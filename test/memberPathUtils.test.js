@@ -89,7 +89,7 @@ describe('safeDirname', () => {
   });
 
   it('returns the directory of a backslash path (preserving separators)', () => {
-    expect(safeDirname('C:\\Users\\alex\\f.txt')).toBe('C:\\Users\\alex');
+    expect(safeDirname('C:\\Users\\benja\\f.txt')).toBe('C:\\Users\\benja');
   });
 
   it('returns empty string when there is no parent directory', () => {

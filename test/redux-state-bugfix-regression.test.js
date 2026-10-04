@@ -50,12 +50,12 @@ describe('BUG-1: addSelectedFiles deduplicates Windows paths case-insensitively'
   test('does not add duplicate when only casing differs (Windows-style paths)', () => {
     const state = {
       ...filesInitial,
-      selectedFiles: [{ path: 'C:\\Users\\Alex\\file.pdf', name: 'file.pdf' }]
+      selectedFiles: [{ path: 'C:\\Users\\Benja\\file.pdf', name: 'file.pdf' }]
     };
 
     const result = filesReducer(
       state,
-      addSelectedFiles([{ path: 'c:\\users\\alex\\file.pdf', name: 'file.pdf' }])
+      addSelectedFiles([{ path: 'c:\\users\\benja\\file.pdf', name: 'file.pdf' }])
     );
 
     expect(result.selectedFiles).toHaveLength(1);
@@ -64,12 +64,12 @@ describe('BUG-1: addSelectedFiles deduplicates Windows paths case-insensitively'
   test('does not add duplicate when separator style differs', () => {
     const state = {
       ...filesInitial,
-      selectedFiles: [{ path: 'C:/Users/Alex/file.pdf', name: 'file.pdf' }]
+      selectedFiles: [{ path: 'C:/Users/Benja/file.pdf', name: 'file.pdf' }]
     };
 
     const result = filesReducer(
       state,
-      addSelectedFiles([{ path: 'C:\\Users\\Alex\\file.pdf', name: 'file.pdf' }])
+      addSelectedFiles([{ path: 'C:\\Users\\Benja\\file.pdf', name: 'file.pdf' }])
     );
 
     expect(result.selectedFiles).toHaveLength(1);
@@ -131,13 +131,13 @@ describe('BUG-2: mergeAnalysisResults deduplicates by canonical path', () => {
   test('updates existing result when path casing differs', () => {
     const state = {
       ...analysisInitial,
-      results: [{ path: 'C:\\Users\\Alex\\report.pdf', analysis: { category: 'finance' } }]
+      results: [{ path: 'C:\\Users\\Benja\\report.pdf', analysis: { category: 'finance' } }]
     };
 
     const result = analysisReducer(
       state,
       mergeAnalysisResults([
-        { path: 'c:\\users\\alex\\report.pdf', analysis: { category: 'updated' } }
+        { path: 'c:\\users\\benja\\report.pdf', analysis: { category: 'updated' } }
       ])
     );
 
@@ -209,11 +209,11 @@ describe('BUG-3: removeSelectedFile uses canonical path comparison', () => {
   test('removes file even when casing differs from stored path', () => {
     const state = {
       ...filesInitial,
-      selectedFiles: [{ path: 'C:\\Users\\Alex\\File.PDF', name: 'File.PDF' }],
-      fileStates: { 'C:\\Users\\Alex\\File.PDF': { state: 'ready' } }
+      selectedFiles: [{ path: 'C:\\Users\\Benja\\File.PDF', name: 'File.PDF' }],
+      fileStates: { 'C:\\Users\\Benja\\File.PDF': { state: 'ready' } }
     };
 
-    const result = filesReducer(state, removeSelectedFile('c:\\users\\alex\\file.pdf'));
+    const result = filesReducer(state, removeSelectedFile('c:\\users\\benja\\file.pdf'));
 
     expect(result.selectedFiles).toHaveLength(0);
   });

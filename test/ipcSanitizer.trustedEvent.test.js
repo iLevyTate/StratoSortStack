@@ -11,7 +11,7 @@ describe('sanitizeTrustedEventArgs', () => {
 
   test('keeps quotes, angle brackets, and .. in path payloads', () => {
     const [out] = sanitizer.sanitizeTrustedEventArgs([
-      { path: 'C:\\Users\\alex\\file "quoted".pdf', nested: { rel: '..\\other<tag>.txt' } }
+      { path: 'C:\\Users\\benja\\file "quoted".pdf', nested: { rel: '..\\other<tag>.txt' } }
     ]);
     expect(out.path).toContain('"quoted"');
     expect(out.nested.rel).toContain('..');

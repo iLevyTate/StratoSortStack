@@ -2,7 +2,7 @@
  * QA runtime repro session — 2026-07-02 (session-only, NOT for CI)
  *
  * Drives the app against a profile with the REAL local models (junctioned in)
- * to verify runtime/QA behavior that the unit suite does not cover:
+ * to verify the "needs runtime/QA" backlog items in docs/BACKLOG_CHECKLIST.md:
  *   TX-02  AI Configuration expand does nothing
  *   A3     Simple -> Advanced re-enables embedding/graph sections
  *   A2     Chat: no duplicated "tail" while streaming

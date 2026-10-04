@@ -50,13 +50,15 @@ Then keep these tabs open:
 
 ## I am running a release
 
-| Doc                                                  | What it covers                                            |
-| ---------------------------------------------------- | --------------------------------------------------------- |
-| [RELEASING.md](RELEASING.md)                         | Tagging, pre-flight, post-install smoke, signing/notarize |
-| [MAC_SIGNING.md](MAC_SIGNING.md)                     | macOS Developer ID signing + notarization runbook         |
-| [COMMERCIAL_COMPLIANCE.md](COMMERCIAL_COMPLIANCE.md) | Pre-release license audit + appendices                    |
-| [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)     | Attribution shipped in the installer (load-bearing)       |
-| [UPDATE_HOST.md](UPDATE_HOST.md)                     | `electron-updater` feed configuration                     |
+| Doc                                                                      | What it covers                                            |
+| ------------------------------------------------------------------------ | --------------------------------------------------------- |
+| [RELEASING.md](RELEASING.md)                                             | Tagging, pre-flight, post-install smoke, signing/notarize |
+| [MAC_SIGNING.md](MAC_SIGNING.md)                                         | macOS Developer ID signing + notarization runbook         |
+| [AZURE_CODE_SIGNING_WINDOWS_PLAN.md](AZURE_CODE_SIGNING_WINDOWS_PLAN.md) | Windows Trusted Signing plan                              |
+| [LAUNCH_RUNBOOK.md](LAUNCH_RUNBOOK.md)                                   | Remaining launch work (legal, fulfillment, license smoke) |
+| [COMMERCIAL_COMPLIANCE.md](COMMERCIAL_COMPLIANCE.md)                     | Pre-release license audit + appendices                    |
+| [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)                         | Attribution shipped in the installer (load-bearing)       |
+| [UPDATE_HOST.md](UPDATE_HOST.md)                                         | `electron-updater` feed configuration                     |
 
 ## I am working on a specific subsystem
 
@@ -80,7 +82,24 @@ These docs are for non-developer audiences. Skip them if you're working on the c
 | [BETA_TESTER_GUIDE.md](BETA_TESTER_GUIDE.md)                                   | Beta tester — install, checklist, bug reports               |
 | [walkthrough-assets/HOW_TO_USE_TOUR.md](walkthrough-assets/HOW_TO_USE_TOUR.md) | How to regenerate the recorded clip (`npm run tour:record`) |
 
-Everything above **I am new here** through **I am a beta tester or end user** is live. Tour media:
+## Reference (read on demand)
+
+| Doc                                                          | Purpose                                 |
+| ------------------------------------------------------------ | --------------------------------------- |
+| [BACKLOG_CHECKLIST.md](BACKLOG_CHECKLIST.md)                 | Open work and audit punch list          |
+| [P2_UX_DEFERRED.md](P2_UX_DEFERRED.md)                       | Product items deferred by scope         |
+| [STABILITY_BASELINE_LEDGER.md](STABILITY_BASELINE_LEDGER.md) | Performance/stability metrics over time |
+
+## Historical (not the live product spec)
+
+Dated snapshots. Use them for archaeology, not as a description of today's app. GitHub Pages
+excludes this directory (see `_config.yml`); it stays in git.
+
+| Location                 | What it is                 |
+| ------------------------ | -------------------------- |
+| [baselines/](baselines/) | LOC / phase-gate snapshots |
+
+Everything above **I am new here** through **Reference** is live. Tour media:
 [walkthrough-assets/HOW_TO_USE_TOUR.md](walkthrough-assets/HOW_TO_USE_TOUR.md), `how-to-use.mp4`,
 `shorts/stratosort-short.mp4`, and `demo-files/`. Public stills for Pages live in
 [assets/e2e-screenshots/](assets/e2e-screenshots/).

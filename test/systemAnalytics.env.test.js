@@ -72,10 +72,10 @@ describe('systemAnalytics.collectMetrics recentErrors sanitization', () => {
 
   testOnWin32('strips raw stack and basename-redacts absolute paths', async () => {
     const failure = new Error(
-      "ENOENT: no such file or directory, open 'C:\\Users\\alex\\secrets\\creds.json'"
+      "ENOENT: no such file or directory, open 'C:\\Users\\benja\\secrets\\creds.json'"
     );
     failure.stack =
-      'Error: ...\n    at readCreds (C:\\Users\\alex\\project\\src\\secrets.js:42:9)';
+      'Error: ...\n    at readCreds (C:\\Users\\benja\\project\\src\\secrets.js:42:9)';
     systemAnalytics.recordFailure(failure);
     systemAnalytics.recordFailure(
       Object.assign(new Error('boom /home/ubuntu/.config/StratoSort Core/settings.json'), {
@@ -87,7 +87,7 @@ describe('systemAnalytics.collectMetrics recentErrors sanitization', () => {
     expect(metrics.recentErrors).toHaveLength(2);
     for (const entry of metrics.recentErrors) {
       expect(entry).not.toHaveProperty('stack');
-      expect(entry.message).not.toMatch(/C:\\Users\\alex/);
+      expect(entry.message).not.toMatch(/C:\\Users\\benja/);
       expect(entry.message).not.toMatch(/\/home\/ubuntu/);
     }
     expect(metrics.recentErrors[0].message).toContain('creds.json');

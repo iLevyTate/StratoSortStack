@@ -183,33 +183,33 @@ describe('Logger', () => {
 
     test('reduces userDataPath / logFilePath / homeDir to basename on Windows, hiding username', () => {
       const sanitized = sanitizeLogData({
-        userDataPath: 'C:\\Users\\alex\\AppData\\Roaming\\StratoSort Core',
-        logFilePath: 'C:\\Users\\alex\\AppData\\Roaming\\StratoSort Core\\logs\\session.log',
-        homeDir: 'C:\\Users\\alex'
+        userDataPath: 'C:\\Users\\benja\\AppData\\Roaming\\StratoSort Core',
+        logFilePath: 'C:\\Users\\benja\\AppData\\Roaming\\StratoSort Core\\logs\\session.log',
+        homeDir: 'C:\\Users\\benja'
       });
       expect(sanitized.userDataPath).toBe('[REDACTED_PATH]/StratoSort Core');
       expect(sanitized.logFilePath).toBe('[REDACTED_PATH]/session.log');
-      expect(sanitized.homeDir).toBe('[REDACTED_PATH]/alex');
+      expect(sanitized.homeDir).toBe('[REDACTED_PATH]/benja');
       // Username must not survive in the sanitized output for userDataPath
-      // even though the raw string contained "alex".
-      expect(JSON.stringify(sanitized.userDataPath)).not.toMatch(/alex/);
+      // even though the raw string contained "benja".
+      expect(JSON.stringify(sanitized.userDataPath)).not.toMatch(/benja/);
     });
 
     test('reduces userDataPath to basename on macOS and Linux, hiding username', () => {
       const sanitized = sanitizeLogData({
-        userDataPath: '/Users/alex/Library/Application Support/StratoSort Core',
-        logsDir: '/home/alex/.config/StratoSort Core/logs',
+        userDataPath: '/Users/benja/Library/Application Support/StratoSort Core',
+        logsDir: '/home/benja/.config/StratoSort Core/logs',
         tempDir: '/var/folders/abc/T'
       });
       expect(sanitized.userDataPath).toBe('[REDACTED_PATH]/StratoSort Core');
       expect(sanitized.logsDir).toBe('[REDACTED_PATH]/logs');
       expect(sanitized.tempDir).toBe('[REDACTED_PATH]/T');
-      expect(JSON.stringify(sanitized)).not.toMatch(/alex/);
+      expect(JSON.stringify(sanitized)).not.toMatch(/benja/);
     });
 
     test('path-like key redaction is case-insensitive and handles trailing separators', () => {
       const sanitized = sanitizeLogData({
-        UserDataPath: 'C:\\Users\\alex\\AppData\\Roaming\\StratoSort Core\\',
+        UserDataPath: 'C:\\Users\\benja\\AppData\\Roaming\\StratoSort Core\\',
         LOGFILEPATH: '/var/log/stratosort/app.log/'
       });
       expect(sanitized.UserDataPath).toBe('[REDACTED_PATH]/StratoSort Core');
@@ -221,7 +221,7 @@ describe('Logger', () => {
       // analyzed — we still want the generic string redaction (which keeps
       // the basename) without forcing the path-key-specific branch.
       const sanitized = sanitizeLogData({
-        filePath: 'C:\\Users\\alex\\Documents\\report.pdf'
+        filePath: 'C:\\Users\\benja\\Documents\\report.pdf'
       });
       expect(sanitized.filePath).toBe('[REDACTED_PATH]\\report.pdf');
     });
@@ -253,7 +253,7 @@ describe('Logger', () => {
     });
 
     test('control-char stripping is a no-op on clean strings (fast path)', () => {
-      const clean = 'regular log message with path C:\\Users\\alex\\file.txt';
+      const clean = 'regular log message with path C:\\Users\\benja\\file.txt';
       const sanitized = sanitizeLogData(clean);
       // Control-char stripping should leave the redacted path intact and
       // must not double-escape backslashes or alter basename output.

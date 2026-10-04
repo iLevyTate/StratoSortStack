@@ -4,10 +4,10 @@ describe('formatHistoryActionDisplay', () => {
   test('structures a single move with destination path', () => {
     const display = formatHistoryActionDisplay({
       type: 'FILE_MOVE',
-      description: 'Move notes.pdf to C:\\Users\\alex\\Documents\\Research\\notes.pdf',
+      description: 'Move notes.pdf to C:\\Users\\benja\\Documents\\Research\\notes.pdf',
       metadata: {
-        source: 'C:\\Users\\alex\\Downloads\\notes.pdf',
-        destination: 'C:\\Users\\alex\\Documents\\Research\\notes.pdf'
+        source: 'C:\\Users\\benja\\Downloads\\notes.pdf',
+        destination: 'C:\\Users\\benja\\Documents\\Research\\notes.pdf'
       }
     });
 
@@ -21,10 +21,10 @@ describe('formatHistoryActionDisplay', () => {
     const display = formatHistoryActionDisplay(
       {
         type: 'FILE_MOVE',
-        description: 'Move notes.pdf to C:\\Users\\alex\\Documents\\Research\\notes.pdf',
+        description: 'Move notes.pdf to C:\\Users\\benja\\Documents\\Research\\notes.pdf',
         metadata: {
-          source: 'C:\\Users\\alex\\Downloads\\notes.pdf',
-          destination: 'C:\\Users\\alex\\Documents\\Research\\notes.pdf'
+          source: 'C:\\Users\\benja\\Downloads\\notes.pdf',
+          destination: 'C:\\Users\\benja\\Documents\\Research\\notes.pdf'
         }
       },
       { redact: true }
@@ -32,8 +32,8 @@ describe('formatHistoryActionDisplay', () => {
 
     expect(display.title).toBe('Hidden file.pdf');
     expect(display.detail).toMatch(/^Moved · …/);
-    expect(display.detail).not.toMatch(/alex/i);
-    expect(display.ariaLabel).not.toMatch(/alex/i);
+    expect(display.detail).not.toMatch(/benja/i);
+    expect(display.ariaLabel).not.toMatch(/benja/i);
   });
 
   test('summarizes batch operations', () => {
@@ -91,13 +91,13 @@ describe('formatHistoryActionDisplay', () => {
     const display = formatHistoryActionDisplay(
       {
         type: 'FILE_MOVE',
-        description: 'Move part.stl to C:\\Users\\alex\\Documents\\3D print\\part.stl',
+        description: 'Move part.stl to C:\\Users\\benja\\Documents\\3D print\\part.stl',
         metadata: {}
       },
       { redact: true }
     );
 
-    expect(display.title).not.toMatch(/alex/i);
+    expect(display.title).not.toMatch(/benja/i);
     expect(display.title).toContain('…');
   });
 });

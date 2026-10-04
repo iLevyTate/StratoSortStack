@@ -109,7 +109,7 @@ function createBaseProps(overrides = {}) {
 
 describe('ChatPanel', () => {
   test('prefers cited document answers and strips local paths from rendered assistant text', () => {
-    const sourcePath = 'C:\\Users\\alex\\Documents\\Financial\\budget-spreadsheet-2025-12-23.xlsx';
+    const sourcePath = 'C:\\Users\\benja\\Documents\\Financial\\budget-spreadsheet-2025-12-23.xlsx';
 
     renderWithRedux(
       <ChatPanel

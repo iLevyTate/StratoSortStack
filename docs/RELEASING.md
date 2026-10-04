@@ -155,7 +155,7 @@ whose path contains spaces.
    **B — From the repo** (after a normal dev build, from the repo root):
 
    ```powershell
-   cd C:\src\StratoSortCore
+   cd c:\Users\benja\Documents\GitHub\StratoSortCore
    npx cross-env NODE_ENV=development electron . --enable-logging --user-data-dir=C:\temp\stratosort-demo-profile
    ```
 
@@ -330,8 +330,8 @@ Two more release-time runtime items pair with this pass, both verifiable only on
 - the **updater live smoke** —
   [§ Updater live smoke](#updater-live-smoke-run-before-every-update-enabled-release), including the
   portable/Store negative checks, and
-- the **license smoke** on a fresh `--user-data-dir`: Settings → License reads free for personal
-  use, a commercial key activates, and removing it returns to free.
+- the **license smoke** on a fresh `--user-data-dir` (see [`LAUNCH_RUNBOOK.md`](LAUNCH_RUNBOOK.md)
+  Phase 3).
 
 ### Portable build
 
