@@ -1,0 +1,352 @@
+import React, { memo, useCallback, useMemo } from 'react';
+import PropTypes from 'prop-types';
+import { Handle, Position, NodeToolbar } from '@xyflow/react';
+import { ExternalLink, FolderOpen, Copy, GitBranch, Focus } from 'lucide-react';
+import { useFileActions } from '../../../hooks';
+import { useAppSelector } from '../../../store/hooks';
+import { selectRedactPaths } from '../../../store/selectors';
+import { useNotification } from '../../../contexts/NotificationContext';
+import { logger } from '../../../../shared/logger';
+import FileIcon, { getFileCategory } from '../../ui/FileIcon';
+import { IconButton } from '../../ui';
+import { formatDisplayPath } from '../../../utils/pathDisplay';
+import { sanitizeGraphMetadataTerms } from '../../../utils/semanticTerms';
+
+const CATEGORY_STYLES = {
+  Documents: {
+    bg: 'bg-stratosort-blue/10',
+    border: 'border-stratosort-blue/30',
+    text: 'text-stratosort-blue',
+    ring: 'ring-stratosort-blue/20'
+  },
+  Spreadsheets: {
+    bg: 'bg-stratosort-success/10',
+    border: 'border-stratosort-success/30',
+    text: 'text-stratosort-success',
+    ring: 'ring-stratosort-success/20'
+  },
+  Presentations: {
+    bg: 'bg-stratosort-accent/10',
+    border: 'border-stratosort-accent/30',
+    text: 'text-stratosort-accent',
+    ring: 'ring-stratosort-accent/20'
+  },
+  Images: {
+    bg: 'bg-stratosort-purple/10',
+    border: 'border-stratosort-purple/30',
+    text: 'text-stratosort-purple',
+    ring: 'ring-stratosort-purple/20'
+  },
+  Videos: {
+    bg: 'bg-stratosort-purple/10',
+    border: 'border-stratosort-purple/30',
+    text: 'text-stratosort-purple',
+    ring: 'ring-stratosort-purple/20'
+  },
+  Audio: {
+    bg: 'bg-stratosort-indigo/10',
+    border: 'border-stratosort-indigo/30',
+    text: 'text-stratosort-indigo',
+    ring: 'ring-stratosort-indigo/20'
+  },
+  Code: {
+    bg: 'bg-stratosort-accent/10',
+    border: 'border-stratosort-accent/30',
+    text: 'text-stratosort-accent',
+    ring: 'ring-stratosort-accent/20'
+  },
+  Data: {
+    bg: 'bg-stratosort-accent/10',
+    border: 'border-stratosort-accent/30',
+    text: 'text-stratosort-accent',
+    ring: 'ring-stratosort-accent/20'
+  },
+  Archives: {
+    bg: 'bg-system-gray-100',
+    border: 'border-system-gray-200',
+    text: 'text-system-gray-700',
+    ring: 'ring-system-gray-100'
+  },
+  Other: {
+    bg: 'bg-system-gray-50',
+    border: 'border-system-gray-200',
+    text: 'text-system-gray-700',
+    ring: 'ring-system-gray-100'
+  }
+};
+
+const FileNode = memo(({ data, selected }) => {
+  const { showError, addNotification } = useNotification();
+  const redactPaths = useAppSelector(selectRedactPaths);
+  const filePath = data?.path || '';
+  const tags = useMemo(() => sanitizeGraphMetadataTerms(data?.tags, { maxTerms: 3 }), [data?.tags]);
+  const suggestedFolder =
+    typeof data?.suggestedFolder === 'string' ? data.suggestedFolder.trim() : '';
+  const rawLabel = data?.label || filePath;
+  const displayLabel = formatDisplayPath(rawLabel, { redact: redactPaths, segments: 2 });
+  const displaySuggestedFolder = suggestedFolder
+    ? formatDisplayPath(suggestedFolder, { redact: redactPaths, segments: 2 })
+    : '';
+
+  // Determine category and style
+  const category = useMemo(() => getFileCategory(filePath), [filePath]);
+  const style = CATEGORY_STYLES[category] || CATEGORY_STYLES.Other;
+
+  // Use shared hooks for file actions
+  const { openFile, revealFile, copyPath } = useFileActions();
+
+  const handleOpen = useCallback(
+    (e) => {
+      e?.stopPropagation?.();
+      openFile(filePath);
+    },
+    [filePath, openFile]
+  );
+
+  const handleReveal = useCallback(
+    (e) => {
+      e?.stopPropagation?.();
+      revealFile(filePath);
+    },
+    [filePath, revealFile]
+  );
+
+  const handleCopyPath = useCallback(
+    async (e) => {
+      e?.stopPropagation?.();
+      await copyPath(filePath);
+      // Quick acknowledgement so the user knows the silent clipboard write
+      // landed; otherwise there's no visible feedback at all. groupKey
+      // collapses repeated copies into a single deduplicated toast.
+      addNotification?.('Path copied', 'success', 1500, 'copy-feedback');
+    },
+    [filePath, copyPath, addNotification]
+  );
+
+  const handleFindSimilar = useCallback(
+    (e) => {
+      e?.stopPropagation?.();
+      if (data?.id || filePath) {
+        const event = new CustomEvent('graph:findSimilar', {
+          detail: { nodeId: data?.id || filePath, path: filePath }
+        });
+        window.dispatchEvent(event);
+      }
+    },
+    [data?.id, filePath]
+  );
+
+  const handleFocusOnNode = useCallback(
+    (e) => {
+      e?.stopPropagation?.();
+      if (data?.id || filePath) {
+        const event = new CustomEvent('graph:focusNode', {
+          detail: { nodeId: data?.id || filePath }
+        });
+        window.dispatchEvent(event);
+      }
+    },
+    [data?.id, filePath]
+  );
+
+  const handleMenuAction = useCallback(
+    async (action) => {
+      try {
+        await action?.();
+      } catch (e) {
+        const message = e?.message || 'Action failed';
+        logger.warn('[FileNode] Menu action failed:', message);
+        showError(message);
+      }
+    },
+    [showError]
+  );
+
+  // Calculate display score from withinScore or score
+  const displayScore = data?.withinScore ?? data?.score ?? null;
+  const hasHighScore = displayScore !== null && displayScore > 0.75;
+
+  return (
+    <div
+      className={`
+        relative px-2.5 py-1.5 rounded-lg border-2 shadow-sm w-[220px] min-h-[104px] overflow-visible
+        transition duration-200 cursor-pointer group backface-hidden transform-gpu
+        ${
+          selected
+            ? `border-[var(--color-stratosort-blue)] ring-2 ring-[var(--color-stratosort-blue)]/20 shadow-lg scale-105 z-10 bg-system-gray-100`
+            : `${style.border} ${style.bg} hover:border-[var(--color-stratosort-blue)]/50 hover:shadow-md hover:scale-[1.02] hover:z-10`
+        }
+      `}
+      style={{ opacity: data?.style?.opacity ?? 1 }}
+      title="Click to select · Double-click to expand related files · Use toolbar to open"
+    >
+      <NodeToolbar isVisible={selected} position={Position.Top}>
+        <div className="flex gap-1 bg-system-gray-100 shadow-lg rounded-lg border border-system-gray-200 p-1">
+          <IconButton
+            onClick={() => handleMenuAction(handleOpen)}
+            icon={<ExternalLink className="w-4 h-4 text-stratosort-blue" />}
+            size="sm"
+            variant="ghost"
+            className="h-7 w-7 hover:bg-stratosort-blue/10"
+            title="Open file"
+            aria-label="Open file"
+          />
+          <IconButton
+            onClick={() => handleMenuAction(handleReveal)}
+            icon={<FolderOpen className="w-4 h-4 text-stratosort-accent" />}
+            size="sm"
+            variant="ghost"
+            className="h-7 w-7 hover:bg-stratosort-accent/10"
+            title="Reveal in folder"
+            aria-label="Reveal in folder"
+          />
+          <IconButton
+            onClick={() => handleMenuAction(handleFindSimilar)}
+            icon={<GitBranch className="w-4 h-4 text-stratosort-success" />}
+            size="sm"
+            variant="ghost"
+            className="h-7 w-7 hover:bg-stratosort-success/10"
+            title="Find similar"
+            aria-label="Find similar"
+          />
+          <IconButton
+            onClick={() => handleMenuAction(handleFocusOnNode)}
+            icon={<Focus className="w-4 h-4 text-stratosort-indigo" />}
+            size="sm"
+            variant="ghost"
+            className="h-7 w-7 hover:bg-stratosort-indigo/10"
+            title="Focus on node"
+            aria-label="Focus on node"
+          />
+          <IconButton
+            onClick={() => handleMenuAction(handleCopyPath)}
+            icon={<Copy className="w-4 h-4 text-system-gray-500" />}
+            size="sm"
+            variant="ghost"
+            className="h-7 w-7 hover:bg-system-gray-100"
+            title="Copy path"
+            aria-label="Copy path"
+          />
+        </div>
+      </NodeToolbar>
+
+      <Handle
+        type="target"
+        position={Position.Left}
+        className="!bg-[var(--color-stratosort-blue)] !w-2 !h-2"
+      />
+
+      {/* Quick actions on hover - using CSS group-hover for performance.
+          Mouse-only REDUNDANT shortcut by design (display:none children are
+          never focusable): the keyboard path is Tab -> node (React Flow
+          nodesFocusable default) -> Enter selects -> NodeToolbar above exposes
+          the full action set as real buttons (U-T14). */}
+      {filePath && !selected && (
+        <div className="hidden group-hover:flex absolute -top-8 left-1/2 -translate-x-1/2 gap-1 bg-system-gray-100 shadow-md rounded-lg px-2 py-1.5 border border-[var(--color-border-soft)] z-20 animate-pop-in nodrag nopan">
+          <IconButton
+            onClick={handleOpen}
+            icon={<ExternalLink className="w-3.5 h-3.5 text-[var(--color-stratosort-blue)]" />}
+            size="sm"
+            variant="ghost"
+            className="h-6 w-6 hover:bg-[var(--color-stratosort-blue)]/10"
+            title="Open file"
+            aria-label="Open file"
+          />
+          <IconButton
+            onClick={handleReveal}
+            icon={<FolderOpen className="w-3.5 h-3.5 text-[var(--color-stratosort-blue)]" />}
+            size="sm"
+            variant="ghost"
+            className="h-6 w-6 hover:bg-[var(--color-stratosort-blue)]/10"
+            title="Reveal in folder"
+            aria-label="Reveal in folder"
+          />
+        </div>
+      )}
+
+      {/* Score badge for relevance indicator */}
+      {displayScore !== null && displayScore > 0 && (
+        <div
+          className={`
+            absolute -top-2 -right-2 text-xs font-bold rounded-full px-1.5 h-5 min-w-[28px] flex items-center justify-center shadow-md border border-system-gray-100 z-10
+            ${hasHighScore ? 'bg-stratosort-blue text-white' : 'bg-system-gray-100 text-system-gray-600 border-system-gray-200'}
+          `}
+          title={`Relevance: ${Math.round(displayScore * 100)}%`}
+        >
+          {Math.round(displayScore * 100)}%
+        </div>
+      )}
+
+      <div className="flex items-start gap-2.5">
+        <div className="shrink-0 mt-0.5">
+          <FileIcon filename={filePath} className="w-5 h-5" />
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-1 mb-0.5">
+            <span className={`text-xs font-semibold uppercase tracking-wider ${style.text}`}>
+              {category}
+            </span>
+          </div>
+
+          <div
+            className="file-node-label text-xs font-semibold text-[var(--color-system-gray-900)] clamp-2 break-all leading-snug mb-1"
+            title={displayLabel}
+          >
+            {displayLabel}
+          </div>
+
+          {(tags.length > 0 || displaySuggestedFolder) && (
+            <div className="flex flex-wrap gap-1 mt-1.5">
+              {displaySuggestedFolder && (
+                <span
+                  className="px-1.5 py-0.5 rounded-md text-xs bg-system-gray-50 text-system-gray-600 font-medium truncate max-w-full inline-block break-all"
+                  title={displaySuggestedFolder}
+                >
+                  📂 {displaySuggestedFolder}
+                </span>
+              )}
+              {tags.map((tag, i) => (
+                <span
+                  key={i}
+                  className="px-1.5 py-0.5 rounded-md text-xs bg-system-gray-100 text-[var(--color-system-gray-600)] border border-border-soft max-w-full truncate inline-block break-all"
+                  title={tag}
+                >
+                  #{tag}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <Handle
+        type="source"
+        position={Position.Right}
+        className="!bg-[var(--color-stratosort-blue)] !w-2 !h-2"
+      />
+    </div>
+  );
+});
+
+FileNode.displayName = 'FileNode';
+
+FileNode.propTypes = {
+  data: PropTypes.shape({
+    id: PropTypes.string,
+    withinScore: PropTypes.number,
+    score: PropTypes.number,
+    label: PropTypes.string,
+    path: PropTypes.string,
+    tags: PropTypes.arrayOf(PropTypes.string),
+    entities: PropTypes.arrayOf(PropTypes.string),
+    dates: PropTypes.arrayOf(PropTypes.string),
+    suggestedFolder: PropTypes.string,
+    style: PropTypes.shape({
+      opacity: PropTypes.number
+    })
+  }),
+  selected: PropTypes.bool
+};
+
+export default FileNode;

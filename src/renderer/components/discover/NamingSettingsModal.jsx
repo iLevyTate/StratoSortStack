@@ -1,0 +1,88 @@
+import React, { memo } from 'react';
+import PropTypes from 'prop-types';
+import Modal from '../ui/Modal';
+import NamingSettings from './NamingSettings';
+import { Button } from '../ui';
+import { Text } from '../ui/Typography';
+import { Stack } from '../layout';
+import { generatePreviewName } from '../../../shared/namingConventions';
+
+const NamingSettingsModal = memo(function NamingSettingsModal({
+  isOpen,
+  onClose,
+  namingConvention,
+  setNamingConvention,
+  dateFormat,
+  setDateFormat,
+  caseConvention,
+  setCaseConvention,
+  separator,
+  setSeparator
+}) {
+  const previewName = generatePreviewName('Sample Document.ext', {
+    convention: namingConvention,
+    separator,
+    dateFormat,
+    caseConvention
+  });
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Naming strategy"
+      size="lg"
+      dataTestId="naming-strategy-modal"
+      closeOnOverlayClick
+      footer={
+        <Button onClick={onClose} variant="primary" size="sm">
+          Done
+        </Button>
+      }
+    >
+      <Stack gap="default">
+        <Text variant="small" className="text-system-gray-600">
+          Configure how StratoSort will rename your files during analysis.
+        </Text>
+
+        <NamingSettings
+          namingConvention={namingConvention}
+          setNamingConvention={setNamingConvention}
+          dateFormat={dateFormat}
+          setDateFormat={setDateFormat}
+          caseConvention={caseConvention}
+          setCaseConvention={setCaseConvention}
+          separator={separator}
+          setSeparator={setSeparator}
+        />
+
+        <div className="border-t border-border-soft/70 pt-4 mt-2">
+          <Text variant="tiny" className="text-system-gray-500 mb-4">
+            <strong>Preview:</strong>{' '}
+            <span
+              data-testid="naming-preview-value"
+              className="font-mono bg-surface-muted border border-border-soft px-3 py-1.5 rounded-lg"
+            >
+              {previewName}
+            </span>
+          </Text>
+        </div>
+      </Stack>
+    </Modal>
+  );
+});
+
+NamingSettingsModal.propTypes = {
+  isOpen: PropTypes.bool.isRequired,
+  onClose: PropTypes.func.isRequired,
+  namingConvention: PropTypes.string.isRequired,
+  setNamingConvention: PropTypes.func.isRequired,
+  dateFormat: PropTypes.string.isRequired,
+  setDateFormat: PropTypes.func.isRequired,
+  caseConvention: PropTypes.string.isRequired,
+  setCaseConvention: PropTypes.func.isRequired,
+  separator: PropTypes.string.isRequired,
+  setSeparator: PropTypes.func.isRequired
+};
+
+export default NamingSettingsModal;

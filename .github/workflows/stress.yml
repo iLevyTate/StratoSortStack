@@ -1,0 +1,53 @@
+# Stress / load tests (test/stress/*, run via `npm run test:stress`).
+#
+# Kept in a SEPARATE workflow from ci.yml on purpose: load tests with 120 s
+# timeouts are inherently flakier than unit tests, so they must NOT gate pull
+# requests. Running them here on post-merge push + a nightly schedule gives an
+# automated performance-regression signal without blocking PRs. Promote into the
+# PR gate (or add windows-latest) only once this job has proven stable.
+name: Stress
+
+on:
+  push:
+    branches: [main, master, develop, RegressionFixes]
+  schedule:
+    # Nightly at 06:00 UTC.
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: stress-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CI: true
+
+jobs:
+  stress:
+    # Ubuntu-only first: deterministic and fast. The stress suite mocks electron
+    # and chokidar (node test env), so no Electron native rebuild is required —
+    # plain `npm ci` is enough. Windows file-watcher timing is the main source of
+    # flake; expand the matrix to windows-latest once this job is proven stable.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Use Node.js from .nvmrc
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --include=optional
+
+      - name: Run stress / load tests
+        run: npm run test:stress
+        env:
+          # Match ci.yml: the suite runs in one process (--runInBand) and can
+          # build large in-memory queues under load.
+          NODE_OPTIONS: '--max-old-space-size=6144'

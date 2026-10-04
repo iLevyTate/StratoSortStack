@@ -1,0 +1,296 @@
+import React from 'react';
+import PropTypes from 'prop-types';
+import Spinner from './Spinner';
+import { Text } from './Typography';
+
+/**
+ * LoadingSkeleton component for displaying placeholder content while data loads
+ * @param {string} className - Additional CSS classes
+ * @param {string} variant - Type of skeleton to display
+ * @param {number} count - Number of skeletons to render
+ */
+export function LoadingSkeleton({ className = '', variant = 'default', count = 1 }) {
+  const baseClasses =
+    'animate-pulse bg-gradient-to-r from-system-gray-100 to-system-gray-200 rounded';
+
+  const variantClasses = {
+    default: 'h-4 w-full',
+    title: 'h-8 w-3/4',
+    text: 'h-3 w-full',
+    card: 'h-32 w-full rounded-[var(--radius-md)]',
+    avatar: 'h-12 w-12 rounded-[var(--radius-full)]',
+    button: 'h-10 w-24 rounded-[var(--radius-md)]',
+    input: 'h-10 w-full rounded-[var(--radius-md)]',
+    file: 'h-16 w-full rounded-[var(--radius-md)]',
+    folder: 'h-20 w-full rounded-[var(--radius-lg)]'
+  };
+
+  const skeletons = Array.from({ length: count }, (_, i) => (
+    <div
+      key={i}
+      className={`${baseClasses} ${variantClasses[variant] || variantClasses.default} ${className}`}
+      aria-hidden="true"
+      style={{ animationDelay: `${i * ANIMATION_CONFIG.DELAY_INCREMENT}s` }}
+    />
+  ));
+
+  return count > 1 ? (
+    <div className="space-y-2 animate-skeleton-enter">{skeletons}</div>
+  ) : (
+    skeletons[0]
+  );
+}
+
+LoadingSkeleton.propTypes = {
+  className: PropTypes.string,
+  variant: PropTypes.oneOf([
+    'default',
+    'title',
+    'text',
+    'card',
+    'avatar',
+    'button',
+    'input',
+    'file',
+    'folder'
+  ]),
+  count: PropTypes.number
+};
+
+// Animation configuration constants
+export const ANIMATION_CONFIG = {
+  DELAY_INCREMENT: 0.1,
+  DEFAULT_FILE_COUNT: 5,
+  DEFAULT_FOLDER_COUNT: 6
+};
+
+/**
+ * Composite loading state for file list UI
+ * @param {number} count - Number of skeleton items to display
+ */
+export function FileListSkeleton({ count = ANIMATION_CONFIG.DEFAULT_FILE_COUNT }) {
+  return (
+    <div className="space-y-3 animate-skeleton-enter" role="status" aria-label="Loading files">
+      {Array.from({ length: count }, (_, i) => (
+        <div
+          key={i}
+          className="flex items-center gap-cozy p-3 bg-system-gray-100 rounded-lg border border-border-soft"
+          style={{ animationDelay: `${i * ANIMATION_CONFIG.DELAY_INCREMENT}s` }}
+        >
+          <LoadingSkeleton variant="avatar" />
+          <div className="flex-1 space-y-2">
+            <LoadingSkeleton className="w-2/3" />
+            <LoadingSkeleton variant="text" className="w-1/3" />
+          </div>
+          <LoadingSkeleton variant="button" />
+        </div>
+      ))}
+      <span className="sr-only">Loading file list...</span>
+    </div>
+  );
+}
+
+FileListSkeleton.propTypes = {
+  count: PropTypes.number
+};
+
+/**
+ * Composite loading state for folder grid UI
+ * @param {number} count - Number of skeleton items to display
+ */
+export function FolderGridSkeleton({ count = ANIMATION_CONFIG.DEFAULT_FOLDER_COUNT }) {
+  return (
+    <div
+      className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-default animate-skeleton-enter"
+      role="status"
+      aria-label="Loading folders"
+    >
+      {Array.from({ length: count }, (_, i) => (
+        <div
+          key={i}
+          className="p-4 bg-system-gray-100 rounded-xl border border-border-soft"
+          style={{ animationDelay: `${i * ANIMATION_CONFIG.DELAY_INCREMENT}s` }}
+        >
+          <LoadingSkeleton variant="folder" />
+          <div className="mt-3 space-y-2">
+            <LoadingSkeleton className="w-3/4" />
+            <LoadingSkeleton variant="text" />
+          </div>
+        </div>
+      ))}
+      <span className="sr-only">Loading folder list...</span>
+    </div>
+  );
+}
+
+FolderGridSkeleton.propTypes = {
+  count: PropTypes.number
+};
+
+export function AnalysisProgressSkeleton() {
+  return (
+    <div
+      className="p-6 bg-system-gray-100 rounded-xl border border-border-soft shadow-sm animate-skeleton-enter"
+      role="status"
+      aria-label="Loading analysis"
+    >
+      <div className="flex items-center justify-between mb-4">
+        <LoadingSkeleton variant="title" className="w-1/3" />
+        <LoadingSkeleton variant="button" />
+      </div>
+      <div className="space-y-3">
+        <LoadingSkeleton className="h-2 w-full rounded-full" />
+        <div className="flex justify-between">
+          <LoadingSkeleton variant="text" className="w-20" />
+          <LoadingSkeleton variant="text" className="w-20" />
+        </div>
+      </div>
+      <div className="mt-4 pt-4 border-t border-border-soft">
+        <LoadingSkeleton variant="text" className="w-2/3" />
+      </div>
+      <span className="sr-only">Loading analysis progress...</span>
+    </div>
+  );
+}
+
+/**
+ * Composite loading state for smart folder list UI (mirrors card grid layout)
+ * @param {number} count - Number of skeleton items to display
+ * @param {boolean} compact - Render compact row-style skeletons
+ */
+export function SmartFolderSkeleton({
+  count = ANIMATION_CONFIG.DEFAULT_FOLDER_COUNT,
+  compact = false
+}) {
+  const gridClass = compact
+    ? 'grid grid-cols-1 md:grid-cols-2 gap-default lg:gap-5'
+    : 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-default lg:gap-5';
+
+  const gridShell = (children) => (
+    <div
+      className={`${gridClass} animate-skeleton-enter`}
+      role="status"
+      aria-label="Loading smart folders"
+    >
+      {children}
+      <span className="sr-only">Loading smart folder list...</span>
+    </div>
+  );
+
+  if (compact) {
+    return gridShell(
+      Array.from({ length: count }, (_, i) => (
+        <div
+          key={i}
+          className="group flex items-center bg-system-gray-100/90 rounded-xl border border-border-soft/60 shadow-sm animate-pulse h-full"
+          style={{ padding: 'var(--spacing-cozy)', gap: 'var(--spacing-cozy)' }}
+        >
+          <div className="h-10 w-10 rounded-xl bg-stratosort-blue/10" />
+          <div className="flex-1 min-w-0 space-y-2">
+            <LoadingSkeleton className="w-3/4" />
+            <LoadingSkeleton variant="text" className="w-1/2" />
+          </div>
+          <div className="w-4 h-4 rounded-full bg-system-gray-200" />
+        </div>
+      ))
+    );
+  }
+
+  return gridShell(
+    Array.from({ length: count }, (_, i) => (
+      <div
+        key={i}
+        className="bg-system-gray-100/90 rounded-xl border border-border-soft/60 shadow-sm animate-pulse flex flex-col"
+        style={{ padding: 'var(--spacing-default)', gap: 'var(--spacing-cozy)' }}
+      >
+        <div className="flex items-start justify-between" style={{ gap: 'var(--spacing-cozy)' }}>
+          <div className="flex items-start" style={{ gap: 'var(--spacing-cozy)' }}>
+            <div className="h-12 w-12 rounded-xl bg-stratosort-blue/10" />
+            <div className="space-y-2 w-full max-w-[14rem]">
+              <LoadingSkeleton className="w-3/4" />
+              <LoadingSkeleton variant="text" className="w-full" />
+            </div>
+          </div>
+          <LoadingSkeleton className="w-20 h-6 rounded-full" />
+        </div>
+
+        <div className="bg-stratosort-blue/5 rounded-xl border border-stratosort-blue/10 p-4 space-y-2">
+          <LoadingSkeleton className="w-1/3" />
+          <LoadingSkeleton variant="text" className="w-2/3" />
+        </div>
+
+        <div
+          className="flex items-center justify-between border-t border-border-soft/50"
+          style={{ gap: 'var(--spacing-cozy)', paddingTop: 'var(--spacing-cozy)' }}
+        >
+          <div className="flex items-center" style={{ gap: 'var(--spacing-compact)' }}>
+            <LoadingSkeleton variant="button" className="w-10 h-10 rounded-xl" />
+            <LoadingSkeleton variant="button" className="w-10 h-10 rounded-xl" />
+            <LoadingSkeleton variant="button" className="w-10 h-10 rounded-xl" />
+          </div>
+          <LoadingSkeleton variant="button" className="w-10 h-10 rounded-xl" />
+        </div>
+      </div>
+    ))
+  );
+}
+
+SmartFolderSkeleton.propTypes = {
+  count: PropTypes.number,
+  compact: PropTypes.bool
+};
+
+// Enhanced loading spinner for lazy-loaded components
+export function LazyLoadingSpinner({ message = 'Loading...' }) {
+  return (
+    <div
+      className="flex items-center justify-center py-12 animate-loading-fade"
+      role="status"
+      aria-label={message}
+    >
+      <div className="text-center animate-loading-content">
+        <Spinner size="lg" className="mx-auto mb-8" />
+        <Text variant="small" className="text-system-gray-700">
+          {message}
+        </Text>
+        <span className="sr-only">{message}</span>
+      </div>
+    </div>
+  );
+}
+
+LazyLoadingSpinner.propTypes = {
+  message: PropTypes.string
+};
+
+// Modal loading overlay for lazy-loaded modals/panels
+// Uses fade-in animation to prevent jarring black flash during Suspense loads
+export function ModalLoadingOverlay({ message = 'Loading...', inline = false }) {
+  // IMPORTANT: inline overlays should never block clicks on modal controls (close/back buttons),
+  // otherwise a slow IPC call can make the UI feel "stuck".
+  const containerClass = inline
+    ? 'absolute inset-0 z-40 flex items-center justify-center bg-system-gray-100/85 backdrop-blur-sm pointer-events-none animate-loading-fade'
+    : 'fixed inset-0 flex items-center justify-center z-modal animate-modal-backdrop pointer-events-none';
+
+  return (
+    <div
+      className={containerClass}
+      role="status"
+      aria-label={message}
+      style={inline ? undefined : { backgroundColor: 'var(--overlay-scrim-subtle)' }}
+    >
+      <div className="bg-system-gray-100 rounded-xl shadow-xl px-8 py-6 text-center animate-modal-enter pointer-events-none border border-border-soft">
+        <Spinner size="md" className="mx-auto mb-3" />
+        <Text variant="small" className="text-system-gray-600">
+          {message}
+        </Text>
+        <span className="sr-only">{message}</span>
+      </div>
+    </div>
+  );
+}
+
+ModalLoadingOverlay.propTypes = {
+  message: PropTypes.string,
+  inline: PropTypes.bool
+};

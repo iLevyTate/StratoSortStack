@@ -1,0 +1,605 @@
+// @ts-check
+/**
+ * Model Manager Service - Universal Llama Model Support
+ * Ensures the application works with available GGUF models
+ */
+
+const { createLogger } = require('../../shared/logger');
+const { TIMEOUTS } = require('../../shared/performanceConstants');
+const { getInstance: getLlamaService } = require('./LlamaService');
+const { createSingletonHelpers } = require('../../shared/singletonFactory');
+const { ERROR_CODES } = require('../../shared/errorCodes');
+const { attachErrorCode } = require('../../shared/errorHandlingUtils');
+const {
+  MODEL_CATEGORY_PREFIXES,
+  FALLBACK_MODEL_PREFERENCES
+} = require('../../shared/modelCategorization');
+const { withTimeout, withAbortableTimeout } = require('../../shared/promiseUtils');
+
+// Lazy load SettingsService
+/** @type {any} */
+let settingsService = null;
+function getSettings() {
+  if (!settingsService) {
+    settingsService = require('./SettingsService').getInstance();
+  }
+  return settingsService;
+}
+
+const logger = createLogger('ModelManager');
+class ModelManager {
+  constructor() {
+    /** @type {any[]} */
+    this.availableModels = [];
+    this.selectedModel = null;
+    this.modelCapabilities = new Map();
+    this.lastHealthCheck = null;
+
+    // Initialization state (promise reuse pattern prevents race conditions)
+    this.initialized = false;
+    this._initPromise = null;
+
+    // Use shared model categories from modelCategorization.js
+    this.modelCategories = MODEL_CATEGORY_PREFIXES;
+
+    // Use shared fallback preferences from modelCategorization.js
+    this.fallbackPreferences = FALLBACK_MODEL_PREFERENCES;
+  }
+
+  get llamaService() {
+    return getLlamaService();
+  }
+
+  /**
+   * Initialize the model manager with race condition protection
+   * FIX: Simplified to use promise reuse pattern instead of complex polling
+   */
+  async initialize() {
+    // If already initialized, return success
+    if (this.initialized) {
+      return true;
+    }
+
+    // If initialization is in progress, wait for it (prevents race conditions)
+    // This single promise check eliminates the need for complex polling logic
+    if (this._initPromise) {
+      return this._initPromise;
+    }
+
+    // Create and store initialization promise immediately to prevent concurrent starts
+    this._initPromise = this._doInitialize();
+    return this._initPromise;
+  }
+
+  /**
+   * Internal initialization logic
+   * @private
+   */
+  async _doInitialize() {
+    try {
+      logger.info('[ModelManager] Initializing');
+
+      // Load saved configuration
+      await this.loadConfig();
+
+      // Discover available models with timeout using withTimeout utility
+      try {
+        await withTimeout(this.discoverModels(), TIMEOUTS.MODEL_DISCOVERY, 'Model discovery');
+      } catch (error) {
+        logger.warn('[ModelManager] Model discovery failed or timed out', {
+          error: error.message
+        });
+      }
+
+      // Ensure we have a working model
+      try {
+        await this.ensureWorkingModel();
+      } catch (modelError) {
+        // Don't fail hard if ensureWorkingModel fails, just log as warning
+        // The user might configure models later or services might spin up
+        logger.warn('[ModelManager] Could not ensure working model during startup (non-fatal):', {
+          error: modelError.message
+        });
+      }
+
+      // Mark as initialized even if models aren't fully ready yet
+      this.initialized = true;
+      this._initPromise = null;
+
+      logger.info(`[ModelManager] Initialized with model: ${this.selectedModel}`);
+      return true;
+    } catch (error) {
+      logger.error('[ModelManager] Initialization failed', {
+        error: error.message
+      });
+
+      // Clear initialization state on failure to allow retry
+      this.initialized = false;
+      this._initPromise = null;
+
+      return false;
+    }
+  }
+
+  /**
+   * Discover all available models from the local models directory
+   */
+  async discoverModels() {
+    try {
+      const models = await this.llamaService.listModels();
+      this.availableModels = models || [];
+
+      // Analyze model capabilities
+      for (const model of this.availableModels) {
+        this.analyzeModelCapabilities(model);
+      }
+
+      logger.info(`[ModelManager] Discovered ${this.availableModels.length} models`);
+      return this.availableModels;
+    } catch (error) {
+      logger.error('[ModelManager] Failed to discover models', {
+        error: error.message
+      });
+      this.availableModels = [];
+      throw error;
+    }
+  }
+
+  /**
+   * Analyze what a model can do based on its name and metadata
+   */
+  analyzeModelCapabilities(/** @type {any} */ model) {
+    const modelName = (model.name || '').toLowerCase();
+    /** @type {Record<string, any>} */
+    const capabilities = {
+      text: false,
+      vision: false,
+      code: false,
+      chat: false,
+      size: model.size || 0,
+      modified: model.modified_at || null
+    };
+
+    // Check capabilities based on model name patterns
+    for (const [capability, patterns] of Object.entries(this.modelCategories)) {
+      capabilities[capability] = patterns.some((pattern) =>
+        modelName.includes(pattern.toLowerCase())
+      );
+    }
+
+    // Special cases for vision models
+    // Note: gemma3 (4B+) IS a multimodal vision model as of March 2025
+    if (
+      modelName.includes('llava') ||
+      modelName.includes('vision') ||
+      modelName.includes('smolvlm') ||
+      modelName.includes('moondream') ||
+      modelName.includes('gemma3')
+    ) {
+      capabilities.vision = true;
+    }
+
+    if (modelName.includes('code') || modelName.includes('coder')) {
+      capabilities.code = true;
+    }
+
+    // Most models can do basic text and chat
+    if (!capabilities.vision && !capabilities.code) {
+      capabilities.text = true;
+      capabilities.chat = true;
+    }
+
+    this.modelCapabilities.set(model.name, capabilities);
+    return capabilities;
+  }
+
+  /**
+   * Ensure we have a working model selected
+   */
+  async ensureWorkingModel() {
+    // Ensure settings are loaded so selectedModel isn't null during early startup
+    if (!this.selectedModel) {
+      await this.loadConfig();
+    }
+
+    // If user explicitly configured a model, trust it without testing
+    // The actual analysis will handle any model errors gracefully
+    // This avoids unnecessary timeout loops testing fallback models
+    if (this.selectedModel) {
+      logger.info(`[ModelManager] Using user-configured model: ${this.selectedModel}`);
+      return this.selectedModel;
+    }
+
+    // Only run fallback discovery for users without configured models
+    // If no models discovered yet, try to discover them now
+    if (this.availableModels.length === 0) {
+      try {
+        await withTimeout(this.discoverModels(), TIMEOUTS.MODEL_DISCOVERY, 'Model list');
+      } catch (error) {
+        logger.warn('[ModelManager] Model discovery unavailable during ensureWorkingModel', {
+          error: error.message
+        });
+      }
+    }
+
+    // Find the best available model for users without configured models
+    const bestModel = await this.findBestModel();
+    if (bestModel) {
+      await this.setSelectedModel(bestModel);
+      return bestModel;
+    }
+
+    throw attachErrorCode(new Error('No working models found'), ERROR_CODES.LLAMA_MODEL_NOT_FOUND);
+  }
+
+  /**
+   * Find the best available model based on preferences and capabilities
+   */
+  async findBestModel() {
+    if (this.availableModels.length === 0) {
+      return null;
+    }
+
+    // Try preferred models first
+    for (const preferred of this.fallbackPreferences) {
+      const model = this.availableModels.find((m) =>
+        m.name.toLowerCase().includes(preferred.toLowerCase())
+      );
+
+      if (model && (await this.testModel(model.name))) {
+        logger.info(`[ModelManager] Selected preferred model: ${model.name}`);
+        return model.name;
+      }
+    }
+
+    // If no preferred model works, try any text-capable model
+    for (const model of this.availableModels) {
+      const capabilities = this.modelCapabilities.get(model.name);
+      if (capabilities && (capabilities.text || capabilities.chat)) {
+        if (await this.testModel(model.name)) {
+          logger.info(`[ModelManager] Selected fallback model: ${model.name}`);
+          return model.name;
+        }
+      }
+    }
+
+    // Last resort: try the first available model
+    const firstModel = this.availableModels[0];
+    if (await this.testModel(firstModel.name)) {
+      logger.info(`[ModelManager] Selected first available model: ${firstModel.name}`);
+      return firstModel.name;
+    }
+
+    return null;
+  }
+
+  /**
+   * Test if a model is working
+   * HIGH PRIORITY FIX #5: Use AbortController for proper cancellation and cleanup
+   */
+  async testModel(/** @type {any} */ modelName, timeout = 10000) {
+    // Create AbortController for proper cleanup
+    const abortController = new AbortController();
+    let timeoutId = null;
+
+    try {
+      logger.debug(`[ModelManager] Testing model: ${modelName}`);
+
+      // Create the test promise with abort signal support
+      const testPromise = this.llamaService.generateText({
+        model: modelName,
+        prompt: 'Hello',
+        maxTokens: 5,
+        temperature: 0.1,
+        signal: abortController.signal
+      });
+
+      // Implement timeout with proper cleanup
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          // Signal cancellation to all operations
+          abortController.abort();
+          reject(attachErrorCode(new Error('Model test timeout'), ERROR_CODES.TIMEOUT));
+        }, timeout);
+        // Allow process to exit if this timer is the only thing keeping it alive
+        // Critical for Jest test cleanup - the timeout still fires during Promise.race
+        if (timeoutId.unref) {
+          timeoutId.unref();
+        }
+      });
+
+      // Race between test and timeout
+      await Promise.race([testPromise, timeoutPromise]);
+
+      // Clear timeout on success
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+
+      logger.debug(`[ModelManager] Model ${modelName} is working`);
+      return true;
+    } catch (error) {
+      // Ensure cleanup happens on any error
+      if (!abortController.signal.aborted) {
+        abortController.abort();
+      }
+
+      logger.debug(`[ModelManager] Model ${modelName} failed test: ${error.message}`);
+      return false;
+    } finally {
+      // Guarantee cleanup in finally block
+      // Clear any remaining timeout
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+
+      // Abort any ongoing operations
+      if (!abortController.signal.aborted) {
+        abortController.abort();
+      }
+    }
+  }
+
+  /**
+   * Get the best model for a specific task
+   */
+  getBestModelForTask(task = 'text') {
+    if (!this.selectedModel) {
+      return null;
+    }
+
+    // Return selected model for all tasks (task-specific selection may be added later)
+    switch (task) {
+      case 'vision':
+      case 'image':
+        // Look for vision-capable models
+        for (const model of this.availableModels) {
+          const caps = this.modelCapabilities.get(model.name);
+          if (caps && caps.vision) {
+            return model.name;
+          }
+        }
+        // Fallback to selected model if no vision model available
+        return this.selectedModel;
+
+      case 'code':
+        // Look for code-capable models
+        for (const model of this.availableModels) {
+          const caps = this.modelCapabilities.get(model.name);
+          if (caps && caps.code) {
+            return model.name;
+          }
+        }
+        // Fallback to selected model
+        return this.selectedModel;
+
+      default:
+        return this.selectedModel;
+    }
+  }
+
+  /**
+   * Set the selected model
+   */
+  async setSelectedModel(/** @type {any} */ modelName) {
+    if (!this.availableModels.some((m) => m.name === modelName)) {
+      throw attachErrorCode(
+        new Error(`Model ${modelName} is not available`),
+        ERROR_CODES.LLAMA_MODEL_NOT_FOUND
+      );
+    }
+
+    this.selectedModel = modelName;
+    await this.saveConfig();
+    logger.info(`[ModelManager] Selected model set to: ${modelName}`);
+  }
+
+  /**
+   * Get model information
+   */
+  getModelInfo(/** @type {any} */ modelName = null) {
+    const targetModel = modelName || this.selectedModel;
+    if (!targetModel) return null;
+
+    const model = this.availableModels.find((m) => m.name === targetModel);
+    const capabilities = this.modelCapabilities.get(targetModel);
+
+    return {
+      name: targetModel,
+      size: model?.size || 0,
+      modified: model?.modified_at || null,
+      capabilities: capabilities || {},
+      isSelected: targetModel === this.selectedModel
+    };
+  }
+
+  /**
+   * Generate text with automatic fallback
+   */
+  /**
+   * @param {string} prompt
+   * @param {Record<string, any>} [options] - { signal, timeoutMs, maxTokens, temperature }
+   */
+  async generateWithFallback(prompt, options = {}) {
+    const { signal, timeoutMs = TIMEOUTS.AI_ANALYSIS_SHORT } = options;
+
+    const modelsToTry = [
+      ...new Set(
+        [
+          this.selectedModel,
+          ...this.fallbackPreferences
+            .map((p) => this.availableModels.find((m) => m.name.includes(p))?.name)
+            .filter(Boolean)
+        ].filter(Boolean)
+      )
+    ];
+
+    for (const modelName of modelsToTry) {
+      try {
+        logger.debug(`[ModelManager] Attempting generation with: ${modelName}`);
+
+        const response = await withAbortableTimeout(
+          async (abortController) => {
+            if (signal?.aborted) {
+              abortController.abort();
+              const error = new Error('Model fallback generation cancelled');
+              error.name = 'AbortError';
+              throw error;
+            }
+
+            let cleanup = null;
+            if (signal) {
+              const onAbort = () => abortController.abort();
+              signal.addEventListener('abort', onAbort, { once: true });
+              cleanup = () => signal.removeEventListener('abort', onAbort);
+            }
+
+            try {
+              return await this.llamaService.generateText({
+                model: modelName,
+                prompt,
+                maxTokens: options.maxTokens || 500,
+                temperature: options.temperature ?? 0.1,
+                signal: abortController.signal
+              });
+            } finally {
+              cleanup?.();
+            }
+          },
+          timeoutMs,
+          `Model fallback generation (${modelName})`
+        );
+
+        if (response.response && response.response.trim()) {
+          return {
+            response: response.response,
+            model: modelName,
+            success: true
+          };
+        }
+      } catch (error) {
+        if (error?.name === 'AbortError') {
+          throw error;
+        }
+        logger.debug(`[ModelManager] Model ${modelName} failed: ${error.message}`);
+        continue;
+      }
+    }
+
+    throw attachErrorCode(
+      new Error('All models failed to generate response'),
+      ERROR_CODES.LLAMA_INFERENCE_FAILED
+    );
+  }
+
+  /**
+   * Load configuration from SettingsService
+   */
+  async loadConfig() {
+    try {
+      const settings = await getSettings().load();
+      this.selectedModel = settings.textModel || null;
+      logger.debug(`[ModelManager] Loaded config: ${this.selectedModel}`);
+    } catch (error) {
+      logger.error('[ModelManager] Error loading config', {
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Save configuration to SettingsService
+   */
+  async saveConfig() {
+    try {
+      await getSettings().save({ textModel: this.selectedModel });
+    } catch (error) {
+      logger.error('[ModelManager] Error saving config', {
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Get health status
+   */
+  async getHealthStatus() {
+    try {
+      const models = await this.discoverModels();
+      const selectedWorking = this.selectedModel ? await this.testModel(this.selectedModel) : false;
+
+      return {
+        connected: true,
+        modelsAvailable: models.length,
+        selectedModel: this.selectedModel,
+        selectedModelWorking: selectedWorking,
+        lastCheck: new Date().toISOString()
+      };
+    } catch (error) {
+      return /** @type {Record<string, any>} */ ({
+        connected: false,
+        error: error.message,
+        modelsAvailable: 0,
+        selectedModel: null,
+        selectedModelWorking: false,
+        lastCheck: new Date().toISOString()
+      });
+    }
+  }
+
+  /**
+   * Get all available models with their capabilities
+   */
+  getAllModelsWithCapabilities() {
+    return this.availableModels.map((model) => ({
+      name: model.name,
+      size: model.size,
+      modified: model.modified_at,
+      capabilities: this.modelCapabilities.get(model.name) || {},
+      isSelected: model.name === this.selectedModel
+    }));
+  }
+
+  /**
+   * Cleanup method to prevent memory leaks
+   * Clears all resources and resets state
+   */
+  async cleanup() {
+    logger.info('[ModelManager] Starting cleanup...');
+
+    try {
+      // Reset initialization state
+      this.initialized = false;
+      this._initPromise = null;
+
+      // Clear model data
+      this.availableModels = [];
+      this.modelCapabilities.clear();
+      this.selectedModel = null;
+      this.lastHealthCheck = null;
+
+      logger.info('[ModelManager] Cleanup completed successfully');
+    } catch (error) {
+      logger.error('[ModelManager] Error during cleanup:', error);
+    }
+  }
+}
+
+// Create singleton helpers using shared factory
+const { getInstance, createInstance, registerWithContainer, resetInstance } =
+  createSingletonHelpers({
+    ServiceClass: ModelManager,
+    serviceId: 'MODEL_MANAGER',
+    serviceName: 'ModelManager',
+    getContainer: () => require('./ServiceContainer'),
+    shutdownMethod: 'cleanup' // ModelManager uses cleanup() for shutdown
+  });
+
+module.exports = {
+  ModelManager,
+  getInstance,
+  createInstance,
+  registerWithContainer,
+  resetInstance
+};

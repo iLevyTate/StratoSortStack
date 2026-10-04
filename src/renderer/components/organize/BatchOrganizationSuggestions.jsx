@@ -1,0 +1,606 @@
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import PropTypes from 'prop-types';
+import {
+  CheckCircle,
+  Lightbulb,
+  Info,
+  ChevronRight,
+  FileText,
+  Folder,
+  ArrowRight,
+  X,
+  Eye
+} from 'lucide-react';
+import { useNotification } from '../../contexts/NotificationContext';
+import { useDialogFocusTrap } from '../../hooks';
+import { Card, Button, IconButton, StateMessage, Textarea } from '../ui';
+import { Heading, Text } from '../ui/Typography';
+
+function BatchOrganizationSuggestions({
+  batchSuggestions,
+  onAcceptStrategy,
+  onCustomizeGroup,
+  onRejectAll,
+  onMemorySaved
+}) {
+  const { addNotification } = useNotification();
+  const [expandedGroups, setExpandedGroups] = useState(new Set());
+  const [selectedStrategy, setSelectedStrategy] = useState(null);
+  const [showPreview, setShowPreview] = useState(false);
+  const [memoryNote, setMemoryNote] = useState('');
+  const [savingMemory, setSavingMemory] = useState(false);
+
+  const previewDialogRef = useRef(null);
+  useDialogFocusTrap({
+    active: showPreview,
+    containerRef: previewDialogRef,
+    onEscape: () => setShowPreview(false)
+  });
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  const toggleGroup = useCallback((groupIndex) => {
+    setExpandedGroups((prev) => {
+      const newExpanded = new Set(prev);
+      if (newExpanded.has(groupIndex)) {
+        newExpanded.delete(groupIndex);
+      } else {
+        newExpanded.add(groupIndex);
+      }
+      return newExpanded;
+    });
+  }, []);
+
+  // Extract values before early return for use in callbacks
+  const suggestedStrategy = batchSuggestions?.suggestedStrategy;
+
+  const handleStrategyAccept = useCallback(() => {
+    if (onAcceptStrategy) {
+      onAcceptStrategy(selectedStrategy || suggestedStrategy);
+    }
+  }, [onAcceptStrategy, selectedStrategy, suggestedStrategy]);
+
+  if (!batchSuggestions || !batchSuggestions.groups) {
+    return (
+      <StateMessage
+        icon={Info}
+        tone="info"
+        variant="card"
+        size="md"
+        title="No batch suggestions available"
+        description="Select multiple files to see organization options."
+        className="p-8"
+        contentClassName="max-w-sm"
+      />
+    );
+  }
+
+  const { groups, patterns, recommendations } = batchSuggestions;
+
+  const handleSaveMemory = async () => {
+    const trimmed = memoryNote.trim();
+    if (!trimmed) return;
+    setSavingMemory(true);
+    try {
+      await window.electronAPI?.suggestions?.addFeedbackMemory?.(trimmed);
+      if (isMountedRef.current) {
+        setMemoryNote('');
+        addNotification('Memory saved', 'success');
+        if (onMemorySaved) {
+          onMemorySaved();
+        }
+      }
+    } catch {
+      if (isMountedRef.current) {
+        addNotification('Failed to save memory', 'warning');
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setSavingMemory(false);
+      }
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-relaxed">
+      <Card className="p-4 sm:p-6 border-system-gray-200 bg-system-gray-50">
+        <Heading as="h3" variant="h6" className="text-system-gray-900 mb-2">
+          Batch feedback note
+        </Heading>
+        <Textarea
+          value={memoryNote}
+          onChange={(event) => setMemoryNote(event.target.value)}
+          placeholder='e.g., "All 3D files go to 3D Prints"'
+          className="w-full text-sm"
+          rows={2}
+        />
+        <div className="mt-2">
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={handleSaveMemory}
+            disabled={savingMemory || !memoryNote.trim()}
+            className="bg-stratosort-blue hover:bg-stratosort-blue/90"
+          >
+            Save memory
+          </Button>
+        </div>
+        <Text variant="tiny" className="mt-2 text-system-gray-500">
+          Saved notes guide future suggestions for all files.
+        </Text>
+      </Card>
+      {/* Pattern Analysis */}
+      {patterns && (
+        <Card className="p-4 bg-stratosort-blue/5 border-stratosort-blue/20">
+          <Heading as="h3" variant="h6" className="text-system-gray-900 mb-3">
+            Pattern analysis
+          </Heading>
+          <div className="grid grid-cols-2 lg:grid-cols-3 gap-[var(--spacing-cozy)] text-sm">
+            {patterns.hasCommonProject && (
+              <div>
+                <span className="text-system-gray-600">Common project:</span>
+                <span className="ml-2 font-medium">{patterns.project}</span>
+              </div>
+            )}
+            {patterns.dominantCategory && (
+              <div>
+                <span className="text-system-gray-600">Main category:</span>
+                <span className="ml-2 font-medium">{patterns.dominantCategory}</span>
+              </div>
+            )}
+            {patterns.fileTypes && patterns.fileTypes.length > 0 && (
+              <div>
+                <span className="text-system-gray-600">File types:</span>
+                <span className="ml-2">{patterns.fileTypes.join(', ')}</span>
+              </div>
+            )}
+            {patterns.commonTerms && patterns.commonTerms.length > 0 && (
+              <div className="col-span-2">
+                <span className="text-system-gray-600">Common terms:</span>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {patterns.commonTerms.map((term) => (
+                    <Text
+                      as="span"
+                      variant="tiny"
+                      key={term}
+                      className="px-2 py-1 bg-system-gray-100 rounded-md"
+                    >
+                      {term}
+                    </Text>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </Card>
+      )}
+
+      {/* Recommendations */}
+      {recommendations && recommendations.length > 0 && (
+        <Card className="p-4 sm:p-6 border-stratosort-success/20 bg-stratosort-success/10">
+          <Heading as="h3" variant="h6" className="text-system-gray-900 mb-3">
+            Recommendations
+          </Heading>
+          <div className="flex flex-col gap-relaxed">
+            {/* FIX: Use stable identifier instead of array index as key */}
+            {recommendations.map((rec) => (
+              <div
+                key={rec.id || rec.description || rec.type}
+                className="flex items-start gap-cozy"
+              >
+                <div className="mt-0.5">
+                  {rec.confidence >= 0.8 ? (
+                    <CheckCircle className="w-4 h-4 text-stratosort-success" />
+                  ) : rec.confidence >= 0.5 ? (
+                    <Lightbulb className="w-4 h-4 text-stratosort-warning" />
+                  ) : (
+                    <Info className="w-4 h-4 text-stratosort-blue" />
+                  )}
+                </div>
+                <div className="flex-1">
+                  <Text as="div" variant="small" className="font-medium text-system-gray-900">
+                    {rec.description}
+                  </Text>
+                  <Text variant="tiny" className="text-system-gray-600 mt-1">
+                    {rec.suggestion}
+                  </Text>
+                  <Text variant="tiny" className="text-system-gray-500 mt-1">
+                    Confidence:{' '}
+                    {Math.round(
+                      Math.min(
+                        100,
+                        Math.max(
+                          0,
+                          (rec.confidence || 0) > 1 ? rec.confidence : (rec.confidence || 0) * 100
+                        )
+                      )
+                    )}
+                    %
+                  </Text>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* Suggested Strategy */}
+      {suggestedStrategy && (
+        <Card className="p-4 sm:p-6 border-stratosort-blue/50 bg-stratosort-blue/5">
+          <div className="flex items-center justify-between mb-3">
+            <Heading as="h3" variant="h6" className="text-system-gray-900">
+              Suggested organization strategy
+            </Heading>
+            <Text as="span" variant="small" className="text-stratosort-blue">
+              {Math.round(
+                Math.min(
+                  100,
+                  Math.max(
+                    0,
+                    (suggestedStrategy.score || 0) > 1
+                      ? suggestedStrategy.score
+                      : (suggestedStrategy.score || 0) * 100
+                  )
+                )
+              )}
+              % Match
+            </Text>
+          </div>
+          <div className="mb-4">
+            <Text as="div" variant="small" className="font-medium text-system-gray-900">
+              {suggestedStrategy.name}
+            </Text>
+            <Text variant="small" className="text-system-gray-600 mt-1">
+              {suggestedStrategy.description}
+            </Text>
+            <Text variant="tiny" className="text-system-gray-500 mt-2">
+              Pattern:{' '}
+              <code className="bg-system-gray-100 px-2 py-1 rounded-md">
+                {suggestedStrategy.pattern}
+              </code>
+            </Text>
+          </div>
+          <div className="flex gap-cozy">
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={handleStrategyAccept}
+              className="bg-stratosort-blue hover:bg-stratosort-blue/90"
+            >
+              Apply this strategy
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => setSelectedStrategy(null)}>
+              Choose different
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {/* File Groups */}
+      <div>
+        <Heading as="h3" variant="h6" className="text-system-gray-900 mb-3">
+          Suggested file groups ({groups.length})
+        </Heading>
+        <div className="flex flex-col gap-relaxed max-h-viewport-md overflow-y-auto modern-scrollbar">
+          {/* FIX: Use stable identifier instead of array index as key */}
+          {groups.map((group, groupIndex) => (
+            <Card
+              key={group.folder || group.id || `group-${groupIndex}`}
+              className="overflow-hidden"
+            >
+              {/* eslint-disable-next-line jsx-a11y/control-has-associated-label -- text content in nested Text components; rule depth cannot see it */}
+              <div
+                className="p-4 cursor-pointer hover:bg-system-gray-50 transition-colors"
+                onClick={() => toggleGroup(groupIndex)}
+                onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && toggleGroup(groupIndex)}
+                role="button"
+                tabIndex={0}
+                aria-expanded={expandedGroups.has(groupIndex)}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-cozy">
+                    <ChevronRight
+                      className={`w-4 h-4 text-system-gray-500 transform transition-transform ${
+                        expandedGroups.has(groupIndex) ? 'rotate-90' : ''
+                      }`}
+                    />
+                    <div>
+                      <Text as="div" variant="small" className="font-medium text-system-gray-900">
+                        {group.folder}
+                      </Text>
+                      <Text as="div" variant="small" className="text-system-gray-600">
+                        {group.files.length} file
+                        {group.files.length !== 1 ? 's' : ''}
+                        {group.confidence && (
+                          <Text as="span" variant="small" className="ml-2">
+                            {/* FIX: Handle confidence values that may already be 0-100 scale */}•{' '}
+                            {Math.round(
+                              group.confidence <= 1 ? group.confidence * 100 : group.confidence
+                            )}
+                            % confidence
+                          </Text>
+                        )}
+                      </Text>
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (onCustomizeGroup) {
+                        onCustomizeGroup(groupIndex, group);
+                      }
+                    }}
+                    className="text-stratosort-blue"
+                  >
+                    Customize
+                  </Button>
+                </div>
+              </div>
+
+              {expandedGroups.has(groupIndex) && (
+                <div className="border-t border-system-gray-200 p-4 sm:p-6 bg-system-gray-50">
+                  <div className="space-y-2">
+                    {/* FIX: Use stable identifier instead of array index as key */}
+                    {Array.isArray(group.files) &&
+                      group.files.map((file) => (
+                        <div
+                          key={file.path || file.id || file.name}
+                          className="flex items-center justify-between text-sm"
+                        >
+                          <div className="flex items-center gap-compact">
+                            <FileText className="w-4 h-4 text-system-gray-400" />
+                            <span>{file.name}</span>
+                          </div>
+                          {file.suggestion && (
+                            <Text as="span" variant="tiny" className="text-system-gray-500">
+                              {Math.round((file.suggestion.confidence || 0) * 100)}% match
+                            </Text>
+                          )}
+                        </div>
+                      ))}
+                  </div>
+
+                  {/* FIX: Use consistent optional chaining and add array length check */}
+                  {Array.isArray(group.files) &&
+                    group.files.length > 0 &&
+                    Array.isArray(group.files[0]?.alternatives) &&
+                    group.files[0].alternatives.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-system-gray-200">
+                        <Text variant="tiny" className="text-system-gray-600 mb-2">
+                          Alternative folders for this group:
+                        </Text>
+                        <div className="flex flex-wrap gap-compact">
+                          {/* FIX: Use stable identifier instead of array index as key */}
+                          {group.files[0].alternatives.slice(0, 3).map((alt) => (
+                            <Button
+                              key={alt.folder || alt.id}
+                              variant="ghost"
+                              size="sm"
+                              className="h-auto px-2 py-1 text-xs bg-system-gray-100 border border-system-gray-300 rounded-md hover:border-stratosort-blue"
+                              onClick={() =>
+                                onCustomizeGroup?.(groupIndex, {
+                                  ...group,
+                                  folder: alt.folder
+                                })
+                              }
+                            >
+                              {alt.folder}
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                </div>
+              )}
+            </Card>
+          ))}
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="flex justify-between pt-4 border-t">
+        <Button variant="secondary" size="sm" onClick={onRejectAll}>
+          Cancel batch organization
+        </Button>
+        <div className="flex gap-cozy">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setShowPreview(true)}
+            className="flex items-center gap-1.5"
+          >
+            <Eye className="w-4 h-4" />
+            Preview changes
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={handleStrategyAccept}
+            className="bg-stratosort-blue hover:bg-stratosort-blue/90"
+          >
+            Apply all suggestions
+          </Button>
+        </div>
+      </div>
+
+      {/* Preview Modal */}
+      {showPreview && (
+        <div
+          ref={previewDialogRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="batch-preview-title"
+          tabIndex={-1}
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ backgroundColor: 'var(--overlay-scrim-subtle)' }}
+        >
+          <Card className="w-full max-w-2xl max-h-[80vh] overflow-hidden m-4 flex flex-col">
+            <div className="p-4 border-b flex items-center justify-between">
+              <Heading as="h3" variant="h5" id="batch-preview-title">
+                Preview organization changes
+              </Heading>
+              <IconButton
+                onClick={() => setShowPreview(false)}
+                variant="ghost"
+                size="sm"
+                aria-label="Close preview"
+                icon={<X className="w-5 h-5" />}
+              />
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4">
+              <div className="space-y-4">
+                {groups.map((group, index) => (
+                  <div key={group.folder || index} className="border rounded-lg overflow-hidden">
+                    <div className="bg-system-gray-50 p-3 flex items-center gap-compact">
+                      <Folder className="w-5 h-5 text-stratosort-blue" />
+                      <Text as="span" variant="small" className="font-medium text-system-gray-900">
+                        {group.folder}
+                      </Text>
+                      <Text as="span" variant="small" className="text-system-gray-500">
+                        ({group.files.length} file{group.files.length !== 1 ? 's' : ''})
+                      </Text>
+                    </div>
+                    <div className="divide-y divide-system-gray-100">
+                      {group.files.map((file) => (
+                        <div
+                          key={file.path || file.name}
+                          className="p-3 flex items-center gap-cozy"
+                        >
+                          <FileText className="w-4 h-4 text-system-gray-400 flex-shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <Text
+                              as="div"
+                              variant="small"
+                              className="truncate font-medium text-system-gray-900"
+                            >
+                              {file.name}
+                            </Text>
+                            {file.currentPath && (
+                              <Text
+                                as="div"
+                                variant="tiny"
+                                className="flex items-center gap-compact text-system-gray-500 mt-1"
+                              >
+                                <span className="truncate">{file.currentPath}</span>
+                                <ArrowRight className="w-3 h-3 flex-shrink-0" />
+                                <span className="truncate text-stratosort-blue">
+                                  {group.folder}
+                                </span>
+                              </Text>
+                            )}
+                          </div>
+                          {file.suggestion?.confidence && (
+                            <Text
+                              as="span"
+                              variant="tiny"
+                              className="bg-system-gray-100 px-2 py-0.5 rounded"
+                            >
+                              {Math.round(file.suggestion.confidence * 100)}%
+                            </Text>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Summary */}
+              <div className="mt-4 p-3 bg-stratosort-blue/5 rounded-lg border border-stratosort-blue/20">
+                <Text variant="small" className="text-system-gray-700">
+                  <span className="font-medium">{groups.length}</span> folder
+                  {groups.length !== 1 ? 's' : ''} will receive{' '}
+                  <span className="font-medium">
+                    {groups.reduce((sum, g) => sum + g.files.length, 0)}
+                  </span>{' '}
+                  file{groups.reduce((sum, g) => sum + g.files.length, 0) !== 1 ? 's' : ''} total
+                </Text>
+              </div>
+            </div>
+
+            <div className="p-4 border-t flex justify-end gap-cozy">
+              <Button variant="secondary" size="sm" onClick={() => setShowPreview(false)}>
+                Close preview
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => {
+                  setShowPreview(false);
+                  handleStrategyAccept();
+                }}
+                className="bg-stratosort-blue hover:bg-stratosort-blue/90"
+              >
+                Apply all changes
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const alternativeShape = PropTypes.shape({
+  folder: PropTypes.string,
+  confidence: PropTypes.number
+});
+
+const fileShape = PropTypes.shape({
+  name: PropTypes.string.isRequired,
+  suggestion: PropTypes.shape({
+    confidence: PropTypes.number
+  }),
+  alternatives: PropTypes.arrayOf(alternativeShape)
+});
+
+const groupShape = PropTypes.shape({
+  folder: PropTypes.string,
+  files: PropTypes.arrayOf(fileShape).isRequired,
+  confidence: PropTypes.number
+});
+
+const patternsShape = PropTypes.shape({
+  hasCommonProject: PropTypes.bool,
+  project: PropTypes.string,
+  dominantCategory: PropTypes.string,
+  fileTypes: PropTypes.arrayOf(PropTypes.string),
+  commonTerms: PropTypes.arrayOf(PropTypes.string)
+});
+
+const recommendationShape = PropTypes.shape({
+  description: PropTypes.string,
+  suggestion: PropTypes.string,
+  confidence: PropTypes.number
+});
+
+const strategyShape = PropTypes.shape({
+  name: PropTypes.string,
+  description: PropTypes.string,
+  pattern: PropTypes.string,
+  score: PropTypes.number
+});
+
+BatchOrganizationSuggestions.propTypes = {
+  batchSuggestions: PropTypes.shape({
+    groups: PropTypes.arrayOf(groupShape).isRequired,
+    patterns: patternsShape,
+    recommendations: PropTypes.arrayOf(recommendationShape),
+    suggestedStrategy: strategyShape
+  }),
+  onAcceptStrategy: PropTypes.func,
+  onCustomizeGroup: PropTypes.func,
+  onRejectAll: PropTypes.func,
+  onMemorySaved: PropTypes.func
+};
+
+export default BatchOrganizationSuggestions;

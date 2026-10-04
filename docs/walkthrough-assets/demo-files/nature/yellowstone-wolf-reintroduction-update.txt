@@ -1,0 +1,64 @@
+Yellowstone Wolf Reintroduction — 31-Year Ecological Update
+
+U.S. Fish and Wildlife Service  |  National Park Service
+Authors: Dr. James Whitfield, Dr. Rosa Delgado
+Report Date: September 2026
+
+OVERVIEW
+Thirty-one years after the landmark 1995 reintroduction of gray wolves (Canis lupus)
+to Yellowstone National Park, the ecosystem continues to demonstrate cascading
+ecological benefits. The 2026 winter census confirmed 112 wolves in 10 packs
+across the Greater Yellowstone Ecosystem (GYE).
+
+PACK CENSUS (Winter 2026)
+
+Pack Name          | Territory          | Adults | Pups | Total
+-------------------|--------------------|--------|------|------
+Lamar Canyon       | Lamar Valley       |   10   |   4  |  14
+Junction Butte     | Slough Creek       |   11   |   5  |  16
+Mollie's           | Pelican Valley     |    8   |   3  |  11
+Wapiti Lake        | Hayden Valley      |    7   |   3  |  10
+8-Mile             | Northern Range     |   10   |   4  |  14
+Prospect Peak      | Mirror Plateau     |    5   |   2  |   7
+Canyon              | Canyon Village     |    6   |   3  |   9
+Bechler            | SW Yellowstone     |    7   |   3  |  10
+Snake River        | Southern Range     |    6   |   3  |   9
+Phantom Lake       | Central Plateau    |    9   |   3  |  12
+
+TROPHIC CASCADE METRICS
+
+Elk (Cervus canadensis) Population
+  Northern herd estimate: 6,050 (down from ~20,000 pre-wolf)
+  Calf-to-cow ratio: 27:100 (healthy; pre-wolf was 45:100 with overgrazing)
+  Behavioral shift: Elk spend 60% less time in riparian zones vs. pre-wolf era
+
+Vegetation Recovery
+  Willow (Salix spp.) canopy height: +350% in Lamar Valley since 1995
+  Aspen (Populus tremuloides) recruitment: measurable in 70% of monitored stands
+  Cottonwood regeneration: observed in 12 of 15 permanent plots along rivers
+
+Beaver (Castor canadensis) Response
+  Active beaver colonies in northern Yellowstone: 13 (zero in 1995)
+  Dam count (Slough Creek drainage): 25
+  Pond surface area created: ~5.1 hectares
+
+Scavenger Guild
+  Raven, magpie, bald eagle, and grizzly bear all benefit from wolf-killed
+  carcasses during winter. Carcass availability index: 3.3× pre-wolf levels.
+
+HUMAN DIMENSIONS
+  Wolf-livestock depredation claims (GYE, 2025): 16 confirmed cattle, 5 sheep
+  Compensation paid: $119,800 (Defenders of Wildlife fund)
+  Wolf-watching tourism economic impact: est. $85 million/year for gateway communities
+
+GENETIC HEALTH
+  Heterozygosity (He): 0.70 (stable; founder population He = 0.74)
+  Effective population size (Ne): ~66
+  Recommendation: Evaluate genetic connectivity with Idaho/Montana meta-population
+  via corridor analysis.
+
+FUTURE PRIORITIES
+1. Expand GPS collar deployment to 30% of adults for fine-scale territory mapping.
+2. Continue long-term vegetation plots (30+ year dataset now globally significant).
+3. Model climate-change impacts on elk migration timing and wolf prey availability.
+4. Coordinate with state agencies on buffer-zone management outside park boundaries.

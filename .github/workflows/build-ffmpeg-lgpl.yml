@@ -1,0 +1,379 @@
+# Build LGPL FFmpeg for macOS
+#
+# Manual-dispatch workflow that compiles a clean LGPL-only FFmpeg binary
+# from upstream source on both Apple architectures, then publishes the
+# resulting zips as a GitHub release.
+#
+# Why this exists:
+#   No public macOS FFmpeg builder ships an LGPL-only build (evermeet.cx and
+#   martin-riedl.de both ship --enable-gpl, fatal for closed-source
+#   commercial distribution). Apple Silicon has no public LGPL binary at
+#   all. This workflow builds our own from upstream source.
+#
+# How to use:
+#   1. Trigger via the Actions tab → "Build LGPL FFmpeg (macOS)" → Run workflow.
+#      Inputs: ffmpeg_version (default 7.1), release_tag (default ffmpeg-lgpl-latest).
+#   2. Wait ~30-45 min. Two jobs run in parallel (both on macos-14; the x64 job
+#      cross-compiles, see matrix comment below).
+#   3. A release named after release_tag is created with both ZIPs and the
+#      exact FFmpeg source tarball attached (LGPL-3.0 §6 source offer).
+#   4. Nothing else to wire: scripts/setup-ffmpeg-runtime.js (darwin branch)
+#      auto-resolves ffmpeg-mac-{x64,arm64}.zip from the ffmpeg-lgpl-latest
+#      release, and dist:mac:* already runs setup:ffmpeg-runtime. Use
+#      STRATOSORT_FFMPEG_TAG / STRATOSORT_FFMPEG_URL to pin or override.
+#
+# Re-run frequency:
+#   Once per FFmpeg version bump (~every 6 months). Releases are tagged so
+#   pinning a specific build for reproducibility is straightforward.
+
+name: Build LGPL FFmpeg (macOS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ffmpeg_version:
+        description: 'FFmpeg release version to build (e.g. 7.1, 8.1)'
+        required: true
+        default: '7.1'
+        type: string
+      release_tag:
+        description: 'GitHub release tag to create or update (e.g. ffmpeg-lgpl-7.1)'
+        required: true
+        default: 'ffmpeg-lgpl-latest'
+        type: string
+
+# Two dispatches against the same release tag would race on the asset upload
+# in the release job; queue them instead.
+concurrency:
+  group: build-ffmpeg-lgpl-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.arch }} on ${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Both archs build on macos-14 (Apple Silicon). The x86_64 job
+          # cross-compiles via clang's -arch flag; smoke-test then runs
+          # the produced x86_64 binary under Rosetta 2 (pre-installed on
+          # macos-14 GitHub runners). macos-13 was the original Intel host
+          # but GitHub deprecated that runner image (Dec 2025) and the pool
+          # is unreliable — see project history for stuck-queue evidence.
+          - os: macos-14
+            arch: x86_64
+            artifact: ffmpeg-mac-x64.zip
+          - os: macos-14
+            arch: arm64
+            artifact: ffmpeg-mac-arm64.zip
+
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+
+    steps:
+      - name: Free disk space
+        # macos-14 runners ship with ~30 GB free, shared with Xcode caches and
+        # any pre-pulled Homebrew bottles. The FFmpeg source tarball (~13 MB)
+        # extracts to ~120 MB and the build tree (object files + intermediates
+        # for both encoders/decoders, even with the LGPL-minimal config) can
+        # exceed 6 GB during compilation. Pruning Xcode platform stubs we'll
+        # never use and the macOS Simulator runtimes reclaims ~25 GB up front
+        # so a slow compile doesn't ENOSPC two-thirds of the way in. Mirrors
+        # the pruning that mac-release.yml's Linux build job already does for
+        # the same reason (deb fpm cache + electron-builder asar pack are the
+        # equivalent space hogs on that side).
+        run: |
+          set -euo pipefail
+          df -h / || true
+          sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes/* || true
+          sudo rm -rf /Applications/Xcode_15.0.app /Applications/Xcode_15.1.app \
+                      /Applications/Xcode_15.2.app /Applications/Xcode_15.3.app || true
+          sudo rm -rf ~/Library/Developer/Xcode/DerivedData/* \
+                      ~/Library/Developer/Xcode/iOS\ DeviceSupport/* \
+                      ~/Library/Developer/Xcode/watchOS\ DeviceSupport/* \
+                      ~/Library/Developer/Xcode/tvOS\ DeviceSupport/* || true
+          df -h / || true
+
+      - name: Install build dependencies (Homebrew)
+        # nasm is required for x86_64 SIMD assembly. arm64 doesn't need it,
+        # but installing on both keeps the matrix uniform.
+        # pkg-config is needed by FFmpeg's configure to find static libs.
+        run: |
+          brew update
+          brew install nasm pkg-config
+
+      - name: Download FFmpeg ${{ inputs.ffmpeg_version }} source
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://ffmpeg.org/releases/ffmpeg-${{ inputs.ffmpeg_version }}.tar.xz" \
+            -o ffmpeg.tar.xz
+          curl -fsSL "https://ffmpeg.org/releases/ffmpeg-${{ inputs.ffmpeg_version }}.tar.xz.asc" \
+            -o ffmpeg.tar.xz.asc
+
+      - name: Verify FFmpeg source signature
+        # This source becomes a binary shipped to every user — verify the
+        # tarball against FFmpeg's release signing key before building.
+        # Fingerprint published at https://ffmpeg.org/download.html.
+        run: |
+          set -euo pipefail
+          FFMPEG_SIGNING_KEY="FCF986EA15E6E293A5644F10B4322F04D67658D8"
+          for keyserver in hkps://keys.openpgp.org hkps://keyserver.ubuntu.com; do
+            if gpg --keyserver "$keyserver" --recv-keys "$FFMPEG_SIGNING_KEY"; then
+              break
+            fi
+            echo "Keyserver $keyserver failed; trying next..."
+          done
+          gpg --status-fd 1 --verify ffmpeg.tar.xz.asc ffmpeg.tar.xz | tee verify.out
+          # VALIDSIG's last field is the primary-key fingerprint (signatures
+          # may be made by a subkey), so match the pin anywhere on that line.
+          grep '^\[GNUPG:\] VALIDSIG' verify.out | grep -q "$FFMPEG_SIGNING_KEY" || {
+            echo "::error::FFmpeg source signature did not match the pinned release key"
+            exit 1
+          }
+
+      - name: Extract FFmpeg source
+        run: |
+          set -euo pipefail
+          mkdir -p ffmpeg-src
+          tar -xf ffmpeg.tar.xz -C ffmpeg-src --strip-components=1
+          echo "Source extracted; version:"
+          head -1 ffmpeg-src/RELEASE 2>/dev/null || echo "(no RELEASE file)"
+
+      - name: Configure (LGPL-only)
+        # The flag set is intentionally minimal. We only need:
+        #   * Decode side: built-in libavcodec decoders cover H.264, HEVC,
+        #     VP8/9, AV1, MP3, AAC, Opus, Vorbis, Theora, FLAC, etc.
+        #   * Encode side: built-in pcm_s16le + mjpeg (no external lib needed).
+        # Every external library that's GPL or non-free is explicitly disabled
+        # — defensive belt-and-suspenders against future FFmpeg defaults.
+        #
+        # Cross-compile note: when matrix.arch != host arch (i.e. the x86_64
+        # job on a macos-14 arm64 host), we add --enable-cross-compile and
+        # pass `-arch x86_64` to clang. macOS system libs (libSystem,
+        # zlib, bzlib, iconv) are universal binaries, so static linking
+        # FFmpeg's own .a files against multi-arch system libs works without
+        # extra setup. nasm is host-tool, target-independent.
+        working-directory: ffmpeg-src
+        run: |
+          set -euo pipefail
+
+          host_arch=$(uname -m)
+          if [ "$host_arch" = "arm64" ]; then host_arch_ff=arm64; else host_arch_ff=x86_64; fi
+
+          # Build cross-compile flags as a bash array so the embedded space
+          # in --cc='clang -arch x86_64' survives shell word-splitting.
+          cross_flags=()
+          if [ "${{ matrix.arch }}" != "$host_arch_ff" ]; then
+            echo "Cross-compiling: host=$host_arch_ff -> target=${{ matrix.arch }}"
+            cross_flags+=(
+              --enable-cross-compile
+              --target-os=darwin
+              "--cc=clang -arch ${{ matrix.arch }}"
+              "--extra-cflags=-arch ${{ matrix.arch }}"
+              "--extra-ldflags=-arch ${{ matrix.arch }}"
+            )
+          else
+            echo "Native build: host=target=$host_arch_ff"
+          fi
+
+          # ${arr[@]+...} — bash 3.2-safe expansion that yields nothing
+          # when cross_flags is empty (native arm64 build). macOS ships
+          # bash 3.2 forever due to GPL-3 licensing, so plain "${arr[@]}"
+          # under `set -u` errors with "unbound variable" on empty arrays.
+          ./configure \
+            --prefix="$PWD/install" \
+            --arch=${{ matrix.arch }} \
+            ${cross_flags[@]+"${cross_flags[@]}"} \
+            --enable-version3 \
+            --disable-gpl \
+            --disable-nonfree \
+            --disable-debug \
+            --disable-doc \
+            --disable-htmlpages \
+            --disable-manpages \
+            --disable-podpages \
+            --disable-txtpages \
+            --disable-shared \
+            --enable-static \
+            --enable-pthreads \
+            --enable-zlib \
+            --enable-bzlib \
+            --enable-iconv \
+            --disable-libx264 \
+            --disable-libx265 \
+            --disable-libxavs \
+            --disable-libxavs2 \
+            --disable-libxvid \
+            --disable-libvidstab \
+            --disable-librubberband \
+            --disable-libfdk-aac \
+            --disable-libopencore-amrnb \
+            --disable-libopencore-amrwb \
+            --disable-frei0r \
+            --disable-libsmbclient \
+            --disable-libsoxr \
+            --pkg-config-flags=--static
+          echo ""
+          echo "--- Resolved configure summary ---"
+          grep -E "^(license|configuration|enable_gpl|enable_nonfree)" config.log | head -20 || true
+
+      - name: Build
+        working-directory: ffmpeg-src
+        run: make -j$(sysctl -n hw.ncpu)
+
+      - name: Verify LGPL posture (HARD GATE)
+        # Refuse to ship if the resulting binary advertises GPL or nonfree
+        # codecs. This catches future FFmpeg defaults that might silently
+        # add a GPL component.
+        working-directory: ffmpeg-src
+        run: |
+          set -euo pipefail
+          ./ffmpeg -version | head -5
+          echo ""
+          if ./ffmpeg -version | grep -q -- '--enable-gpl'; then
+            echo "ERROR: build advertises --enable-gpl. Refusing to ship a GPL binary."
+            exit 1
+          fi
+          if ./ffmpeg -version | grep -q -- '--enable-nonfree'; then
+            echo "ERROR: build advertises --enable-nonfree. Refusing to ship a nonfree binary."
+            exit 1
+          fi
+          if ! ./ffmpeg -version | grep -q -- '--enable-version3'; then
+            echo "ERROR: build does not advertise --enable-version3 (LGPLv3+). Refusing."
+            exit 1
+          fi
+          echo "OK — LGPL-3.0-or-later build verified."
+
+      - name: Smoke-test the binary
+        # Validate that the binary can actually do what MediaTranscoder needs:
+        # decode + encode pcm_s16le + extract a JPEG frame.
+        working-directory: ffmpeg-src
+        run: |
+          set -euo pipefail
+          # Generate a 1-second silent WAV input
+          ./ffmpeg -f lavfi -i "sine=frequency=440:duration=1" -ac 1 -ar 16000 \
+            -acodec pcm_s16le test_in.wav -y
+          # Decode to whisper-format PCM (the actual transcodeToWhisperPcm path)
+          ./ffmpeg -i test_in.wav -vn -f s16le -ac 1 -ar 16000 -acodec pcm_s16le test_out.pcm -y
+          # Generate a 1-second video and extract a JPEG keyframe (extractKeyframes path)
+          ./ffmpeg -f lavfi -i "color=c=red:size=320x240:duration=1" -frames:v 1 \
+            -q:v 4 test_frame.jpg -y
+          ls -lh test_in.wav test_out.pcm test_frame.jpg
+
+      - name: Strip binary
+        working-directory: ffmpeg-src
+        run: |
+          ls -lh ffmpeg
+          strip ffmpeg
+          ls -lh ffmpeg
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp ffmpeg-src/ffmpeg dist/ffmpeg
+          cd dist
+          # zip with -j to flatten path inside archive (single ./ffmpeg entry)
+          zip -j "${{ matrix.artifact }}" ffmpeg
+          rm ffmpeg
+          ls -lh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Stage source tarball (LGPL §6 source offer)
+        # NOTICE.md promises the release that carries the binaries also carries
+        # the complete corresponding source. Upload the exact tarball we built
+        # from (once — the arm64 job; both jobs download the same bytes).
+        if: matrix.arch == 'arm64'
+        run: cp ffmpeg.tar.xz "dist/ffmpeg-${{ inputs.ffmpeg_version }}-source.tar.xz"
+
+      - name: Upload source tarball
+        if: matrix.arch == 'arm64'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ffmpeg-source
+          path: dist/ffmpeg-${{ inputs.ffmpeg_version }}-source.tar.xz
+          retention-days: 30
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          path: dist
+          # Both binary zips plus the ffmpeg-source artifact (source tarball).
+          merge-multiple: true
+
+      - name: List staged release files
+        run: |
+          ls -lh dist/
+
+      - name: Create or update release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          name: LGPL FFmpeg ${{ inputs.ffmpeg_version }} (macOS)
+          body: |
+            **Self-hosted LGPL FFmpeg binaries for macOS.**
+
+            ## Source
+            FFmpeg ${{ inputs.ffmpeg_version }} from https://ffmpeg.org/releases/
+
+            ## Configure flags
+            ```
+            --enable-version3 --disable-gpl --disable-nonfree
+            --disable-libx264 --disable-libx265 --disable-libfdk-aac
+            (full list: see .github/workflows/build-ffmpeg-lgpl.yml)
+            ```
+
+            ## Architectures
+            - `ffmpeg-mac-x64.zip` — Intel x86_64 (cross-compiled on macos-14,
+              smoke-tested under Rosetta 2)
+            - `ffmpeg-mac-arm64.zip` — Apple Silicon arm64 (native macos-14)
+
+            ## Complete corresponding source
+            `ffmpeg-${{ inputs.ffmpeg_version }}-source.tar.xz` attached to this
+            release is the exact upstream tarball these binaries were built
+            from (LGPL-3.0 §6 source offer).
+
+            ## License
+            LGPL-3.0-or-later. Build verification (`--enable-gpl` and
+            `--enable-nonfree` absent in `ffmpeg -version` output) is enforced
+            as a hard gate inside the build workflow; this release ships only
+            if the binary passed that check.
+
+            See `assets/runtime/ffmpeg/NOTICE.md` in the source repository for
+            attribution and source-availability terms.
+
+            ## Wiring into the app
+            None required when this release uses the default
+            `ffmpeg-lgpl-latest` tag: `scripts/setup-ffmpeg-runtime.js`
+            auto-resolves `ffmpeg-mac-{x64,arm64}.zip` from that tag and the
+            `dist:mac:*` scripts already run `setup:ffmpeg-runtime`. To pin a
+            versioned tag instead, set `STRATOSORT_FFMPEG_TAG` (or override
+            the full URL with `STRATOSORT_FFMPEG_URL`).
+          files: |
+            dist/ffmpeg-mac-x64.zip
+            dist/ffmpeg-mac-arm64.zip
+            dist/ffmpeg-${{ inputs.ffmpeg_version }}-source.tar.xz
+          fail_on_unmatched_files: true
+          generate_release_notes: false
+          make_latest: false

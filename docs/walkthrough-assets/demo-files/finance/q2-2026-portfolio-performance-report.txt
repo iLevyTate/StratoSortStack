@@ -1,0 +1,73 @@
+Quarterly Portfolio Performance Report — Q2 2026
+
+Prepared for: Meridian Capital Partners, LP
+Investment Manager: Crestline Wealth Advisors
+Date: July 15, 2026
+
+PORTFOLIO SUMMARY
+
+Total AUM (as of Jun 30, 2026):  $51,140,000
+Net Return (Q2):                 +5.14%
+Benchmark (S&P 500 TR):         +4.02%
+Alpha Generated:                 +1.12%
+Sharpe Ratio (trailing 12-mo):  1.29
+
+ASSET ALLOCATION
+
+Asset Class             | Allocation | Q2 Return | Benchmark
+------------------------|------------|-----------|----------
+US Large-Cap Equity     |    34.0%   |   +5.48%  |  +4.55%
+US Mid/Small-Cap Equity |    12.5%   |   +6.21%  |  +5.10%
+International Developed |    16.0%   |   +4.05%  |  +3.20%
+Emerging Markets        |     8.0%   |   +3.12%  |  +2.40%
+Investment-Grade Bonds  |    14.5%   |   +1.64%  |  +1.50%
+High-Yield Bonds        |     5.0%   |   +2.88%  |  +2.55%
+Real Assets (REITs)     |     5.0%   |   +4.90%  |  +4.10%
+Alternatives (PE/HF)    |     3.0%   |   +3.85%  |    N/A
+Cash & Equivalents      |     2.0%   |   +1.18%  |  +1.15%
+
+TOP EQUITY HOLDINGS
+
+Symbol  | Name                  | Weight | Q2 Return | Contribution
+--------|-----------------------|--------|-----------|-------------
+NVDA    | NVIDIA Corporation    |  4.0%  |  +15.6%   |   +0.62%
+MSFT    | Microsoft Corp        |  3.7%  |   +8.4%   |   +0.32%
+AAPL    | Apple Inc             |  3.4%  |   +5.1%   |   +0.17%
+AMZN    | Amazon.com Inc        |  3.0%  |   +7.8%   |   +0.23%
+AVGO    | Broadcom Inc         |  2.6%  |  +11.2%   |   +0.29%
+LLY     | Eli Lilly & Co        |  2.5%  |   +6.9%   |   +0.19%
+JPM     | JPMorgan Chase        |  2.2%  |   +7.4%   |   +0.19%
+V       | Visa Inc              |  1.9%  |   +5.8%   |   +0.11%
+UNH     | UnitedHealth Group    |  2.0%  |   +2.1%   |   +0.04%
+XOM     | Exxon Mobil Corp      |  1.5%  |   -1.4%   |   -0.02%
+
+RISK METRICS
+
+  Portfolio Beta:                0.91
+  Max Drawdown (Q2):           -2.86% (April 22 rate-volatility spike)
+  VaR (95%, 1-day):            $255,700
+  Tracking Error (annualized):  2.09%
+  Information Ratio:            0.54
+
+COMMENTARY
+The portfolio outperformed the benchmark by 112 basis points in Q2, driven
+primarily by semiconductor and software names plus a modest overweight in
+international developed equities. The late-April rate spike was managed
+through our rebalancing band: we added to duration as yields peaked and
+trimmed US large-cap after the May rally, which contributed about 35 bps of
+alpha recovery into June.
+
+Our alternatives sleeve posted a steady mark from Sequoia Growth Fund IV
+(vintage 2022) after several portfolio companies reported stronger H1 bookings.
+REITs lagged equities but still beat their sleeve benchmark as financing costs
+eased into quarter-end.
+
+OUTLOOK & RECOMMENDED ACTIONS
+1. Hold US Large-Cap Equity near 34% after the May trim; do not chase.
+2. Keep International Developed at 16% (European value still cheap vs US).
+3. Maintain fixed-income duration at 5.0 years (policy rate path still easing).
+4. Watch high-yield spreads for any widening into H2 earnings.
+
+DISCLOSURES
+Past performance does not guarantee future results. This report is confidential
+and intended solely for the named recipient.

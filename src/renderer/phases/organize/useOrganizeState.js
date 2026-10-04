@@ -1,0 +1,258 @@
+// @ts-check
+/**
+ * useOrganizeState Hook
+ *
+ * Redux state management hook for OrganizePhase.
+ * Handles selectors, action dispatchers, and computed values.
+ *
+ * @module organize/useOrganizeState
+ */
+
+import { useCallback, useMemo, useEffect, useRef } from 'react';
+import { useAppSelector, useAppDispatch } from '../../store/hooks';
+import {
+  setSmartFolders as setSmartFoldersAction,
+  setOrganizedFiles as setOrganizedFilesAction,
+  addOrganizedFiles as addOrganizedFilesAction,
+  removeOrganizedFiles as removeOrganizedFilesAction,
+  setFileStates as setFileStatesAction
+} from '../../store/slices/filesSlice';
+import { selectFilesWithAnalysis, selectFileStats } from '../../store/selectors';
+import { setPhase, setOrganizing } from '../../store/slices/uiSlice';
+import { fetchDocumentsPath } from '../../store/slices/systemSlice';
+import { createLogger } from '../../../shared/logger';
+import { isAbsolutePath } from '../../utils/pathNormalization';
+import { joinPath } from '../../utils/platform';
+
+const logger = createLogger('OrganizePhase-State');
+/**
+ * Hook for managing OrganizePhase Redux state
+ * @returns {Object} State and actions for organize phase
+ */
+export function useOrganizeState() {
+  const dispatch = useAppDispatch();
+
+  // Selectors
+  const organizedFiles = useAppSelector((/** @type {any} */ state) => state.files.organizedFiles);
+  const filesWithAnalysis = useAppSelector(selectFilesWithAnalysis);
+  const fileStats = useAppSelector(selectFileStats);
+  const analysisResults = useAppSelector((/** @type {any} */ state) => state.analysis.results);
+  const isAnalyzing = useAppSelector((/** @type {any} */ state) => state.analysis.isAnalyzing);
+  const analysisProgress = useAppSelector(
+    (/** @type {any} */ state) => state.analysis.analysisProgress
+  );
+  const smartFolders = useAppSelector((/** @type {any} */ state) => state.files.smartFolders);
+  const fileStates = useAppSelector((/** @type {any} */ state) => state.files.fileStates);
+  const documentsPath = useAppSelector((/** @type {any} */ state) => state.system.documentsPath);
+  const defaultSmartFolderLocation = useAppSelector(
+    (/** @type {any} */ state) => state.ui.settings?.defaultSmartFolderLocation
+  );
+
+  // Use user-configured default from Settings when available; otherwise fall back to system Documents
+  const defaultLocation = useMemo(() => {
+    if (
+      typeof defaultSmartFolderLocation === 'string' &&
+      defaultSmartFolderLocation.trim().length > 0
+    ) {
+      const trimmed = defaultSmartFolderLocation.trim();
+      if (isAbsolutePath(trimmed)) {
+        return trimmed;
+      }
+      // "Documents" means system Documents folder: use documentsPath when available
+      if (trimmed === 'Documents') {
+        return documentsPath || 'Documents';
+      }
+      // Other relative/simple folder name: resolve against documents path
+      const base = documentsPath || 'Documents';
+      return base && base !== 'Documents' ? joinPath(base, trimmed) : trimmed;
+    }
+    return documentsPath || 'Documents';
+  }, [defaultSmartFolderLocation, documentsPath]);
+
+  // Refs for avoiding stale closures
+  const smartFoldersRef = useRef(smartFolders);
+  const dispatchRef = useRef(dispatch);
+
+  useEffect(() => {
+    smartFoldersRef.current = smartFolders;
+  }, [smartFolders]);
+
+  useEffect(() => {
+    dispatchRef.current = dispatch;
+  }, [dispatch]);
+
+  // Ref for avoiding stale closures in functional updates
+  const organizedFilesRef = useRef(organizedFiles);
+  useEffect(() => {
+    organizedFilesRef.current = organizedFiles;
+  }, [organizedFiles]);
+
+  // Action dispatchers
+  const setOrganizedFiles = useCallback(
+    (/** @type {any} */ value) => {
+      const nextValue = typeof value === 'function' ? value(organizedFilesRef.current) : value;
+      dispatch(setOrganizedFilesAction(nextValue));
+    },
+    [dispatch]
+  );
+
+  const addOrganizedFiles = useCallback(
+    (/** @type {any} */ files) => dispatch(addOrganizedFilesAction(files)),
+    [dispatch]
+  );
+
+  const removeOrganizedFiles = useCallback(
+    (/** @type {any} */ paths) => dispatch(removeOrganizedFilesAction(paths)),
+    [dispatch]
+  );
+
+  // Ref for avoiding stale closures in functional updates
+  const fileStatesRef = useRef(fileStates);
+  useEffect(() => {
+    fileStatesRef.current = fileStates;
+  }, [fileStates]);
+
+  const setFileStates = useCallback(
+    (/** @type {any} */ states) => {
+      if (typeof states === 'function') {
+        dispatch(setFileStatesAction(states(fileStatesRef.current)));
+      } else {
+        dispatch(setFileStatesAction(states));
+      }
+    },
+    [dispatch]
+  );
+
+  const setSmartFolders = useCallback(
+    (/** @type {any} */ folders) => dispatch(setSmartFoldersAction(folders)),
+    [dispatch]
+  );
+
+  const setOrganizingState = useCallback(
+    (/** @type {any} */ isOrganizing) => dispatch(setOrganizing(isOrganizing)),
+    [dispatch]
+  );
+
+  const advancePhase = useCallback(
+    (/** @type {any} */ phase) => dispatch(setPhase(phase)),
+    [dispatch]
+  );
+
+  // Compatibility object for legacy code
+  const phaseData = useMemo(
+    () => ({
+      analysisResults,
+      smartFolders,
+      organizedFiles,
+      fileStates,
+      isAnalyzing,
+      analysisProgress
+    }),
+    [analysisResults, smartFolders, organizedFiles, fileStates, isAnalyzing, analysisProgress]
+  );
+
+  // Memoized actions object for legacy compatibility
+  const actions = useMemo(
+    () => ({
+      setPhaseData: (/** @type {any} */ key, /** @type {any} */ value) => {
+        if (key === 'smartFolders') dispatch(setSmartFoldersAction(value));
+        if (key === 'organizedFiles') setOrganizedFiles(value);
+        if (key === 'fileStates') setFileStates(value);
+      },
+      advancePhase: (/** @type {any} */ phase) => dispatch(setPhase(phase))
+    }),
+    [dispatch, setOrganizedFiles, setFileStates]
+  );
+
+  // Failed / ready from the same selector Dashboard + Discover use.
+  const failedCount = fileStats.failed;
+  const readyCount = fileStats.ready;
+
+  return {
+    // Raw state
+    organizedFiles,
+    filesWithAnalysis,
+    fileStats,
+    readyCount,
+    analysisResults,
+    isAnalyzing,
+    analysisProgress,
+    smartFolders,
+    fileStates,
+    documentsPath,
+    defaultLocation,
+    failedCount,
+
+    // Refs
+    smartFoldersRef,
+    dispatchRef,
+
+    // Action dispatchers
+    dispatch,
+    setOrganizedFiles,
+    addOrganizedFiles,
+    removeOrganizedFiles,
+    setFileStates,
+    setSmartFolders,
+    setOrganizingState,
+    advancePhase,
+
+    // Compatibility
+    phaseData,
+    actions
+  };
+}
+
+/**
+ * Hook for loading initial data
+ * @param {{ smartFoldersRef: any, dispatchRef: any }} refs - Refs for smart folders, notification, dispatch
+ * @param {Function} addNotification - Notification function
+ */
+export function useLoadInitialData(refs, addNotification) {
+  const { smartFoldersRef, dispatchRef } = refs;
+  const documentsPath = useAppSelector((/** @type {any} */ state) => state.system.documentsPath);
+
+  // Keep notification function stable via ref to avoid effect churn
+  const addNotificationRef = useRef(addNotification);
+  useEffect(() => {
+    addNotificationRef.current = addNotification;
+  }, [addNotification]);
+
+  // Load smart folders if missing
+  const loadSmartFoldersIfMissing = useCallback(async () => {
+    try {
+      const currentSmartFolders = smartFoldersRef.current;
+      if (!Array.isArray(currentSmartFolders) || currentSmartFolders.length === 0) {
+        if (!window?.electronAPI?.smartFolders?.get) {
+          logger.debug('[Organize] Smart folder API unavailable; skipping load');
+          return;
+        }
+        const folders = await window.electronAPI.smartFolders.get();
+        if (Array.isArray(folders) && folders.length > 0) {
+          dispatchRef.current(setSmartFoldersAction(folders));
+          addNotificationRef.current?.(
+            `Loaded ${folders.length} smart folder${folders.length > 1 ? 's' : ''}`,
+            'info'
+          );
+        }
+      }
+    } catch (error) {
+      logger.error('Failed to load smart folders in Organize phase', {
+        error: error.message,
+        stack: error.stack
+      });
+    }
+  }, [smartFoldersRef, dispatchRef]);
+
+  useEffect(() => {
+    loadSmartFoldersIfMissing();
+  }, [loadSmartFoldersIfMissing]);
+
+  // Fetch documents path
+  useEffect(() => {
+    const currentDispatch = dispatchRef?.current;
+    if (!documentsPath && currentDispatch) {
+      currentDispatch(fetchDocumentsPath(/** @type {any} */ (undefined)));
+    }
+  }, [dispatchRef, documentsPath]);
+}

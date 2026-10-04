@@ -1,0 +1,495 @@
+/**
+ * Tests for File Selection Handlers
+ * Tests file selection dialogs and folder scanning
+ */
+
+// Mock logger
+jest.mock('../src/shared/logger', () => {
+  const logger = {
+    setContext: jest.fn(),
+    info: jest.fn(),
+    debug: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn()
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
+
+// Mock fs
+const mockFs = {
+  stat: jest.fn(),
+  readdir: jest.fn()
+};
+jest.mock('fs', () => ({
+  promises: mockFs
+}));
+
+// Mock pathSanitization — validateFileOperationPath returns { valid: true, normalizedPath }
+jest.mock('../src/shared/pathSanitization', () => ({
+  validateFileOperationPath: jest.fn(async (p) => ({
+    valid: true,
+    normalizedPath: p
+  })),
+  sanitizePath: jest.fn((p) => p)
+}));
+
+// Mock constants
+jest.mock('../src/shared/constants', () => ({
+  SUPPORTED_DOCUMENT_EXTENSIONS: ['.pdf', '.doc', '.docx'],
+  SUPPORTED_IMAGE_EXTENSIONS: ['.jpg', '.png', '.gif'],
+  SUPPORTED_AUDIO_EXTENSIONS: ['.mp3', '.wav', '.m4a'],
+  SUPPORTED_VIDEO_EXTENSIONS: ['.mp4', '.mov', '.mkv'],
+  SUPPORTED_ARCHIVE_EXTENSIONS: ['.zip', '.rar'],
+  SUPPORTED_3D_EXTENSIONS: ['.stl', '.obj'],
+  SUPPORTED_DESIGN_EXTENSIONS: ['.ai', '.psd'],
+  FILE_SIZE_LIMITS: {
+    MAX_TEXT_FILE_SIZE: 50 * 1024 * 1024,
+    MAX_IMAGE_FILE_SIZE: 100 * 1024 * 1024,
+    MAX_DOCUMENT_FILE_SIZE: 200 * 1024 * 1024,
+    MAX_AUDIO_FILE_SIZE: 1024 * 1024 * 1024,
+    MAX_VIDEO_FILE_SIZE: 2 * 1024 * 1024 * 1024
+  },
+  DEFAULT_AI_MODELS: {
+    TEXT_ANALYSIS: 'qwen3:0.6b',
+    IMAGE_ANALYSIS: 'gemma3:latest',
+    EMBEDDING: 'embeddinggemma'
+  },
+  IPC_CHANNELS: {
+    VECTOR_DB: { STATUS_CHANGED: 'vectordb:status-changed' },
+    CHAT: {
+      QUERY: 'chat:query',
+      QUERY_STREAM: 'chat:query-stream',
+      STREAM_CHUNK: 'chat:stream-chunk',
+      STREAM_END: 'chat:stream-end',
+      RESET_SESSION: 'chat:reset-session',
+      LIST_CONVERSATIONS: 'chat:list-conversations',
+      GET_CONVERSATION: 'chat:get-conversation',
+      DELETE_CONVERSATION: 'chat:delete-conversation',
+      SEARCH_CONVERSATIONS: 'chat:search-conversations'
+    },
+    UNDO_REDO: {
+      STATE_CHANGED: 'undo-redo:state-changed'
+    }
+  },
+  IPC_EVENTS: {
+    SYSTEM_METRICS: 'system-metrics',
+    OPERATION_PROGRESS: 'operation-progress',
+    APP_ERROR: 'app:error',
+    APP_UPDATE: 'app:update',
+    MENU_ACTION: 'menu-action',
+    OPEN_SEMANTIC_SEARCH: 'open-semantic-search',
+    SETTINGS_CHANGED_EXTERNAL: 'settings-changed-external',
+    FILE_OPERATION_COMPLETE: 'file-operation-complete',
+    NOTIFICATION: 'notification',
+    BATCH_RESULTS_CHUNK: 'batch-results-chunk',
+    OPERATION_FAILED: 'operation-failed'
+  }
+}));
+
+// Mock performanceConstants
+jest.mock('../src/shared/performanceConstants', () => ({
+  TIMEOUTS: {
+    DELAY_BATCH: 50
+  },
+  CONCURRENCY: {
+    DEFAULT_WORKERS: 3
+  }
+}));
+
+// Mock ipcWrappers
+jest.mock('../src/main/ipc/ipcWrappers', () => ({
+  createHandler: jest.fn(({ handler }) => handler),
+  withErrorLogging: jest.fn((logger, handler) => handler),
+  safeHandle: (ipcMain, channel, handler) => {
+    ipcMain.handle(channel, handler);
+  },
+  z: null
+}));
+
+// Mock electron
+jest.mock('electron', () => ({
+  app: {
+    getPath: jest.fn().mockReturnValue('/mock/documents')
+  }
+}));
+
+describe('File Selection Handlers', () => {
+  let registerFileSelectionHandlers;
+  let mockIpcMain;
+  let mockDialog;
+  let mockGetMainWindow;
+  let handlers;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.resetModules();
+
+    mockIpcMain = {
+      handle: jest.fn()
+    };
+
+    mockDialog = {
+      showOpenDialog: jest.fn()
+    };
+
+    mockGetMainWindow = jest.fn().mockReturnValue({
+      isFocused: () => true,
+      isMinimized: () => false,
+      isVisible: () => true,
+      focus: jest.fn(),
+      restore: jest.fn(),
+      show: jest.fn()
+    });
+
+    handlers = {};
+
+    // Capture registered handlers
+    mockIpcMain.handle.mockImplementation((channel, handler) => {
+      handlers[channel] = handler;
+    });
+
+    const module = require('../src/main/ipc/files/fileSelectionHandlers');
+    registerFileSelectionHandlers = module.registerFileSelectionHandlers;
+  });
+
+  describe('registerFileSelectionHandlers', () => {
+    test('registers all handlers', () => {
+      registerFileSelectionHandlers({
+        ipcMain: mockIpcMain,
+        IPC_CHANNELS: {
+          FILES: {
+            SELECT_DIRECTORY: 'files:select-directory',
+            GET_DOCUMENTS_PATH: 'files:get-documents-path',
+            GET_FILE_STATS: 'files:get-file-stats',
+            GET_FILES_IN_DIRECTORY: 'files:get-files-in-directory',
+            SELECT: 'files:select'
+          }
+        },
+        dialog: mockDialog,
+        getMainWindow: mockGetMainWindow
+      });
+
+      expect(mockIpcMain.handle).toHaveBeenCalledTimes(5);
+    });
+  });
+
+  describe('selectDirectory handler', () => {
+    beforeEach(() => {
+      registerFileSelectionHandlers({
+        ipcMain: mockIpcMain,
+        IPC_CHANNELS: {
+          FILES: {
+            SELECT_DIRECTORY: 'files:select-directory',
+            GET_DOCUMENTS_PATH: 'files:get-documents-path',
+            GET_FILE_STATS: 'files:get-file-stats',
+            GET_FILES_IN_DIRECTORY: 'files:get-files-in-directory',
+            SELECT: 'files:select'
+          }
+        },
+        dialog: mockDialog,
+        getMainWindow: mockGetMainWindow
+      });
+    });
+
+    test('returns null path when dialog canceled', async () => {
+      mockDialog.showOpenDialog.mockResolvedValueOnce({
+        canceled: true,
+        filePaths: []
+      });
+
+      const handler = handlers['files:select-directory'];
+      const result = await handler({});
+
+      expect(result.success).toBe(false);
+      expect(result.path).toBe(null);
+    });
+
+    test('returns selected directory path', async () => {
+      mockDialog.showOpenDialog.mockResolvedValueOnce({
+        canceled: false,
+        filePaths: ['/selected/directory']
+      });
+
+      const handler = handlers['files:select-directory'];
+      const result = await handler({});
+
+      expect(result.success).toBe(true);
+      expect(result.path).toBe('/selected/directory');
+    });
+
+    test('a folder picked as a destination is remembered for the destination policy', async () => {
+      const policy = require('../src/main/ipc/files/destinationPolicy');
+      policy._resetDestinationPolicyForTests();
+      mockDialog.showOpenDialog.mockResolvedValueOnce({
+        canceled: false,
+        filePaths: ['/selected/destination']
+      });
+
+      const handler = handlers['files:select-directory'];
+      const result = await handler({}, { purpose: 'destination' });
+
+      expect(result.success).toBe(true);
+      expect(policy.isUserChosenLocation(result.path)).toBe(true);
+    });
+
+    test('a folder picked to be scanned vouches for nothing', async () => {
+      const policy = require('../src/main/ipc/files/destinationPolicy');
+      policy._resetDestinationPolicyForTests();
+      mockDialog.showOpenDialog
+        .mockResolvedValueOnce({ canceled: false, filePaths: ['/selected/source'] })
+        .mockResolvedValueOnce({ canceled: false, filePaths: ['/selected/unsaid'] });
+
+      const handler = handlers['files:select-directory'];
+      const scanned = await handler({}, { purpose: 'source' });
+      const unsaid = await handler({});
+
+      expect(scanned.success).toBe(true);
+      expect(policy.isUserChosenLocation(scanned.path)).toBe(false);
+      expect(unsaid.success).toBe(true);
+      expect(policy.isUserChosenLocation(unsaid.path)).toBe(false);
+    });
+
+    test('handles dialog error', async () => {
+      mockDialog.showOpenDialog.mockRejectedValueOnce(new Error('Dialog error'));
+
+      const handler = handlers['files:select-directory'];
+      const result = await handler({});
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Dialog error');
+    });
+  });
+
+  describe('getDocumentsPath handler', () => {
+    beforeEach(() => {
+      registerFileSelectionHandlers({
+        ipcMain: mockIpcMain,
+        IPC_CHANNELS: {
+          FILES: {
+            SELECT_DIRECTORY: 'files:select-directory',
+            GET_DOCUMENTS_PATH: 'files:get-documents-path',
+            GET_FILE_STATS: 'files:get-file-stats',
+            GET_FILES_IN_DIRECTORY: 'files:get-files-in-directory',
+            SELECT: 'files:select'
+          }
+        },
+        dialog: mockDialog,
+        getMainWindow: mockGetMainWindow
+      });
+    });
+
+    test('returns documents path', async () => {
+      const handler = handlers['files:get-documents-path'];
+      const result = await handler({});
+
+      expect(result.success).toBe(true);
+      expect(result.path).toBe('/mock/documents');
+    });
+  });
+
+  describe('getFileStats handler', () => {
+    beforeEach(() => {
+      registerFileSelectionHandlers({
+        ipcMain: mockIpcMain,
+        IPC_CHANNELS: {
+          FILES: {
+            SELECT_DIRECTORY: 'files:select-directory',
+            GET_DOCUMENTS_PATH: 'files:get-documents-path',
+            GET_FILE_STATS: 'files:get-file-stats',
+            GET_FILES_IN_DIRECTORY: 'files:get-files-in-directory',
+            SELECT: 'files:select'
+          }
+        },
+        dialog: mockDialog,
+        getMainWindow: mockGetMainWindow
+      });
+    });
+
+    test('rejects invalid path', async () => {
+      const handler = handlers['files:get-file-stats'];
+      const result = await handler({}, null);
+
+      expect(result.success).toBe(false);
+      expect(result.stats).toBe(null);
+    });
+
+    test('returns file stats', async () => {
+      const mockStats = {
+        size: 1024,
+        isFile: () => true,
+        isDirectory: () => false,
+        birthtime: new Date('2024-01-01'),
+        mtime: new Date('2024-01-02'),
+        atime: new Date('2024-01-03')
+      };
+      mockFs.stat.mockResolvedValueOnce(mockStats);
+
+      const handler = handlers['files:get-file-stats'];
+      const result = await handler({}, '/path/to/file.txt');
+
+      expect(result.success).toBe(true);
+      expect(result.stats.size).toBe(1024);
+      expect(result.stats.isFile).toBe(true);
+      expect(result.stats.isDirectory).toBe(false);
+    });
+
+    test('handles stat error', async () => {
+      mockFs.stat.mockRejectedValueOnce(new Error('File not found'));
+
+      const handler = handlers['files:get-file-stats'];
+      const result = await handler({}, '/nonexistent/file.txt');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('File not found');
+    });
+  });
+
+  describe('getFilesInDirectory handler', () => {
+    beforeEach(() => {
+      registerFileSelectionHandlers({
+        ipcMain: mockIpcMain,
+        IPC_CHANNELS: {
+          FILES: {
+            SELECT_DIRECTORY: 'files:select-directory',
+            GET_DOCUMENTS_PATH: 'files:get-documents-path',
+            GET_FILE_STATS: 'files:get-file-stats',
+            GET_FILES_IN_DIRECTORY: 'files:get-files-in-directory',
+            SELECT: 'files:select'
+          }
+        },
+        dialog: mockDialog,
+        getMainWindow: mockGetMainWindow
+      });
+    });
+
+    test('rejects invalid directory path', async () => {
+      const handler = handlers['files:get-files-in-directory'];
+      const result = await handler({}, null);
+
+      expect(result.success).toBe(false);
+      expect(result.files).toEqual([]);
+    });
+
+    test('returns files in directory', async () => {
+      mockFs.readdir.mockResolvedValueOnce([
+        { name: 'file1.txt', isFile: () => true },
+        { name: 'file2.pdf', isFile: () => true },
+        { name: 'subdir', isFile: () => false }
+      ]);
+
+      const handler = handlers['files:get-files-in-directory'];
+      const result = await handler({}, '/some/directory');
+
+      expect(result.success).toBe(true);
+      expect(result.files).toHaveLength(2);
+      expect(result.files[0].name).toBe('file1.txt');
+    });
+
+    test('handles readdir error', async () => {
+      mockFs.readdir.mockRejectedValueOnce(new Error('Cannot read directory'));
+
+      const handler = handlers['files:get-files-in-directory'];
+      const result = await handler({}, '/nonexistent');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Cannot read directory');
+    });
+  });
+
+  describe('selectFiles handler', () => {
+    beforeEach(() => {
+      registerFileSelectionHandlers({
+        ipcMain: mockIpcMain,
+        IPC_CHANNELS: {
+          FILES: {
+            SELECT_DIRECTORY: 'files:select-directory',
+            GET_DOCUMENTS_PATH: 'files:get-documents-path',
+            GET_FILE_STATS: 'files:get-file-stats',
+            GET_FILES_IN_DIRECTORY: 'files:get-files-in-directory',
+            SELECT: 'files:select'
+          }
+        },
+        dialog: mockDialog,
+        getMainWindow: mockGetMainWindow
+      });
+    });
+
+    test('returns empty when dialog canceled', async () => {
+      mockDialog.showOpenDialog.mockResolvedValueOnce({
+        canceled: true,
+        filePaths: []
+      });
+
+      const handler = handlers['files:select'];
+      const result = await handler({});
+
+      expect(result.success).toBe(false);
+      expect(result.files).toEqual([]);
+    });
+
+    test('returns selected files', async () => {
+      mockDialog.showOpenDialog.mockResolvedValueOnce({
+        canceled: false,
+        filePaths: ['/selected/file.pdf']
+      });
+      mockFs.stat.mockResolvedValueOnce({
+        isFile: () => true,
+        isDirectory: () => false,
+        size: 1024
+      });
+
+      const handler = handlers['files:select'];
+      const result = await handler({});
+
+      expect(result.success).toBe(true);
+      expect(result.files).toHaveLength(1);
+      expect(result.files[0].name).toBe('file.pdf');
+    });
+
+    test('filters unsupported files', async () => {
+      mockDialog.showOpenDialog.mockResolvedValueOnce({
+        canceled: false,
+        filePaths: ['/selected/file.exe']
+      });
+      mockFs.stat.mockResolvedValueOnce({
+        isFile: () => true,
+        isDirectory: () => false,
+        size: 1024
+      });
+
+      const handler = handlers['files:select'];
+      const result = await handler({});
+
+      expect(result.success).toBe(true);
+      expect(result.files).toHaveLength(0);
+    });
+
+    test('skips directory paths without extensions', async () => {
+      mockDialog.showOpenDialog.mockResolvedValueOnce({
+        canceled: false,
+        filePaths: ['/selected/folder']
+      });
+
+      const handler = handlers['files:select'];
+      const result = await handler({});
+
+      // Directories have no extension, so they are skipped by the select handler
+      expect(result.success).toBe(true);
+      expect(result.files).toHaveLength(0);
+    });
+
+    test('handles stat error gracefully', async () => {
+      mockDialog.showOpenDialog.mockResolvedValueOnce({
+        canceled: false,
+        filePaths: ['/nonexistent/file.pdf']
+      });
+      mockFs.stat.mockRejectedValueOnce(new Error('File not found'));
+
+      const handler = handlers['files:select'];
+      const result = await handler({});
+
+      expect(result.success).toBe(true);
+      expect(result.files).toHaveLength(0);
+    });
+  });
+});

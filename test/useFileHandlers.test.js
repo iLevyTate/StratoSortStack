@@ -1,0 +1,561 @@
+/**
+ * Tests for useFileHandlers Hook
+ * Tests file selection and handling logic
+ */
+
+import { renderHook, act, waitFor } from '@testing-library/react';
+
+// Mock dependencies
+jest.mock('../src/shared/logger', () => {
+  const logger = {
+    setContext: jest.fn(),
+    info: jest.fn(),
+    debug: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn()
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
+
+jest.mock('../src/shared/constants', () => ({
+  ...jest.requireActual('../src/shared/constants')
+}));
+
+jest.mock('../src/renderer/phases/discover/namingUtils', () => ({
+  extractExtension: jest.fn((name) => {
+    if (!name || !name.includes('.')) return '';
+    return '.' + name.split('.').pop().toLowerCase();
+  }),
+  extractFileName: jest.fn((path) => {
+    if (!path) return '';
+    return path.split(/[\\/]/).pop() || '';
+  })
+}));
+
+// Mock window.electronAPI
+const mockElectronAPI = {
+  files: {
+    select: jest.fn(),
+    selectDirectory: jest.fn(),
+    getStats: jest.fn()
+  },
+  smartFolders: {
+    scanStructure: jest.fn()
+  }
+};
+
+describe('useFileHandlers', () => {
+  let useFileHandlers;
+  let mockSetSelectedFiles;
+  let mockAddSelectedFiles;
+  let mockUpdateFileState;
+  let mockAddNotification;
+  let mockAnalyzeFiles;
+
+  const createMockOptions = (overrides = {}) => ({
+    selectedFiles: [],
+    setSelectedFiles: mockSetSelectedFiles,
+    addSelectedFiles: mockAddSelectedFiles,
+    updateFileState: mockUpdateFileState,
+    addNotification: mockAddNotification,
+    analyzeFiles: mockAnalyzeFiles,
+    ...overrides
+  });
+
+  beforeEach(() => {
+    // jest.resetModules(); // Removed - breaks React hooks context
+    jest.clearAllMocks();
+
+    // Set up window.electronAPI fresh each test (test-setup.js may overwrite global.window)
+    global.window = global.window || {};
+    global.window.electronAPI = mockElectronAPI;
+
+    mockSetSelectedFiles = jest.fn();
+    mockAddSelectedFiles = jest.fn();
+    mockUpdateFileState = jest.fn();
+    mockAddNotification = jest.fn();
+    mockAnalyzeFiles = jest.fn();
+
+    mockElectronAPI.files.select.mockResolvedValue({ success: true, files: [] });
+    mockElectronAPI.files.selectDirectory.mockResolvedValue({ success: true, path: null });
+    mockElectronAPI.files.getStats.mockResolvedValue({
+      size: 1024,
+      created: new Date().toISOString(),
+      modified: new Date().toISOString(),
+      isDirectory: false
+    });
+    mockElectronAPI.smartFolders.scanStructure.mockResolvedValue({ files: [] });
+
+    useFileHandlers = require('../src/renderer/phases/discover/useFileHandlers').useFileHandlers;
+  });
+
+  describe('initialization', () => {
+    test('returns isScanning state', () => {
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      expect(result.current.isScanning).toBe(false);
+    });
+
+    test('returns handleFileSelection function', () => {
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      expect(typeof result.current.handleFileSelection).toBe('function');
+    });
+
+    test('returns handleFolderSelection function', () => {
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      expect(typeof result.current.handleFolderSelection).toBe('function');
+    });
+
+    test('returns handleFileDrop function', () => {
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      expect(typeof result.current.handleFileDrop).toBe('function');
+    });
+
+    test('returns getBatchFileStats function', () => {
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      expect(typeof result.current.getBatchFileStats).toBe('function');
+    });
+  });
+
+  describe('handleFileSelection', () => {
+    test('shows notification when no files selected', async () => {
+      mockElectronAPI.files.select.mockResolvedValue({ success: true, files: [] });
+
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      await act(async () => {
+        await result.current.handleFileSelection();
+      });
+
+      expect(mockAddNotification).toHaveBeenCalledWith(
+        'No files selected',
+        'info',
+        2000,
+        'file-selection'
+      );
+    });
+
+    test('adds new files when files are selected', async () => {
+      mockElectronAPI.files.select.mockResolvedValue({
+        success: true,
+        files: [{ path: '/test.txt', name: 'test.txt' }]
+      });
+
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      await act(async () => {
+        await result.current.handleFileSelection();
+      });
+
+      expect(mockAddSelectedFiles).toHaveBeenCalledWith([
+        expect.objectContaining({ path: '/test.txt', source: 'file_selection' })
+      ]);
+      expect(mockAddNotification).toHaveBeenCalledWith(
+        expect.stringContaining('Added'),
+        'success',
+        2500,
+        'files-added'
+      );
+    });
+
+    test('skips duplicate files', async () => {
+      mockElectronAPI.files.select.mockResolvedValue({
+        success: true,
+        files: [{ path: '/existing.txt', name: 'existing.txt' }]
+      });
+
+      const { result } = renderHook(() =>
+        useFileHandlers(
+          createMockOptions({
+            selectedFiles: [{ path: '/existing.txt', name: 'existing.txt' }]
+          })
+        )
+      );
+
+      await act(async () => {
+        await result.current.handleFileSelection();
+      });
+
+      expect(mockAddNotification).toHaveBeenCalledWith(
+        'All files are already in the queue',
+        'info',
+        2000,
+        'duplicate-files'
+      );
+    });
+
+    test('handles selection errors', async () => {
+      mockElectronAPI.files.select.mockRejectedValue(new Error('Selection failed'));
+
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      await act(async () => {
+        await result.current.handleFileSelection();
+      });
+
+      expect(mockAddNotification).toHaveBeenCalledWith(
+        expect.stringContaining('Error selecting files'),
+        'error',
+        4000,
+        'file-selection-error'
+      );
+    });
+
+    test('calls analyzeFiles after adding files', async () => {
+      mockElectronAPI.files.select.mockResolvedValue({
+        success: true,
+        files: [{ path: '/test.txt', name: 'test.txt' }]
+      });
+
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      await act(async () => {
+        await result.current.handleFileSelection();
+      });
+
+      expect(mockAnalyzeFiles).toHaveBeenCalled();
+    });
+
+    test('clears isScanning before awaiting analysis (SW-34)', async () => {
+      let resolveAnalyze;
+      mockAnalyzeFiles.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveAnalyze = resolve;
+          })
+      );
+      mockElectronAPI.files.select.mockResolvedValue({
+        success: true,
+        files: [{ path: '/test.txt', name: 'test.txt' }]
+      });
+
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+      let finished = false;
+      act(() => {
+        result.current.handleFileSelection().then(() => {
+          finished = true;
+        });
+      });
+
+      await waitFor(() => expect(mockAnalyzeFiles).toHaveBeenCalled());
+      expect(result.current.isScanning).toBe(false);
+      expect(finished).toBe(false);
+
+      await act(async () => {
+        resolveAnalyze();
+      });
+      await waitFor(() => expect(finished).toBe(true));
+    });
+  });
+
+  describe('handleFolderSelection', () => {
+    test('shows notification when folder selection cancelled', async () => {
+      mockElectronAPI.files.selectDirectory.mockResolvedValue({
+        success: false,
+        path: null
+      });
+
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      await act(async () => {
+        await result.current.handleFolderSelection();
+      });
+
+      expect(mockAddNotification).toHaveBeenCalledWith(
+        'Folder selection cancelled',
+        'info',
+        2000,
+        'folder-selection'
+      );
+    });
+
+    test('scans folder structure when selected', async () => {
+      mockElectronAPI.files.selectDirectory.mockResolvedValue({
+        success: true,
+        path: '/test-folder'
+      });
+      mockElectronAPI.smartFolders.scanStructure.mockResolvedValue({
+        files: [{ path: '/test-folder/test.pdf', name: 'test.pdf' }]
+      });
+
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      await act(async () => {
+        await result.current.handleFolderSelection();
+      });
+
+      expect(mockElectronAPI.smartFolders.scanStructure).toHaveBeenCalledWith('/test-folder');
+    });
+
+    test('shows warning when no supported files found', async () => {
+      mockElectronAPI.files.selectDirectory.mockResolvedValue({
+        success: true,
+        path: '/test-folder'
+      });
+      mockElectronAPI.smartFolders.scanStructure.mockResolvedValue({
+        files: [{ path: '/test-folder/test.xyz', name: 'test.xyz' }]
+      });
+
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      await act(async () => {
+        await result.current.handleFolderSelection();
+      });
+
+      expect(mockAddNotification).toHaveBeenCalledWith(
+        'No supported files found in the selected folder',
+        'warning',
+        3000,
+        'folder-scan'
+      );
+    });
+
+    test('handles folder selection errors', async () => {
+      mockElectronAPI.files.selectDirectory.mockRejectedValue(new Error('Folder error'));
+
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      await act(async () => {
+        await result.current.handleFolderSelection();
+      });
+
+      expect(mockAddNotification).toHaveBeenCalledWith(
+        expect.stringContaining('Error selecting folder'),
+        'error',
+        4000,
+        'folder-selection-error'
+      );
+    });
+  });
+
+  describe('handleFileDrop', () => {
+    test('does nothing for empty files', async () => {
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      await act(async () => {
+        await result.current.handleFileDrop([]);
+      });
+
+      expect(mockAddSelectedFiles).not.toHaveBeenCalled();
+    });
+
+    test('does nothing for null files', async () => {
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      await act(async () => {
+        await result.current.handleFileDrop(null);
+      });
+
+      expect(mockAddSelectedFiles).not.toHaveBeenCalled();
+    });
+
+    test('skips dropped items without absolute paths', async () => {
+      const droppedFiles = [{ path: 'relative.txt', name: 'relative.txt' }];
+
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      await act(async () => {
+        await result.current.handleFileDrop(droppedFiles);
+      });
+
+      expect(mockAddNotification).toHaveBeenCalledWith(
+        'Skipped 1 item because no stable absolute path was available',
+        'warning',
+        2500,
+        'drop-missing-path'
+      );
+      expect(mockAddSelectedFiles).not.toHaveBeenCalled();
+    });
+
+    test('adds dropped files', async () => {
+      const droppedFiles = [{ path: '/dropped.txt', name: 'dropped.txt' }];
+
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      await act(async () => {
+        await result.current.handleFileDrop(droppedFiles);
+      });
+
+      expect(mockAddSelectedFiles).toHaveBeenCalledWith([
+        expect.objectContaining({ path: '/dropped.txt', source: 'drag_drop' })
+      ]);
+      expect(mockUpdateFileState).toHaveBeenCalledWith('/dropped.txt', 'pending');
+    });
+
+    test('adds source and timestamp to dropped files', async () => {
+      const droppedFiles = [{ path: '/dropped.txt', name: 'dropped.txt' }];
+
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      await act(async () => {
+        await result.current.handleFileDrop(droppedFiles);
+      });
+
+      expect(mockAddNotification).toHaveBeenCalledWith(
+        expect.stringContaining('Added 1 new file'),
+        'success',
+        2500,
+        'files-added'
+      );
+    });
+
+    test('calls analyzeFiles after dropping files', async () => {
+      const droppedFiles = [{ path: '/dropped.txt', name: 'dropped.txt' }];
+
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      await act(async () => {
+        await result.current.handleFileDrop(droppedFiles);
+      });
+
+      expect(mockAnalyzeFiles).toHaveBeenCalled();
+    });
+
+    test('skips unsupported dropped files (SW-80)', async () => {
+      const droppedFiles = [
+        { path: '/dropped.exe', name: 'dropped.exe' },
+        { path: '/dropped.txt', name: 'dropped.txt' }
+      ];
+
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      await act(async () => {
+        await result.current.handleFileDrop(droppedFiles);
+      });
+
+      expect(mockAddNotification).toHaveBeenCalledWith(
+        '1 unsupported file skipped',
+        'warning',
+        2500,
+        'drop-unsupported'
+      );
+      expect(mockAnalyzeFiles).toHaveBeenCalledWith(
+        expect.arrayContaining([expect.objectContaining({ path: '/dropped.txt' })])
+      );
+      const analyzed = mockAnalyzeFiles.mock.calls[0][0];
+      expect(analyzed.some((file) => String(file.path).endsWith('.exe'))).toBe(false);
+    });
+
+    test('extracts extension if not provided', async () => {
+      const droppedFiles = [{ path: '/dropped.pdf', name: 'dropped.pdf' }];
+
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      await act(async () => {
+        await result.current.handleFileDrop(droppedFiles);
+      });
+
+      const added = mockAddSelectedFiles.mock.calls[0][0];
+      expect(added[0].extension).toBe('.pdf');
+    });
+
+    test('expands dropped directories and analyzes contained files', async () => {
+      const droppedItems = [{ path: '/dropped-folder', name: 'dropped-folder' }];
+
+      mockElectronAPI.files.getStats.mockResolvedValueOnce({
+        size: 0,
+        created: new Date().toISOString(),
+        modified: new Date().toISOString(),
+        isDirectory: true
+      });
+
+      mockElectronAPI.smartFolders.scanStructure.mockResolvedValueOnce({
+        files: [{ path: '/dropped-folder/doc.pdf', name: 'doc.pdf' }]
+      });
+
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      await act(async () => {
+        await result.current.handleFileDrop(droppedItems);
+      });
+
+      expect(mockElectronAPI.smartFolders.scanStructure).toHaveBeenCalledWith('/dropped-folder');
+      expect(mockAddSelectedFiles).toHaveBeenCalled();
+      expect(mockUpdateFileState).toHaveBeenCalledWith('/dropped-folder/doc.pdf', 'pending');
+      expect(mockAnalyzeFiles).toHaveBeenCalledWith(
+        expect.arrayContaining([expect.objectContaining({ path: '/dropped-folder/doc.pdf' })])
+      );
+    });
+  });
+
+  describe('getBatchFileStats', () => {
+    test('returns file stats for all paths', async () => {
+      const filePaths = ['/test1.txt', '/test2.txt'];
+
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      let stats;
+      await act(async () => {
+        stats = await result.current.getBatchFileStats(filePaths);
+      });
+
+      expect(stats.length).toBe(2);
+      expect(stats[0].path).toBe('/test1.txt');
+      expect(stats[1].path).toBe('/test2.txt');
+    });
+
+    test('handles stats errors gracefully', async () => {
+      mockElectronAPI.files.getStats.mockRejectedValue(new Error('Stats error'));
+      const filePaths = ['/error.txt'];
+
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      let stats;
+      await act(async () => {
+        stats = await result.current.getBatchFileStats(filePaths);
+      });
+
+      expect(stats.length).toBe(1);
+      expect(stats[0].success).toBe(false);
+      expect(stats[0].error).toBe('Stats error');
+    });
+
+    test('processes files in batches', async () => {
+      const filePaths = Array(100)
+        .fill(null)
+        .map((_, i) => `/file${i}.txt`);
+
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      let stats;
+      await act(async () => {
+        stats = await result.current.getBatchFileStats(filePaths, 10);
+      });
+
+      expect(stats.length).toBe(100);
+    });
+  });
+
+  describe('isScanning state', () => {
+    test('sets isScanning during file selection', async () => {
+      let resolveSelect;
+      mockElectronAPI.files.select.mockReturnValue(
+        new Promise((resolve) => {
+          resolveSelect = resolve;
+        })
+      );
+
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      // Start selection (don't await)
+      act(() => {
+        result.current.handleFileSelection();
+      });
+
+      // isScanning should be true during the operation
+      // Note: Due to async nature, we may not catch this state
+
+      // Complete the operation
+      await act(async () => {
+        resolveSelect({ success: true, files: [] });
+      });
+
+      // After completion, isScanning should be false
+      expect(result.current.isScanning).toBe(false);
+    });
+  });
+});

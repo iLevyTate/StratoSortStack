@@ -1,0 +1,149 @@
+# Pull requests: run the same gate as packaged in `npm run ci` (format, lint, audit,
+# compliance verify, tests + coverage, IPC contracts, production webpack build).
+# PR CI also verifies Electron-linked native modules load on all three OSes. The
+# macos-latest runner builds x64 while production ships arm64 — the x64 run still
+# exercises the rebuild toolchain; arm64 ABI alignment is verified pre-release via
+# `npm run local:gate` (see the inline note on the rebuild step below).
+#
+# Push to long-lived branches (main/develop/RegressionFixes) runs the same gate to
+# catch regressions that land via non-PR pushes (e.g. hotfix commits direct-to-branch).
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main, master, develop, RegressionFixes]
+  push:
+    branches: [main, master, develop, RegressionFixes]
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: both jobs only read the repo and upload artifacts.
+permissions:
+  contents: read
+
+env:
+  CI: true
+
+jobs:
+  ci:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Use Node.js from .nvmrc
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --include=optional
+
+      - name: Generate branding assets from SVG (macOS ICNS)
+        if: runner.os == 'macOS'
+        run: npm run generate:branding-if-source
+
+      - name: CI
+        run: npm run ci
+        env:
+          # 6144, not 4096: jest runs every suite in one process
+          # (maxWorkers: 1) and merges all coverage maps there; the run
+          # OOM-aborted at ~3.7 GB once filePipeline.fixture started truly
+          # executing (its fixture was missing from checkouts before).
+          NODE_OPTIONS: '--max-old-space-size=6144'
+
+      # Rebuild native modules against Electron ABI. We run on macOS too
+      # despite the runner being x64 and production shipping arm64 — the
+      # x64 build still exercises the rebuild toolchain path and surfaces
+      # native-module regressions (node-gyp, electron-rebuild) that
+      # exclusively skipping macOS would mask. Production ABI alignment
+      # for arm64 is still verified by `npm run local:gate` pre-release.
+      - name: Rebuild native modules against Electron ABI
+        run: npx --no electron-builder install-app-deps
+
+      - name: Verify native modules load under Electron
+        run: npm run verify:native-modules
+
+      - name: Verify Electron fuses config
+        run: npm run verify:electron-fuses-config
+
+      - name: Verify IPC handler coverage (static scan)
+        run: npm run verify:ipc-handlers
+
+      - name: Verify IPC handler schemas
+        run: npm run verify:ipc-handler-schemas
+
+      - name: Upload coverage report (HTML)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: coverage-lcov-${{ matrix.os }}
+          path: coverage/lcov-report/
+          if-no-files-found: warn
+
+  # Smoke E2E: boot the packaged-dev build and verify the window opens, preload is
+  # loaded, and electronAPI is exposed, plus a stable LLM-free subset (session
+  # persistence, undo/redo, organize phase, search modal, settings backup/restore
+  # — these self-skip steps that need analyzed files or a loaded model). Catches
+  # "app doesn't boot" and core-flow regressions that unit tests will never see.
+  # The full `npm run test:e2e` suite (including @live-llm specs) is run manually
+  # before releases; there is no nightly E2E workflow.
+  e2e-smoke:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    # 45, not 20: each spec relaunches the app (~17 s/test on windows-latest),
+    # so the 91-test smoke list alone needs ~27 min plus ~5 min of npm ci +
+    # native rebuild + dev builds before Playwright even starts.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci --include=optional
+      - name: Rebuild native modules against Electron ABI
+        run: npx --no electron-builder install-app-deps
+      - name: Build main + preload (dev)
+        run: npm run build:main:dev
+      - name: Build renderer + copy assets
+        run: npm run build:dev
+      - name: Run xvfb-friendly E2E smoke
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum -- npx playwright test test/e2e/app-launch.spec.js test/e2e/whisper-variant-loader.spec.js test/e2e/session-persistence.spec.js test/e2e/undo-redo.spec.js test/e2e/organize-phase.spec.js test/e2e/search-modal.spec.js test/e2e/settings-backup-restore.spec.js test/e2e/accessibility.spec.js --reporter=list
+        env:
+          CI: 'true'
+          # pw:browser* forwards the Electron child's stdout/stderr from spawn
+          # time — the only reliable way to see app startup output when the
+          # window never opens (helper-side stream capture attaches too late).
+          DEBUG: 'pw:browser*'
+      - name: Run E2E smoke (Windows)
+        if: runner.os == 'Windows'
+        run: npx playwright test test/e2e/app-launch.spec.js test/e2e/whisper-variant-loader.spec.js test/e2e/session-persistence.spec.js test/e2e/undo-redo.spec.js test/e2e/organize-phase.spec.js test/e2e/search-modal.spec.js test/e2e/settings-backup-restore.spec.js test/e2e/accessibility.spec.js --reporter=list
+        env:
+          CI: 'true'
+      - name: Upload E2E artifacts on failure
+        # cancelled() too: exceeding timeout-minutes marks the job cancelled,
+        # not failed, and we still want the traces from a timed-out run.
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: e2e-smoke-artifacts-${{ matrix.os }}
+          path: test-results/
+          if-no-files-found: ignore

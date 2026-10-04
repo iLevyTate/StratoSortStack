@@ -1,0 +1,49 @@
+{
+  "//": [
+    "Opt-in JS type-checking via per-file `// @ts-check` directives. The main",
+    "tsconfig.json keeps allowJs/checkJs OFF so the strict TS suite continues to",
+    "only see .ts/.tsx/.d.ts files. This config flips allowJs on so src JS files",
+    "load into the program (cross-file inference), but leaves checkJs OFF so only",
+    "files that explicitly opt in via `// @ts-check` (first lines) get checked.",
+    "",
+    "noImplicitAny is ON: opted-in files must annotate every parameter (JSDoc",
+    "@param) or make it inferrable. End-state: every .js under src/ is opted in",
+    "(.jsx components are out of scope; they benefit via inference).",
+    "",
+    "Coverage is ratcheted by scripts/verify-checkjs-ratchet.js — directives can",
+    "never be removed and covered directories stay at 100%. Run via",
+    "`npm run typecheck:js`; enumerate remaining files in a directory with",
+    "`node scripts/verify-checkjs-ratchet.js --list <dir>`.",
+    "",
+    "Later ratchet (deliberate, per spec 2026-07-03-jsdoc-type-safety-design.md):",
+    "once a directory is fully annotated, strictNullChecks can be evaluated by",
+    "running `npx tsc --noEmit -p tsconfig.checkjs.json --strictNullChecks` and",
+    "burning down per-directory. Do not flip it globally in this file until that",
+    "burn-down is done.",
+    "",
+    ".jsx files are included (jsx: react) ONLY so imports from checked .js files",
+    "resolve; they carry no @ts-check and are never error-checked."
+  ],
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react",
+    "strict": false,
+    "noImplicitAny": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "allowJs": true,
+    "checkJs": false,
+    "types": ["node"]
+  },
+  "include": [
+    "src/**/*.js",
+    "src/**/*.jsx",
+    "src/**/*.d.ts",
+    "assets/**/*.d.ts"
+  ]
+}

@@ -1,0 +1,196 @@
+# Standalone macOS signing/notarization verification for an already-published release.
+#
+# What this does: downloads the DMG(s) attached to the given release tag, mounts
+# each on a macOS GHA runner, and runs the end-user Gatekeeper assessment that
+# `mac-release.yml` does not currently perform post-notarization:
+#
+#   - codesign --verify --deep --strict --verbose=4   (signature structure)
+#   - codesign -dv --verbose=4                        (cert chain summary, info only)
+#   - spctl --assess --type exec --verbose=4          (Gatekeeper acceptance)
+#   - xcrun stapler validate                          (offline ticket on the DMG)
+#
+# Why a separate workflow: a workflow_dispatch entry point lets you re-verify any
+# past release tag without re-building (e.g. after cert renewal or to confirm a
+# release still validates). It also stands in for the "borrow a Mac" smoke test
+# in docs/MAC_SIGNING.md Phase 8 for developers working from Windows/Linux.
+#
+# How to trigger:
+#   - GitHub UI: Actions -> Verify macOS Signing -> Run workflow -> enter tag
+#   - CLI:       gh workflow run verify-mac-signing.yml -f tag_name=v3.2.1
+name: Verify macOS Signing
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Existing release tag to verify (e.g. v3.2.1)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify-mac-signing:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-latest
+          - arch: x64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+
+    steps:
+      - name: Validate tag input
+        env:
+          TAG: ${{ inputs.tag_name }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]; then
+            echo "::error::Tag must match v<major>.<minor>.<patch>[-prerelease]; received '$TAG'"
+            exit 1
+          fi
+
+      - name: Download DMG from release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag_name }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          mkdir -p verify
+          cd verify
+          # Restrict pattern so we only pull the one DMG we're verifying. If
+          # multiple match (shouldn't happen given the canonical artifact name)
+          # we'll error explicitly below.
+          gh release download "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "StratoSortCore-*-mac-${ARCH}.dmg"
+
+          shopt -s nullglob
+          dmgs=(StratoSortCore-*-mac-${ARCH}.dmg)
+          if [ ${#dmgs[@]} -eq 0 ]; then
+            echo "::error::No DMG matching StratoSortCore-*-mac-${ARCH}.dmg in release $TAG"
+            echo "Hint: this workflow only verifies SIGNED + NOTARIZED releases. Unsigned"
+            echo "builds (when mac-release.yml's signing secrets were missing) don't publish"
+            echo "a Notarized Developer ID asset to verify."
+            exit 1
+          fi
+          if [ ${#dmgs[@]} -gt 1 ]; then
+            echo "::error::Multiple DMGs matched; refusing to guess. Found:"
+            printf '  %s\n' "${dmgs[@]}"
+            exit 1
+          fi
+          echo "Verifying: ${dmgs[0]}"
+
+      - name: Mount DMG and locate .app
+        id: mount
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          dmgs=(verify/StratoSortCore-*-mac-${ARCH}.dmg)
+          dmg_path="${dmgs[0]}"
+
+          # Attach read-only (-nobrowse keeps it out of Finder) and persist the
+          # -plist output to a real file: PlistBuddy cannot reliably read a plist
+          # from a pipe/stdin. Walk :system-entities and take the first entity
+          # that actually carries a mount-point (the GPT scheme entity has none).
+          # Reading the key value directly preserves volume names with spaces --
+          # a `grep -oE '/Volumes/[^ ]+'` truncates "StratoSort Core 4.0.4" at the
+          # first space and yields a path that fails the -d check below.
+          plist_file="$(mktemp)"
+          hdiutil attach -nobrowse -readonly -plist "$dmg_path" > "$plist_file"
+
+          mount_point=""
+          i=0
+          while /usr/libexec/PlistBuddy -c "Print :system-entities:$i:dev-entry" "$plist_file" >/dev/null 2>&1; do
+            mp="$(/usr/libexec/PlistBuddy -c "Print :system-entities:$i:mount-point" "$plist_file" 2>/dev/null || true)"
+            if [ -n "$mp" ]; then
+              mount_point="$mp"
+              break
+            fi
+            i=$((i + 1))
+          done
+
+          if [ -z "$mount_point" ] || [ ! -d "$mount_point" ]; then
+            echo "::error::Failed to determine mount point for $dmg_path"
+            echo "---- hdiutil attach -plist output ----"
+            cat "$plist_file" || true
+            exit 1
+          fi
+          echo "Mounted: $mount_point"
+
+          app_path=$(find "$mount_point" -maxdepth 2 -name '*.app' -type d | head -n1)
+          if [ -z "$app_path" ]; then
+            echo "::error::No .app bundle found under $mount_point"
+            ls -la "$mount_point"
+            exit 1
+          fi
+          echo "App: $app_path"
+
+          echo "dmg_path=$dmg_path" >> "$GITHUB_OUTPUT"
+          echo "mount_point=$mount_point" >> "$GITHUB_OUTPUT"
+          echo "app_path=$app_path" >> "$GITHUB_OUTPUT"
+
+      - name: codesign --verify --deep --strict
+        run: |
+          codesign --verify --deep --strict --verbose=4 "${{ steps.mount.outputs.app_path }}"
+
+      - name: codesign -dv (cert chain summary)
+        # Info only, never fail. Useful in logs to confirm the cert chain is the
+        # Developer ID Application identity you provisioned, not an ad-hoc sig.
+        run: |
+          codesign -dv --verbose=4 "${{ steps.mount.outputs.app_path }}" 2>&1 || true
+
+      - name: spctl --assess (Gatekeeper acceptance)
+        # This is THE end-user-experience check. If spctl says "accepted" with
+        # source "Notarized Developer ID", any user's Mac will open the app
+        # without the "developer cannot be verified" warning.
+        run: |
+          set -euo pipefail
+          out=$(spctl --assess --type exec --verbose=4 "${{ steps.mount.outputs.app_path }}" 2>&1)
+          echo "$out"
+          if ! grep -q 'accepted' <<<"$out"; then
+            echo "::error::spctl rejected the app --Gatekeeper would block it on user machines."
+            exit 1
+          fi
+          if ! grep -q 'Notarized Developer ID' <<<"$out"; then
+            echo "::error::spctl accepted but source is not 'Notarized Developer ID' (got: $(grep -oE 'source=.*' <<<"$out" || echo unknown))"
+            exit 1
+          fi
+          echo "::notice::Gatekeeper accepts the app with source=Notarized Developer ID"
+
+      - name: stapler validate (offline ticket attached to DMG)
+        run: |
+          xcrun stapler validate "${{ steps.mount.outputs.dmg_path }}"
+
+      - name: Unmount DMG
+        if: always() && steps.mount.outputs.mount_point != ''
+        run: |
+          hdiutil detach "${{ steps.mount.outputs.mount_point }}" || \
+            hdiutil detach -force "${{ steps.mount.outputs.mount_point }}" || true
+
+      - name: Summary
+        env:
+          TAG: ${{ inputs.tag_name }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          {
+            echo "## macOS signing verification --$TAG ($ARCH)"
+            echo ""
+            echo "- DMG: \`${{ steps.mount.outputs.dmg_path }}\`"
+            echo "- App: \`${{ steps.mount.outputs.app_path }}\`"
+            echo ""
+            echo "### Checks passed"
+            echo "- \`codesign --verify --deep --strict\`"
+            echo "- \`spctl --assess --type exec\` (Notarized Developer ID)"
+            echo "- \`xcrun stapler validate\` (offline ticket)"
+            echo ""
+            echo "The release would open cleanly on an end user's Mac without"
+            echo "Gatekeeper warnings."
+          } >> "$GITHUB_STEP_SUMMARY"

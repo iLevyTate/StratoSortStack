@@ -1,0 +1,177 @@
+{
+  "productName": "StratoSort Core",
+  "appId": "com.stratosort.app",
+  "copyright": "Copyright © 2026 Kennedy Applied Sciences, Inc.",
+  "publish": [
+    {
+      "provider": "github",
+      "owner": "iLevyTate",
+      "repo": "StratoSortCore"
+    }
+  ],
+  "artifactName": "StratoSortCore-${version}-${os}-${arch}.${ext}",
+  "compression": "maximum",
+  "asar": true,
+  "electronFuses": {
+    "runAsNode": false,
+    "enableCookieEncryption": true,
+    "enableNodeOptionsEnvironmentVariable": false,
+    "enableNodeCliInspectArguments": false,
+    "enableEmbeddedAsarIntegrityValidation": true,
+    "onlyLoadAppFromAsar": true,
+    "loadBrowserProcessSpecificV8Snapshot": false,
+    "grantFileProtocolExtraPrivileges": false
+  },
+  "nodeGypRebuild": false,
+  "asarUnpack": [
+    "**/*.{node,dll,so,dylib,gguf,bin}",
+    "**/node_modules/sharp/**/*",
+    "**/node_modules/@img/**/*",
+    "**/node_modules/tesseract.js-core/**/*",
+    "**/node_modules/tesseract.js/**/*",
+    "**/node_modules/node-llama-cpp/**/*",
+    "**/node_modules/@node-llama-cpp/**/*",
+    "**/node_modules/@fugood/**/*",
+    "**/node_modules/@napi-rs/canvas/**/*",
+    "**/node_modules/better-sqlite3/**/*",
+    "**/node_modules/lz4-napi/**/*",
+    "**/node_modules/pino/**/*",
+    "**/node_modules/thread-stream/**/*",
+    "**/node_modules/piscina/**/*",
+    "dist/{ocrWorker,embeddingWorker,logExportWorker,textExtractionWorker,imagePreprocessWorker,umapProjectionWorker,settingsImportParserWorker}.js"
+  ],
+  "files": [
+    "dist/**/*",
+    "src/shared/**/*",
+    "package.json",
+    "!**/*.map",
+    "!test/**",
+    "!coverage/**",
+    "!**/*.test.*",
+    "!**/__tests__/**",
+    "!**/node_modules/**/test/**",
+    "!**/node_modules/**/tests/**",
+    "!**/node_modules/**/__tests__/**",
+    "!**/node_modules/**/docs/**",
+    "!**/node_modules/**/doc/**",
+    "!**/node_modules/**/examples/**",
+    "!**/node_modules/**/example/**",
+    "!**/node_modules/**/coverage/**",
+    "!**/node_modules/**/benchmark/**",
+    "!**/node_modules/**/benchmarks/**",
+    "!**/node_modules/**/demo/**",
+    "!**/node_modules/**/demos/**"
+  ],
+  "extraMetadata": {
+    "main": "dist/main.js"
+  },
+  "directories": {
+    "buildResources": "assets",
+    "output": "release/build"
+  },
+  "fileAssociations": [
+    { "ext": "pdf", "name": "PDF Document", "role": "Viewer" },
+    { "ext": "doc", "role": "Viewer" },
+    { "ext": "docx", "role": "Viewer" },
+    { "ext": "xlsx", "role": "Viewer" },
+    { "ext": "pptx", "role": "Viewer" },
+    { "ext": "txt", "role": "Viewer" },
+    { "ext": "md", "role": "Viewer" }
+  ],
+  "win": {
+    "icon": "assets/icons/win/icon.ico",
+    "target": ["nsis", "portable"]
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": false,
+    "createDesktopShortcut": "always",
+    "createStartMenuShortcut": true,
+    "shortcutName": "StratoSort Core",
+    "runAfterFinish": true,
+    "allowElevation": false,
+    "installerIcon": "assets/icons/win/icon.ico",
+    "uninstallerIcon": "assets/icons/win/icon.ico",
+    "installerHeaderIcon": "assets/icons/win/icon.ico",
+    "include": "build/installer-themed.nsh",
+    "license": "build/license_en.txt",
+    "artifactName": "StratoSortCore-Setup-${version}.exe"
+  },
+  "mac": {
+    "icon": "assets/icons/mac/icon.icns",
+    "category": "public.app-category.productivity",
+    "hardenedRuntime": true,
+    "gatekeeperAssess": false,
+    "entitlements": "assets/entitlements.mac.plist",
+    "entitlementsInherit": "assets/entitlements.mac.plist",
+    "target": ["dmg", "zip"]
+  },
+  "dmg": {
+    "title": "StratoSort Core ${version}",
+    "icon": "assets/icons/mac/icon.icns",
+    "window": {
+      "width": 540,
+      "height": 380
+    },
+    "contents": [
+      {
+        "x": 130,
+        "y": 240
+      },
+      {
+        "x": 410,
+        "y": 240,
+        "type": "link",
+        "path": "/Applications"
+      }
+    ]
+  },
+  "linux": {
+    "icon": "assets/icons/png/512x512.png",
+    "maintainer": "Kennedy Applied Sciences, Inc. <contact@kennedyappliedsciences.com>",
+    "target": ["AppImage", "deb"],
+    "category": "Office;Utility;FileTools",
+    "synopsis": "AI-powered file organization",
+    "description": "StratoSort uses AI to intelligently organize your files into smart folders. Features include semantic search, automatic categorization, and customizable organization rules.",
+    "mimeTypes": [
+      "application/pdf",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      "text/plain",
+      "text/markdown"
+    ]
+  },
+  "extraResources": [
+    {
+      "from": "assets/",
+      "to": "assets/",
+      "filter": [
+        "stratosort-logo.png",
+        "icons/win/icon.ico",
+        "icons/mac/icon.icns",
+        "icons/png/*.png",
+        "entitlements.mac.plist",
+        "runtime/**"
+      ]
+    },
+    {
+      "from": "LICENSE",
+      "to": "LICENSE"
+    },
+    {
+      "from": "PRIVACY.md",
+      "to": "PRIVACY.md"
+    },
+    {
+      "from": "SECURITY.md",
+      "to": "SECURITY.md"
+    },
+    {
+      "from": "docs/THIRD_PARTY_NOTICES.md",
+      "to": "THIRD_PARTY_NOTICES.md"
+    }
+  ]
+}

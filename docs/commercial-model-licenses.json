@@ -1,0 +1,133 @@
+{
+  "lastReviewed": "2026-05-05",
+  "models": [
+    {
+      "url": "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q8_0.gguf",
+      "license": "apache-2.0",
+      "commercialUse": "allowed",
+      "riskLevel": "allowed",
+      "obligations": [
+        "Retain Apache-2.0 notice and attribution when redistributing."
+      ],
+      "source": "https://huggingface.co/api/models/nomic-ai/nomic-embed-text-v1.5-GGUF"
+    },
+    {
+      "url": "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf",
+      "license": "apache-2.0",
+      "commercialUse": "allowed",
+      "riskLevel": "allowed",
+      "obligations": [
+        "Retain Apache-2.0 notice and attribution when redistributing."
+      ],
+      "source": "https://huggingface.co/api/models/nomic-ai/nomic-embed-text-v1.5-GGUF"
+    },
+    {
+      "url": "https://huggingface.co/mixedbread-ai/mxbai-embed-large-v1/resolve/main/gguf/mxbai-embed-large-v1-f16.gguf",
+      "license": "apache-2.0",
+      "commercialUse": "allowed",
+      "riskLevel": "allowed",
+      "obligations": [
+        "Retain Apache-2.0 notice and attribution when redistributing."
+      ],
+      "source": "https://huggingface.co/api/models/mixedbread-ai/mxbai-embed-large-v1"
+    },
+    {
+      "url": "https://huggingface.co/second-state/All-MiniLM-L6-v2-Embedding-GGUF/resolve/main/all-MiniLM-L6-v2-Q4_K_M.gguf",
+      "license": "apache-2.0",
+      "commercialUse": "allowed",
+      "riskLevel": "allowed",
+      "obligations": [
+        "Retain Apache-2.0 notice and attribution when redistributing."
+      ],
+      "source": "https://huggingface.co/api/models/second-state/All-MiniLM-L6-v2-Embedding-GGUF"
+    },
+    {
+      "url": "https://huggingface.co/second-state/All-MiniLM-L6-v2-Embedding-GGUF/resolve/main/all-MiniLM-L6-v2-Q8_0.gguf",
+      "license": "apache-2.0",
+      "commercialUse": "allowed",
+      "riskLevel": "allowed",
+      "obligations": [
+        "Retain Apache-2.0 notice and attribution when redistributing."
+      ],
+      "source": "https://huggingface.co/api/models/second-state/All-MiniLM-L6-v2-Embedding-GGUF"
+    },
+    {
+      "url": "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+      "license": "apache-2.0",
+      "commercialUse": "allowed",
+      "riskLevel": "allowed",
+      "obligations": [
+        "Retain Apache-2.0 notice and attribution when redistributing."
+      ],
+      "source": "https://huggingface.co/api/models/bartowski/Qwen2.5-7B-Instruct-GGUF"
+    },
+    {
+      "url": "https://huggingface.co/bartowski/Mistral-7B-Instruct-v0.3-GGUF/resolve/main/Mistral-7B-Instruct-v0.3-Q4_K_M.gguf",
+      "license": "apache-2.0",
+      "commercialUse": "allowed",
+      "riskLevel": "allowed",
+      "obligations": [
+        "Retain Apache-2.0 notice and attribution when redistributing."
+      ],
+      "source": "https://huggingface.co/api/models/bartowski/Mistral-7B-Instruct-v0.3-GGUF"
+    },
+    {
+      "url": "https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+      "license": "llama3.2",
+      "commercialUse": "allowed_with_conditions",
+      "riskLevel": "review_required",
+      "obligations": [
+        "Include the Llama 3.2 Community License text in distribution.",
+        "Include required attribution notice (\"Built with Llama\" and notice file language).",
+        "Verify Additional Commercial Terms for large-scale monthly active user thresholds."
+      ],
+      "notes": "EU multimodal carve-out N/A: text models only; vision is Apache-licensed LLaVA-Mistral.",
+      "source": "https://huggingface.co/api/models/bartowski/Llama-3.2-3B-Instruct-GGUF"
+    },
+    {
+      "url": "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf",
+      "license": "mit",
+      "commercialUse": "allowed",
+      "riskLevel": "allowed",
+      "obligations": [
+        "Retain MIT license and NOTICE files when redistributing."
+      ],
+      "source": "https://huggingface.co/api/models/microsoft/Phi-3-mini-4k-instruct-gguf"
+    },
+    {
+      "url": "https://huggingface.co/cjpais/llava-1.6-mistral-7b-gguf/resolve/main/llava-v1.6-mistral-7b.Q4_K_M.gguf",
+      "license": "apache-2.0",
+      "commercialUse": "allowed",
+      "riskLevel": "allowed",
+      "obligations": [
+        "Retain Apache-2.0 notice and attribution when redistributing."
+      ],
+      "notes": "Vision model is LLaVA v1.6 on a Mistral-7B (Apache-2.0) base — the Llama 3.2 Community License EU multimodal restriction does not apply to this app's vision stack (verified 2026-07-10).",
+      "source": "https://huggingface.co/api/models/cjpais/llava-1.6-mistral-7b-gguf"
+    },
+    {
+      "url": "https://huggingface.co/cjpais/llava-1.6-mistral-7b-gguf/resolve/main/mmproj-model-f16.gguf",
+      "license": "apache-2.0",
+      "commercialUse": "allowed",
+      "riskLevel": "allowed",
+      "obligations": [
+        "Retain Apache-2.0 notice and attribution when redistributing."
+      ],
+      "notes": "Vision model is LLaVA v1.6 on a Mistral-7B (Apache-2.0) base — the Llama 3.2 Community License EU multimodal restriction does not apply to this app's vision stack (verified 2026-07-10).",
+      "source": "https://huggingface.co/api/models/cjpais/llava-1.6-mistral-7b-gguf"
+    }
+  ],
+  "runtimeBinaries": [
+    {
+      "name": "llama-server runtime bundle",
+      "source": "https://github.com/ggml-org/llama.cpp/releases",
+      "license": "mit",
+      "commercialUse": "allowed",
+      "riskLevel": "review_required",
+      "obligations": [
+        "Retain MIT license for llama.cpp.",
+        "Validate redistributed GPU DLL/license obligations from the selected release archive."
+      ]
+    }
+  ]
+}

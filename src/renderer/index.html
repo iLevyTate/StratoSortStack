@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en" data-theme="primary">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>StratoSort Core</title>
+    <!-- CSP is set by the main process. Keeping meta minimal to avoid conflicts. -->
+    <!-- Critical inline styles for splash screen to prevent FOUC (Flash of Unstyled Content) -->
+    <style>
+      /* Lock layout from first paint to prevent resize/flash when CSS bundle loads */
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #0f1820;
+        overscroll-behavior: none;
+      }
+      #root {
+        height: 100%;
+        min-height: 100%;
+        width: 100%;
+        overflow: hidden;
+      }
+      /* Splash screen must be styled immediately before CSS bundle loads */
+      .splash-screen {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        background: #0f1820;
+        opacity: 1;
+        will-change: opacity;
+        contain: layout paint style;
+        backface-visibility: hidden;
+        transform: translateZ(0);
+      }
+      .splash-background {
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(circle at top, rgba(59, 160, 192, 0.18), transparent 34%),
+          radial-gradient(circle at 82% 18%, rgba(224, 160, 32, 0.08), transparent 28%),
+          linear-gradient(180deg, #14212b 0%, #0f1820 52%, #0b141b 100%);
+        pointer-events: none;
+      }
+      .splash-content {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        padding: 2rem;
+      }
+      .splash-mark {
+        position: relative;
+        width: 126px;
+        height: 108px;
+        margin-bottom: 1.75rem;
+      }
+      .splash-mark-aura {
+        position: absolute;
+        inset: 10px 12px 4px;
+        background: radial-gradient(
+          circle,
+          rgba(59, 160, 192, 0.24) 0%,
+          rgba(16, 120, 160, 0.16) 45%,
+          transparent 78%
+        );
+        filter: blur(12px);
+        pointer-events: none;
+      }
+      .splash-file {
+        position: relative;
+        width: 72px;
+        height: 88px;
+        border-radius: 22px;
+        border: 1px solid rgba(196, 221, 233, 0.14);
+        background: linear-gradient(180deg, rgba(26, 46, 62, 0.96) 0%, rgba(20, 33, 43, 0.98) 100%);
+        box-shadow:
+          0 26px 44px rgba(5, 10, 15, 0.4),
+          0 8px 16px rgba(5, 10, 15, 0.22);
+        overflow: hidden;
+        backdrop-filter: blur(4px);
+        -webkit-backdrop-filter: blur(4px);
+      }
+      .splash-file::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(135deg, rgba(216, 222, 229, 0.18), transparent 48%);
+        pointer-events: none;
+      }
+      .splash-file-back {
+        position: absolute;
+        left: 12px;
+        top: 14px;
+        transform: rotate(-14deg);
+        opacity: 0.62;
+      }
+      .splash-file-mid {
+        position: absolute;
+        left: 28px;
+        top: 8px;
+        transform: rotate(9deg);
+        opacity: 0.84;
+      }
+      .splash-file-front {
+        position: absolute;
+        left: 28px;
+        top: 16px;
+        border-color: rgba(59, 160, 192, 0.24);
+        background: linear-gradient(180deg, rgba(36, 57, 73, 0.98) 0%, rgba(26, 46, 62, 1) 100%);
+      }
+      .splash-file-accent {
+        position: absolute;
+        top: 14px;
+        left: 14px;
+        width: 12px;
+        height: 36px;
+        border-radius: 999px;
+        background: linear-gradient(180deg, #3ba0c0 0%, #1078a0 100%);
+        box-shadow: 0 6px 14px rgba(59, 160, 192, 0.28);
+      }
+      .splash-file-lines {
+        position: absolute;
+        top: 18px;
+        left: 34px;
+        right: 14px;
+        display: grid;
+        gap: 8px;
+      }
+      .splash-file-line {
+        height: 6px;
+        border-radius: 999px;
+        background: linear-gradient(90deg, rgba(59, 160, 192, 0.28), rgba(138, 150, 163, 0.14));
+      }
+      .splash-file-line-short {
+        width: 68%;
+      }
+      .splash-file-line-medium {
+        width: 86%;
+      }
+      .splash-file-line-long {
+        width: 100%;
+      }
+      .splash-title {
+        margin: 0 0 0.5rem 0;
+        font-size: 2rem;
+        font-weight: 700;
+        font-family:
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          Roboto,
+          sans-serif;
+        background: linear-gradient(135deg, #d8dee5 0%, #97a2ad 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+      }
+      .splash-tagline {
+        margin: 0 0 2rem 0;
+        font-size: 0.9375rem;
+        color: #97a2ad;
+        font-family:
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          Roboto,
+          sans-serif;
+        font-weight: 500;
+      }
+      .splash-loader-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.75rem;
+      }
+      .splash-loader {
+        width: 200px;
+        height: 4px;
+        background: rgba(59, 160, 192, 0.14);
+        border-radius: 2px;
+        overflow: hidden;
+        contain: layout paint;
+      }
+      .splash-loader-bar {
+        width: 40%;
+        height: 100%;
+        background: linear-gradient(90deg, #1078a0, #3ba0c0);
+        border-radius: 2px;
+        animation: splash-loading 1.5s ease-in-out infinite;
+        will-change: transform;
+        transform: translate3d(-100%, 0, 0);
+      }
+      .splash-status {
+        margin: 0;
+        font-size: 0.8125rem;
+        color: #8d9fab;
+        font-family:
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          Roboto,
+          sans-serif;
+        font-weight: 500;
+      }
+      .splash-footer {
+        position: absolute;
+        bottom: 1.5rem;
+        left: 0;
+        right: 0;
+        text-align: center;
+      }
+      .splash-version {
+        font-size: 0.75rem;
+        color: #8d9fab;
+        font-family:
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          Roboto,
+          sans-serif;
+        font-weight: 500;
+      }
+      @keyframes splash-loading {
+        0% {
+          transform: translate3d(-100%, 0, 0);
+        }
+        50% {
+          transform: translate3d(150%, 0, 0);
+        }
+        100% {
+          transform: translate3d(150%, 0, 0);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .splash-loader-bar {
+          animation-duration: 1ms !important;
+          animation-iteration-count: 1 !important;
+        }
+      }
+      /* Theme-scoped splash so the reload screen matches the user's palette
+         before the CSS bundle loads. data-theme is set pre-paint by the inline
+         script above. Values mirror the light/dark tokens in styles.css; the
+         branded file-stack mark is intentionally left as-is (reads as a glyph on
+         either surface). "primary" needs no block — it is the base above. */
+      :root[data-theme='dark'],
+      :root[data-theme='dark'] body {
+        background: #0a0c0e;
+      }
+      :root[data-theme='dark'] .splash-screen {
+        background: #0a0c0e;
+      }
+      :root[data-theme='dark'] .splash-background {
+        background:
+          radial-gradient(circle at top, rgba(70, 176, 208, 0.16), transparent 34%),
+          radial-gradient(circle at 82% 18%, rgba(224, 160, 32, 0.06), transparent 28%),
+          linear-gradient(180deg, #101316 0%, #0a0c0e 55%, #060708 100%);
+      }
+      :root[data-theme='light'],
+      :root[data-theme='light'] body {
+        background: #eef2f6;
+      }
+      :root[data-theme='light'] .splash-screen {
+        background: #eef2f6;
+      }
+      :root[data-theme='light'] .splash-background {
+        background:
+          radial-gradient(circle at top, rgba(31, 134, 168, 0.12), transparent 34%),
+          radial-gradient(circle at 82% 18%, rgba(185, 121, 12, 0.06), transparent 28%),
+          linear-gradient(180deg, #f7f9fb 0%, #eef2f6 55%, #e2e8ee 100%);
+      }
+      :root[data-theme='light'] .splash-title {
+        background: linear-gradient(135deg, #1f2c35 0%, #4a5a66 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+      }
+      :root[data-theme='light'] .splash-tagline {
+        color: #4a5a66;
+      }
+      :root[data-theme='light'] .splash-status,
+      :root[data-theme='light'] .splash-version {
+        color: #6a7884;
+      }
+      :root[data-theme='light'] .splash-loader {
+        background: rgba(31, 134, 168, 0.16);
+      }
+    </style>
+  </head>
+  <body data-theme="primary">
+    <!-- If you change this inline script, update the matching script-src sha256 in createWindow.js CSP. -->
+    <script>
+      // Start of splash visibility window (before bundle loads) — used to enforce a minimum display time.
+      window.__STRATOSORT_SPLASH_AT =
+        typeof performance !== 'undefined' && typeof performance.now === 'function'
+          ? performance.now()
+          : Date.now();
+      // Apply the persisted palette BEFORE first paint so the splash/reload
+      // screen matches the user's theme instead of always flashing the default
+      // dark 'primary'. Reads a cheap dedicated mirror key (written by App.js),
+      // falling back to the full Redux persistence blob for installs from before
+      // the mirror key existed. Kept ES5/synchronous so it runs inside the CSP
+      // script hash and before the splash div paints just below.
+      (function () {
+        try {
+          var valid = { primary: 1, light: 1, dark: 1 };
+          var theme = localStorage.getItem('stratosort_theme');
+          if (!valid[theme]) {
+            var raw = localStorage.getItem('stratosort_redux_state');
+            var parsed = raw ? JSON.parse(raw) : null;
+            theme = parsed && parsed.ui ? parsed.ui.selectedTheme : null;
+          }
+          if (!valid[theme]) theme = 'primary';
+          document.documentElement.setAttribute('data-theme', theme);
+          if (document.body) document.body.setAttribute('data-theme', theme);
+        } catch (e) {
+          /* localStorage unavailable (private mode / disabled) — keep default */
+        }
+      })();
+    </script>
+    <!-- Initial loading screen with polished design -->
+    <div
+      id="initial-loading"
+      class="splash-screen"
+      role="status"
+      aria-live="polite"
+      aria-label="Loading StratoSort application"
+    >
+      <!-- Background gradient -->
+      <div class="splash-background"></div>
+
+      <!-- Content container -->
+      <section class="splash-content">
+        <!-- Abstract file stack mark -->
+        <div class="splash-mark" aria-hidden="true">
+          <div class="splash-mark-aura"></div>
+          <div class="splash-file splash-file-back"></div>
+          <div class="splash-file splash-file-mid"></div>
+          <div class="splash-file splash-file-front">
+            <div class="splash-file-accent"></div>
+            <div class="splash-file-lines">
+              <div class="splash-file-line splash-file-line-medium"></div>
+              <div class="splash-file-line splash-file-line-long"></div>
+              <div class="splash-file-line splash-file-line-short"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- App name -->
+        <h1 class="splash-title">StratoSort</h1>
+
+        <!-- Tagline -->
+        <p class="splash-tagline">AI-powered file organization</p>
+
+        <!-- Loading indicator -->
+        <div class="splash-loader-container">
+          <div class="splash-loader">
+            <div class="splash-loader-bar"></div>
+          </div>
+          <p id="splash-status" class="splash-status">Loading local workspace...</p>
+        </div>
+      </section>
+
+      <!-- Version info (optional) -->
+      <div class="splash-footer">
+        <span class="splash-version">Preparing workspace</span>
+      </div>
+    </div>
+
+    <!-- React root container (must be empty for React to work) -->
+    <div id="root"></div>
+
+    <!-- Additional styles are defined in Tailwind CSS, splash screen uses inline styles above -->
+
+    <!-- Webpack will inject the script tags automatically -->
+  </body>
+</html>

@@ -1,0 +1,12 @@
+2024-01-15 08:00:01 INFO  [Startup] Application started, version 4.0.0
+2024-01-15 08:00:02 INFO  [Config] Loaded configuration from settings.json
+2024-01-15 08:00:03 DEBUG [Database] Connection pool initialized (size=10)
+2024-01-15 08:05:12 INFO  [Auth] User session established for user_id=1042
+2024-01-15 08:17:45 WARN  [Cache] Cache miss rate above threshold: 38%
+2024-01-15 09:02:10 ERROR [Network] Request to /api/reports timed out after 30000ms
+2024-01-15 09:02:11 INFO  [Network] Retrying request (attempt 2 of 3)
+2024-01-15 09:02:14 INFO  [Network] Request to /api/reports succeeded (1873ms)
+2024-01-15 10:30:00 INFO  [Scheduler] Nightly cleanup task scheduled for 02:00
+2024-01-15 12:45:33 DEBUG [Worker] Processed batch of 250 records in 4.2s
+2024-01-15 17:59:58 INFO  [Shutdown] Graceful shutdown initiated
+2024-01-15 17:59:59 INFO  [Shutdown] All connections closed, exiting

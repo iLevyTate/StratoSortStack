@@ -1,0 +1,298 @@
+/**
+ * Tests for LLM Suggester
+ * Tests LLM-powered organization suggestions
+ */
+
+// Mock logger
+jest.mock('../src/shared/logger', () => {
+  const logger = {
+    setContext: jest.fn(),
+    info: jest.fn(),
+    debug: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn()
+  };
+  return { logger, createLogger: jest.fn(() => logger) };
+});
+
+const mockLlamaService = {
+  getConfig: jest.fn().mockReturnValue({ textModel: 'test-model.gguf' }),
+  initialize: jest.fn().mockResolvedValue(undefined),
+  generateText: jest.fn()
+};
+const { AI_DEFAULTS } = require('../src/shared/constants');
+
+jest.mock('../src/main/services/LlamaService', () => ({
+  getInstance: () => mockLlamaService
+}));
+
+// Mock deduplicator
+const mockDeduplicator = {
+  generateKey: jest.fn().mockReturnValue('test-key'),
+  deduplicate: jest.fn()
+};
+
+jest.mock('../src/main/utils/llmOptimization', () => ({
+  globalDeduplicator: mockDeduplicator
+}));
+
+// Mock JSON repair
+jest.mock('../src/main/utils/jsonRepair', () => ({
+  extractAndParseJSON: jest.fn()
+}));
+
+// Mock LLM-based JSON repair
+jest.mock('../src/main/utils/llmJsonRepair', () => ({
+  attemptJsonRepairWithLlama: jest.fn()
+}));
+
+describe('llmSuggester', () => {
+  let getLLMAlternativeSuggestions;
+  let MAX_RESPONSE_SIZE;
+  let extractAndParseJSON;
+  let attemptJsonRepairWithLlama;
+
+  const testFile = {
+    name: 'document.pdf',
+    extension: '.pdf',
+    analysis: {
+      category: 'documents',
+      subject: 'Report',
+      confidence: 0.9
+    }
+  };
+
+  const testSmartFolders = [
+    { name: 'Documents', description: 'General documents' },
+    { name: 'Reports', description: 'Business reports' },
+    { name: 'Archive', description: 'Archived files' }
+  ];
+
+  beforeEach(() => {
+    jest.resetModules();
+    jest.clearAllMocks();
+
+    extractAndParseJSON = require('../src/main/utils/jsonRepair').extractAndParseJSON;
+    attemptJsonRepairWithLlama =
+      require('../src/main/utils/llmJsonRepair').attemptJsonRepairWithLlama;
+    attemptJsonRepairWithLlama.mockResolvedValue(null);
+
+    // Default mock responses
+    mockDeduplicator.deduplicate.mockImplementation((key, fn) => fn());
+
+    mockLlamaService.generateText.mockResolvedValue({
+      response: JSON.stringify({
+        suggestions: [
+          {
+            folder: 'Reports',
+            reasoning: 'Document appears to be a report',
+            confidence: 0.85,
+            strategy: 'content-based'
+          }
+        ]
+      })
+    });
+
+    extractAndParseJSON.mockReturnValue({
+      suggestions: [
+        {
+          folder: 'Reports',
+          reasoning: 'Document appears to be a report',
+          confidence: 0.85,
+          strategy: 'content-based'
+        }
+      ]
+    });
+
+    const llmSuggester = require('../src/main/services/organization/llmSuggester');
+    getLLMAlternativeSuggestions = llmSuggester.getLLMAlternativeSuggestions;
+    MAX_RESPONSE_SIZE = llmSuggester.MAX_RESPONSE_SIZE;
+  });
+
+  test('returns suggestions from LLM', async () => {
+    const suggestions = await getLLMAlternativeSuggestions(testFile, testSmartFolders);
+
+    expect(suggestions).toHaveLength(1);
+    expect(suggestions[0].folder).toBe('Reports');
+    expect(suggestions[0].reasoning).toBe('Document appears to be a report');
+    expect(suggestions[0].method).toBe('llm_creative');
+  });
+
+  test('first-pass prompt requires raw JSON without markdown fences or backticks', async () => {
+    await getLLMAlternativeSuggestions(testFile, testSmartFolders);
+
+    const { prompt } = mockLlamaService.generateText.mock.calls[0][0];
+    expect(prompt).toContain('STRICT OUTPUT RULES');
+    expect(prompt).toMatch(/no backticks/i);
+    expect(prompt).toMatch(/markdown/i);
+  });
+
+  test('uses deduplicator to prevent duplicate calls', async () => {
+    await getLLMAlternativeSuggestions(testFile, testSmartFolders);
+
+    expect(mockDeduplicator.generateKey).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fileName: 'document.pdf',
+        type: 'organization-suggestions'
+      })
+    );
+    expect(mockDeduplicator.deduplicate).toHaveBeenCalled();
+  });
+
+  test('passes config values to llama', async () => {
+    await getLLMAlternativeSuggestions(testFile, testSmartFolders, {
+      llmTemperature: 0.5,
+      llmMaxTokens: 1000
+    });
+
+    // The config is passed through deduplicate to generate
+    expect(mockDeduplicator.deduplicate).toHaveBeenCalled();
+  });
+
+  test('returns empty array when llama is not available', async () => {
+    mockLlamaService.initialize.mockRejectedValueOnce(new Error('Llama not available'));
+    const suggestions = await getLLMAlternativeSuggestions(testFile, testSmartFolders);
+    expect(suggestions).toEqual([]);
+  });
+
+  test('returns empty array when no valid smart folders are configured', async () => {
+    const suggestions = await getLLMAlternativeSuggestions(testFile, [{}, { name: '   ' }]);
+    expect(suggestions).toEqual([]);
+    expect(mockLlamaService.generateText).not.toHaveBeenCalled();
+  });
+
+  test('uses default model', async () => {
+    const suggestions = await getLLMAlternativeSuggestions(testFile, testSmartFolders);
+    expect(suggestions).toHaveLength(1);
+    expect(mockLlamaService.generateText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: expect.any(String),
+        temperature: 0.7,
+        maxTokens: 500
+      })
+    );
+  });
+
+  test('returns empty array when response exceeds size limit', async () => {
+    const largeResponse = 'x'.repeat(MAX_RESPONSE_SIZE + 1);
+    mockLlamaService.generateText.mockResolvedValueOnce({
+      response: largeResponse
+    });
+
+    const suggestions = await getLLMAlternativeSuggestions(testFile, testSmartFolders);
+
+    expect(suggestions).toEqual([]);
+  });
+
+  test('returns empty array when JSON parsing fails', async () => {
+    extractAndParseJSON.mockReturnValue(null);
+    attemptJsonRepairWithLlama.mockResolvedValueOnce(null);
+
+    const suggestions = await getLLMAlternativeSuggestions(testFile, testSmartFolders);
+
+    expect(suggestions).toEqual([]);
+  });
+
+  test('drops hallucinated folders not present in smart folder config', async () => {
+    extractAndParseJSON.mockReturnValueOnce({
+      suggestions: [
+        {
+          folder: 'MadeUpFolder',
+          reasoning: 'This folder sounds plausible',
+          confidence: 0.9,
+          strategy: 'hallucinated'
+        }
+      ]
+    });
+
+    const suggestions = await getLLMAlternativeSuggestions(testFile, testSmartFolders);
+    expect(suggestions).toEqual([]);
+  });
+
+  test('returns empty array when suggestions array is missing', async () => {
+    extractAndParseJSON.mockReturnValueOnce({});
+
+    const suggestions = await getLLMAlternativeSuggestions(testFile, testSmartFolders);
+
+    expect(suggestions).toEqual([]);
+  });
+
+  test('handles LLM error gracefully', async () => {
+    mockDeduplicator.deduplicate.mockRejectedValueOnce(new Error('LLM error'));
+
+    const suggestions = await getLLMAlternativeSuggestions(testFile, testSmartFolders);
+
+    expect(suggestions).toEqual([]);
+  });
+
+  test('maps suggestion properties correctly', async () => {
+    extractAndParseJSON.mockReturnValueOnce({
+      suggestions: [
+        {
+          folder: 'Archive',
+          reasoning: 'Old document',
+          confidence: 0.75,
+          strategy: 'temporal'
+        },
+        {
+          folder: 'Documents',
+          reasoning: 'General doc',
+          // confidence missing - should default to 0.5
+          strategy: 'fallback'
+        }
+      ]
+    });
+
+    const suggestions = await getLLMAlternativeSuggestions(testFile, testSmartFolders);
+
+    expect(suggestions).toHaveLength(2);
+
+    expect(suggestions[0].folder).toBe('Archive');
+    expect(suggestions[0].score).toBe(0.75);
+    expect(suggestions[0].confidence).toBe(0.75);
+    expect(suggestions[0].strategy).toBe('temporal');
+    expect(suggestions[0].method).toBe('llm_creative');
+
+    expect(suggestions[1].folder).toBe('Documents');
+    expect(suggestions[1].score).toBe(0.5); // Default
+    expect(suggestions[1].confidence).toBe(0.5); // Default
+  });
+
+  test('handles file without analysis', async () => {
+    const fileWithoutAnalysis = {
+      name: 'mystery.txt',
+      extension: '.txt'
+    };
+
+    await getLLMAlternativeSuggestions(fileWithoutAnalysis, testSmartFolders);
+
+    expect(mockDeduplicator.generateKey).toHaveBeenCalled();
+  });
+
+  test('truncates long analysis in prompt', async () => {
+    const fileWithLongAnalysis = {
+      name: 'doc.pdf',
+      extension: '.pdf',
+      analysis: {
+        content: 'x'.repeat(1000),
+        extraField: 'y'.repeat(1000)
+      }
+    };
+
+    await getLLMAlternativeSuggestions(fileWithLongAnalysis, testSmartFolders);
+
+    // Should not throw error
+    expect(mockDeduplicator.deduplicate).toHaveBeenCalled();
+  });
+
+  test('uses default config values', async () => {
+    await getLLMAlternativeSuggestions(testFile, testSmartFolders);
+
+    // Default temperature is 0.7, default max tokens is 500
+    expect(mockDeduplicator.deduplicate).toHaveBeenCalled();
+  });
+
+  test('MAX_RESPONSE_SIZE is exported', () => {
+    expect(MAX_RESPONSE_SIZE).toBe(1024 * 1024);
+  });
+});

@@ -1,0 +1,347 @@
+// @ts-check
+/**
+ * IPC Service Context
+ *
+ * Groups related dependencies into logical service contexts to reduce
+ * coupling and make dependency management more maintainable for IPC handlers.
+ *
+ * This pattern replaces the 28-parameter function signature with
+ * organized service groups that are easier to test and modify.
+ *
+ * NOTE: This is distinct from src/main/services/ServiceContainer.js which is
+ * the main DI container. This class specifically handles IPC handler context.
+ */
+
+/**
+ * @typedef {Object} CoreServices
+ * @property {import('electron').IpcMain} ipcMain - Electron IPC main module
+ * @property {typeof import('../../shared/constants').IPC_CHANNELS} IPC_CHANNELS - IPC channel constants
+ * @property {import('../../shared/logger').Logger} logger - Logger instance
+ */
+
+/**
+ * @typedef {Object} ElectronServices
+ * @property {import('electron').Dialog} dialog - Electron dialog API
+ * @property {import('electron').Shell} shell - Electron shell API
+ * @property {() => import('electron').BrowserWindow | null} getMainWindow - Function to get main BrowserWindow
+ */
+
+/**
+ * @typedef {Object} FolderServices
+ * @property {(...args: any[]) => any} getCustomFolders - Get custom folders
+ * @property {(...args: any[]) => any} setCustomFolders - Set custom folders
+ * @property {(...args: any[]) => any} saveCustomFolders - Persist custom folders
+ * @property {(...args: any[]) => any} scanDirectory - Scan directory for files
+ */
+
+/**
+ * @typedef {Object} AnalysisServices
+ * @property {(...args: any[]) => any} analyzeDocumentFile - Document analysis function
+ * @property {(...args: any[]) => any} analyzeImageFile - Image analysis function
+ */
+
+/**
+ * @typedef {Object} SettingsServices
+ * @property {Record<string, any>} settingsService - Settings service instance
+ * @property {(...args: any[]) => any} onSettingsChanged - Settings change callback
+ */
+
+/**
+ * @typedef {{ licenseService: import('../services/LicenseService').LicenseService }} LicenseServices
+ */
+
+/**
+ * IPC Service Context class that organizes dependencies into logical groups
+ * for IPC handlers. This is separate from the main DI ServiceContainer.
+ */
+class IpcServiceContext {
+  constructor() {
+    /** @type {CoreServices|null} */
+    this._core = null;
+    /** @type {ElectronServices|null} */
+    this._electron = null;
+    /** @type {FolderServices|null} */
+    this._folders = null;
+    /** @type {AnalysisServices|null} */
+    this._analysis = null;
+    /** @type {SettingsServices|null} */
+    this._settings = null;
+    /** @type {*} */
+    this._systemAnalytics = null;
+    /** @type {(() => any)|null} */
+    this._serviceIntegration = null;
+  }
+
+  /**
+   * Set core services (ipcMain, IPC_CHANNELS, logger)
+   * @param {CoreServices} services
+   */
+  setCore(services) {
+    this._core = services;
+    return this;
+  }
+
+  /**
+   * Set Electron-specific services (dialog, shell, window management)
+   * @param {ElectronServices} services
+   */
+  setElectron(services) {
+    this._electron = services;
+    return this;
+  }
+
+  /**
+   * Set folder management services
+   * @param {FolderServices} services
+   */
+  setFolders(services) {
+    this._folders = services;
+    return this;
+  }
+
+  /**
+   * Set analysis services (document, image, OCR)
+   * @param {AnalysisServices} services
+   */
+  setAnalysis(services) {
+    this._analysis = services;
+    return this;
+  }
+
+  /**
+   * Set settings services
+   * @param {SettingsServices} services
+   */
+  setSettings(services) {
+    this._settings = services;
+    return this;
+  }
+
+  /**
+   * Set license/entitlement services
+   * @param {LicenseServices} services
+   */
+  setLicense(services) {
+    this._license = services;
+    return this;
+  }
+
+  /**
+   * Set system analytics instance
+   * @param {*} analytics
+   */
+  setSystemAnalytics(analytics) {
+    this._systemAnalytics = analytics;
+    return this;
+  }
+
+  /**
+   * Set service integration getter
+   * @param {() => any} getter
+   */
+  setServiceIntegration(getter) {
+    this._serviceIntegration = getter;
+    return this;
+  }
+
+  // Getters for each service group
+  get core() {
+    return this._core;
+  }
+
+  get electron() {
+    return this._electron;
+  }
+
+  get folders() {
+    return this._folders;
+  }
+
+  get analysis() {
+    return this._analysis;
+  }
+
+  get settings() {
+    return this._settings;
+  }
+
+  get license() {
+    return this._license;
+  }
+
+  get systemAnalytics() {
+    return this._systemAnalytics;
+  }
+
+  get getServiceIntegration() {
+    return this._serviceIntegration;
+  }
+
+  /**
+   * Get a service by name (for backward compatibility)
+   * @param {string} name - Service name
+   * @returns {*} The requested service or null
+   */
+  getService(name) {
+    return this.get(name);
+  }
+
+  /**
+   * Get a required service by name - throws if not available
+   * Use this for services that MUST exist for the handler to work.
+   * Fails fast with a clear error instead of silent undefined behavior.
+   *
+   * @param {string} name - Service name
+   * @returns {*} The requested service
+   * @throws {Error} If service is not available
+   */
+  getRequiredService(name) {
+    const service = this.get(name);
+    if (service === null || service === undefined) {
+      throw new Error(
+        `[IpcServiceContext] Required service '${name}' is not available. ` +
+          `Ensure the service is properly initialized before IPC handlers are called.`
+      );
+    }
+    return service;
+  }
+
+  /**
+   * Get a service by name (internal implementation)
+   * @param {string} name - Service name
+   * @returns {*} The requested service or null
+   */
+  get(name) {
+    switch (name) {
+      case 'ipcMain':
+        return this._core?.ipcMain;
+      case 'IPC_CHANNELS':
+        return this._core?.IPC_CHANNELS;
+      case 'logger':
+        return this._core?.logger;
+      case 'dialog':
+        return this._electron?.dialog;
+      case 'shell':
+        return this._electron?.shell;
+      case 'getMainWindow':
+        return this._electron?.getMainWindow;
+      case 'systemAnalytics':
+        return this._systemAnalytics;
+      case 'getServiceIntegration':
+        return this._serviceIntegration;
+      case 'getCustomFolders':
+        return this._folders?.getCustomFolders;
+      case 'setCustomFolders':
+        return this._folders?.setCustomFolders;
+      case 'saveCustomFolders':
+        return this._folders?.saveCustomFolders;
+      case 'scanDirectory':
+        return this._folders?.scanDirectory;
+      case 'analyzeDocumentFile':
+        return this._analysis?.analyzeDocumentFile;
+      case 'analyzeImageFile':
+        return this._analysis?.analyzeImageFile;
+      case 'settingsService':
+        return this._settings?.settingsService;
+      case 'onSettingsChanged':
+        return this._settings?.onSettingsChanged;
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * Check if the container has all required services
+   * @returns {{ valid: boolean, missing: string[], warnings: string[] }} Validation result with missing services
+   */
+  validate() {
+    const missing = [];
+    const warnings = [];
+
+    if (!this._core?.ipcMain) missing.push('ipcMain');
+    if (!this._core?.IPC_CHANNELS) missing.push('IPC_CHANNELS');
+    if (!this._core?.logger) missing.push('logger');
+
+    if (!this._electron?.getMainWindow) warnings.push('getMainWindow');
+    if (!this._serviceIntegration) warnings.push('getServiceIntegration');
+
+    return {
+      valid: missing.length === 0,
+      missing,
+      warnings
+    };
+  }
+
+  /**
+   * Create parameters object for legacy IPC handler functions
+   * This provides backward compatibility during migration
+   * @returns {Record<string, any>} Legacy parameters object
+   */
+  toLegacyParams() {
+    return {
+      // Core
+      ipcMain: this._core?.ipcMain,
+      IPC_CHANNELS: this._core?.IPC_CHANNELS,
+      logger: this._core?.logger,
+      // Electron
+      dialog: this._electron?.dialog,
+      shell: this._electron?.shell,
+      getMainWindow: this._electron?.getMainWindow,
+      // Analytics
+      systemAnalytics: this._systemAnalytics,
+      // Service integration
+      getServiceIntegration: this._serviceIntegration,
+      // Folders
+      getCustomFolders: this._folders?.getCustomFolders,
+      setCustomFolders: this._folders?.setCustomFolders,
+      saveCustomFolders: this._folders?.saveCustomFolders,
+      scanDirectory: this._folders?.scanDirectory,
+      // Analysis
+      analyzeDocumentFile: this._analysis?.analyzeDocumentFile,
+      analyzeImageFile: this._analysis?.analyzeImageFile,
+      // Settings
+      settingsService: this._settings?.settingsService,
+      onSettingsChanged: this._settings?.onSettingsChanged
+    };
+  }
+}
+
+/**
+ * Factory function to create an IpcServiceContext from legacy parameters
+ * @param {Record<string, any>} params - Legacy 28-parameter object
+ * @returns {IpcServiceContext} Configured IPC service context
+ */
+function createFromLegacyParams(params) {
+  return new IpcServiceContext()
+    .setCore({
+      ipcMain: params.ipcMain,
+      IPC_CHANNELS: params.IPC_CHANNELS,
+      logger: params.logger
+    })
+    .setElectron({
+      dialog: params.dialog,
+      shell: params.shell,
+      getMainWindow: params.getMainWindow
+    })
+    .setFolders({
+      getCustomFolders: params.getCustomFolders,
+      setCustomFolders: params.setCustomFolders,
+      saveCustomFolders: params.saveCustomFolders,
+      scanDirectory: params.scanDirectory
+    })
+    .setAnalysis({
+      analyzeDocumentFile: params.analyzeDocumentFile,
+      analyzeImageFile: params.analyzeImageFile
+    })
+    .setSettings({
+      settingsService: params.settingsService,
+      onSettingsChanged: params.onSettingsChanged
+    })
+    .setSystemAnalytics(params.systemAnalytics)
+    .setServiceIntegration(params.getServiceIntegration);
+}
+
+module.exports = {
+  IpcServiceContext,
+  createFromLegacyParams
+};

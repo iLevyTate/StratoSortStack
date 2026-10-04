@@ -1,0 +1,166 @@
+// @ts-check
+/**
+ * Suggestion Ranker
+ *
+ * Ranking, deduplication, and scoring for organization suggestions.
+ * Extracted from OrganizationSuggestionService for better maintainability.
+ *
+ * @module services/organization/suggestionRanker
+ */
+
+/**
+ * Source-based weight multipliers
+ */
+/** @type {Record<string, number>} */
+const sourceWeights = {
+  llm: 1.5, // LLM content analysis is PRIMARY - semantic understanding first
+  user_pattern: 1.2, // User patterns are valuable but don't override content understanding
+  semantic: 1.1, // Embedding similarity supports but doesn't dominate
+  cluster: 1.1, // Cluster-based suggestions support organization
+  pattern: 1.0, // Historical patterns are baseline
+  strategy: 1.0, // Strategy-based are standard
+  llm_creative: 0.7 // Creative suggestions are experimental
+};
+
+/**
+ * Rank and deduplicate suggestions
+ * @param {Array<any>} suggestions - All suggestions to rank
+ * @returns {Array<any>} Ranked and deduplicated suggestions
+ */
+function rankSuggestions(suggestions) {
+  // Deduplicate by folder name
+  const uniqueSuggestions = new Map();
+
+  for (const suggestion of suggestions) {
+    const key = suggestion.folder?.toLowerCase();
+    if (!key) continue;
+
+    if (!uniqueSuggestions.has(key)) {
+      uniqueSuggestions.set(key, { ...suggestion });
+    } else {
+      // Merge scores if duplicate (working on our cloned copy, not caller's object)
+      const existing = uniqueSuggestions.get(key);
+
+      // Keep the source that provided higher confidence (check BEFORE updating)
+      if (suggestion.confidence > existing.confidence) {
+        existing.source = suggestion.source;
+        existing.method = suggestion.method;
+      }
+
+      // Then update to max scores
+      existing.score = Math.max(existing.score, suggestion.score);
+      existing.confidence = Math.max(existing.confidence, suggestion.confidence);
+    }
+  }
+
+  // Apply weighting based on source
+  const weighted = Array.from(uniqueSuggestions.values()).map((s) => ({
+    ...s,
+    weightedScore: applySourceWeight(s)
+  }));
+
+  // Sort by weighted score
+  return weighted.sort((a, b) => b.weightedScore - a.weightedScore);
+}
+
+/**
+ * Apply source-based weighting to scores
+ * @param {Record<string, any>} suggestion - Suggestion to weight
+ * @returns {number} Weighted score
+ */
+function applySourceWeight(suggestion) {
+  const weight = sourceWeights[suggestion.source] || 1.0;
+  return (suggestion.score || 0) * weight;
+}
+
+/**
+ * Calculate confidence for a suggestion
+ * @param {Record<string, any>} suggestion - Suggestion to evaluate
+ * @returns {number} Confidence score 0-1
+ */
+function calculateConfidence(suggestion) {
+  if (!suggestion) return 0;
+
+  // Take the HIGHER of the two (F-201 / CP-25): `confidence` carries the
+  // calibrated cap (≤ 0.75 in common cases) while `score` carries the
+  // "trust the LLM's explicit category" boost (≥ 0.95). Reading confidence
+  // first made that boost dead on the auto-organize path.
+  const rawConfidence = Number(suggestion.confidence);
+  const rawScore = Number(suggestion.score);
+  let confidence = Math.max(
+    Number.isFinite(rawConfidence) ? rawConfidence : 0,
+    Number.isFinite(rawScore) ? rawScore : 0
+  );
+
+  // Boost if matches user pattern
+  if (suggestion.source === 'user_pattern') {
+    confidence = Math.min(1.0, confidence * 1.3);
+  }
+
+  return Math.round(confidence * 100) / 100;
+}
+
+/**
+ * Generate human-readable explanation for suggestion
+ * @param {Record<string, any>} suggestion - Suggestion to explain
+ * @param {Record<string, any>} file - File being organized
+ * @returns {string} Human-readable explanation
+ */
+function generateExplanation(suggestion, file) {
+  if (!suggestion) {
+    return 'No clear match found. Consider creating a new folder.';
+  }
+
+  /** @type {Record<string, string>} */
+  const explanations = {
+    semantic: `This file's meaning matches "${suggestion.folder}"`,
+    user_pattern: `You've organized similar files this way before`,
+    strategy: `Using ${suggestion.strategyName || 'your preferred'} organization method`,
+    llm: `Based on the file's content and purpose`,
+    pattern: `This is where ${(file?.extension || 'these').toUpperCase()} files usually go`,
+    llm_creative: suggestion.reasoning || 'Alternative way to organize this file',
+    folder_improvement: `"${suggestion.folder}" could be enhanced for this type of file`,
+    improvement: suggestion.improvement || `Suggested improvement for better organization`,
+    new_folder_suggestion: 'A new folder would be perfect for this file type',
+    cluster: suggestion.clusterLabel
+      ? `This file clusters with ${suggestion.clusterPeersInFolder || 'similar'} files in "${suggestion.folder}" (${suggestion.clusterLabel})`
+      : `Similar files are grouped together in "${suggestion.folder}"`,
+    cluster_membership: `${suggestion.clusterPeersInFolder || 'Multiple'} similar files from "${suggestion.clusterLabel || 'the same cluster'}" are already in this folder`,
+    cluster_label_match: `The "${suggestion.clusterLabel}" cluster matches this folder's purpose`,
+    cluster_batch: `Organize this cluster of ${suggestion.clusterSize || 'related'} files together`
+  };
+
+  // Add confidence-based prefix (reserved for future use)
+  const prefix = '';
+
+  return (
+    prefix +
+    (explanations[suggestion.source] || explanations[suggestion.method] || 'Based on file analysis')
+  );
+}
+
+/**
+ * Combine suggestions from multiple sources
+ * @param {Record<string, any>} sources - Object with suggestion arrays by source
+ * @returns {Array<any>} Combined suggestions with source tags
+ */
+function combineSuggestions(sources) {
+  const allSuggestions = [];
+
+  for (const [source, suggestions] of Object.entries(sources)) {
+    for (const suggestion of suggestions) {
+      allSuggestions.push({ ...suggestion, source });
+    }
+  }
+
+  return allSuggestions;
+}
+
+module.exports = {
+  sourceWeights,
+  rankSuggestions,
+  applySourceWeight,
+  calculateConfidence,
+  generateExplanation,
+  combineSuggestions
+};

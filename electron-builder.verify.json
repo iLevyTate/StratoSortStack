@@ -1,0 +1,6 @@
+{
+  "extends": "electron-builder.json",
+  "directories": {
+    "output": "release/build-verify"
+  }
+}

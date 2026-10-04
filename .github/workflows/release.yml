@@ -1,0 +1,410 @@
+# Windows installer build + GitHub Release upload. Runs on v* tag pushes (same trigger as
+# mac-release.yml) or via workflow_dispatch against an existing release tag.
+name: Release (Windows)
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: Existing release tag to build and publish
+        required: true
+        type: string
+
+concurrency:
+  # Normalize to the bare tag name: `github.ref` is `refs/tags/v1.2.3` on tag
+  # push while dispatch inputs carry `v1.2.3`, so mixing them would let a
+  # push-triggered and a dispatch-triggered run for the SAME tag race each
+  # other's asset uploads (incl. latest.yml) on the GitHub release.
+  group: release-${{ github.event.inputs.tag_name || github.ref_name }}
+  cancel-in-progress: false
+
+# Least privilege: only publish-release uploads to the GitHub Release and
+# declares contents: write at job level.
+permissions:
+  contents: read
+
+env:
+  CI: true
+
+# Before dispatch: npm run ci && npm run verify:native-modules && npm run dist:win locally to validate;
+# use this job when you want CI to build/publish Windows bits instead of uploading from your machine.
+
+jobs:
+  resolve-release-target:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      ref: ${{ steps.resolve.outputs.ref }}
+    steps:
+      - name: Resolve and validate release target
+        id: resolve
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const tagPattern = /^v\d+\.\d+\.\d+$/;
+            const isTagPush = context.eventName === "push" && context.ref.startsWith("refs/tags/");
+
+            if (isTagPush) {
+              const tag = context.ref.replace("refs/tags/", "");
+              if (!tagPattern.test(tag)) {
+                core.setFailed(`Release tag must match v<major>.<minor>.<patch>; received '${tag}'.`);
+                return;
+              }
+              core.setOutput("tag", tag);
+              core.setOutput("ref", `refs/tags/${tag}`);
+              return;
+            }
+
+            const requestedTag = String(context.payload.inputs?.tag_name || "").trim();
+            if (!tagPattern.test(requestedTag)) {
+              core.setFailed(
+                `workflow_dispatch tag_name must match v<major>.<minor>.<patch>; received '${requestedTag || "<empty>"}'.`
+              );
+              return;
+            }
+
+            try {
+              await github.rest.git.getRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `tags/${requestedTag}`
+              });
+            } catch (error) {
+              core.setFailed(`Release tag '${requestedTag}' does not exist in the repository.`);
+              return;
+            }
+
+            core.setOutput("tag", requestedTag);
+            core.setOutput("ref", `refs/tags/${requestedTag}`);
+
+  build-release:
+    needs: resolve-release-target
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      # arm64 builds better-sqlite3 from source on a native windows-11-arm
+      # runner (no reliable arm64 prebuild) and ships without bundled FFmpeg
+      # (BtbN has no win-arm64 LGPL build — MediaTranscoder falls back to PATH).
+      # It is newer/lower-traffic, so do not let an arm64 failure block the
+      # proven x64 release.
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+            dist_script: dist:win
+          - arch: arm64
+            runner: windows-11-arm
+            dist_script: dist:win:arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-release-target.outputs.ref }}
+          fetch-depth: 0
+      - name: Verify package version matches release tag
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ needs.resolve-release-target.outputs.tag }}
+        run: |
+          node -e "const tag=process.env.RELEASE_TAG; if (!tag) { throw new Error('RELEASE_TAG env var not set; cannot verify package.json'); } const pkg=require('./package.json'); const expected=String(tag).replace(/^v/, ''); if (pkg.version !== expected) { throw new Error('package.json version ' + pkg.version + ' does not match release tag ' + tag); }"
+
+      - name: Use Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+
+      - name: Verify Windows build assets
+        run: node scripts/verify-build-assets.js --platform=win
+
+      - name: Install dependencies
+        run: npm ci --include=optional
+
+      - name: Generate installer assets
+        run: npm run generate:branding-if-source
+
+      - name: Rebuild native modules for Electron runtime (${{ matrix.arch }})
+        # arm64 runs on a native windows-11-arm runner so better-sqlite3 (no
+        # reliable arm64 prebuild) is compiled from source for the correct ABI.
+        run: npx --no electron-builder install-app-deps --arch=${{ matrix.arch }}
+
+      - name: Verify native module loading
+        run: npm run verify:native-modules
+
+      - name: Detect Windows release mode
+        id: windows-release-mode
+        shell: pwsh
+        env:
+          # tenant/client IDs are identifiers (repo Variables); the client
+          # secret is the only true credential (repo Secret). The four
+          # signing-identity fields are hardcoded in configure-win-signing.js.
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          $required = @('AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET')
+          $missing = @($required | Where-Object { [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_)) })
+          if ($missing.Count -eq 0) {
+            # Re-export the non-secret identifiers trimmed so electron-builder's
+            # EnvironmentCredential never sees a stray trailing newline from a
+            # pasted repository variable (a real, observed failure mode). The
+            # build step inherits these from $GITHUB_ENV and must NOT redeclare
+            # them, or its step-level value would shadow the trimmed one.
+            ("AZURE_TENANT_ID=" + $env:AZURE_TENANT_ID.Trim()) | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding UTF8
+            ("AZURE_CLIENT_ID=" + $env:AZURE_CLIENT_ID.Trim()) | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding UTF8
+            "signed=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding UTF8
+            Write-Host "::notice::Using signed Windows release mode (Azure Trusted Signing)."
+          }
+          else {
+            "signed=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding UTF8
+            Write-Host "::warning::Azure Trusted Signing credentials missing ($($missing -join ', ')). Building unsigned ad-hoc artifacts."
+          }
+
+      - name: Enable Azure Trusted Signing in build config
+        # azureSignOptions cannot live in the committed configs: electron-builder
+        # attempts Azure signing whenever the block exists, which would break
+        # local and fork builds that have no Azure credentials. The script holds
+        # the (public) signing-identity values, so no env is needed here.
+        # Injecting into the base config covers both legs: dist:win reads it
+        # directly and electron-builder.win-arm64.json inherits win.* via extends.
+        if: steps.windows-release-mode.outputs.signed == 'true'
+        run: node scripts/configure-win-signing.js electron-builder.json
+
+      - name: Clean release output directory
+        shell: pwsh
+        run: |
+          $target = Join-Path $PWD "release/build"
+          if (-not (Test-Path $target)) { return }
+
+          for ($i = 0; $i -lt 6; $i++) {
+            try {
+              Remove-Item -Path $target -Recurse -Force -ErrorAction Stop
+              break
+            }
+            catch {
+              if ($i -eq 5) { throw }
+              Start-Sleep -Seconds 3
+            }
+          }
+
+      - name: Build Windows installer
+        env:
+          # Service-principal credentials consumed by electron-builder's
+          # Invoke-TrustedSigning call when azureSignOptions is configured.
+          # AZURE_TENANT_ID / AZURE_CLIENT_ID are inherited (trimmed) from
+          # $GITHUB_ENV set by the detect step — do NOT redeclare them here or
+          # the untrimmed step-level value would shadow them. The secret is the
+          # only true credential and is passed directly.
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          # electron-builder reads the publish config at startup and
+          # eagerly instantiates GitHubPublisher, which throws if GH_TOKEN
+          # is unset, even when --publish=never disables the actual upload.
+          # mac-release.yml's Linux build sets the same env var for the
+          # same reason; mirror it so the Windows release does not fail
+          # 20+ minutes in after native rebuild and signing.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run ${{ matrix.dist_script }}
+
+      - name: Normalize updater metadata name
+        # electron-updater requests exactly latest.yml on Windows for every
+        # arch (no arch suffix). electron-builder emits latest.yml today; if a
+        # future version suffixes the arm64 leg, fold it back so this leg's
+        # build root looks like a single-arch release for the verifier below.
+        shell: pwsh
+        run: |
+          $ymls = @(Get-ChildItem release/build -File -Filter 'latest*.yml')
+          if ($ymls.Count -ne 1) {
+            throw "Expected exactly one updater metadata file in release/build, found $($ymls.Count): $($ymls.Name -join ', ')"
+          }
+          if ($ymls[0].Name -ne 'latest.yml') {
+            Move-Item -Force -Path $ymls[0].FullName -Destination 'release/build/latest.yml'
+            Write-Host "Renamed $($ymls[0].Name) -> latest.yml"
+          }
+
+      - name: Verify packaged Windows artifacts
+        run: node scripts/verify-packaged-artifacts.js --platform=win --arch=${{ matrix.arch }}
+
+      - name: Verify Windows updater metadata
+        run: node scripts/verify-updater-metadata.js --platform=win --arch=${{ matrix.arch }} --build-root=release/build
+
+      - name: Verify Authenticode signatures
+        if: steps.windows-release-mode.outputs.signed == 'true'
+        shell: pwsh
+        run: |
+          $executables = Get-ChildItem release/build -File -ErrorAction Stop |
+            Where-Object { $_.Name -match '^StratoSortCore-Setup-.*\.exe$|^StratoSortCore-.*-win-.*\.exe$' }
+          if (-not $executables -or $executables.Count -eq 0) {
+            throw "No Windows executables found to verify signature."
+          }
+
+          foreach ($file in $executables) {
+            $signature = Get-AuthenticodeSignature $file.FullName
+            if ($signature.Status -ne 'Valid') {
+              throw "Invalid signature status '$($signature.Status)' for $($file.Name)"
+            }
+          }
+
+      - name: Generate SHA256 checksums
+        # Installers and blockmaps only: the published latest.yml is merged in
+        # publish-release from both legs, so a per-leg channel-file hash would
+        # not match the uploaded file.
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem release/build -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^StratoSortCore-.*\.(exe|blockmap)$' }
+          if (-not $files -or $files.Count -eq 0) {
+            throw "No build artifacts found to checksum."
+          }
+          $hashes = $files | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
+            "$hash *$($_.Name)"
+          }
+          # Arch-suffixed so the x64 and arm64 matrix legs do not overwrite each
+          # other's checksum file on the shared GitHub Release.
+          $hashes | Out-File "release/build/checksums-windows-${{ matrix.arch }}.sha256" -Encoding ASCII
+
+      - name: Build release notes from CHANGELOG
+        # Only the x64 leg owns the release body; publish-release reads it from
+        # the x64 artifact.
+        if: matrix.arch == 'x64'
+        shell: pwsh
+        run: |
+          $tag = "${{ needs.resolve-release-target.outputs.tag }}"
+          $version = $tag -replace '^v', ''
+          $isSigned = "${{ steps.windows-release-mode.outputs.signed }}" -eq "true"
+          $changelog = Get-Content CHANGELOG.md
+          $start = -1
+          $end = $changelog.Length
+          for ($i = 0; $i -lt $changelog.Length; $i++) {
+            if ($changelog[$i] -match "^## \[$version\]") {
+              $start = $i
+              continue
+            }
+            if ($start -ge 0 -and $i -gt $start -and $changelog[$i] -match "^## \[") {
+              $end = $i
+              break
+            }
+          }
+          if ($start -ge 0) {
+            $section = $changelog[$start..($end - 1)]
+          } else {
+            $section = @(
+              "## $tag",
+              "",
+              "Release notes are in CHANGELOG.md."
+            )
+          }
+          $releaseIntegrityNote = if ($isSigned) {
+            "- Windows artifacts are Authenticode-signed."
+          } else {
+            "- Windows artifacts are unsigned ad-hoc builds and may trigger SmartScreen warnings."
+          }
+
+          $notes = @(
+            "## Release Notes",
+            "",
+            "- **Vision runtime is included** — no separate download needed.",
+            "- Tesseract OCR is auto-installed or uses bundled tesseract.js fallback.",
+            "- Use **Download Base Models** after install to enable AI features.",
+            $releaseIntegrityNote,
+            "- See the [Install Guide](https://github.com/iLevyTate/StratoSortCore/blob/main/docs/INSTALL_GUIDE.md) for Windows & Mac — one download, no CLI.",
+            ""
+          ) + $section
+          $notes | Out-File release/build/release-notes.md -Encoding UTF8
+
+      - name: Stage artifacts
+        # The channel file is staged under an arch-suffixed name so the two
+        # legs cannot collide; publish-release merges them back into the single
+        # latest.yml that every Windows client requests.
+        shell: pwsh
+        run: |
+          $arch = "${{ matrix.arch }}"
+          $stage = "release/upload/$arch"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Get-ChildItem release/build -File |
+            Where-Object { $_.Name -match '^StratoSortCore-Setup-.*\.exe$|^StratoSortCore-.*-win-.*\.exe$|\.blockmap$|^checksums-windows-.*\.sha256$|^release-notes\.md$' } |
+            Copy-Item -Destination $stage
+          Copy-Item release/build/latest.yml (Join-Path $stage "latest-$arch.yml")
+          Get-ChildItem $stage | Select-Object Name, Length
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-${{ matrix.arch }}-artifacts
+          path: release/upload/${{ matrix.arch }}
+          if-no-files-found: error
+
+  publish-release:
+    needs:
+      - resolve-release-target
+      - build-release
+    # build-release is fail-fast: false so an arm64 failure must not block the
+    # proven x64 release; run whenever the matrix finished (any result) and let
+    # the merge step demand the x64 artifact.
+    if: ${{ !cancelled() && needs.resolve-release-target.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-release-target.outputs.ref }}
+
+      - name: Use Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: windows-*-artifacts
+          merge-multiple: true
+          path: release/build
+
+      - name: Merge Windows updater metadata
+        # x64 FIRST: electron-updater serves the first .exe to clients whose
+        # process.arch appears in no url, and the x64 installer name carries no
+        # arch token. The staging names are removed so only latest.yml ships.
+        run: |
+          set -euo pipefail
+          cd release/build
+          if [ ! -f latest-x64.yml ]; then
+            echo "::error::x64 leg did not produce updater metadata (latest-x64.yml); refusing to publish."
+            exit 1
+          fi
+          inputs=(latest-x64.yml)
+          if [ -f latest-arm64.yml ]; then
+            inputs+=(latest-arm64.yml)
+          else
+            echo "::warning::No arm64 updater metadata staged; latest.yml will advertise x64 only."
+          fi
+          node ../../scripts/merge-updater-metadata.js --output=latest.yml "${inputs[@]}"
+          rm -f "${inputs[@]}"
+          cat latest.yml
+
+      - name: Verify Windows updater metadata (merged)
+        run: node scripts/verify-updater-metadata.js --platform=win --build-root=release/build
+
+      - name: Publish release artifacts
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          tag_name: ${{ needs.resolve-release-target.outputs.tag }}
+          generate_release_notes: false
+          body_path: release/build/release-notes.md
+          # Every pattern matches at least one x64 file, so an unmatched pattern
+          # means a leg staged nothing for it.
+          fail_on_unmatched_files: true
+          files: |
+            release/build/StratoSortCore-Setup-*.exe
+            release/build/StratoSortCore-*-win-*.exe
+            release/build/*.blockmap
+            release/build/latest.yml
+            release/build/checksums-windows-*.sha256

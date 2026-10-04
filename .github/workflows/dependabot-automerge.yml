@@ -1,0 +1,47 @@
+name: Dependabot Auto-merge
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  pull-requests: write
+  contents: write
+  checks: read
+  statuses: read
+
+jobs:
+  automerge:
+    # Key off the PR author, not the workflow actor: a maintainer re-running
+    # this workflow (or a synchronize event they trigger) would otherwise
+    # change github.actor and skip/mis-fire the gate.
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Dependabot metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3
+        id: metadata
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Auto-approve - skip this step if you don't have branch protection requiring reviews
+      # Uncomment the following lines and add DEPENDABOT_PAT secret if needed
+      # - name: Auto approve PR
+      #   uses: hmarr/auto-approve-action@v3
+      #   with:
+      #     github-token: ${{ secrets.DEPENDABOT_PAT }}
+
+      # Enable GitHub auto-merge only for patch/minor (major requires human review).
+      # Auto-merge completes only after required checks pass. There is
+      # deliberately NO immediate-merge step here: this workflow fires on
+      # `opened` (before any CI run starts), so a direct pulls.merge call
+      # would land unverified dependency bumps on main whenever branch
+      # protection is not configured to require checks.
+      - name: Enable auto-merge for Dependabot PRs
+        if: |
+          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+          steps.metadata.outputs.update-type == 'version-update:semver-minor'
+        uses: peter-evans/enable-pull-request-automerge@a660677d5469627102a1c1e11409dd063606628d # v3
+        with:
+          merge-method: squash
+          token: ${{ secrets.GITHUB_TOKEN }}
+          pull-request-number: ${{ github.event.pull_request.number }}

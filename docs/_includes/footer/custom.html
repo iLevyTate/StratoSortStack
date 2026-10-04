@@ -1,0 +1,32 @@
+<!-- GLightbox — auto-initializes zoom on all doc page screenshots -->
+<script src="https://cdn.jsdelivr.net/npm/glightbox/dist/js/glightbox.min.js"></script>
+<script>
+  (function () {
+    function initLightbox() {
+      // Wrap every content image in a lightbox anchor (skip images already inside a link)
+      document.querySelectorAll('.page__content img').forEach(function (img) {
+        if (img.closest('a')) return;
+        var a = document.createElement('a');
+        a.href = img.src;
+        a.setAttribute('data-gallery', 'page');
+        a.setAttribute('data-title', img.alt || '');
+        img.parentNode.insertBefore(a, img);
+        a.appendChild(img);
+      });
+
+      GLightbox({
+        selector: '.page__content a[data-gallery]',
+        touchNavigation: true,
+        loop: false,
+        closeButton: true,
+        keyboardNavigation: true,
+      });
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initLightbox);
+    } else {
+      initLightbox();
+    }
+  })();
+</script>

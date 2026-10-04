@@ -1,0 +1,727 @@
+// @ts-check
+/**
+ * ServiceContainer - Dependency Injection Container
+ *
+ * This module provides a centralized dependency injection (DI) container for managing
+ * service instances throughout the application. It supports:
+ *
+ * - Singleton services: Created once and shared across the application
+ * - Transient services: Created fresh for each request
+ * - Factory functions: Custom instantiation logic with dependency resolution
+ * - Lazy initialization: Services are created only when first requested
+ *
+ * @example
+ * // Register a singleton service
+ * container.registerSingleton('vectorDb', () => new OramaVectorService());
+ *
+ * // Register with dependencies
+ * container.registerSingleton('folderMatcher', (c) => {
+ *   return new FolderMatchingService(c.resolve('vectorDb'));
+ * });
+ *
+ * // Resolve a service
+ * const vectorDb = container.resolve('vectorDb');
+ *
+ * @module ServiceContainer
+ */
+
+const { AsyncLocalStorage } = require('node:async_hooks');
+const { logger: baseLogger, createLogger } = require('../../shared/logger');
+
+/**
+ * Per-chain resolution tracking for async circular dependency detection.
+ * Each resolveAsync() call chain gets its own Set<string> via AsyncLocalStorage,
+ * so concurrent unrelated resolutions never interfere with each other.
+ * @type {AsyncLocalStorage<Set<string>>}
+ */
+const _asyncResolutionStore = new AsyncLocalStorage();
+
+const logger = typeof createLogger === 'function' ? createLogger('ServiceContainer') : baseLogger;
+if (typeof createLogger !== 'function' && logger?.setContext) {
+  logger.setContext('ServiceContainer');
+}
+
+/**
+ * Service lifetime constants
+ * @readonly
+ * @enum {string}
+ */
+const ServiceLifetime = {
+  /** Service is created once and reused for all requests */
+  SINGLETON: 'singleton',
+  /** Service is created fresh for each request */
+  TRANSIENT: 'transient'
+};
+
+/**
+ * Service registration entry
+ * @typedef {Object} ServiceRegistration
+ * @property {string} name - Service identifier
+ * @property {Function} factory - Factory function to create the service
+ * @property {ServiceLifetime} lifetime - Service lifetime (singleton or transient)
+ * @property {*} [instance] - Cached instance for singletons
+ * @property {boolean} [initializing] - Flag to detect circular dependencies
+ */
+
+/**
+ * Dependency Injection Container
+ *
+ * Manages service registration, resolution, and lifecycle. Provides:
+ * - Type-safe service registration with factory functions
+ * - Automatic dependency resolution
+ * - Singleton and transient lifetime support
+ * - Circular dependency detection
+ * - Graceful shutdown with cleanup
+ *
+ * @class ServiceContainer
+ */
+class ServiceContainer {
+  constructor() {
+    /**
+     * Registry of all service registrations
+     * @type {Map<string, ServiceRegistration>}
+     * @private
+     */
+    this._registrations = new Map();
+
+    /**
+     * Resolution stack for circular dependency detection
+     * @type {Set<string>}
+     * @private
+     */
+    this._resolutionStack = new Set();
+
+    /**
+     * Flag indicating if container is shutting down
+     * @type {boolean}
+     * @private
+     */
+    this._isShuttingDown = false;
+
+    /**
+     * Initialization promises for async singletons
+     * @type {Map<string, Promise<*>>}
+     * @private
+     */
+    this._initPromises = new Map();
+  }
+
+  /**
+   * Public read-only accessor for the shutdown flag. Callers (e.g. StartupManager)
+   * can check this to avoid triggering lazy registration paths that would resolve
+   * back through the shutting-down container and throw.
+   */
+  isShuttingDown() {
+    return this._isShuttingDown;
+  }
+
+  /**
+   * Register a singleton service
+   *
+   * Singleton services are created once on first request and the same instance
+   * is returned for all subsequent requests. Use this for stateful services
+   * that should be shared across the application.
+   *
+   * @param {string} name - Unique service identifier
+   * @param {Function} factory - Factory function that receives the container and returns the service instance
+   * @returns {ServiceContainer} The container instance for chaining
+   *
+   * @example
+   * container.registerSingleton('database', (c) => {
+   *   return new DatabaseService(c.resolve('config'));
+   * });
+   */
+  registerSingleton(name, factory) {
+    if (typeof name !== 'string' || !name.trim()) {
+      throw new Error('Service name must be a non-empty string');
+    }
+    if (typeof factory !== 'function') {
+      throw new Error(`Factory for service '${name}' must be a function`);
+    }
+
+    this._registrations.set(name, {
+      name,
+      factory,
+      lifetime: ServiceLifetime.SINGLETON,
+      instance: null,
+      initializing: false
+    });
+
+    logger.debug(`[ServiceContainer] Registered singleton: ${name}`);
+    return this;
+  }
+
+  /**
+   * Register a transient service
+   *
+   * Transient services are created fresh for each request. Use this for
+   * stateless services or when you need a new instance each time.
+   *
+   * @param {string} name - Unique service identifier
+   * @param {Function} factory - Factory function that receives the container and returns a new service instance
+   * @returns {ServiceContainer} The container instance for chaining
+   *
+   * @example
+   * container.registerTransient('httpClient', () => {
+   *   return new HttpClient();
+   * });
+   */
+  registerTransient(name, factory) {
+    if (typeof name !== 'string' || !name.trim()) {
+      throw new Error('Service name must be a non-empty string');
+    }
+    if (typeof factory !== 'function') {
+      throw new Error(`Factory for service '${name}' must be a function`);
+    }
+
+    this._registrations.set(name, {
+      name,
+      factory,
+      lifetime: ServiceLifetime.TRANSIENT
+    });
+
+    logger.debug(`[ServiceContainer] Registered transient: ${name}`);
+    return this;
+  }
+
+  /**
+   * Register an existing instance as a singleton
+   *
+   * Use this to register pre-created instances or external dependencies
+   * that were created outside the container.
+   *
+   * @param {string} name - Unique service identifier
+   * @param {*} instance - The pre-created service instance
+   * @returns {ServiceContainer} The container instance for chaining
+   *
+   * @example
+   * const existingDb = new Database();
+   * container.registerInstance('database', existingDb);
+   */
+  registerInstance(name, instance) {
+    if (typeof name !== 'string' || !name.trim()) {
+      throw new Error('Service name must be a non-empty string');
+    }
+    if (instance === undefined) {
+      throw new Error(`Instance for service '${name}' cannot be undefined`);
+    }
+
+    this._registrations.set(name, {
+      name,
+      factory: () => instance,
+      lifetime: ServiceLifetime.SINGLETON,
+      instance,
+      initializing: false
+    });
+
+    logger.debug(`[ServiceContainer] Registered instance: ${name}`);
+    return this;
+  }
+
+  /**
+   * Resolve a service by name
+   *
+   * Returns the service instance, creating it if necessary for singletons
+   * or always creating a new instance for transient services.
+   *
+   * @param {string} name - The service identifier to resolve
+   * @returns {*} The resolved service instance
+   * @throws {Error} If service is not registered or circular dependency detected
+   *
+   * @example
+   * const db = container.resolve('database');
+   */
+  resolve(name) {
+    if (this._isShuttingDown) {
+      throw new Error(`Cannot resolve service '${name}' - container is shutting down`);
+    }
+
+    const registration = this._registrations.get(name);
+    if (!registration) {
+      throw new Error(
+        `Service '${name}' is not registered. Available services: ${Array.from(this._registrations.keys()).join(', ')}`
+      );
+    }
+
+    // Check for circular dependencies
+    if (this._resolutionStack.has(name)) {
+      const chain = `${Array.from(this._resolutionStack).join(' -> ')} -> ${name}`;
+      throw new Error(`Circular dependency detected while resolving '${name}': ${chain}`);
+    }
+
+    // For singletons, return cached instance if available
+    if (registration.lifetime === ServiceLifetime.SINGLETON && registration.instance !== null) {
+      return registration.instance;
+    }
+
+    // Prevent creating duplicate singleton when async initialization is in progress
+    if (registration.lifetime === ServiceLifetime.SINGLETON && this._initPromises.has(name)) {
+      throw new Error(
+        `Service '${name}' is being initialized asynchronously via resolveAsync(). ` +
+          `Use resolveAsync() to await the in-progress initialization instead of resolve().`
+      );
+    }
+
+    // Track resolution for circular dependency detection
+    this._resolutionStack.add(name);
+
+    try {
+      // Create instance using factory
+      let instance;
+      try {
+        instance = registration.factory(this);
+      } catch (error) {
+        logger.error(`[ServiceContainer] Factory threw for service '${name}':`, {
+          error: error.message
+        });
+        throw error;
+      }
+
+      // Sync resolve() cannot await an async factory. If one is registered,
+      // silently caching the pending Promise as the singleton instance is a
+      // trap: every subsequent consumer of resolve() receives a Promise
+      // instead of the service and typically calls methods on it (.analyze,
+      // .embed), producing confusing "fn is not a function" errors far from
+      // the actual misconfiguration. Fail loudly and point the caller at
+      // resolveAsync() so the bug surfaces at registration-smoke time.
+      if (instance && typeof instance.then === 'function') {
+        throw new Error(
+          `Factory for service '${name}' returned a Promise. Synchronous resolve() cannot cache an async instance — ` +
+            `register with an async factory and call resolveAsync('${name}') instead.`
+        );
+      }
+
+      // Cache singleton instances
+      if (registration.lifetime === ServiceLifetime.SINGLETON) {
+        registration.instance = instance;
+        logger.debug(`[ServiceContainer] Created singleton instance: ${name}`);
+      } else {
+        logger.debug(`[ServiceContainer] Created transient instance: ${name}`);
+      }
+
+      return instance;
+    } finally {
+      this._resolutionStack.delete(name);
+    }
+  }
+
+  /**
+   * Resolve a service asynchronously
+   *
+   * Similar to resolve() but supports async factory functions and
+   * returns a Promise. Useful for services that require async initialization.
+   *
+   * @param {string} name - The service identifier to resolve
+   * @returns {Promise<*>} Promise resolving to the service instance
+   *
+   * @example
+   * const db = await container.resolveAsync('database');
+   */
+  async resolveAsync(name) {
+    if (this._isShuttingDown) {
+      throw new Error(`Cannot resolve service '${name}' - container is shutting down`);
+    }
+
+    const registration = this._registrations.get(name);
+    if (!registration) {
+      throw new Error(
+        `Service '${name}' is not registered. Available services: ${Array.from(this._registrations.keys()).join(', ')}`
+      );
+    }
+
+    // For singletons, return cached instance if available (no factory call, safe)
+    if (registration.lifetime === ServiceLifetime.SINGLETON && registration.instance !== null) {
+      return registration.instance;
+    }
+
+    // Circular dependency detection for async resolution chains.
+    // Uses AsyncLocalStorage so each call chain gets its own Set, avoiding the
+    // false-positive problem that a shared Set would cause with concurrent resolves.
+    const parentChain = _asyncResolutionStore.getStore();
+    if (parentChain?.has(name)) {
+      const chain = `${Array.from(parentChain).join(' -> ')} -> ${name}`;
+      throw new Error(`Circular dependency detected while resolving '${name}': ${chain}`);
+    }
+
+    // For singletons, return existing init promise if in progress (concurrent access dedup).
+    // This check comes AFTER the circular dep check: a same-chain re-entry is a cycle,
+    // but a different chain waiting on the same service is legitimate deduplication.
+    if (registration.lifetime === ServiceLifetime.SINGLETON && this._initPromises.has(name)) {
+      return this._initPromises.get(name);
+    }
+
+    // Build the resolution chain for nested factory calls
+    const currentChain = new Set(parentChain || []);
+    currentChain.add(name);
+
+    // Create initialization promise, running the factory within an async context
+    // that carries the current resolution chain for circular dependency detection.
+    const rawInitPromise = _asyncResolutionStore.run(currentChain, async () => {
+      const instance = await registration.factory(this);
+
+      // If shutdown started while we were awaiting, discard the instance
+      if (this._isShuttingDown) {
+        logger.warn(`[ServiceContainer] Service '${name}' resolved during shutdown, discarding`);
+        this._initPromises.delete(name);
+
+        // Attempt to cleanup the discarded instance to prevent resource leaks
+        // The instance may have acquired resources (connections, timers) during creation
+        if (instance) {
+          try {
+            if (typeof instance.shutdown === 'function') {
+              await instance.shutdown();
+            } else if (typeof instance.cleanup === 'function') {
+              await instance.cleanup();
+            } else if (typeof instance.dispose === 'function') {
+              await instance.dispose();
+            }
+          } catch (cleanupError) {
+            logger.warn(
+              `[ServiceContainer] Failed to cleanup discarded instance '${name}':`,
+              cleanupError?.message || String(cleanupError)
+            );
+          }
+        }
+
+        return null;
+      }
+
+      // Cache singleton instances
+      if (registration.lifetime === ServiceLifetime.SINGLETON) {
+        registration.instance = instance;
+        this._initPromises.delete(name);
+        logger.debug(`[ServiceContainer] Created async singleton: ${name}`);
+      } else {
+        logger.debug(`[ServiceContainer] Created async transient: ${name}`);
+      }
+
+      return instance;
+    });
+
+    // For singletons, store promise to prevent duplicate initialization.
+    // Also ensure we clear the initPromise entry if initialization fails, otherwise
+    // the service becomes permanently "stuck" as initializing.
+    if (registration.lifetime === ServiceLifetime.SINGLETON) {
+      /** @type {Promise<any>} */
+      let initPromise;
+      initPromise = rawInitPromise.catch((/** @type {any} */ err) => {
+        // Only delete if this is still the active tracked promise
+        if (this._initPromises.get(name) === initPromise) {
+          this._initPromises.delete(name);
+        }
+        throw err;
+      });
+      this._initPromises.set(name, initPromise);
+      return await initPromise;
+    }
+
+    return await rawInitPromise;
+  }
+
+  /**
+   * Try to resolve a service, returning null if not found
+   *
+   * @param {string} name - The service identifier to resolve
+   * @returns {*|null} The resolved service instance or null if not found
+   */
+  tryResolve(name) {
+    try {
+      return this.resolve(name);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Check if a service is registered
+   *
+   * @param {string} name - The service identifier to check
+   * @returns {boolean} True if the service is registered
+   */
+  has(name) {
+    return this._registrations.has(name);
+  }
+
+  /**
+   * Get all registered service names
+   *
+   * @returns {string[]} Array of registered service names
+   */
+  getRegisteredServices() {
+    return Array.from(this._registrations.keys());
+  }
+
+  /**
+   * Clear a singleton instance (for testing or reconfiguration)
+   *
+   * FIX: Added check to prevent clearing while async resolution is in progress
+   * This prevents race conditions that could break the singleton guarantee
+   *
+   * @param {string} name - The service identifier to clear
+   * @returns {boolean} True if the instance was cleared
+   */
+  clearInstance(name) {
+    const registration = this._registrations.get(name);
+    if (registration && registration.lifetime === ServiceLifetime.SINGLETON) {
+      // Clearing during resolution would cause duplicate instances to be created
+      if (this._initPromises.has(name)) {
+        logger.warn(
+          `[ServiceContainer] Cannot clear instance '${name}' - async resolution in progress`
+        );
+        return false;
+      }
+
+      const wasCleared = registration.instance !== null;
+      registration.instance = null;
+      registration.initializing = false; // Reset initializing flag too
+      logger.debug(`[ServiceContainer] Cleared singleton instance: ${name}`);
+      return wasCleared;
+    }
+    return false;
+  }
+
+  /**
+   * Shutdown the container and all services
+   *
+   * Calls shutdown/cleanup methods on all singleton services that implement them.
+   * Uses SHUTDOWN_ORDER to ensure dependent services are stopped before their dependencies.
+   * Should be called when the application is closing.
+   *
+   * @param {string[]} [shutdownOrder] - Optional custom shutdown order (defaults to SHUTDOWN_ORDER)
+   * @returns {Promise<void>}
+   */
+  async shutdown(shutdownOrder = null) {
+    if (this._isShuttingDown) {
+      logger.warn('[ServiceContainer] Shutdown already in progress');
+      return;
+    }
+
+    this._isShuttingDown = true;
+    logger.info('[ServiceContainer] Starting coordinated shutdown...');
+
+    // Track which services have been shut down
+    const shutdownComplete = new Set();
+
+    /**
+     * Shutdown a single service by name
+     * @param {string} name - Service name
+     * @returns {Promise<void>}
+     */
+    const shutdownService = async (name) => {
+      if (shutdownComplete.has(name)) return;
+
+      const registration = this._registrations.get(name);
+      if (!registration) return;
+      if (registration.lifetime !== ServiceLifetime.SINGLETON) return;
+      if (registration.instance === null) return;
+
+      const { instance } = registration;
+      shutdownComplete.add(name);
+
+      try {
+        if (typeof instance.shutdown === 'function') {
+          logger.debug(`[ServiceContainer] Calling shutdown on: ${name}`);
+          await Promise.resolve(instance.shutdown());
+        } else if (typeof instance.cleanup === 'function') {
+          logger.debug(`[ServiceContainer] Calling cleanup on: ${name}`);
+          await Promise.resolve(instance.cleanup());
+        } else if (typeof instance.dispose === 'function') {
+          logger.debug(`[ServiceContainer] Calling dispose on: ${name}`);
+          await Promise.resolve(instance.dispose());
+        } else {
+          // Drift detector: SHUTDOWN_ORDER lists this service but the instance
+          // exposes no lifecycle hook. This is almost always a silent bug — the
+          // container marches past the entry without cleaning up timers, open
+          // files, DB connections, etc. Emit a warning so it's caught in tests
+          // and dev logs instead of becoming a mystery leak in production.
+          logger.warn(
+            `[ServiceContainer] '${name}' is in shutdown order but exposes no shutdown(), cleanup(), or dispose() method — teardown will silently skip it`
+          );
+        }
+        logger.debug(`[ServiceContainer] Successfully shut down: ${name}`);
+      } catch (error) {
+        logger.error(`[ServiceContainer] Error shutting down ${name}:`, error?.message || error);
+      }
+    };
+
+    // Phase 1: Shutdown services in the specified order (sequentially)
+    // This ensures dependent services stop before their dependencies
+    // Use provided order or import default SHUTDOWN_ORDER
+    const order = shutdownOrder || [];
+
+    for (const serviceName of order) {
+      if (!this._registrations.has(serviceName)) {
+        logger.warn(
+          `[ServiceContainer] Service '${serviceName}' in shutdown order but not registered, skipping`
+        );
+        continue;
+      }
+      await shutdownService(serviceName);
+    }
+
+    // Phase 2: Shutdown any remaining services not in the order list.
+    // These are services the caller forgot to list in SHUTDOWN_ORDER — we
+    // don't know their dependency relationships, but running them in
+    // parallel used to produce heisen-crashes on Windows where one
+    // service's teardown (closing a sqlite handle, flushing a writable
+    // stream) raced with another's cleanup that still held a reference.
+    // Iterate sequentially in registration order; it's slower but safe,
+    // and in practice Phase 1 covers 99% of services so Phase 2 is tiny.
+    const remainingNames = [];
+    for (const [name, registration] of this._registrations) {
+      if (
+        !shutdownComplete.has(name) &&
+        registration.lifetime === ServiceLifetime.SINGLETON &&
+        registration.instance !== null
+      ) {
+        remainingNames.push(name);
+      }
+    }
+
+    if (remainingNames.length > 0) {
+      logger.debug(
+        `[ServiceContainer] Shutting down ${remainingNames.length} unordered services sequentially...`
+      );
+      for (const name of remainingNames) {
+        await shutdownService(name);
+      }
+    }
+
+    // This prevents resolutions from completing after container is cleared
+    if (this._initPromises.size > 0) {
+      logger.debug(
+        `[ServiceContainer] Waiting for ${this._initPromises.size} in-flight resolutions...`
+      );
+      await Promise.allSettled(Array.from(this._initPromises.values()));
+    }
+
+    // Clear all registrations
+    this._registrations.clear();
+    this._initPromises.clear();
+    this._resolutionStack.clear();
+
+    logger.info(`[ServiceContainer] Shutdown complete (${shutdownComplete.size} services stopped)`);
+  }
+
+  /**
+   * Reset the container (for testing)
+   *
+   * Clears all registrations and instances without calling shutdown methods.
+   */
+  reset() {
+    this._registrations.clear();
+    this._initPromises.clear();
+    this._resolutionStack.clear();
+    this._isShuttingDown = false;
+    logger.debug('[ServiceContainer] Container reset');
+  }
+}
+
+// Create and export the global container instance
+const container = new ServiceContainer();
+
+/**
+ * Service identifiers for type-safe resolution
+ * Only includes services that are registered with the container via ServiceIntegration.
+ * Other services (LlamaService, ParallelEmbeddingService, etc.) use their own
+ * singleton patterns and should be accessed via their respective getInstance() methods.
+ * @readonly
+ * @enum {string}
+ */
+const ServiceIds = {
+  // Core services
+  SERVICE_INTEGRATION: 'serviceIntegration',
+  ORAMA_VECTOR: 'oramaVector', // New in-process vector database
+  SETTINGS: 'settings',
+  SEARCH_SERVICE: 'searchService',
+  DOWNLOAD_WATCHER: 'downloadWatcher',
+  FILE_PATH_COORDINATOR: 'filePathCoordinator',
+  CACHE_INVALIDATION_BUS: 'cacheInvalidationBus',
+
+  // AI/Embedding services
+  LLAMA_SERVICE: 'llamaService', // New in-process LLM service
+  VISION_SERVICE: 'visionService', // Local multimodal runtime wrapper
+  WHISPER_SERVICE: 'whisperService', // In-process speech-to-text via whisper.cpp
+  PARALLEL_EMBEDDING: 'parallelEmbedding',
+  EMBEDDING_CACHE: 'embeddingCache',
+  MODEL_MANAGER: 'modelManager',
+  MODEL_DOWNLOAD_MANAGER: 'modelDownloadManager',
+
+  // Analysis services
+  FOLDER_MATCHING: 'folderMatching',
+  ORGANIZATION_SUGGESTION: 'organizationSuggestion',
+  AUTO_ORGANIZE: 'autoOrganize',
+  CLUSTERING: 'clustering',
+  LEARNING_FEEDBACK: 'learningFeedback', // Records implicit feedback from file organization
+  RELATIONSHIP_INDEX: 'relationshipIndex',
+
+  // State services
+  ANALYSIS_HISTORY: 'analysisHistory',
+  CHAT_HISTORY_STORE: 'chatHistoryStore',
+  UNDO_REDO: 'undoRedo',
+  PROCESSING_STATE: 'processingState',
+
+  // New cached services
+  ANALYSIS_CACHE: 'analysisCache',
+  FILE_ACCESS_POLICY: 'fileAccessPolicy',
+
+  // Watcher services
+  SMART_FOLDER_WATCHER: 'smartFolderWatcher',
+
+  // Notification service
+  NOTIFICATION_SERVICE: 'notificationService'
+};
+
+/**
+ * Shutdown order for services (reverse of initialization dependency order)
+ * Services are shut down in this order to ensure dependent services
+ * are stopped before their dependencies.
+ * @readonly
+ * @type {string[]}
+ */
+const SHUTDOWN_ORDER = [
+  // First: Watcher services (must stop before other services)
+  ServiceIds.SMART_FOLDER_WATCHER,
+  ServiceIds.DOWNLOAD_WATCHER,
+  // High-level services that use other services
+  ServiceIds.FILE_PATH_COORDINATOR, // Coordinator depends on many services
+  ServiceIds.SEARCH_SERVICE,
+  ServiceIds.RELATIONSHIP_INDEX,
+  ServiceIds.LEARNING_FEEDBACK, // Depends on suggestion service, must shutdown before it
+  ServiceIds.AUTO_ORGANIZE,
+  ServiceIds.ORGANIZATION_SUGGESTION,
+  ServiceIds.CLUSTERING,
+  ServiceIds.PARALLEL_EMBEDDING,
+  ServiceIds.FOLDER_MATCHING,
+  ServiceIds.NOTIFICATION_SERVICE,
+  // Second: Core infrastructure services
+  ServiceIds.EMBEDDING_CACHE,
+  ServiceIds.MODEL_MANAGER,
+  ServiceIds.MODEL_DOWNLOAD_MANAGER,
+  // New services (node-llama-cpp + Orama)
+  ServiceIds.VISION_SERVICE,
+  ServiceIds.WHISPER_SERVICE,
+  ServiceIds.LLAMA_SERVICE,
+  ServiceIds.ORAMA_VECTOR,
+  ServiceIds.ANALYSIS_CACHE,
+  // Third: State management services
+  ServiceIds.CHAT_HISTORY_STORE,
+  ServiceIds.PROCESSING_STATE,
+  ServiceIds.UNDO_REDO,
+  ServiceIds.ANALYSIS_HISTORY,
+  ServiceIds.FILE_ACCESS_POLICY,
+  // Cache invalidation bus (needed by all caches)
+  ServiceIds.CACHE_INVALIDATION_BUS,
+  // Note: SERVICE_INTEGRATION is intentionally omitted — ServiceIntegration.shutdown()
+  // invokes container.shutdown(SHUTDOWN_ORDER); listing it here would recurse.
+  // Last: Settings and config
+  ServiceIds.SETTINGS
+];
+
+module.exports = {
+  ServiceContainer,
+  container,
+  ServiceLifetime,
+  ServiceIds,
+  SHUTDOWN_ORDER
+};

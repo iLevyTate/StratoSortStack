@@ -1,0 +1,52 @@
+# docs/_config.yml
+title: 'StratoSort Core'
+description: 'Intelligent File Organization with Privacy-First Local AI'
+url: 'https://iLevyTate.github.io'
+baseurl: '/StratoSortCore'
+repository: 'iLevyTate/StratoSortCore'
+
+# Use a pinned Minimal Mistakes release for deterministic GitHub Pages builds.
+# GitHub Pages runs an older Sass engine that can break against upstream HEAD changes.
+remote_theme: 'mmistakes/minimal-mistakes@4.24.0'
+
+# Required plugin for Minimal Mistakes
+plugins:
+  - jekyll-include-cache
+
+# Minimal Mistakes Specific Configuration
+minimal_mistakes_skin: 'dark' # We use dark mode to match the app's aesthetic
+search: false
+
+# Sidebar and main navigation configuration
+navigation:
+  main:
+    - title: 'Home'
+      url: /
+    - title: 'Docs'
+      url: /INSTALL_GUIDE.html
+    - title: 'GitHub'
+      url: 'https://github.com/iLevyTate/StratoSortCore'
+
+# Keep these in git, but do not emit them as GitHub Pages. Baseline snapshots,
+# demo fixtures, and CI inventories are not the public site. Live guides, e2e
+# stills, tour stills, and how-to-use.mp4 still publish.
+exclude:
+  - baselines
+  - walkthrough-assets/demo-files
+  - commercial-use-inventory.json
+  - commercial-model-licenses.json
+  - commercial-compliance-waivers.json
+
+# Defaults for all markdown files in this repo to automatically get the single layout
+# and the sidebar navigation
+defaults:
+  - scope:
+      path: '' # an empty string here means all files in the project
+      type: 'pages'
+    values:
+      layout: 'single'
+      author_profile: false
+      toc: true
+      toc_sticky: true
+      sidebar:
+        nav: 'docs'

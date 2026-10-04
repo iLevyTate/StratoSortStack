@@ -1,0 +1,781 @@
+// @ts-check
+/**
+ * File Handlers Hook
+ *
+ * Custom hook for file selection and handling logic.
+ * Extracted from DiscoverPhase for better maintainability.
+ *
+ * @module phases/discover/useFileHandlers
+ */
+
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { TIMEOUTS } from '../../../shared/performanceConstants';
+import { ANALYSIS_SUPPORTED_EXTENSIONS, ALL_SUPPORTED_EXTENSIONS } from '../../../shared/constants';
+import { createLogger } from '../../../shared/logger';
+import { extractExtension, extractFileName } from './namingUtils';
+import { normalizePathValue, isAbsolutePath } from '../../utils/pathNormalization';
+import { mapErrorToNotification } from '../../utils/errorMapping';
+import { toCanonicalPath } from '../../utils/canonicalPath';
+
+const logger = createLogger('DiscoverPhase:FileHandlers');
+const ensureFileApi = (/** @type {any} */ addNotification, /** @type {any} */ actionLabel) => {
+  if (!window?.electronAPI?.files) {
+    logger.warn('[DiscoverPhase] File API unavailable', { actionLabel });
+    addNotification?.(
+      'File system API not ready. Please wait for the app to finish loading.',
+      'warning',
+      3000,
+      'file-api-unavailable'
+    );
+    return false;
+  }
+  return true;
+};
+
+const ensureSmartFolderApi = (
+  /** @type {any} */ addNotification,
+  /** @type {any} */ actionLabel
+) => {
+  if (!window?.electronAPI?.smartFolders) {
+    logger.warn('[DiscoverPhase] Smart folder API unavailable', { actionLabel });
+    addNotification?.(
+      'Smart folder API not ready. Please wait for the app to finish loading.',
+      'warning',
+      3000,
+      'smart-folder-api-unavailable'
+    );
+    return false;
+  }
+  return true;
+};
+
+/**
+ * Supported file extensions for analysis (centralized list)
+ */
+const SUPPORTED_EXTENSIONS = ANALYSIS_SUPPORTED_EXTENSIONS || ALL_SUPPORTED_EXTENSIONS || [];
+
+const SCAN_TIMEOUT = TIMEOUTS.DIRECTORY_SCAN || 30000;
+const FILE_STATS_BATCH_SIZE = 25;
+const buildMissingPathWarning = (/** @type {any} */ count) =>
+  `Skipped ${count} item${count > 1 ? 's' : ''} because no stable absolute path was available`;
+
+/**
+ * Custom hook for file handling operations
+ * @param {any} options
+ * @returns {Record<string, any>} File handler functions and state
+ */
+export function useFileHandlers({
+  selectedFiles,
+  setSelectedFiles,
+  addSelectedFiles,
+  updateFileState,
+  addNotification,
+  analyzeFiles
+}) {
+  const [isScanning, setIsScanning] = useState(false);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  const setIsScanningSafe = useCallback(
+    (/** @type {any} */ value) => {
+      if (isMountedRef.current) setIsScanning(value);
+    },
+    [setIsScanning]
+  );
+  const buildBaseFileEntry = (/** @type {any} */ file) => {
+    const filePath = typeof file === 'string' ? file : file.path;
+    const fileName = file?.name || extractFileName(filePath || '');
+    return {
+      name: fileName,
+      path: filePath,
+      extension: extractExtension(fileName),
+      size: 0,
+      isDirectory: false,
+      type: 'file',
+      created: file?.created,
+      modified: file?.modified,
+      source: file?.source
+    };
+  };
+
+  /**
+   * Get batch file stats for multiple files
+   */
+  const getBatchFileStats = useCallback(
+    async (/** @type {any} */ filePaths, batchSize = FILE_STATS_BATCH_SIZE) => {
+      if (!ensureFileApi(addNotification, 'getBatchFileStats')) {
+        return [];
+      }
+      /** @type {any[]} */
+      const results = [];
+      const totalFiles = Array.isArray(filePaths) ? filePaths.length : 0;
+      const isLargeBatch = totalFiles > 500;
+      const effectiveBatchSize = isLargeBatch
+        ? Math.min(batchSize, 10)
+        : Math.min(batchSize, FILE_STATS_BATCH_SIZE);
+      const maxConcurrency = isLargeBatch ? 2 : Math.max(1, Math.min(5, effectiveBatchSize));
+
+      const getStatsWithRetry = async (/** @type {any} */ filePath) => {
+        const fetchStats = () => window.electronAPI.files.getStats(filePath);
+        const withTimeout = (/** @type {any} */ promise) => {
+          /** @type {NodeJS.Timeout | undefined} */
+          let timeoutId;
+          return Promise.race([
+            promise,
+            new Promise((_, reject) => {
+              timeoutId = setTimeout(
+                () => reject(new Error('File metadata timeout')),
+                TIMEOUTS.FILE_READ
+              );
+            })
+          ]).finally(() => {
+            if (timeoutId) clearTimeout(timeoutId);
+          });
+        };
+
+        try {
+          const stats = await withTimeout(fetchStats());
+          return stats;
+        } catch (error) {
+          if (String(error?.message || '').includes('Rate limit exceeded')) {
+            await new Promise((resolve) => setTimeout(resolve, TIMEOUTS.DELAY_SHORT));
+            return withTimeout(fetchStats());
+          }
+          throw error;
+        }
+      };
+
+      const mapWithConcurrency = async (
+        /** @type {any} */ items,
+        /** @type {any} */ limit,
+        /** @type {any} */ worker
+      ) => {
+        const pending = new Set();
+        const output = new Array(items.length);
+        let index = 0;
+
+        const runNext = async () => {
+          if (index >= items.length) return;
+          const currentIndex = index++;
+          const promise = (async () => {
+            output[currentIndex] = await worker(items[currentIndex], currentIndex);
+          })()
+            .catch((error) => {
+              output[currentIndex] = { error };
+            })
+            .finally(() => {
+              pending.delete(promise);
+            });
+          pending.add(promise);
+        };
+
+        while (index < items.length || pending.size > 0) {
+          while (pending.size < limit && index < items.length) {
+            // Spread out IPC calls slightly to avoid rate limiter bursts.
+            if (pending.size > 0) {
+              await new Promise((resolve) => setTimeout(resolve, TIMEOUTS.DELAY_TINY));
+            }
+            await runNext();
+          }
+          if (pending.size > 0) {
+            await Promise.race(pending);
+          }
+        }
+
+        return output;
+      };
+
+      for (let i = 0; i < filePaths.length; i += effectiveBatchSize) {
+        const batch = filePaths.slice(i, i + effectiveBatchSize);
+        const batchResults = await mapWithConcurrency(
+          batch,
+          maxConcurrency,
+          async (/** @type {any} */ filePath) => {
+            try {
+              const stats = await getStatsWithRetry(filePath);
+              const fileName = extractFileName(filePath);
+              const extension = extractExtension(fileName);
+
+              return {
+                name: fileName,
+                path: filePath,
+                extension,
+                size: stats?.size || 0,
+                isDirectory: stats?.isDirectory || false,
+                type: 'file',
+                created: stats?.created,
+                modified: stats?.modified,
+                success: true
+              };
+            } catch (error) {
+              const fileName = extractFileName(filePath);
+              return {
+                name: fileName,
+                path: filePath,
+                extension: extractExtension(fileName),
+                size: 0,
+                isDirectory: false,
+                type: 'file',
+                success: false,
+                error: error.message
+              };
+            }
+          }
+        );
+
+        batchResults.forEach((result, index) => {
+          if (result?.error) {
+            const filePath = batch[index];
+            const fileName = extractFileName(filePath);
+            const errorMessage =
+              typeof result.error === 'string'
+                ? result.error
+                : result.error?.message || 'Unknown error';
+            results.push({
+              name: fileName,
+              path: filePath,
+              extension: extractExtension(fileName),
+              size: 0,
+              isDirectory: false,
+              type: 'file',
+              success: false,
+              error: errorMessage
+            });
+            return;
+          }
+
+          results.push(result);
+        });
+
+        if (i + effectiveBatchSize < filePaths.length) {
+          const batchDelay = isLargeBatch ? TIMEOUTS.DELAY_SHORT : TIMEOUTS.DELAY_BATCH;
+          await new Promise((resolve) => setTimeout(resolve, batchDelay));
+        }
+      }
+
+      return results;
+    },
+    [addNotification]
+  );
+
+  const enrichSelectedFiles = useCallback(
+    async (/** @type {any} */ filePaths, /** @type {any} */ source) => {
+      try {
+        const fileObjects = await getBatchFileStats(filePaths);
+        const enhancedFiles = fileObjects.map((file) => ({
+          ...file,
+          source
+        }));
+
+        setSelectedFiles((/** @type {any} */ prev) => {
+          const existing = Array.isArray(prev) ? prev : [];
+          const merged = [...existing];
+          // Canonical compare: stats results echo paths from main-process
+          // IPC whose case/separator style can differ from the queued entry.
+          enhancedFiles.forEach((file) => {
+            const canonical = toCanonicalPath(file.path);
+            const idx = merged.findIndex((f) => toCanonicalPath(f.path) === canonical);
+            if (idx >= 0) {
+              merged[idx] = { ...merged[idx], ...file };
+            } else {
+              merged.push(file);
+            }
+          });
+          return merged;
+        });
+
+        const failedFiles = fileObjects.filter((f) => !f.success);
+        if (failedFiles.length > 0) {
+          addNotification(
+            `Warning: ${failedFiles.length} files had issues loading metadata`,
+            'warning',
+            3000,
+            'file-issues'
+          );
+        }
+      } catch (error) {
+        logger.warn('[DiscoverPhase] Failed to enrich file stats', {
+          error: error?.message
+        });
+      }
+    },
+    [addNotification, getBatchFileStats, setSelectedFiles]
+  );
+
+  /**
+   * Filter and deduplicate new files
+   */
+  const filterNewFiles = useCallback(
+    (/** @type {any} */ files, /** @type {any} */ existingFiles) => {
+      // Canonical compare: a file queued via drag-drop and re-added via the
+      // dialog can arrive with different separator/case style — raw equality
+      // would queue (and analyze) it twice.
+      const existingPaths = new Set(
+        existingFiles.map((/** @type {any} */ f) => toCanonicalPath(f.path))
+      );
+      const newFiles = files.filter((/** @type {any} */ file) => {
+        const path = typeof file === 'string' ? file : file.path;
+        return !existingPaths.has(toCanonicalPath(path));
+      });
+
+      const duplicateCount = files.length - newFiles.length;
+
+      if (duplicateCount > 0 && newFiles.length > 0) {
+        addNotification(
+          `Skipped ${duplicateCount} duplicate files already in queue`,
+          'info',
+          2000,
+          'duplicate-files'
+        );
+      } else if (newFiles.length === 0) {
+        addNotification('All files are already in the queue', 'info', 2000, 'duplicate-files');
+      }
+
+      return newFiles;
+    },
+    [addNotification]
+  );
+
+  const expandDroppedDirectories = useCallback(
+    async (/** @type {any} */ directories) => {
+      if (!directories.length) return [];
+      if (!ensureSmartFolderApi(addNotification, 'expandDroppedDirectories')) {
+        return [];
+      }
+
+      const expanded = [];
+      for (const dir of directories) {
+        try {
+          /** @type {NodeJS.Timeout | undefined} */
+          let scanTimeoutId;
+          const scanResult = await Promise.race([
+            window.electronAPI.smartFolders.scanStructure(dir.path),
+            new Promise((_, reject) => {
+              scanTimeoutId = setTimeout(
+                () =>
+                  reject(
+                    new Error(
+                      'Folder scan timeout - the folder may be on a slow network drive or contain too many files'
+                    )
+                  ),
+                SCAN_TIMEOUT
+              );
+            })
+          ]).finally(() => {
+            if (scanTimeoutId) clearTimeout(scanTimeoutId);
+          });
+
+          if (scanResult?.partial) {
+            addNotification(
+              'Folder scan returned partial results (slow drive or too many files). Try a smaller folder.',
+              'warning',
+              4000,
+              'folder-scan-partial'
+            );
+          }
+
+          if (scanResult?.files?.length > 0) {
+            const supportedFiles = scanResult.files.filter((/** @type {any} */ file) => {
+              const ext = extractExtension(file.name);
+              return SUPPORTED_EXTENSIONS.includes(ext);
+            });
+
+            if (supportedFiles.length === 0) {
+              addNotification(
+                `No supported files found in dropped folder: ${dir.name || 'Selected folder'}`,
+                'warning',
+                3000,
+                'drop-folder-empty'
+              );
+              continue;
+            }
+
+            expanded.push(
+              ...supportedFiles.map((/** @type {any} */ file) => ({
+                ...file,
+                source: 'folder_scan',
+                droppedFrom: dir.path
+              }))
+            );
+          } else {
+            addNotification(
+              `No files found in dropped folder: ${dir.name || 'Selected folder'}`,
+              'warning',
+              3000,
+              'drop-folder-empty'
+            );
+          }
+        } catch {
+          addNotification(
+            `Error scanning dropped folder: ${dir.name || 'Selected folder'}`,
+            'error',
+            4000,
+            'drop-folder-error'
+          );
+        }
+      }
+
+      return expanded;
+    },
+    [addNotification]
+  );
+
+  /**
+   * Handle file selection from dialog
+   */
+  const handleFileSelection = useCallback(async () => {
+    try {
+      setIsScanningSafe(true);
+      if (!ensureFileApi(addNotification, 'handleFileSelection')) {
+        return;
+      }
+      const result = await window.electronAPI.files.select();
+
+      if (result?.success && result?.files?.length > 0) {
+        const absoluteFiles = (result.files || []).map((/** @type {any} */ f) => {
+          const rawPath = typeof f === 'string' ? f : f?.path;
+          const normalizedPath = normalizePathValue(rawPath);
+          return typeof f === 'string' ? normalizedPath : { ...f, path: normalizedPath };
+        });
+        const usableFiles = absoluteFiles.filter((/** @type {any} */ f) =>
+          isAbsolutePath(typeof f === 'string' ? f : f?.path)
+        );
+        const droppedNonAbsolute = (result.files || []).length - absoluteFiles.length;
+        const unusableCount = absoluteFiles.length - usableFiles.length;
+
+        if (droppedNonAbsolute > 0 || unusableCount > 0) {
+          const skipped = droppedNonAbsolute + unusableCount;
+          addNotification(buildMissingPathWarning(skipped), 'warning', 2500, 'file-selection-path');
+        }
+
+        const newFiles = filterNewFiles(usableFiles, selectedFiles);
+
+        if (newFiles.length === 0) return;
+
+        // Update file states for new files
+        // newFiles contains {path, name} objects from API response
+        newFiles.forEach((/** @type {any} */ file) => {
+          const filePath = typeof file === 'string' ? file : file.path;
+          updateFileState(filePath, 'pending');
+        });
+
+        const baseFiles = newFiles.map((/** @type {any} */ file) => ({
+          ...buildBaseFileEntry(file),
+          source: 'file_selection'
+        }));
+
+        addSelectedFiles(baseFiles);
+
+        addNotification(
+          `Added ${baseFiles.length} new file${baseFiles.length !== 1 ? 's' : ''} for analysis`,
+          'success',
+          2500,
+          'files-added'
+        );
+
+        // Scanning is done; don't hold the spinner through analysis (SW-34).
+        setIsScanningSafe(false);
+
+        // Analyze the new files
+        if (analyzeFiles) {
+          logger.info(`Requesting analysis for ${baseFiles.length} files`);
+          await analyzeFiles(baseFiles);
+        } else {
+          logger.warn('analyzeFiles function not available');
+        }
+
+        // Enrich stats in the background to avoid blocking analysis start
+        const filePaths = newFiles.map((/** @type {any} */ f) =>
+          typeof f === 'string' ? f : f.path
+        );
+        enrichSelectedFiles(filePaths, 'file_selection');
+      } else {
+        addNotification('No files selected', 'info', 2000, 'file-selection');
+      }
+    } catch (error) {
+      const { message } = mapErrorToNotification({ error });
+      addNotification(`Error selecting files: ${message}`, 'error', 4000, 'file-selection-error');
+    } finally {
+      setIsScanningSafe(false);
+    }
+  }, [
+    selectedFiles,
+    addSelectedFiles,
+    updateFileState,
+    addNotification,
+    filterNewFiles,
+    analyzeFiles,
+    enrichSelectedFiles,
+    setIsScanningSafe
+  ]);
+
+  /**
+   * Handle folder selection
+   */
+  const handleFolderSelection = useCallback(async () => {
+    try {
+      setIsScanningSafe(true);
+      if (!ensureFileApi(addNotification, 'handleFolderSelection')) {
+        return;
+      }
+      // The folder is scanned for files to analyze, not written to.
+      const result = await window.electronAPI.files.selectDirectory({ purpose: 'source' });
+
+      if (result?.success && result?.path) {
+        /** @type {NodeJS.Timeout | undefined} */
+        let scanTimeoutId;
+
+        const scanResult = await Promise.race([
+          ensureSmartFolderApi(addNotification, 'scanStructure')
+            ? window.electronAPI.smartFolders.scanStructure(result.path)
+            : Promise.resolve({ files: [] }),
+          new Promise((_, reject) => {
+            scanTimeoutId = setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    'Folder scan timeout - the folder may be on a slow network drive or contain too many files'
+                  )
+                ),
+              SCAN_TIMEOUT
+            );
+          })
+        ]).finally(() => {
+          if (scanTimeoutId) clearTimeout(scanTimeoutId);
+        });
+
+        if (scanResult?.partial) {
+          addNotification(
+            'Folder scan returned partial results (slow drive or too many files). Try a smaller folder.',
+            'warning',
+            4000,
+            'folder-scan-partial'
+          );
+        }
+
+        if (scanResult?.files?.length > 0) {
+          const supportedFiles = scanResult.files.filter((/** @type {any} */ file) => {
+            const ext = extractExtension(file.name);
+            return SUPPORTED_EXTENSIONS.includes(ext);
+          });
+
+          if (supportedFiles.length === 0) {
+            addNotification(
+              'No supported files found in the selected folder',
+              'warning',
+              3000,
+              'folder-scan'
+            );
+            return;
+          }
+
+          const newFiles = filterNewFiles(supportedFiles, selectedFiles);
+          if (newFiles.length === 0) return;
+
+          // Update file states
+          newFiles.forEach((/** @type {any} */ file) => updateFileState(file.path, 'pending'));
+
+          const baseFiles = newFiles.map((/** @type {any} */ file) => ({
+            ...buildBaseFileEntry(file),
+            source: 'folder_scan'
+          }));
+
+          addSelectedFiles(baseFiles);
+
+          addNotification(
+            `Added ${baseFiles.length} new file${baseFiles.length !== 1 ? 's' : ''} from folder for analysis`,
+            'success',
+            2500,
+            'files-added'
+          );
+
+          // Scanning is done; don't hold the spinner through analysis (SW-34).
+          setIsScanningSafe(false);
+
+          if (analyzeFiles) {
+            await analyzeFiles(baseFiles);
+          }
+
+          enrichSelectedFiles(
+            newFiles.map((/** @type {any} */ f) => f.path),
+            'folder_scan'
+          );
+        } else {
+          addNotification('No files found in the selected folder', 'warning', 3000, 'folder-scan');
+        }
+      } else if (result?.success === false && result?.path === null) {
+        addNotification('Folder selection cancelled', 'info', 2000, 'folder-selection');
+      } else {
+        addNotification('No folder selected', 'info', 2000, 'folder-selection');
+      }
+    } catch (error) {
+      const { message } = mapErrorToNotification({ error });
+      addNotification(
+        `Error selecting folder: ${message}`,
+        'error',
+        4000,
+        'folder-selection-error'
+      );
+    } finally {
+      setIsScanningSafe(false);
+    }
+  }, [
+    selectedFiles,
+    addSelectedFiles,
+    updateFileState,
+    addNotification,
+    filterNewFiles,
+    analyzeFiles,
+    enrichSelectedFiles,
+    setIsScanningSafe
+  ]);
+
+  /**
+   * Handle file drop
+   * FIX H-2: Added try/catch for consistent error handling with other handlers
+   */
+  const handleFileDrop = useCallback(
+    async (/** @type {any} */ files) => {
+      if (!files || files.length === 0) return;
+
+      try {
+        // Normalize paths and require absolute paths for dropped items
+        const normalizedFiles = files.map((/** @type {any} */ file) => {
+          if (typeof file === 'string') return normalizePathValue(file);
+          const normalizedPath = normalizePathValue(file.path || '');
+          return { ...file, path: normalizedPath };
+        });
+
+        const usableFiles = normalizedFiles.filter((/** @type {any} */ file) => {
+          const pathValue = typeof file === 'string' ? file : file.path;
+          return isAbsolutePath(pathValue);
+        });
+
+        const skippedCount = files.length - usableFiles.length;
+        if (skippedCount > 0) {
+          addNotification(
+            buildMissingPathWarning(skippedCount),
+            'warning',
+            2500,
+            'drop-missing-path'
+          );
+        }
+
+        if (usableFiles.length === 0) return;
+
+        const newFiles = filterNewFiles(usableFiles, selectedFiles);
+        if (newFiles.length === 0) return;
+
+        const withPath = newFiles; // Already filtered for absolute paths
+
+        // Split directories and files
+        /** @type {any[]} */
+        const droppedDirectories = [];
+        /** @type {any[]} */
+        const droppedFiles = [];
+
+        const paths = withPath.map((/** @type {any} */ file) =>
+          typeof file === 'string' ? file : file.path
+        );
+        const statsResults = await getBatchFileStats(paths);
+
+        withPath.forEach((/** @type {any} */ file, /** @type {any} */ idx) => {
+          const pathValue = typeof file === 'string' ? file : file.path;
+          const stat = statsResults[idx] || {};
+          const fileName = file.name || extractFileName(pathValue || '');
+
+          if (stat?.isDirectory) {
+            droppedDirectories.push({ path: pathValue, name: fileName });
+            return;
+          }
+
+          let { extension } = file;
+          if (!extension) {
+            extension = extractExtension(fileName);
+          }
+
+          droppedFiles.push({
+            ...file,
+            path: pathValue,
+            name: fileName,
+            extension,
+            size: stat?.size ?? file.size ?? 0,
+            created: stat?.created,
+            modified: stat?.modified,
+            type: 'file',
+            source: 'drag_drop',
+            droppedAt: new Date().toISOString()
+          });
+        });
+
+        const supportedDroppedFiles = droppedFiles.filter((file) => {
+          const ext = file.extension || extractExtension(file.name);
+          return SUPPORTED_EXTENSIONS.includes(ext);
+        });
+        const skippedUnsupported = droppedFiles.length - supportedDroppedFiles.length;
+        if (skippedUnsupported > 0) {
+          addNotification(
+            `${skippedUnsupported} unsupported file${skippedUnsupported !== 1 ? 's' : ''} skipped`,
+            'warning',
+            2500,
+            'drop-unsupported'
+          );
+        }
+
+        const expandedFromFolders = await expandDroppedDirectories(droppedDirectories);
+        const enhancedFiles = [...supportedDroppedFiles, ...expandedFromFolders];
+        if (enhancedFiles.length === 0) {
+          addNotification('No supported files found in drop', 'warning', 2000, 'drop-empty');
+          return;
+        }
+
+        // Update file states
+        enhancedFiles.forEach((file) => updateFileState(file.path, 'pending'));
+
+        addSelectedFiles(enhancedFiles);
+
+        addNotification(
+          `Added ${enhancedFiles.length} new file${enhancedFiles.length !== 1 ? 's' : ''} for analysis`,
+          'success',
+          2500,
+          'files-added'
+        );
+
+        if (analyzeFiles) {
+          await analyzeFiles(enhancedFiles);
+        }
+      } catch (error) {
+        logger.error('[DiscoverPhase] Error handling file drop', {
+          error: error.message,
+          stack: error.stack
+        });
+        const { message } = mapErrorToNotification({ error });
+        addNotification(`Error processing dropped files: ${message}`, 'error', 4000, 'drop-error');
+      }
+    },
+    [
+      selectedFiles,
+      addSelectedFiles,
+      updateFileState,
+      addNotification,
+      filterNewFiles,
+      analyzeFiles,
+      expandDroppedDirectories,
+      getBatchFileStats
+    ]
+  );
+
+  return {
+    isScanning,
+    handleFileSelection,
+    handleFolderSelection,
+    handleFileDrop,
+    getBatchFileStats
+  };
+}

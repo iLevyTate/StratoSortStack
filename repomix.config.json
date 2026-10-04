@@ -1,0 +1,40 @@
+{
+  "output": {
+    "filePath": "repomix-output.txt",
+    "style": "xml",
+    "removeComments": false,
+    "removeEmptyLines": false,
+    "topFilesLength": 5,
+    "showLineNumbers": false,
+    "copyToClipboard": false
+  },
+  "include": ["**/*"],
+  "ignore": {
+    "useGitignore": true,
+    "useDefaultPatterns": true,
+    "customPatterns": [
+      "node_modules/**",
+      "package-lock.json",
+      "yarn.lock",
+      "pnpm-lock.yaml",
+      "dist/**",
+      "release/**",
+      "coverage/**",
+      "test/**",
+      "tests/**",
+      "**/*.test.js",
+      "**/*.test.ts",
+      "**/*.spec.js",
+      "**/*.spec.ts",
+      "**/*.map",
+      ".git/**",
+      ".github/**",
+      ".vscode/**",
+      ".idea/**",
+      "**/*.log",
+      "**/tmp/**",
+      "**/temp/**",
+      "assets/**"
+    ]
+  }
+}

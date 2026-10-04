@@ -1,0 +1,169 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: '/'
+    schedule:
+      interval: daily
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - automerge
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # @types/node must track the runtime major (Node 20.19, see .nvmrc and
+      # package.json#engines). Allow minor/patch bumps within 20.x; refuse
+      # cross-major jumps (e.g. 25.x) which would expose Node-25-only APIs to
+      # TypeScript even though the runtime is still 20.x. Re-evaluate this
+      # ignore rule whenever .nvmrc moves to a new major.
+      - dependency-name: '@types/node'
+        update-types:
+          - 'version-update:semver-major'
+
+      # ─── electron: stay on 41.x ──────────────────────────────────────────
+      # CANONICAL RATIONALE for the electron version pin. CLAUDE.md and
+      # package.json#electron reference this comment rather than duplicating
+      # it — keep this entry the single source of truth.
+      #
+      # STATUS (re-verified 2026-10-03): the original toolchain blocker is
+      # GONE upstream and the gap has widened to three majors. This entry is
+      # now a STALE PIN awaiting a bump attempt, not a known-blocked one.
+      # Do not read it as "still blocked" without re-running the probes below.
+      #
+      # Where we are:
+      #   - pinned:          electron ^41.10.1
+      #   - latest upstream: electron 44.5.1 (three majors ahead)
+      #   - Electron supports the latest three stable majors (42/43/44), so
+      #     41.x is OUTSIDE upstream security support. Treat the bump as a
+      #     security item, not a dependency chore.
+      #
+      # ABI reference (the numbers in this entry were wrong before
+      # 2026-10-03 — it claimed 41=136 / 42=137; both figures were fiction):
+      #   electron 41 => ABI 145      electron 43 => ABI 148
+      #   electron 42 => ABI 146      electron 44 => ABI 149
+      #
+      # Blocker 1 — `@electron/rebuild` ABI detection: RESOLVED UPSTREAM.
+      #   `node-abi@4.35.0` carries entries through electron 45. The local
+      #   tree still fails `getAbi('42.0.0','electron')` only because the
+      #   lockfile pins the copy nested under `@electron/rebuild` to 4.26.0;
+      #   `@electron/rebuild@4.2.0` declares `node-abi ^4.2.0`, so 4.35.0 is
+      #   already in range and a lockfile refresh picks it up. Probe:
+      #     node -e "console.log(require(require.resolve('node-abi',       #       {paths:['node_modules/@electron/rebuild']}))       #       .getAbi('44.5.1','electron'))"
+      #   149 => condition met. "Could not detect abi" => refresh the lock.
+      #
+      # Blocker 2 — `better-sqlite3` prebuilts: OBSOLETE AS WRITTEN.
+      #   WiseLibs stopped attaching prebuilt binaries to GitHub releases:
+      #   v12.12.0 carried 145 assets, every v13.x release carries ZERO. The
+      #   condition can therefore never be satisfied as phrased. It was also
+      #   never our gating condition — `scripts/native-modules.js` marks
+      #   better-sqlite3 `requiresElectronRebuild: true`, i.e. we compile it
+      #   from source against the target Electron ABI regardless of what
+      #   upstream publishes. Replaced in the unblock signal below.
+      #
+      # Recurrence history (why an ignore exists at all):
+      #   PR #180  (2026-04-xx): bumped 41 → 42.0.0   ← first attempt
+      #   PR #197  (2026-04-xx): reverted 42 → 41     ← better-sqlite3 break
+      #                                                 NO ignore added →
+      #                                                 Dependabot re-bumped
+      #   PR #206  (2026-05-11): re-bumped 41 → 42.0.1 ← same trap reopened
+      #   PR #TBD  (2026-05-15): revert + this ignore  ← stop the loop
+      #
+      # Unblock signal, revised 2026-10-03 (lift the ignore when ALL hold):
+      #   - the ABI probe above resolves the target Electron major
+      #   - `better-sqlite3` and `node-llama-cpp` REBUILD FROM SOURCE against
+      #     the target major and `npm run verify:native-modules` passes
+      #     (source rebuild, not published prebuilts — see Blocker 2)
+      #   - `whisper.node` and any other native dep in package.json either
+      #     rebuilds or ships a binary for the target ABI
+      #
+      # Verification recipe (must all pass before removing the ignore):
+      #   1. rm -rf node_modules package-lock.json
+      #   2. npm install                            # postinstall rebuild must succeed
+      #   3. npm run verify:native-modules          # every native dep loads
+      #   4. npm run dev                            # smoke: app boots
+      #   5. npm test                               # native modules load under Jest
+      #   6. npm run local:gate                     # full ci + verify:native-modules
+      #   Do this in a separate worktree: a cross-arch/ABI rebuild overwrites
+      #   node_modules/<pkg>/build/Release/*.node in place (see CLAUDE.md).
+      #
+      # Cross-references:
+      #   - package.json#devDependencies.electron (^41.10.1)
+      #   - CLAUDE.md → "Known Production Gaps" / "Electron version pin"
+      #   - scripts/postinstall.js → throws POSTINSTALL_REBUILD_FAILED
+      #     when ABI detection fails (the failure surface we hit)
+      - dependency-name: 'electron'
+        update-types:
+          - 'version-update:semver-major'
+
+      # ─── embedding-atlas: stay on 0.22.x ─────────────────────────────────
+      # 0.x minors are breaking. 0.24.0 added an embedding worker that the
+      # barrel instantiates via `new Worker(new URL('./embedding.worker.js',
+      # import.meta.url))`; webpack bundles that worker and fails on its
+      # dynamic `import('https://cdn.jsdelivr.net/npm/@huggingface/...')`.
+      # Even if resolvable, a privacy-first app with `script-src 'self'` must
+      # not ship code that fetches models from a CDN. package.json pins
+      # `~0.22.0`; the 43-update Dependabot group (#412) bumped it to 0.24 and
+      # broke `npm run build` because Actions were off.
+      #
+      # Unblock signal: an embedding-atlas release whose dist contains no
+      # remote-URL imports (grep dist/ for `cdn.jsdelivr`), or a subpath
+      # export that exposes EmbeddingView without the worker chunk. Verify
+      # with `npm run build` and the Atlas tab before lifting.
+      - dependency-name: 'embedding-atlas'
+        update-types:
+          - 'version-update:semver-minor'
+          - 'version-update:semver-major'
+
+      # ─── typescript: stay on 6.x ─────────────────────────────────────────
+      # The JSDoc checkjs lane (`npm run typecheck:js`, 432 opted-in .js files
+      # under `// @ts-check`) relies on TypeScript inferring CommonJS
+      # `module.exports = X; module.exports.y = ...` shapes. TypeScript 7.0.2
+      # (#382, merged with Actions off) reports 351 errors on the same sources
+      # that 6.0.3 checks clean (TS2309 "export assignment cannot be used in a
+      # module with other exported elements", lost `getInstance`/typedef
+      # members, `typeof` on `require()` results). `npm run ci` fails at
+      # typecheck:js.
+      #
+      # Unblock signal: either the checkjs lane migrates every
+      # `module.exports = ...; module.exports.x = ...` module to a single
+      # object export (or ESM), or a TypeScript 7.x release restores the
+      # CommonJS inference. Verify with `npm run typecheck:js` before lifting.
+      - dependency-name: 'typescript'
+        update-types:
+          - 'version-update:semver-major'
+
+      # ─── Node >= 22 majors: hold until the runtime moves ─────────────────
+      # This repo runs Node 20.19 (.nvmrc, package.json#engines). Each of
+      # these majors declares engines.node >= 22:
+      #   better-sqlite3 13.x  — also one of the two modules on the Electron
+      #                          native-rebuild chain (scripts/native-modules.js)
+      #   @testing-library/jest-dom 7.x — under Node 20 it also breaks
+      #                          per-file `jest.mock('fs', …)` factories
+      #                          (43 suites / 539 tests failed on 7.0.1)
+      #   cssnano 8.x          — build-time only, but same engine floor
+      #                          (^22.11). 8.0.4+ of postcss-merge-longhand
+      #                          calls Set.prototype.difference, so under
+      #                          Node 20 cssnano fails to load, Tailwind is
+      #                          never compiled and the renderer build dies
+      #                          on a duplicate styles.css. Held at 7.x.
+      # Lift all three together with the Node major bump, re-running
+      # `npm run ci` and the electron verification recipe above.
+      - dependency-name: 'better-sqlite3'
+        update-types:
+          - 'version-update:semver-major'
+      - dependency-name: '@testing-library/jest-dom'
+        update-types:
+          - 'version-update:semver-major'
+      - dependency-name: 'cssnano'
+        update-types:
+          - 'version-update:semver-major'
+  - package-ecosystem: github-actions
+    directory: '/'
+    schedule:
+      interval: weekly
+    labels:
+      - ci
+      - automerge

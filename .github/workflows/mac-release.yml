@@ -1,0 +1,687 @@
+# macOS Apple Silicon (arm64) + Intel (x64) DMG/zip, and Linux x64 AppImage/deb. Tag or manual dispatch.
+# Windows: build locally (npm run dist:win) or use Release (Windows) workflow.
+#
+# Code signing: OPTIONAL. If repo secrets MACOS_CSC_LINK, MACOS_CSC_KEY_PASSWORD, APPLE_ID,
+# APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID are all set, builds are signed + notarized.
+# If any are missing (typical without an Apple Developer Program certificate), this workflow still
+# succeeds and produces unsigned DMG/ZIP with ad-hoc signing only — fine for testing or internal
+# distribution; other Macs may need right-click → Open to bypass Gatekeeper.
+name: Release (macOS + Linux)
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: Existing release tag to build and publish
+        required: true
+        type: string
+
+# Serialize concurrent runs for the same tag (e.g. a tag push racing a manual
+# re-dispatch). ref_name (not ref) so both triggers normalize to the bare tag:
+# a push produces ref=refs/tags/v1.2.3 while a dispatch supplies tag_name=v1.2.3
+# — with github.ref the two would land in different groups and run concurrently.
+# The cross-workflow race with release.yml (Windows) is handled in
+# publish-release: the create step tolerates "already exists", and asset
+# filenames never collide across platforms, so uploads are safe to interleave.
+concurrency:
+  group: mac-release-${{ github.event.inputs.tag_name || github.ref_name }}
+  cancel-in-progress: false
+
+# Least privilege: only publish-release creates the release / uploads assets
+# and declares contents: write at job level. Build jobs only read (checkout,
+# gh api lookup of the FFmpeg asset).
+permissions:
+  contents: read
+
+env:
+  CI: true
+
+# Before tagging: npm run ci && npm run verify:native-modules on your machine.
+
+jobs:
+  resolve-release-target:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      ref: ${{ steps.resolve.outputs.ref }}
+    steps:
+      - name: Resolve and validate release target
+        id: resolve
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const tagPattern = /^v\d+\.\d+\.\d+$/;
+            const isTagPush = context.eventName === "push" && context.ref.startsWith("refs/tags/");
+
+            if (isTagPush) {
+              const tag = context.ref.replace("refs/tags/", "");
+              if (!tagPattern.test(tag)) {
+                core.setFailed(`Release tag must match v<major>.<minor>.<patch>; received '${tag}'.`);
+                return;
+              }
+              core.setOutput("tag", tag);
+              core.setOutput("ref", `refs/tags/${tag}`);
+              return;
+            }
+
+            const requestedTag = String(context.payload.inputs?.tag_name || "").trim();
+            if (!tagPattern.test(requestedTag)) {
+              core.setFailed(
+                `workflow_dispatch tag_name must match v<major>.<minor>.<patch>; received '${requestedTag || "<empty>"}'.`
+              );
+              return;
+            }
+
+            try {
+              await github.rest.git.getRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `tags/${requestedTag}`
+              });
+            } catch (error) {
+              core.setFailed(`Release tag '${requestedTag}' does not exist in the repository.`);
+              return;
+            }
+
+            core.setOutput("tag", requestedTag);
+            core.setOutput("ref", `refs/tags/${requestedTag}`);
+
+  build-macos:
+    needs: resolve-release-target
+    # macos-15-intel is ~2x slower than macos-latest (M1) for this build —
+    # arm64 finishes in ~27 min, x64 was hitting the prior 45-min ceiling
+    # mid-electron-builder. 75 min gives x64 ~30 min of headroom past its
+    # previous progress point. Revisit if/when GitHub retires the slow
+    # macos-15-intel image.
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-latest
+          - arch: x64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-release-target.outputs.ref }}
+          fetch-depth: 0
+      - name: Verify package version matches release tag
+        env:
+          RELEASE_TAG: ${{ needs.resolve-release-target.outputs.tag }}
+        run: |
+          node -e "const tag=process.env.RELEASE_TAG; if (!tag) { throw new Error('RELEASE_TAG env var not set; cannot verify package.json'); } const pkg=require('./package.json'); const expected=String(tag).replace(/^v/, ''); if (pkg.version !== expected) { throw new Error('package.json version ' + pkg.version + ' does not match release tag ' + tag); }"
+
+      - name: Use Node.js 20.x
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+
+      - name: Verify macOS build assets
+        run: node scripts/verify-build-assets.js --platform=mac
+
+      - name: Install dependencies (with optional deps)
+        run: npm ci --include=optional
+
+      - name: Detect mac release mode
+        id: mac-release-mode
+        env:
+          CSC_LINK: ${{ secrets['MACOS_CSC_LINK'] }}
+          CSC_KEY_PASSWORD: ${{ secrets['MACOS_CSC_KEY_PASSWORD'] }}
+          APPLE_ID: ${{ secrets['APPLE_ID'] }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets['APPLE_APP_SPECIFIC_PASSWORD'] }}
+          APPLE_TEAM_ID: ${{ secrets['APPLE_TEAM_ID'] }}
+          # Override: set this repo variable to "true" to force unsigned mac
+          # builds even when all 5 signing secrets are configured. Use when
+          # the cert/notarization credentials are stale and you want to ship
+          # an interim release while sorting them out. Reset to "false" (or
+          # remove the variable) to re-enable signed builds.
+          STRATOSORT_FORCE_UNSIGNED_MAC: ${{ vars.STRATOSORT_FORCE_UNSIGNED_MAC || 'false' }}
+        run: |
+          set -euo pipefail
+          if [[ "${STRATOSORT_FORCE_UNSIGNED_MAC:-false}" == "true" ]]; then
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::STRATOSORT_FORCE_UNSIGNED_MAC=true — overriding to UNSIGNED mac builds despite signing secrets being present."
+          elif [[ -n "${CSC_LINK:-}" && -n "${CSC_KEY_PASSWORD:-}" && -n "${APPLE_ID:-}" && -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" && -n "${APPLE_TEAM_ID:-}" ]]; then
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Using signed + notarized mac release mode."
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::macOS signing/notarization secrets are not configured. Building unsigned ad-hoc artifacts."
+          fi
+
+      - name: Generate installer assets
+        run: npm run generate:branding-if-source
+
+      - name: Rebuild native modules for Electron runtime (${{ matrix.arch }})
+        run: npx --no electron-builder install-app-deps --arch=${{ matrix.arch }}
+
+      - name: Verify native module loading
+        run: npm run verify:native-modules
+
+      - name: Clean release output directory
+        run: |
+          rm -rf release/build
+
+      - name: Resolve FFmpeg asset URL (private-repo workaround)
+        id: ffmpeg-asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Private repos can't serve assets via the public
+          # /releases/download/<tag>/<file> URL even with auth — only the
+          # API asset endpoint works. Resolve the asset id once here and
+          # pass the API URL to setup-ffmpeg-runtime.js via env. Append a
+          # #<filename>.zip fragment so inferArchiveType() detects the
+          # archive type (Node strips fragments before sending the HTTP
+          # request, so this is server-side invisible).
+          set -euo pipefail
+          asset_name="ffmpeg-mac-${{ matrix.arch }}.zip"
+          asset_id=$(gh api "repos/${{ github.repository }}/releases/tags/ffmpeg-lgpl-latest" \
+            --jq ".assets[] | select(.name == \"${asset_name}\") | .id")
+          if [ -z "${asset_id:-}" ]; then
+            echo "::error::FFmpeg asset ${asset_name} not found in ffmpeg-lgpl-latest release"
+            exit 1
+          fi
+          api_url="https://api.github.com/repos/${{ github.repository }}/releases/assets/${asset_id}#${asset_name}"
+          echo "url=${api_url}" >> "$GITHUB_OUTPUT"
+          echo "Resolved ${asset_name} -> ${api_url}"
+
+      - name: Build signed Mac app and DMG (${{ matrix.arch }})
+        if: steps.mac-release-mode.outputs.signed == 'true'
+        env:
+          CSC_LINK: ${{ secrets['MACOS_CSC_LINK'] }}
+          CSC_KEY_PASSWORD: ${{ secrets['MACOS_CSC_KEY_PASSWORD'] }}
+          CSC_IDENTITY_AUTO_DISCOVERY: true
+          APPLE_ID: ${{ secrets['APPLE_ID'] }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets['APPLE_APP_SPECIFIC_PASSWORD'] }}
+          APPLE_TEAM_ID: ${{ secrets['APPLE_TEAM_ID'] }}
+          STRATOSORT_FFMPEG_URL: ${{ steps.ffmpeg-asset.outputs.url }}
+          # GITHUB_TOKEN: setup-ffmpeg-runtime.js attaches Bearer auth on
+          # api.github.com (private-repo asset). GH_TOKEN: electron-builder
+          # eagerly instantiates GitHubPublisher from electron-builder.json's
+          # publish config and requires the token to construct, even though
+          # --publish=never gates the actual upload.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run dist:mac:${{ matrix.arch }}
+
+      - name: Build unsigned Mac app and DMG (${{ matrix.arch }})
+        if: steps.mac-release-mode.outputs.signed != 'true'
+        env:
+          # No Apple ID / distribution certificate: do not search the keychain for a signer.
+          CSC_IDENTITY: '-'
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          STRATOSORT_FFMPEG_URL: ${{ steps.ffmpeg-asset.outputs.url }}
+          # See signed-build comment above for token rationale.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run dist:mac:${{ matrix.arch }}
+
+      - name: Note unsigned Gatekeeper behavior (${{ matrix.arch }})
+        if: steps.mac-release-mode.outputs.signed != 'true'
+        run: |
+          echo "::notice::macOS artifacts are UNSIGNED (no Apple Developer signing secrets). Testers may need to right-click the app → Open, or allow it under System Settings → Privacy & Security. Signed + notarized builds require MACOS_CSC_* and APPLE_* repository secrets."
+
+      - name: Verify packaged macOS artifacts (${{ matrix.arch }})
+        run: node scripts/verify-packaged-artifacts.js --platform=mac --arch=${{ matrix.arch }}
+
+      - name: Verify app signature
+        if: steps.mac-release-mode.outputs.signed == 'true'
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apps=(release/build/mac*/StratoSort\ Core.app)
+          if [ ${#apps[@]} -eq 0 ]; then
+            echo "::error::No .app bundle found for signature verification."
+            ls -R release/build || true
+            exit 1
+          fi
+
+          for app_path in "${apps[@]}"; do
+            codesign --verify --deep --strict --verbose=2 "$app_path"
+            spctl -a -t exec -vv "$app_path" || true
+          done
+
+      - name: Notarize and staple artifacts (${{ matrix.arch }})
+        if: steps.mac-release-mode.outputs.signed == 'true'
+        env:
+          APPLE_ID: ${{ secrets['APPLE_ID'] }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets['APPLE_APP_SPECIFIC_PASSWORD'] }}
+          APPLE_TEAM_ID: ${{ secrets['APPLE_TEAM_ID'] }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          arch="${{ matrix.arch }}"
+          artifacts=(release/build/StratoSortCore-*-mac-${arch}.dmg release/build/StratoSortCore-*-mac-${arch}.zip)
+          if [ ${#artifacts[@]} -eq 0 ]; then
+            echo "::error::No notarizable mac artifacts found for arch=${arch}."
+            ls -R release/build || true
+            exit 1
+          fi
+
+          for artifact in "${artifacts[@]}"; do
+            xcrun notarytool submit "$artifact" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              --wait
+          done
+
+          for dmg_path in release/build/StratoSortCore-*-mac-${arch}.dmg; do
+            [ -f "$dmg_path" ] || continue
+            xcrun stapler staple "$dmg_path"
+            xcrun stapler validate "$dmg_path"
+          done
+
+      - name: Patch updater metadata sha512 after stapling (${{ matrix.arch }})
+        # xcrun stapler staple embeds the notarization ticket into the DMG,
+        # changing its binary and therefore its sha512. electron-builder wrote
+        # latest*.yml before notarization, so the recorded DMG hash is stale.
+        # On macOS the ZIP is the primary updater artifact (top-level sha512
+        # in the yml); the DMG is a secondary files: entry. The script locates
+        # the DMG sha512 by its url: match rather than by top-level position,
+        # so the ZIP sha512 is never touched.
+        if: steps.mac-release-mode.outputs.signed == 'true'
+        run: |
+          set -euo pipefail
+          arch="${{ matrix.arch }}"
+          shopt -s nullglob
+          for dmg in release/build/StratoSortCore-*-mac-${arch}.dmg; do
+            [ -f "$dmg" ] || continue
+            for yml in release/build/latest*.yml; do
+              [ -f "$yml" ] || continue
+              grep -qF "$(basename "$dmg")" "$yml" || continue
+              node scripts/patch-mac-updater-metadata.js --dmg="$dmg" --yml="$yml"
+            done
+          done
+
+      - name: Stage artifacts
+        run: |
+          set -euo pipefail
+          arch="${{ matrix.arch }}"
+          mkdir -p "release/upload/${arch}"
+          shopt -s nullglob
+          for path in release/build/StratoSortCore-*-mac-${arch}.dmg release/build/StratoSortCore-*-mac-${arch}.zip; do
+            if [ -f "$path" ]; then
+              cp "$path" "release/upload/${arch}/"
+            fi
+          done
+
+          # IMPORTANT: Only publish updater metadata for SIGNED + NOTARIZED
+          # builds. electron-updater on macOS will happily download an update
+          # advertised by this metadata and then fail at install time because
+          # Gatekeeper rejects the unsigned .app — leaving users stuck on a
+          # broken "update available" prompt and an untouchable install.
+          # For unsigned/ad-hoc builds we ship the installers themselves so
+          # testers can still upgrade manually, but we deliberately skip the
+          # updater feed file.
+          #
+          # The channel file is staged under an arch-suffixed STAGING name so
+          # the two legs cannot collide; publish-release merges them into the
+          # single latest-mac.yml that electron-updater requests on darwin
+          # (it never asks for an arch-suffixed name).
+          if [ "${{ steps.mac-release-mode.outputs.signed }}" = "true" ]; then
+            ymls=(release/build/latest*.yml)
+            if [ ${#ymls[@]} -ne 1 ]; then
+              echo "::error::Expected exactly one updater metadata file for a signed build, found ${#ymls[@]}: ${ymls[*]:-<none>}"
+              exit 1
+            fi
+            cp "${ymls[0]}" "release/upload/${arch}/latest-mac-${arch}.yml"
+          else
+            echo "::notice::Skipping updater metadata for unsigned build to prevent broken auto-update advertisements."
+          fi
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: macos-${{ matrix.arch }}-artifacts
+          path: release/upload/${{ matrix.arch }}
+          if-no-files-found: error
+
+  build-linux:
+    needs: resolve-release-target
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      # arm64 builds better-sqlite3 from source on a native arm64 runner and is
+      # newer/lower-traffic; do not let an arm64 failure block the proven x64
+      # release (or vice versa).
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-release-target.outputs.ref }}
+          fetch-depth: 0
+
+      - name: Free disk space on runner
+        # ubuntu images ship with ~14 GB free. node_modules + Electron
+        # download + bundled FFmpeg + electron-builder fpm cache + the deb/
+        # AppImage staging directories blow past that, manifesting as
+        # `Errno::ENOSPC` deep inside the fpm Ruby packager. Pruning the
+        # well-known pre-installed bloat reclaims ~25 GB. Inline shell (no
+        # third-party action) so this stays auditable.
+        run: |
+          set -euo pipefail
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          df -h /
+
+      - name: Install Linux packaging and native build dependencies
+        # xz-utils provides the `xz`-capable `tar` that setup-ffmpeg-runtime.js
+        # uses to extract BtbN's .tar.xz LGPL FFmpeg builds.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            python3 \
+            fakeroot \
+            dpkg-dev \
+            rpm \
+            xz-utils
+
+      - name: Verify package version matches release tag
+        env:
+          RELEASE_TAG: ${{ needs.resolve-release-target.outputs.tag }}
+        run: |
+          node -e "const tag=process.env.RELEASE_TAG; if (!tag) { throw new Error('RELEASE_TAG env var not set; cannot verify package.json'); } const pkg=require('./package.json'); const expected=String(tag).replace(/^v/, ''); if (pkg.version !== expected) { throw new Error('package.json version ' + pkg.version + ' does not match release tag ' + tag); }"
+
+      - name: Use Node.js 20.x
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+
+      - name: Install dependencies (with optional deps)
+        run: npm ci --include=optional
+
+      - name: Generate installer assets
+        run: npm run generate:branding-if-source
+
+      - name: Verify Linux build assets
+        run: node scripts/verify-build-assets.js --platform=linux
+
+      - name: Rebuild native modules for Electron runtime (${{ matrix.arch }})
+        # arm64 runs on a native ubuntu-24.04-arm runner so better-sqlite3 (no
+        # reliable arm64 prebuild) is compiled from source for the correct ABI;
+        # cross-compiling it from an x64 host is unreliable.
+        run: npx --no electron-builder install-app-deps --arch=${{ matrix.arch }}
+
+      - name: Verify native module loading
+        run: npm run verify:native-modules
+
+      - name: Clean release output directory
+        run: |
+          rm -rf release/build
+
+      - name: Build Linux distribution (AppImage + deb)
+        env:
+          # electron-builder.json declares publish:[{provider:github}], which
+          # eagerly instantiates GitHubPublisher and throws if GH_TOKEN is
+          # absent — even when --publish=never gates the actual upload.
+          # Provide the token so the publisher constructs successfully; the
+          # CLI flag still suppresses the upload itself.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # dist:linux:<arch> runs build + arch-matched vision/ffmpeg runtime
+          # setup (incl. the .tar.xz extraction) + electron-builder --<arch>.
+          npm run dist:linux:${{ matrix.arch }}
+          shopt -s nullglob
+          # electron-builder arch tokens differ per target: deb uses amd64,
+          # AppImage uses x86_64. Scope globs to this leg's arch so a config
+          # regression that reintroduces dual-arch output fails loudly here
+          # instead of colliding in the publish-release artifact merge.
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            appimages=(release/build/StratoSortCore-*-linux-arm64.AppImage)
+            debs=(release/build/StratoSortCore-*-linux-arm64.deb)
+          else
+            appimages=(release/build/StratoSortCore-*-linux-x86_64.AppImage)
+            debs=(release/build/StratoSortCore-*-linux-amd64.deb)
+          fi
+          if [ ${#appimages[@]} -eq 0 ]; then
+            echo "::error::Linux ${{ matrix.arch }} AppImage was not produced."
+            exit 1
+          fi
+          if [ ${#debs[@]} -eq 0 ]; then
+            echo "::error::Linux ${{ matrix.arch }} deb was not produced."
+            exit 1
+          fi
+
+      - name: Normalize arm64 updater metadata
+        # If electron-builder emits a non-suffixed latest-linux.yml (or
+        # latest.yml) for the standalone arm64 build, rename it to
+        # latest-linux-arm64.yml so it does not collide with the x64 feed when
+        # both legs merge in publish-release. No-op if already arm64-suffixed.
+        if: matrix.arch == 'arm64'
+        run: |
+          set -euo pipefail
+          if [ -f release/build/latest-linux.yml ]; then
+            mv -f release/build/latest-linux.yml release/build/latest-linux-arm64.yml
+          elif [ -f release/build/latest.yml ]; then
+            mv -f release/build/latest.yml release/build/latest-linux-arm64.yml
+          fi
+
+      - name: Verify packaged Linux artifacts
+        run: node scripts/verify-packaged-artifacts.js --platform=linux --arch=${{ matrix.arch }}
+
+      - name: Verify Linux updater metadata
+        run: node scripts/verify-updater-metadata.js --platform=linux --arch=${{ matrix.arch }} --build-root=release/build
+
+      - name: Stage Linux artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p release/upload/linux
+          shopt -s nullglob
+          # Stage only this leg's arch (deb=amd64, AppImage=x86_64 for x64).
+          # The x64 and arm64 legs merge flat in publish-release; staging
+          # cross-arch files here caused the v4.0.3 sha512 metadata mismatch.
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            artifacts=(release/build/StratoSortCore-*-linux-arm64.AppImage release/build/StratoSortCore-*-linux-arm64.deb)
+          else
+            artifacts=(release/build/StratoSortCore-*-linux-x86_64.AppImage release/build/StratoSortCore-*-linux-amd64.deb)
+          fi
+          for f in "${artifacts[@]}"; do
+            cp "$f" release/upload/linux/
+          done
+          # Normalize updater metadata names so the x64 and arm64 matrix legs do
+          # not collide when their artifacts are merged in publish-release.
+          for f in release/build/latest*.yml; do
+            base="$(basename "$f")"
+            if [ "${{ matrix.arch }}" = "arm64" ]; then
+              cp "$f" release/upload/linux/latest-linux-arm64.yml
+            elif [ "$base" = "latest.yml" ] || [ "$base" = "latest-linux.yml" ]; then
+              cp "$f" release/upload/linux/latest-linux.yml
+            else
+              cp "$f" "release/upload/linux/$base"
+            fi
+          done
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: linux-${{ matrix.arch }}-artifacts
+          path: release/upload/linux
+          if-no-files-found: error
+
+  publish-release:
+    needs:
+      - resolve-release-target
+      - build-macos
+      - build-linux
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-release-target.outputs.ref }}
+          fetch-depth: 0
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: macos-*-artifacts
+          path: release/artifacts
+
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: linux-*-artifacts
+          merge-multiple: true
+          path: release/artifacts-linux
+
+      - name: Prepare merged release files
+        run: |
+          set -euo pipefail
+          mkdir -p release/build
+
+          shopt -s globstar nullglob
+          for f in release/artifacts/**; do
+            [ -f "$f" ] || continue
+            base="$(basename "$f")"
+            target="release/build/$base"
+
+            if [ -f "$target" ] && ! cmp -s "$f" "$target"; then
+              echo "::error::Conflicting artifact filename '$base' from $f"
+              exit 1
+            fi
+
+            cp "$f" "$target"
+          done
+
+          for f in release/artifacts-linux/**; do
+            [ -f "$f" ] || continue
+            base="$(basename "$f")"
+            target="release/build/$base"
+
+            if [ -f "$target" ] && ! cmp -s "$f" "$target"; then
+              echo "::error::Conflicting artifact filename '$base' from $f"
+              exit 1
+            fi
+
+            cp "$f" "$target"
+          done
+
+      - name: Merge macOS updater metadata
+        # electron-updater requests exactly latest-mac.yml on darwin and picks
+        # its own arch out of files: (MacUpdater.filterFilesForArch). Union the
+        # per-arch staging files into that one canonical file and drop the
+        # staging names so they never reach the GitHub release. Unsigned builds
+        # stage no metadata at all (see build-macos), so there is nothing to
+        # merge in that case.
+        run: |
+          set -euo pipefail
+          cd release/build
+          shopt -s nullglob
+          inputs=(latest-mac-x64.yml latest-mac-arm64.yml)
+          staged=()
+          for f in "${inputs[@]}"; do
+            [ -f "$f" ] && staged+=("$f")
+          done
+          if [ ${#staged[@]} -eq 0 ]; then
+            echo "::notice::No macOS updater metadata staged (unsigned build); latest-mac.yml will not be published."
+            exit 0
+          fi
+          node ../../scripts/merge-updater-metadata.js --output=latest-mac.yml "${staged[@]}"
+          rm -f "${staged[@]}"
+          cat latest-mac.yml
+
+      - name: Verify updater metadata (mac + linux)
+        # Skip the mac check when STRATOSORT_FORCE_UNSIGNED_MAC=true: the
+        # build-macos job deliberately omits updater metadata for unsigned
+        # builds (so electron-updater doesn't advertise updates to binaries
+        # Gatekeeper will reject), so there is nothing to validate.
+        run: |
+          if [ "${{ vars.STRATOSORT_FORCE_UNSIGNED_MAC }}" != "true" ]; then
+            node scripts/verify-updater-metadata.js --platform=mac --build-root=release/build
+          fi
+          node scripts/verify-updater-metadata.js --platform=linux --build-root=release/build
+
+      - name: Generate SHA256 checksums
+        run: |
+          set -euo pipefail
+          cd release/build
+          rm -f checksums-macos.sha256 checksums-linux.sha256
+
+          # GNU coreutils (ubuntu-latest); BSD shasum is not guaranteed on Linux runners
+          for f in StratoSortCore-*.dmg StratoSortCore-*.zip; do
+            if [ -f "$f" ]; then
+              h="$(sha256sum -- "$f" | awk '{print $1}')"
+              printf '%s *%s\n' "$h" "$f" >> checksums-macos.sha256
+            fi
+          done
+
+          for f in StratoSortCore-*-linux-*.AppImage StratoSortCore-*-linux-*.deb; do
+            if [ -f "$f" ]; then
+              h="$(sha256sum -- "$f" | awk '{print $1}')"
+              printf '%s *%s\n' "$h" "$f" >> checksums-linux.sha256
+            fi
+          done
+
+          if [ ! -s checksums-macos.sha256 ]; then
+            echo "No macOS build artifacts found to checksum."
+            exit 1
+          fi
+
+          if [ ! -s checksums-linux.sha256 ]; then
+            echo "No Linux build artifacts found to checksum."
+            exit 1
+          fi
+
+      - name: Ensure GitHub release exists for tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.resolve-release-target.outputs.tag }}"
+          # This workflow previously assumed release.yml (Windows) had already
+          # created the release; `gh release upload` fails outright when the
+          # release is missing. Create a minimal release here when absent —
+          # release.yml's x64 leg owns the rich body and updates it when it
+          # runs. The `|| gh release view` fallback absorbs the race where the
+          # Windows workflow creates the release between our check and create.
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+              --title "$TAG" \
+              --notes "macOS/Linux artifacts for $TAG. Windows artifacts and full release notes are published by the Release (Windows) workflow." \
+              || gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
+          fi
+
+      - name: Publish release artifacts (replace same-named assets)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.resolve-release-target.outputs.tag }}"
+          cd release/build
+          shopt -s nullglob
+          upload=()
+          # Channel files are listed explicitly (not *latest*.yml) so an
+          # unmerged arch-suffixed staging file can never be published.
+          for f in StratoSortCore-*.dmg StratoSortCore-*.zip StratoSortCore-*.AppImage StratoSortCore-*.deb latest-mac.yml latest-linux.yml latest-linux-arm64.yml checksums-*.sha256; do
+            [ -f "$f" ] && upload+=("$f")
+          done
+          if [ ${#upload[@]} -eq 0 ]; then
+            echo "::error::No release files to upload."
+            exit 1
+          fi
+          gh release upload "$TAG" "${upload[@]}" --clobber --repo "$GITHUB_REPOSITORY"

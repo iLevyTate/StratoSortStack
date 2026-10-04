@@ -1,0 +1,159 @@
+# Dependencies
+node_modules/
+
+# Local-only testing workspace (real-file harnesses, synthetic clips,
+# keyframe spot-check JPEGs). Useful while running scratch/run-real-media.js
+# against actual mp3/mp4 inputs but never wanted in git.
+scratch/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# Production builds
+dist/
+release/
+build/*
+!build/installer.nsh
+!build/installer-themed.nsh
+out/
+
+# Development — every .env variant stays local; only the committed templates are tracked
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Editor directories and files
+.idea/
+.vscode/
+.cursor/
+.claude/
+*.swp
+*.swo
+*~
+
+# OS generated files
+Thumbs.db
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Logs
+logs/
+*.log
+# Committed test fixtures must survive the *.log rule (filePipeline.fixture
+# tests fail loudly on CI when a fixture is missing from the checkout).
+!test/test-files/*.log
+app-errors.txt
+app-output.txt
+crash-dumps/
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Testing
+coverage/
+.nyc_output/
+test-results/
+junit.xml
+
+# Playwright
+playwright-report/
+playwright/.cache/
+blob-report/
+
+# Temporary files
+*.tmp
+*.temp
+test-list.txt
+.cache/
+.webpack-cache/
+assets/icons/temp-ico/
+.eslintcache
+repomix-output.xml
+repomix-output.txt
+nul
+
+# Debug files
+debug-analysis.js
+startup-validation.js
+verify-*.js
+!scripts/verify-*.js
+!scripts/compliance/verify-*.js
+
+# Documentation build
+# Generated locally (contains absolute paths); run `npm run licenses:production` before release
+docs/licenses-production.json
+
+docs/_build/
+docs/.doctrees/
+
+# Package files
+*.tgz
+*.zip
+*.tar.gz
+# Exception for test fixture archives
+!test/StratoSortOfTestFiles/*.zip
+!test/test-files/*.zip
+
+# Lock files (optional - uncomment if you want to ignore)
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml 
+
+# Project data and local artifacts
+Documents/
+tmpUserData/
+*.traineddata
+
+# Cursor/IDE workspace image artifacts (occasionally end up under assets/ via copy/paste)
+assets/c__Users_*_workspaceStorage_*_images_*.png
+assets/**/workspaceStorage_*/*
+
+# Stray scratch screenshot dropped at repo root (e.g. branding reference grabs)
+/image.png
+
+# Internal planning documents
+.internal/
+
+# macOS code-signing material produced by scripts/setup-mac-signing.ps1
+# (private key, CSR, Apple cert, .p12, base64-encoded .p12). Never commit —
+# delete or move to encrypted storage after pasting into GitHub Secrets.
+signing-output/
+
+# Local testing documents
+LOCAL_TESTING_CHECKLIST.md
+
+# Legacy documentation (archived reports and session logs)
+docs/.legacy/
+
+# Runtime binaries (downloaded by setup scripts) — ignore all contents but keep
+# checked-in attribution/notice/readme files for bundled runtimes. The
+# subdirectory un-ignore rule is required because git won't re-include a file
+# whose parent directory is excluded.
+assets/runtime/**
+!assets/runtime/**/
+!assets/runtime/**/NOTICE.md
+!assets/runtime/**/README.md
+
+# Git worktrees (each worktree is a full working copy; never tracked by the
+# primary repo). See `superpowers:using-git-worktrees`.
+.worktrees/
+
+# License signing keys — NEVER commit (see scripts/license/)
+scripts/license/*.pem
+
+# Playwright raw captures from `npm run tour:record` (trimmed mp4 is kept)
+docs/walkthrough-assets/tour-raw/
+
+# PNG dumps from the recorder; published stills are docs/assets/e2e-screenshots/
+docs/walkthrough-assets/tour/
+
+# Local ffmpeg frame dumps while composing shorts / how-to-use
+docs/walkthrough-assets/shorts/probe/
+docs/walkthrough-assets/lessons/probe/

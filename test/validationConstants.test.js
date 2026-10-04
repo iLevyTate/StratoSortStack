@@ -1,0 +1,99 @@
+/**
+ * Tests for shared/validationConstants
+ * Ensures the centralized validation rules behave as expected.
+ */
+
+const {
+  LOGGING_LEVELS,
+  NUMERIC_LIMITS,
+  URL_PATTERN,
+  LENIENT_URL_PATTERN,
+  MODEL_NAME_PATTERN,
+  MAX_MODEL_NAME_LENGTH,
+  isValidLoggingLevel,
+  isValidNumericSetting,
+  isValidUrl,
+  isValidModelName
+} = require('../src/shared/validationConstants');
+
+describe('validationConstants', () => {
+  test('exports expected enums', () => {
+    expect(LOGGING_LEVELS).toEqual(expect.arrayContaining(['error', 'warn', 'info', 'debug']));
+  });
+
+  test('exports numeric limits', () => {
+    expect(NUMERIC_LIMITS.cacheSize).toEqual({ min: 0, max: 100000 });
+    expect(NUMERIC_LIMITS.maxBatchSize).toEqual({ min: 1, max: 1000 });
+  });
+
+  test('exports patterns', () => {
+    expect(URL_PATTERN).toBeInstanceOf(RegExp);
+    expect(LENIENT_URL_PATTERN).toBeInstanceOf(RegExp);
+    expect(MODEL_NAME_PATTERN).toBeInstanceOf(RegExp);
+    expect(typeof MAX_MODEL_NAME_LENGTH).toBe('number');
+  });
+
+  describe('isValidLoggingLevel', () => {
+    test('accepts valid levels', () => {
+      for (const level of LOGGING_LEVELS) {
+        expect(isValidLoggingLevel(level)).toBe(true);
+      }
+    });
+
+    test('rejects invalid levels', () => {
+      expect(isValidLoggingLevel('verbose')).toBe(false);
+      expect(isValidLoggingLevel(1)).toBe(false);
+    });
+  });
+
+  describe('isValidNumericSetting', () => {
+    test('validates cacheSize', () => {
+      expect(isValidNumericSetting('cacheSize', 0)).toBe(true);
+      expect(isValidNumericSetting('cacheSize', 100000)).toBe(true);
+      expect(isValidNumericSetting('cacheSize', -1)).toBe(false);
+      expect(isValidNumericSetting('cacheSize', 100001)).toBe(false);
+      expect(isValidNumericSetting('cacheSize', 1.5)).toBe(false);
+    });
+
+    test('validates maxBatchSize', () => {
+      expect(isValidNumericSetting('maxBatchSize', 1)).toBe(true);
+      expect(isValidNumericSetting('maxBatchSize', 1000)).toBe(true);
+      expect(isValidNumericSetting('maxBatchSize', 0)).toBe(false);
+      expect(isValidNumericSetting('maxBatchSize', 1001)).toBe(false);
+    });
+
+    test('rejects unknown fields', () => {
+      expect(isValidNumericSetting('unknown', 1)).toBe(false);
+    });
+  });
+
+  describe('isValidUrl', () => {
+    test('validates strict URLs (requires protocol)', () => {
+      expect(isValidUrl('http://localhost:8080')).toBe(true);
+      expect(isValidUrl('https://127.0.0.1:8080/api/endpoint')).toBe(true);
+      expect(isValidUrl('localhost:8080')).toBe(false);
+    });
+
+    test('validates lenient URLs (protocol optional)', () => {
+      expect(isValidUrl('localhost:8080', true)).toBe(true);
+      expect(isValidUrl('http://localhost:8080', true)).toBe(true);
+      expect(isValidUrl('', true)).toBe(false);
+    });
+  });
+
+  describe('isValidModelName', () => {
+    test('accepts valid model names', () => {
+      expect(isValidModelName('llama3:latest')).toBe(true);
+      expect(isValidModelName('model@latest')).toBe(true);
+      expect(isValidModelName('Qwen2.5 7B Instruct (Q4_K_M).gguf')).toBe(true);
+      expect(isValidModelName('a')).toBe(true);
+    });
+
+    test('rejects invalid model names', () => {
+      expect(isValidModelName('model;rm -rf /')).toBe(false);
+      expect(isValidModelName('../model.gguf')).toBe(false);
+      expect(isValidModelName('')).toBe(false);
+      expect(isValidModelName('a'.repeat(MAX_MODEL_NAME_LENGTH + 1))).toBe(false);
+    });
+  });
+});

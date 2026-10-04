@@ -1,0 +1,380 @@
+import React, { useState, memo, useCallback } from 'react';
+import PropTypes from 'prop-types';
+import { Card, Button, Textarea } from '../ui';
+import { Heading, Text } from '../ui/Typography';
+
+const OrganizationSuggestions = memo(function OrganizationSuggestions({
+  file,
+  suggestions,
+  onAccept,
+  onReject,
+  onStrategyChange,
+  onMemorySaved
+}) {
+  const [selectedStrategy, setSelectedStrategy] = useState(null);
+  const [expandedAlternatives, setExpandedAlternatives] = useState(false);
+  const [feedbackNote, setFeedbackNote] = useState('');
+
+  const handleStrategySelect = useCallback(
+    (strategyId) => {
+      setSelectedStrategy(strategyId);
+      if (onStrategyChange) {
+        onStrategyChange(file, strategyId);
+      }
+    },
+    [file, onStrategyChange]
+  );
+
+  if (!suggestions || !suggestions.primary) {
+    return null;
+  }
+
+  const { primary, alternatives = [], strategies = [], confidence = 0, explanation } = suggestions;
+
+  // Normalize confidence for both display (0-100) and logic (0-1)
+  const normalizeConfidenceFraction = (value) => {
+    if (!Number.isFinite(value)) return 0;
+    const fraction = value > 1 ? value / 100 : value;
+    return Math.min(1, Math.max(0, fraction));
+  };
+
+  const confidenceFraction = normalizeConfidenceFraction(confidence);
+  const confidencePercent = Math.round(confidenceFraction * 100);
+  const safeConfidence = confidenceFraction;
+
+  // React automatically escapes text content when using {}, but we add defense-in-depth:
+  // 1. Type validation to prevent object injection
+  // 2. Remove script-injection characters and control characters
+  // 3. Prevent empty strings that could cause layout issues
+  const sanitizeFolderName = (name) => {
+    if (typeof name !== 'string') return 'Unknown';
+
+    // Remove dangerous characters for defense-in-depth:
+    // - HTML tags: < > (prevent <script> injection)
+    // - Quotes: ' " ` (prevent attribute injection)
+    // - Null bytes: \0 (prevent string termination attacks)
+    // - Control characters: \u0000-\u001F (prevent terminal injection if logged)
+    const sanitized = name
+      // eslint-disable-next-line no-control-regex
+      .replace(/[<>'"`\u0000-\u001F]/g, '')
+      .trim();
+
+    return sanitized || 'Unknown';
+  };
+
+  const getConfidenceColor = (conf) => {
+    if (conf >= 0.8) return 'text-stratosort-success';
+    if (conf >= 0.5) return 'text-stratosort-warning';
+    return 'text-stratosort-accent';
+  };
+
+  const getConfidenceLabel = (conf) => {
+    if (conf >= 0.8) return 'Great match';
+    if (conf >= 0.5) return 'Good match';
+    return 'Possible match';
+  };
+
+  const buildFeedbackPayload = () => {
+    const trimmed = feedbackNote.trim();
+    return trimmed ? { feedbackNote: trimmed } : undefined;
+  };
+
+  const handleAccept = (target) => {
+    const payload = buildFeedbackPayload();
+    if (onAccept) {
+      onAccept(file, target, payload);
+    }
+    if (payload) {
+      setFeedbackNote('');
+      if (onMemorySaved) {
+        onMemorySaved();
+      }
+    }
+  };
+
+  const handleReject = (target) => {
+    const payload = buildFeedbackPayload();
+    if (onReject) {
+      onReject(file, target, payload);
+    }
+    if (payload) {
+      setFeedbackNote('');
+      if (onMemorySaved) {
+        onMemorySaved();
+      }
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Primary Suggestion */}
+      <Card className="p-4 sm:p-6 border-stratosort-blue/30">
+        <div className="flex items-start justify-between">
+          <div className="flex-1">
+            <div className="flex items-center gap-cozy mb-2">
+              <Heading as="h4" variant="h6" className="text-system-gray-900">
+                Suggested organization
+              </Heading>
+              <Text as="span" variant="small" className={getConfidenceColor(confidenceFraction)}>
+                {getConfidenceLabel(confidenceFraction)} ({confidencePercent}%)
+              </Text>
+            </div>
+
+            <div className="mb-3">
+              <div className="flex items-center gap-compact">
+                <Text as="span" variant="small" className="text-system-gray-600">
+                  Folder:
+                </Text>
+                <Text as="span" variant="small" className="font-medium text-stratosort-blue">
+                  {sanitizeFolderName(primary.folder)}
+                </Text>
+                {primary.path && (
+                  <Text as="span" variant="small" className="text-system-gray-500">
+                    ({sanitizeFolderName(primary.path)})
+                  </Text>
+                )}
+              </div>
+
+              {explanation && (
+                <Text variant="small" className="text-system-gray-600 mt-2 italic">
+                  {explanation}
+                </Text>
+              )}
+
+              {primary.strategy && (
+                <Text variant="tiny" className="mt-2 text-system-gray-500">
+                  Strategy: {primary.strategyName || primary.strategy}
+                </Text>
+              )}
+
+              {primary.memoryAdjustment && (
+                <Text variant="tiny" className="mt-2 text-system-gray-500">
+                  Memory boost applied
+                </Text>
+              )}
+            </div>
+
+            <div className="flex gap-compact">
+              <Button size="sm" variant="primary" onClick={() => handleAccept(primary)}>
+                Accept
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => handleReject(primary)}>
+                Reject
+              </Button>
+            </div>
+          </div>
+
+          {/* Confidence Indicator */}
+          <div className="ml-4">
+            <div className="w-16 h-16 relative">
+              <svg className="transform -rotate-90 w-16 h-16">
+                <circle
+                  cx="32"
+                  cy="32"
+                  r="28"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                  fill="none"
+                  className="text-system-gray-200"
+                />
+                <circle
+                  cx="32"
+                  cy="32"
+                  r="28"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                  fill="none"
+                  strokeDasharray={`${2 * Math.PI * 28 * safeConfidence} ${2 * Math.PI * 28}`}
+                  className={getConfidenceColor(safeConfidence)}
+                />
+              </svg>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <Text as="span" variant="small" className="font-medium">
+                  {Math.round(safeConfidence * 100)}%
+                </Text>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      {/* Feedback Note */}
+      <Card className="p-4 sm:p-6 bg-system-gray-50 border-system-gray-200">
+        <Text variant="small" className="text-system-gray-700 font-medium mb-2">
+          Feedback note (optional)
+        </Text>
+        <Textarea
+          value={feedbackNote}
+          onChange={(event) => setFeedbackNote(event.target.value)}
+          placeholder='e.g., "3D files go to 3D Prints"'
+          className="w-full text-sm"
+          rows={2}
+        />
+        <Text variant="tiny" className="mt-2 text-system-gray-500">
+          Notes are saved as memory to improve future suggestions.
+        </Text>
+      </Card>
+
+      {/* Alternative Suggestions */}
+      {alternatives.length > 0 && (
+        <div>
+          <Button
+            onClick={() => setExpandedAlternatives(!expandedAlternatives)}
+            variant="ghost"
+            size="sm"
+            className="text-system-gray-600 hover:text-stratosort-blue px-1"
+          >
+            <span
+              className={`transform transition-transform ${expandedAlternatives ? 'rotate-90' : ''}`}
+            >
+              ▶
+            </span>
+            View {alternatives.length} alternative suggestion
+            {alternatives.length > 1 ? 's' : ''}
+          </Button>
+
+          {expandedAlternatives && (
+            <div className="mt-3 space-y-2">
+              {/* FIX: Use stable identifier (folder + confidence) instead of array index */}
+              {alternatives.map((alt) => (
+                <Card
+                  key={`${alt.folder}-${alt.confidence}-${alt.method || 'default'}`}
+                  className="p-3 border-system-gray-200 hover:border-stratosort-blue/50 transition-colors"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-compact">
+                        <Text as="span" variant="small" className="font-medium">
+                          {sanitizeFolderName(alt.folder)}
+                        </Text>
+                        <Text
+                          as="span"
+                          variant="tiny"
+                          className={getConfidenceColor(
+                            normalizeConfidenceFraction(alt.confidence || 0)
+                          )}
+                        >
+                          {Math.round(normalizeConfidenceFraction(alt.confidence || 0) * 100)}%
+                        </Text>
+                      </div>
+                      {alt.reasoning && (
+                        <Text variant="tiny" className="text-system-gray-500 mt-1">
+                          {alt.reasoning}
+                        </Text>
+                      )}
+                      {alt.method && (
+                        <Text as="span" variant="tiny" className="text-system-gray-500">
+                          Source: {alt.method.replaceAll('_', ' ')}
+                        </Text>
+                      )}
+                      {alt.memoryAdjustment && (
+                        <Text variant="tiny" className="text-system-gray-500">
+                          Memory boost applied
+                        </Text>
+                      )}
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => handleAccept(alt)}
+                      className="text-stratosort-blue hover:bg-stratosort-blue/10"
+                    >
+                      Use this
+                    </Button>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Organization Strategies */}
+      {strategies.length > 0 && (
+        <Card className="p-4 sm:p-6 bg-system-gray-50">
+          <Heading as="h5" variant="h6" className="text-system-gray-700 mb-3">
+            Organization strategies
+          </Heading>
+          <div className="space-y-2">
+            {strategies.map((strategy) => (
+              /* eslint-disable-next-line jsx-a11y/control-has-associated-label -- text content in nested Text components; rule depth cannot see it */
+              <div
+                key={strategy.id}
+                className={`p-2 rounded-md border cursor-pointer transition ${
+                  selectedStrategy === strategy.id
+                    ? 'border-stratosort-blue bg-stratosort-blue/5'
+                    : 'border-system-gray-200 hover:border-system-gray-300'
+                }`}
+                role="button"
+                tabIndex={0}
+                aria-pressed={selectedStrategy === strategy.id}
+                onClick={() => handleStrategySelect(strategy.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    handleStrategySelect(strategy.id);
+                  }
+                }}
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Text variant="small" className="font-medium text-system-gray-800">
+                      {strategy.name}
+                    </Text>
+                    <Text variant="tiny" className="text-system-gray-600">
+                      {strategy.description}
+                    </Text>
+                    <Text variant="tiny" className="text-system-gray-500 mt-1">
+                      Pattern: {strategy.pattern}
+                    </Text>
+                  </div>
+                  <Text variant="tiny" className="text-system-gray-500">
+                    {Math.round(strategy.applicability * 100)}% match
+                  </Text>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+});
+
+const suggestionShape = PropTypes.shape({
+  folder: PropTypes.string,
+  path: PropTypes.string,
+  confidence: PropTypes.number,
+  reasoning: PropTypes.string,
+  method: PropTypes.string,
+  strategy: PropTypes.string,
+  strategyName: PropTypes.string,
+  suggestedName: PropTypes.string
+});
+
+const strategyShape = PropTypes.shape({
+  id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
+  name: PropTypes.string,
+  description: PropTypes.string,
+  pattern: PropTypes.string,
+  applicability: PropTypes.number
+});
+
+OrganizationSuggestions.propTypes = {
+  file: PropTypes.shape({
+    name: PropTypes.string.isRequired
+  }).isRequired,
+  suggestions: PropTypes.shape({
+    primary: suggestionShape.isRequired,
+    alternatives: PropTypes.arrayOf(suggestionShape),
+    strategies: PropTypes.arrayOf(strategyShape),
+    confidence: PropTypes.number,
+    explanation: PropTypes.string
+  }).isRequired,
+  onAccept: PropTypes.func,
+  onReject: PropTypes.func,
+  onStrategyChange: PropTypes.func,
+  onMemorySaved: PropTypes.func
+};
+
+export default OrganizationSuggestions;

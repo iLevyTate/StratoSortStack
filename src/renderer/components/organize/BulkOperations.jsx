@@ -1,0 +1,136 @@
+import React, { useMemo } from 'react';
+import PropTypes from 'prop-types';
+import { Check, Pencil } from 'lucide-react';
+import Button from '../ui/Button';
+import Select from '../ui/Select';
+import { Text } from '../ui/Typography';
+import { Inline, Stack } from '../layout';
+import { getSelectableSmartFolders } from '../../../shared/categoryFolderMatching';
+
+function BulkOperations({
+  total,
+  selectedCount,
+  onSelectAll,
+  onApproveSelected,
+  bulkEditMode,
+  setBulkEditMode,
+  bulkCategory,
+  setBulkCategory,
+  onApplyBulkCategory,
+  smartFolders = [],
+  isProcessing = false
+}) {
+  const selectableFolders = useMemo(() => getSelectableSmartFolders(smartFolders), [smartFolders]);
+
+  return (
+    <Stack gap="cozy" className="w-full">
+      <Inline className="justify-between w-full" gap="cozy">
+        <Inline gap="cozy">
+          <input
+            id="bulk-select-all"
+            type="checkbox"
+            checked={selectedCount === total && total > 0}
+            onChange={onSelectAll}
+            className="form-checkbox accent-stratosort-blue h-4 w-4 rounded border-border-soft focus:ring-stratosort-blue"
+            aria-label={
+              selectedCount > 0 ? `${selectedCount} of ${total} items selected` : 'Select all items'
+            }
+          />
+          <Text
+            as="label"
+            htmlFor="bulk-select-all"
+            variant="small"
+            className="font-medium cursor-pointer text-system-gray-700 select-none"
+          >
+            {selectedCount > 0 ? `${selectedCount} selected` : 'Select all'}
+          </Text>
+        </Inline>
+
+        {selectedCount > 0 && (
+          <Inline gap="cozy">
+            <Button onClick={onApproveSelected} variant="primary" size="sm" disabled={isProcessing}>
+              <Check className="w-4 h-4" aria-hidden="true" />
+              {isProcessing ? 'Processing...' : 'Approve selected'}
+            </Button>
+            <Button onClick={() => setBulkEditMode(!bulkEditMode)} variant="secondary" size="sm">
+              <Pencil className="w-4 h-4" aria-hidden="true" />
+              Bulk edit
+            </Button>
+          </Inline>
+        )}
+      </Inline>
+
+      {bulkEditMode && (
+        <div className="bg-system-gray-50 p-default rounded-lg border border-border-soft animate-fade-in">
+          <Inline gap="cozy" className="w-full items-end">
+            <div className="flex-1">
+              <Select
+                label="Apply category to selected"
+                value={bulkCategory}
+                onChange={(e) => setBulkCategory(e.target.value)}
+                className="w-full"
+              >
+                <option value="">Select category...</option>
+                {/*
+                 * Native <select> options are rendered by the browser's
+                 * native popup (not the DOM we laid out above), so they
+                 * are already "virtualized" at the OS level and handle
+                 * thousands of entries without any perf concern. We
+                 * intentionally do NOT wrap this in a react-window List —
+                 * doing so would require abandoning the native <select>
+                 * and rebuilding keyboard navigation + screen-reader
+                 * semantics from scratch.
+                 */}
+                {selectableFolders.map((folder) => (
+                  <option key={folder.id || folder.name} value={folder.name}>
+                    {folder.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <Button
+              onClick={onApplyBulkCategory}
+              variant="primary"
+              size="sm"
+              disabled={!bulkCategory || isProcessing}
+              title={!bulkCategory ? 'Select a category first' : 'Apply category to selected items'}
+            >
+              {isProcessing ? 'Applying...' : 'Apply'}
+            </Button>
+            <Button
+              onClick={() => {
+                setBulkEditMode(false);
+                setBulkCategory('');
+              }}
+              variant="secondary"
+              size="sm"
+            >
+              Cancel
+            </Button>
+          </Inline>
+        </div>
+      )}
+    </Stack>
+  );
+}
+
+BulkOperations.propTypes = {
+  total: PropTypes.number,
+  selectedCount: PropTypes.number,
+  onSelectAll: PropTypes.func,
+  onApproveSelected: PropTypes.func,
+  bulkEditMode: PropTypes.bool,
+  setBulkEditMode: PropTypes.func,
+  bulkCategory: PropTypes.string,
+  setBulkCategory: PropTypes.func,
+  onApplyBulkCategory: PropTypes.func,
+  smartFolders: PropTypes.arrayOf(
+    PropTypes.shape({
+      id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
+      name: PropTypes.string.isRequired
+    })
+  ),
+  isProcessing: PropTypes.bool
+};
+
+export default BulkOperations;

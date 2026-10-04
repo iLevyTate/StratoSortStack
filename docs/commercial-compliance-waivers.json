@@ -1,0 +1,14 @@
+{
+  "dependencies": {
+    "high_risk": [],
+    "unknown": []
+  },
+  "models": {
+    "high_risk": [],
+    "unknown": []
+  },
+  "notes": [
+    "Waivers are intended to be empty in the steady state. Any entry added here must reference a legal sign-off recorded in release tracking and a follow-up issue to remove the waiver.",
+    "Dev-only npm packages (lockfile `dev: true`) and platform-specific optional binaries (lockfile `optional: true`) are excluded from the verifier failure set in scripts/compliance/verify-commercial-compliance.js because they are never bundled into the shipped installer."
+  ]
+}
