@@ -287,7 +287,7 @@
     "eslint-plugin-promise": "^7.3.0",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.1.1",
-    "framer-motion": "^13.4.0",
+    "framer-motion": "^14.0.0",
     "globals": "^17.13.0",
     "html-webpack-plugin": "^5.6.8",
     "husky": "^9.1.7",
