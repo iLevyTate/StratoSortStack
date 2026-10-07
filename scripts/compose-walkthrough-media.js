@@ -34,8 +34,12 @@ const ACTIONS = path.join(RAW_DIR, 'actions.json');
 const LOGO = path.join(ROOT, 'assets', 'stratosort-logo.png');
 
 const FPS = 25;
+// Lessons still dissolve between steps. The how-to and the short cut hard:
+// a dissolve of two different screens reads as a mistake.
 const SCENE_XFADE = 0.35;
-const OUTRO_SECONDS = 1.6;
+const OUTRO_FADE = 0.45;
+const OUTRO_READABLE = 3.2;
+const OUTRO_SECONDS = OUTRO_READABLE + OUTRO_FADE + 0.5;
 const BLUR_BG = 'gblur=sigma=28,eq=brightness=-0.2:saturation=0.8';
 const INK = '0x0b1220';
 
@@ -52,222 +56,175 @@ const INK = '0x0b1220';
  *               kept in frame — 'action' (the recorded click) or a normalized [x, y].
  *               Missing z/focus inherit from the previous keyframe.
  */
-const MODAL = [0.5, 0.52];
-const DETAILS_PANEL = [0.8, 0.5];
-const CHAT_COMPOSER = [0.55, 0.78];
-const CHAT_ANSWER = [0.56, 0.6];
-const GRAPH = [0.55, 0.55];
+// Windows are measured against this capture, not a generic timing model.
+// A caption may only cover footage of the screen it names. Zooms stay wide
+// enough that the action (the name, the counter, the answer, the graph) is
+// still readable. The in-app graph zoom is the close-up; another camera push
+// on top of it slices the node off the frame.
 
-// Every mark is the moment of its click (see record-product-tour.js). Windows below
-// are timed to what the app actually does next: the folder dialog closes ~0.5s after
-// the first add but ~3.5s after later ones (embedding warm-up), files appear ~4s
-// before the discover-drop mark, search shows results ~2.4s before its mark, etc.
-
-// Shared step definitions. Each output picks its own pace.
-function setupScene({ addDuration, natureDuration, withResearch }) {
-  const cuts = [
-    {
-      // Typing the description → Add folder → dialog closes → Finance card + toast.
-      id: 'setup-add',
-      padBefore: 3.4,
-      duration: addDuration,
-      speed: 4.6 / addDuration,
-      // Ease in and hold. The next shots stay at this framing so the cut does not pop.
-      cam: [
-        { t: 0.15, z: 1 },
-        { t: 1.35, z: 1.4, focus: MODAL }
-      ]
-    }
-  ];
-  if (withResearch) {
-    cuts.push({
-      id: 'setup-research',
-      padBefore: 2.4,
-      duration: 1.6,
-      speed: 1.6,
-      cam: [{ t: 0, z: 1.4, focus: MODAL }]
-    });
-  }
-  cuts.push(
-    {
-      id: 'setup-nature',
-      padBefore: 2.6,
-      duration: natureDuration,
-      speed: 2.9 / natureDuration,
-      // Hold the modal framing, then ease back out onto the destination list.
-      cam: [
-        { t: 0, z: 1.4, focus: MODAL },
-        { t: -1.05, z: 1.4, focus: MODAL },
-        { t: -0.08, z: 1 }
-      ]
-    },
-    {
-      // Jump past the "Adding…" spinner to the finished destination list.
-      id: 'setup-nature-done',
-      from: { id: 'setup-nature', offset: 3.7 },
-      until: { id: 'setup-nature', offset: 4.9 },
-      duration: 1.2
-    }
-  );
-  return { title: 'Add Smart Folders', cuts };
+function setupScene() {
+  return {
+    title: 'Add Smart Folders',
+    cuts: [
+      {
+        // Dialog still open: Finance, its description, Add folder.
+        id: 'setup-finance',
+        from: { id: 'setup-add', offset: -1.55 },
+        until: { id: 'setup-add', offset: -0.85 },
+        duration: 1.4
+      },
+      {
+        id: 'setup-research',
+        from: { id: 'setup-research', offset: -1.5 },
+        until: { id: 'setup-research', offset: -0.8 },
+        duration: 1.25
+      },
+      {
+        id: 'setup-nature',
+        from: { id: 'setup-nature', offset: -1.5 },
+        until: { id: 'setup-nature', offset: -0.75 },
+        duration: 1.25
+      }
+    ]
+  };
 }
 
-function discoverScene({ lapse, analyzedDuration }) {
+function discoverScene() {
   return {
     title: 'Drop in your files',
     cuts: [
       {
-        // Empty Discover → six files land → "Analyzing 0 of 6".
-        id: 'discover-files',
-        from: { id: 'discover-drop', offset: -4.4 },
-        until: { id: 'discover-drop', offset: -2.0 },
-        duration: 2.0
+        id: 'discover-empty',
+        padBefore: 0.25,
+        duration: 1.15
       },
       {
-        id: 'discover-timelapse',
-        from: { id: 'discover-drop', offset: -2.0 },
-        until: { id: 'discover-analyzed', offset: -0.8 },
-        duration: lapse,
-        cam: [
-          { t: 0, z: 1, focus: [0.5, 0.5] },
-          { t: lapse, z: 1.12 }
-        ]
+        // Files have landed and the counter reads 0 of 6.
+        id: 'discover-drop',
+        padBefore: 0.15,
+        duration: 1.9
       },
-      // Categorized cards, then the click through to Organize.
-      { id: 'discover-analyzed', padBefore: 0.6, duration: analyzedDuration }
+      {
+        // The bar fills. Stop while Discover is still on screen (5 of 6).
+        // The later "counted" mark is already the Organize page.
+        id: 'discover-timelapse',
+        from: { id: 'discover-drop', offset: 2.2 },
+        until: { id: 'discover-drop', offset: 29.5 },
+        duration: 2.1
+      },
+      {
+        id: 'discover-hold',
+        from: { id: 'discover-drop', offset: 31.2 },
+        until: { id: 'discover-drop', offset: 33.0 },
+        duration: 1.7
+      }
     ]
   };
 }
 
-function reviewScene({ scrollDuration }) {
+function reviewScene() {
   return {
     title: 'Review what the AI found',
     cuts: [
       {
-        id: 'organize-details',
-        padBefore: 0.8,
-        duration: 2.4,
-        cam: [
-          { t: 0.3, z: 1 },
-          { t: 1.6, z: 1.4, focus: DETAILS_PANEL }
-        ]
+        // The six cards, names and categories still in frame. No push-in.
+        id: 'organize-cards',
+        from: { id: 'organize-rename', offset: -4.6 },
+        until: { id: 'organize-rename', offset: -3.35 },
+        duration: 1.25
       },
       {
-        id: 'organize-details-scroll',
-        padBefore: 0,
-        duration: scrollDuration,
-        speed: 1.5,
-        cam: [
-          { t: 0, z: 1.4, focus: DETAILS_PANEL },
-          { t: -1.05, z: 1.4, focus: DETAILS_PANEL },
-          { t: -0.08, z: 1 }
-        ]
+        id: 'organize-rename',
+        padBefore: 0.1,
+        duration: 2.5,
+        speed: 1.15
+      },
+      {
+        // The menu opens and the card now says Nature.
+        id: 'organize-category',
+        padBefore: 0.35,
+        duration: 2.1
       }
     ]
   };
 }
 
-function moveScene({ moveDuration, moveSpeed, completeDuration }) {
+function moveScene() {
   return {
     title: 'Move everything in one click',
     cuts: [
       {
+        // Pointer is on Move 6 files. Leave before the destination list opens.
+        id: 'organize-press',
+        from: { id: 'organize-move', offset: -1.25 },
+        until: { id: 'organize-move', offset: -0.88 },
+        duration: 1.15
+      },
+      {
+        // The popup and the bar. Tight enough that the destination list stays out.
         id: 'organize-move',
-        padBefore: 1.0,
-        duration: moveDuration,
-        speed: moveSpeed,
-        cam: [
-          { t: 1.0 / moveSpeed, z: 1 },
-          { t: 1.0 / moveSpeed + 1.2, z: 1.16, focus: [0.5, 0.42] }
-        ]
-      },
-      { id: 'complete', padBefore: 0.4, duration: completeDuration }
-    ]
-  };
-}
-
-function searchScene({ resultsDuration }) {
-  return {
-    title: 'Search by meaning',
-    cuts: [
-      {
-        id: 'search-typing',
-        from: { id: 'search', offset: -7.6 },
-        until: { id: 'search', offset: -4.5 },
-        duration: 2.2,
-        cam: [
-          { t: 0.15, z: 1 },
-          { t: 1.35, z: 1.18, focus: [0.5, 0.36] }
-        ]
+        from: { id: 'organize-move', offset: 0.45 },
+        until: { id: 'organize-move', offset: 1.65 },
+        duration: 1.55,
+        cam: [{ t: 0, z: 3.15, focus: [0.5, 0.23] }]
       },
       {
-        // Results pop in ~2.4s before the mark; ease out so the full-width list fits.
-        id: 'search',
-        from: { id: 'search', offset: -2.6 },
-        until: { id: 'search', offset: 2.6 },
-        duration: resultsDuration,
-        cam: [
-          { t: 0, z: 1.18, focus: [0.5, 0.36] },
-          { t: 1.4, z: 1.06, focus: [0.5, 0.44] }
-        ]
+        // Heading and the 6-files line. Leave before search opens, and above the list.
+        id: 'complete',
+        from: { id: 'complete', offset: 0.5 },
+        until: { id: 'complete', offset: 1.55 },
+        duration: 2.3,
+        cam: [{ t: 0, z: 2.55, focus: [0.5, 0.16] }]
       }
     ]
   };
 }
 
-function chatScene({ answerDuration }) {
+function searchScene() {
+  return {
+    title: 'Search by meaning',
+    cuts: [
+      {
+        // Query, ranked results, and the arctic preview are all on screen here.
+        id: 'search',
+        from: { id: 'search', offset: -2.6 },
+        until: { id: 'search', offset: 1.7 },
+        duration: 4.0
+      }
+    ]
+  };
+}
+
+function chatScene() {
   return {
     title: 'Chat with your documents',
     cuts: [
       {
         id: 'chat-send',
-        padBefore: 3.0,
-        duration: 2.4,
-        speed: 1.5,
-        requires: 'chat',
-        cam: [
-          { t: 0.15, z: 1 },
-          { t: 1.45, z: 1.28, focus: CHAT_COMPOSER }
-        ]
+        padBefore: 1.7,
+        duration: 1.8,
+        requires: 'chat'
       },
       {
-        // The answer is still streaming here — let it grow on camera.
+        // The cited paragraph is already on screen. A push-in crops it.
         id: 'chat',
-        padBefore: 1.5,
-        duration: answerDuration,
-        cam: [
-          { t: 0, z: 1.28, focus: CHAT_COMPOSER },
-          { t: 1.3, z: 1.36, focus: CHAT_ANSWER }
-        ]
+        padBefore: 2.0,
+        duration: 4.0
       }
     ]
   };
 }
 
-function relateScene({ nodeDuration }) {
+function relateScene() {
   return {
     title: 'See how files connect',
     cuts: [
-      { id: 'relate-zoom-in', padBefore: 0.5, duration: 2.0 },
-      { id: 'relate-zoom-out', padBefore: 0.4, duration: 1.4 },
       {
-        id: 'relate',
-        padBefore: 0.4,
-        duration: nodeDuration,
-        cam: [
-          { t: 0.25, z: 1 },
-          { t: 1.45, z: 1.16, focus: GRAPH }
-        ]
-      },
-      {
-        id: 'relate-2',
-        padBefore: 0.3,
-        duration: nodeDuration,
-        cam: [
-          { t: 0, z: 1.16, focus: GRAPH },
-          { t: -1.05, z: 1.16, focus: GRAPH },
-          { t: -0.08, z: 1 }
-        ]
+        // In-app zoom has already enlarged the node. Hold through Why connected.
+        id: 'relate-open',
+        from: { id: 'relate', offset: -0.35 },
+        until: { id: 'relate-why', offset: 1.35 },
+        duration: 3.5
       }
     ]
   };
@@ -296,19 +253,25 @@ const HOW_TO_SCENES = [
   {
     title: 'Welcome',
     cuts: [
-      { id: 'welcome-cta', padBefore: 0.8, duration: 1.8 },
-      // Explainer, Escape, then the click through to Setup.
-      { id: 'how-it-works', padBefore: 0.6, duration: 4.2, speed: 1.3 }
+      { id: 'welcome-cta', padBefore: 3.0, duration: 2.05 },
+      {
+        // The four steps, held. Leave before Escape lands on the spinner.
+        id: 'how-it-works',
+        from: { id: 'how-it-works', offset: -2.3 },
+        until: { id: 'how-it-works', offset: -0.15 },
+        duration: 2.35
+      }
     ]
   },
-  setupScene({ addDuration: 2.6, natureDuration: 2.0, withResearch: true }),
-  discoverScene({ lapse: 3.6, analyzedDuration: 2.6 }),
-  reviewScene({ scrollDuration: 2.4 }),
-  moveScene({ moveDuration: 3.8, moveSpeed: 2.6, completeDuration: 2.0 }),
-  searchScene({ resultsDuration: 4.6 }),
-  chatScene({ answerDuration: 4.8 }),
-  relateScene({ nodeDuration: 2.1 }),
-  atlasScene({ duration: 2.8 })
+  setupScene(),
+  discoverScene(),
+  reviewScene(),
+  moveScene(),
+  searchScene(),
+  chatScene(),
+  relateScene(),
+  // Omitted unless the capture marks `atlas` with a real map.
+  atlasScene({ duration: 5.2 })
 ];
 
 const SEARCH_LESSON = [
@@ -440,6 +403,9 @@ const OUTPUTS = {
     scenes: HOW_TO_SCENES,
     size: [1080, 1920],
     zoomScale: 0.75,
+    storyFade: 0,
+    outroFade: OUTRO_FADE,
+    lossless: true,
     dest: () => path.join(SHORT_DIR, 'stratosort-short.mp4'),
     frame: shortLetterboxFilter,
     caption: shortCaption,
@@ -449,6 +415,9 @@ const OUTPUTS = {
     scenes: HOW_TO_SCENES,
     size: [1920, 1080],
     zoomScale: 0.75,
+    storyFade: 0,
+    outroFade: OUTRO_FADE,
+    lossless: true,
     dest: () => path.join(OUT_DIR, 'how-to-use.mp4'),
     frame: howToFilter,
     caption: howToCaption,
@@ -510,6 +479,12 @@ const even = (n) => Math.max(2, Math.floor(n / 2) * 2);
 const num = (n) => Number(n.toFixed(4)).toString();
 
 const X264 = ['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'fast', '-crf', '18'];
+// CRF 0 is x264's lossless mode. Preset only changes size and encode time.
+const X264_LOSSLESS = ['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'medium', '-crf', '0'];
+
+function videoEncode(output) {
+  return output?.lossless ? X264_LOSSLESS : X264;
+}
 
 // ---------------------------------------------------------------------------
 // Capture
@@ -704,13 +679,15 @@ function shortLetterboxFilter() {
   ].join(';');
 }
 
-/** Whole UI fitted to 1920×1080; any aspect slack becomes a blurred fill instead of a crop. */
+/** UI on top, an ink bar underneath for the step title so nothing in the product is covered. */
 function howToFilter() {
+  const stageH = 1080 - 84;
   return [
     '[ui]split[srcbg][srcfg]',
-    `[srcbg]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,${BLUR_BG}[bg]`,
-    '[srcfg]scale=1920:1080:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2,eq=contrast=1.02:saturation=1.01[fg]',
-    '[bg][fg]overlay=(W-w)/2:(H-h)/2,format=yuv420p'
+    `[srcbg]scale=1920:${stageH}:force_original_aspect_ratio=increase,crop=1920:${stageH},${BLUR_BG}[bg]`,
+    `[srcfg]scale=1920:${stageH}:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2,eq=contrast=1.02:saturation=1.01[fg]`,
+    '[bg][fg]overlay=(W-w)/2:(H-h)/2[stage]',
+    `[stage]pad=1920:1080:0:0:color=${INK},format=yuv420p`
   ].join(';');
 }
 
@@ -747,7 +724,7 @@ function extractClip(ctx, cut, name) {
     '-t',
     num(duration),
     '-an',
-    ...X264,
+    ...videoEncode(output),
     out
   ]);
   return out;
@@ -827,9 +804,16 @@ function fadeAlpha(sceneDuration, hold = Infinity) {
   return `if(lt(t,${start}),0,if(lt(t,${start}+0.3),(t-${start})/0.3,if(lt(t,${end}-0.3),1,max(0,(${end}-t)/0.3))))`;
 }
 
+/** Visible from the first frame of the scene. The scene change and its caption land together. */
+function alignedAlpha(sceneDuration) {
+  const fade = 0.12;
+  const end = num(Math.max(sceneDuration - 0.2, fade + 0.2));
+  return `if(lt(t,${fade}),t/${fade},if(lt(t,${end}),1,max(0,(${num(sceneDuration)}-t)/0.2)))`;
+}
+
 /** Short: step + title in the blur zone above the UI, quiet tagline below it. */
 function shortCaption(ctx, scene, index, sceneDuration) {
-  const alpha = fadeAlpha(sceneDuration);
+  const alpha = alignedAlpha(sceneDuration);
   return [
     drawText(ctx, `STEP ${index + 1}`, {
       font: ctx.fonts.regular,
@@ -874,42 +858,43 @@ function lessonCaption(ctx, scene, index, sceneDuration) {
   });
 }
 
-/** Tour: a lower-third pill that introduces the step, then gets out of the way. */
+/** Tour: the step title sits in the ink bar under the picture. */
 function howToCaption(ctx, scene, index, sceneDuration) {
-  return drawText(ctx, `${index + 1}  ·  ${scene.title}`, {
+  return drawText(ctx, `${index + 1}   ${scene.title}`, {
     font: ctx.fonts.bold,
-    size: 40,
+    size: 32,
     color: 'white',
-    x: 56,
-    y: 'h-56-th',
-    alpha: fadeAlpha(sceneDuration, 2.8),
-    box: { color: `${INK}@0.78`, pad: 18 }
+    x: '(w-text_w)/2',
+    y: '1080-42-th/2',
+    alpha: alignedAlpha(sceneDuration)
   });
 }
 
 // ---------------------------------------------------------------------------
 // Assembly
 
-function concatFiles(clips, dest, vf) {
+function concatFiles(clips, dest, vf, encode) {
   const list = path.join(path.dirname(dest), `${path.basename(dest, '.mp4')}.txt`);
   fs.writeFileSync(list, clips.map((file) => `file '${file.replace(/\\/g, '/')}'`).join('\n'));
   const args = ['-y', '-f', 'concat', '-safe', '0', '-i', list];
   if (vf) args.push('-vf', vf);
-  args.push('-an', ...X264, dest);
+  args.push('-an', ...(encode || X264), dest);
   run('ffmpeg', args);
   return dest;
 }
 
 function buildScene(ctx, scene, index) {
   const name = `${ctx.key}-s${String(index).padStart(2, '0')}`;
+  const encode = videoEncode(ctx.output);
   const clips = scene.cuts.map((cut, i) => extractClip(ctx, cut, `${name}-c${i}`));
-  const rough = concatFiles(clips, path.join(ctx.workDir, `${name}-rough.mp4`));
+  const rough = concatFiles(clips, path.join(ctx.workDir, `${name}-rough.mp4`), null, encode);
   if (!ctx.fonts.bold) return rough;
   const { duration } = probeVideo(rough);
   return concatFiles(
     [rough],
     path.join(ctx.workDir, `${name}.mp4`),
-    ctx.output.caption(ctx, scene, index, duration)
+    ctx.output.caption(ctx, scene, index, duration),
+    encode
   );
 }
 
@@ -962,36 +947,55 @@ function buildOutro(ctx) {
     '[v]',
     '-t',
     num(OUTRO_SECONDS),
-    ...X264,
+    ...videoEncode(ctx.output),
     out
   );
   run('ffmpeg', args);
   return out;
 }
 
-/** Crossfade the scenes and the outro, fade the whole piece in and out, add a silent track. */
+/** Hard-cut the story. Dissolve only into the end card, then fade the whole piece out. */
 function assemble(ctx, sceneFiles, dest) {
   const inputs = [...sceneFiles, buildOutro(ctx)];
   const durations = inputs.map((file) => probeVideo(file).duration);
+  const storyFade = ctx.output.storyFade ?? SCENE_XFADE;
+  const outroFade = ctx.output.outroFade ?? storyFade;
   const [w, h] = ctx.output.size;
+  const encode = videoEncode(ctx.output);
+  const storyCount = inputs.length - 1;
   const chain = [];
-  let label = '[0:v]';
+  let storyLabel = '[0:v]';
   let elapsed = durations[0];
-  for (let i = 1; i < inputs.length; i += 1) {
-    const offset = elapsed - SCENE_XFADE;
-    const next = i === inputs.length - 1 ? '[joined]' : `[x${i}]`;
-    chain.push(
-      `${label}[${i}:v]xfade=transition=fade:duration=${SCENE_XFADE}:offset=${num(offset)}${next}`
-    );
-    label = next;
-    elapsed = offset + durations[i];
+
+  if (storyFade <= 0) {
+    const pads = inputs
+      .slice(0, storyCount)
+      .map((_, i) => `[${i}:v]`)
+      .join('');
+    chain.push(`${pads}concat=n=${storyCount}:v=1:a=0[story]`);
+    storyLabel = '[story]';
+    elapsed = durations.slice(0, storyCount).reduce((sum, value) => sum + value, 0);
+  } else {
+    for (let i = 1; i < storyCount; i += 1) {
+      const offset = elapsed - storyFade;
+      const next = `[s${i}]`;
+      chain.push(
+        `${storyLabel}[${i}:v]xfade=transition=fade:duration=${storyFade}:offset=${num(offset)}${next}`
+      );
+      storyLabel = next;
+      elapsed = offset + durations[i];
+    }
   }
-  if (inputs.length === 1) {
-    chain.push('[0:v]null[joined]');
-  }
-  const total = elapsed;
+
+  const outroOffset = Math.max(0, elapsed - outroFade);
+  chain.push(`${storyLabel}fps=${FPS},settb=1/${FPS}[storytb]`);
+  chain.push(`[${storyCount}:v]fps=${FPS},settb=1/${FPS}[outrotb]`);
   chain.push(
-    `[joined]fade=t=in:st=0:d=0.3,fade=t=out:st=${num(total - 0.5)}:d=0.5,format=yuv420p[v]`
+    `[storytb][outrotb]xfade=transition=fade:duration=${outroFade}:offset=${num(outroOffset)}[joined]`
+  );
+  elapsed = outroOffset + durations[storyCount];
+  chain.push(
+    `[joined]fade=t=in:st=0:d=0.25,fade=t=out:st=${num(elapsed - 0.5)}:d=0.5,format=yuv420p[v]`
   );
 
   const args = ['-y'];
@@ -1008,15 +1012,8 @@ function assemble(ctx, sceneFiles, dest) {
     '-map',
     `${inputs.length}:a`,
     '-t',
-    num(total),
-    '-c:v',
-    'libx264',
-    '-preset',
-    'slow',
-    '-crf',
-    '17',
-    '-pix_fmt',
-    'yuv420p',
+    num(elapsed),
+    ...encode,
     '-r',
     String(FPS),
     '-s',
@@ -1024,13 +1021,13 @@ function assemble(ctx, sceneFiles, dest) {
     '-c:a',
     'aac',
     '-b:a',
-    '128k',
+    ctx.output.lossless ? '320k' : '128k',
     '-movflags',
     '+faststart',
     dest
   );
   run('ffmpeg', args);
-  return total;
+  return elapsed;
 }
 
 function composeOutput(base, key) {

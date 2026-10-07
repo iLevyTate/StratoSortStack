@@ -2,9 +2,9 @@
 
 The watchable clips are a real Electron session with a moving pointer — not a Ken Burns slideshow.
 
-**Guided tour (~55 s):** [how-to-use.mp4](./how-to-use.mp4) (live mouse, 1920×1080)
+**Guided tour (~43 s):** [how-to-use.mp4](./how-to-use.mp4) (live mouse, 1920×1080)
 
-**YouTube Short (~45 s):** [shorts/stratosort-short.mp4](./shorts/stratosort-short.mp4) (live mouse,
+**YouTube Short (~43 s):** [shorts/stratosort-short.mp4](./shorts/stratosort-short.mp4) (live mouse,
 1080×1920, whole UI centered over a blurred fill)
 
 **Stills:** [E2E Walkthrough](../E2E_WALKTHROUGH.md) (`docs/assets/e2e-screenshots/`)
@@ -37,36 +37,48 @@ npm run tour:compose  # --short | --howto to build one; --offset=N to fix clock 
 Watch it live (the window stays up through analysis):
 
 ```bash
-npx cross-env STRATOSORT_TOUR_HEADED=1 STRATOSORT_REDACT_PATHS=1 node scripts/record-product-tour.js
+npx cross-env STRATOSORT_TOUR_HEADED=1 node scripts/record-product-tour.js
 npm run tour:compose
 ```
 
 `tour:record` rebuilds `dist/` when `src/` is newer, launches an isolated profile, junctions your
 already-downloaded models, copies six demo files (Finance, Research, Nature) into a temp inbox, and
-walks the product the way a first-time viewer should see it. It runs inference on the GPU (the
-shared e2e launcher's CPU-only override is lifted), so a full take is eight to ten minutes, most of
-it the analysis wait that the edit time-lapses.
+walks the product the way a first-time viewer should see it. The profile is empty apart from those
+six files, so Welcome has no leftover toasts, Knowledge OS counts six, and search cannot surface
+files from an older library. It runs inference on the GPU (the shared e2e launcher's CPU-only
+override is lifted), so a full take is eight to ten minutes, most of it the analysis wait that the
+edit time-lapses. Path redaction stays off: the demo names are the point, and the Complete shot is
+framed on the "6 files" line so the temp destination list stays out of frame.
+
+Atlas is not in this cut. The six-file library draws the small-map fallback, and a WebGPU miss
+draws a blank panel. Record that shot on its own, with `STRATOSORT_TOUR_ATLAS=1`, only on a machine
+where WebGPU works and the library already has a few hundred files. Otherwise the tour ends on
+Relate.
 
 ## The story
 
-Both cuts are the same eight steps; the Short skips the Welcome orientation.
+Both cuts use the same scenes. The how-to opens on Welcome; the end card is held long enough to read.
 
-1. Add Smart Folders — type Finance and Nature destinations
-2. Drop in your files — six files land, analysis runs as a time-lapse
-3. Review what the AI found — open one file's details and scroll them
-4. Move everything in one click — the move runs at 3×, then Organization Complete
-5. Search by meaning — "how warming affects wildlife" → results
-6. Chat with your documents — "Summarize the arctic sea ice report…" → cited answer
-7. See how files connect — zoom in, zoom out, click two nodes
-8. Map your whole library — Atlas overview, then the brand outro
+1. Welcome — the four-step story, then Setup
+2. Add Smart Folders — Finance, Research, and Nature, each with its description
+3. Drop in your files — the empty drop zone, then the files, and the counter fills to 5 of 6
+   (the app leaves Discover for review before a held 6 of 6)
+4. Review what the AI found — type one new name and change one category
+5. Move everything in one click — Organize is pressed on camera, then the "6 files" summary
+6. Search by meaning — "how warming affects wildlife" → results
+7. Chat with your documents — "Summarize the arctic sea ice report…" → cited answer
+8. See how files connect — zoom into the graph and open Why connected
+
+The end card follows. Atlas is a separate shot. See above.
 
 ## How the edit is built (`scripts/compose-walkthrough-media.js`)
 
-- **Scenes.** Each step is a scene: hard cuts inside it, a 0.35 s crossfade between scenes, a
-  numbered caption per scene (in the letterbox on the Short, a lower-third pill on the tour).
-- **Camera.** Cuts carry `cam` keyframes — eased push-ins on the modal, the details panel, the
-  answer bubble — resolved into an ffmpeg `zoompan` so the phone-sized frame stays readable. The
-  tour shows the UI 1.33× larger already, so it uses 75 % of each push.
+- **Scenes.** Each step is a scene. Cuts inside a step are hard, and the how-to cuts hard
+  between steps so two screens never sit on top of each other. The step title sits in a bar under
+  the picture. Only the end card dissolves in.
+- **Camera.** Cuts carry `cam` keyframes resolved into an ffmpeg `zoompan`. The tour shows the UI
+  1.33× larger already, so it uses 75 % of each push. The move progress and Complete push in so
+  the temp destination list stays below the frame. Every other step is the full window.
 - **Time-lapse.** `speed` (or a `from`/`until` window) compresses typing, the analysis wait and the
   move so nothing sits still; `speed` is derived when both anchors are given.
 - **Clock alignment.** Every recorded mark is the moment of its click. Playwright's video starts a
@@ -78,8 +90,10 @@ Both cuts are the same eight steps; the Short skips the Welcome orientation.
 - Captions need a TrueType font; the defaults are Segoe UI / Arial / DejaVu. Override with
   `STRATOSORT_TOUR_FONT_BOLD` and `STRATOSORT_TOUR_FONT`.
 
-Paths are redacted. Demo files are copies, so the repo set is not moved. Local PNG dumps under
-`tour/` and `tour-raw/` are capture artifacts (gitignored), not the published stills.
+Paths on the Complete screen are cropped out of the shot. Demo files are copies, so the repo set
+is not moved. Local PNG dumps under `tour/` and `tour-raw/` are capture artifacts (gitignored),
+not the published stills. A new take moves every mark, so voiceover and music need retiming
+against that cut.
 
 ## Voiceover
 

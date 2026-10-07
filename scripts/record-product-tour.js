@@ -165,6 +165,30 @@ function prepareWorkspace() {
   });
 
   const modelsLinked = linkHostModels(userDataDir);
+  // A first launch otherwise watches Documents\Uncategorized, which is a real
+  // folder full of old files. Point the fallback at an empty temp directory
+  // so the recording's index is only the six demo files.
+  const uncategorizedDir = path.join(libraryDir, 'Uncategorized');
+  fs.mkdirSync(uncategorizedDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(userDataDir, 'custom-folders.json'),
+    JSON.stringify(
+      [
+        {
+          id: 'tour-uncategorized',
+          name: 'Uncategorized',
+          path: uncategorizedDir,
+          description: 'Files that do not match a smart folder',
+          keywords: [],
+          category: 'uncategorized',
+          isDefault: true,
+          createdAt: new Date().toISOString()
+        }
+      ],
+      null,
+      2
+    )
+  );
   return { inboxDir, libraryDir, userDataDir, files, folders, modelsLinked };
 }
 
@@ -571,22 +595,47 @@ async function showFirstAnalyzedResult(window) {
   return true;
 }
 
+async function readAnalysisCount(window) {
+  const text = await window
+    .getByText(/Analyzing \d+ of \d+/)
+    .first()
+    .innerText()
+    .catch(() => '');
+  const match = String(text).match(/Analyzing (\d+) of (\d+)/);
+  if (!match) return null;
+  return { current: Number(match[1]), total: Number(match[2]) };
+}
+
 async function waitForAnalysis(window, expectedCount) {
   const maxMs = ANALYSIS_WAIT_MS;
   console.log(`[tour] waiting for analysis of ${expectedCount} files (max ${maxMs / 1000}s)…`);
   const deadline = Date.now() + maxMs;
   let lastLog = 0;
   let firstShown = false;
+  let counted = false;
   while (Date.now() < deadline) {
     const itemCount = await window.locator('[data-testid="file-item"]').count();
     if (!firstShown && itemCount >= 1) {
       firstShown = await showFirstAnalyzedResult(window);
+    }
+    const progress = await readAnalysisCount(window);
+    if (
+      !counted &&
+      progress &&
+      progress.current >= expectedCount &&
+      progress.total >= expectedCount
+    ) {
+      counted = true;
+      console.log(`[tour] analysis counter ${progress.current} of ${progress.total}`);
+      await markAction(window, 'discover-counted');
+      await hold(window, 700);
     }
     const moveBtn = window.getByRole('button', { name: /Move \d+/i });
     if (
       itemCount >= expectedCount &&
       (await moveBtn.isEnabled({ timeout: 400 }).catch(() => false))
     ) {
+      if (!counted) await markAction(window, 'discover-counted');
       console.log(`[tour] analysis complete — already on Organize items=${itemCount}`);
       return 'organize';
     }
@@ -595,6 +644,7 @@ async function waitForAnalysis(window, expectedCount) {
       itemCount >= expectedCount &&
       (await continueBtn.isEnabled({ timeout: 400 }).catch(() => false))
     ) {
+      if (!counted) await markAction(window, 'discover-counted');
       console.log(
         `[tour] analysis complete on Discover items=${itemCount} expected=${expectedCount}`
       );
@@ -610,6 +660,7 @@ async function waitForAnalysis(window, expectedCount) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   console.warn('[tour] analysis wait timed out; continuing mouse tour');
+  if (!counted) await markAction(window, 'discover-counted', { ok: false });
   return null;
 }
 
@@ -622,6 +673,16 @@ async function quietNotifications(window) {
       await settings.update('notifications', false);
     })
     .catch(() => {});
+}
+
+/** A reused profile can still be showing old analysis toasts (a .zip at 70%, and so on). */
+async function dismissLeftoverNotices(window) {
+  for (let i = 0; i < 6; i += 1) {
+    const dismiss = window.getByRole('button', { name: 'Dismiss' }).first();
+    if (!(await dismiss.isVisible().catch(() => false))) break;
+    await dismiss.click().catch(() => {});
+    await hold(window, 200);
+  }
 }
 
 async function waitForIndexedFiles(window, minCount) {
@@ -838,19 +899,17 @@ async function populateGraph(window) {
     .first();
   if (await zoomIn.isVisible().catch(() => false)) {
     await moveAndClick(window, zoomIn, 'relate-zoom-in');
-    await hold(window, 450);
+    await hold(window, 350);
     if (await zoomIn.isVisible().catch(() => false)) {
       await moveAndClick(window, zoomIn);
-      await hold(window, 400);
+      await hold(window, 280);
+    }
+    if (await zoomIn.isVisible().catch(() => false)) {
+      await moveAndClick(window, zoomIn);
+      await hold(window, 280);
     }
   } else {
     await markAction(window, 'relate-zoom-in', { ok: false });
-  }
-  if (await zoomOut.isVisible().catch(() => false)) {
-    await moveAndClick(window, zoomOut, 'relate-zoom-out');
-    await hold(window, 500);
-  } else {
-    await markAction(window, 'relate-zoom-out', { ok: false });
   }
 
   const node = nodes.first();
@@ -859,7 +918,27 @@ async function populateGraph(window) {
   await node.click({ timeout: 5000, force: true }).catch((err) => {
     console.warn('[tour] graph node click:', err.message);
   });
-  await hold(window, 1200);
+  const why = window.getByText('Why connected').first();
+  const whyOpen = await why
+    .waitFor({ state: 'visible', timeout: 4000 })
+    .then(() => true)
+    .catch(() => false);
+  if (whyOpen) {
+    await moveTo(window, why, 'relate-why');
+    await hold(window, 1600);
+  } else {
+    await markAction(window, 'relate-why', { ok: false });
+    await hold(window, 900);
+  }
+
+  // Later marks feed the graph lesson. The how-to cut ends on the click above.
+  if (await zoomOut.isVisible().catch(() => false)) {
+    await moveAndClick(window, zoomOut, 'relate-zoom-out');
+    await hold(window, 400);
+  } else {
+    await markAction(window, 'relate-zoom-out', { ok: false });
+  }
+
   const second = nodes.nth(Math.min(count - 1, 2));
   if (count > 1 && (await second.isVisible().catch(() => false))) {
     await movePointer(window, second).catch(() => {});
@@ -867,65 +946,32 @@ async function populateGraph(window) {
     await second.click({ timeout: 5000, force: true }).catch((err) => {
       console.warn('[tour] graph second node click:', err.message);
     });
-    await hold(window, 1100);
+    await hold(window, 900);
   }
-  return true;
-}
-
-async function inspectFileDetails(window) {
-  const detailsBtn = window.getByRole('button', { name: /View analysis details for /i }).first();
-  const visible = await detailsBtn
-    .waitFor({ state: 'visible', timeout: 8000 })
-    .then(() => true)
-    .catch(() => false);
-  if (!visible) {
-    console.warn('[tour] organize Details control missing');
-    await markAction(window, 'organize-details', { ok: false });
-    await markAction(window, 'organize-details-scroll', { ok: false });
-    return false;
-  }
-  await moveAndClick(window, detailsBtn, 'organize-details');
-  const panel = window
-    .locator('[role="complementary"], [role="dialog"]')
-    .filter({ hasText: 'File analysis details' })
-    .first();
-  const opened = await panel
-    .waitFor({ state: 'visible', timeout: 5000 })
-    .then(() => true)
-    .catch(() => false);
-  if (!opened) {
-    await markAction(window, 'organize-details-scroll', { ok: false });
-    return false;
-  }
-  await hold(window, 500);
-  const scroller = panel.locator('.overflow-y-auto').first();
-  await scroller
-    .evaluate((el) => {
-      el.scrollTo({ top: Math.min(el.scrollHeight, 260), behavior: 'smooth' });
-    })
-    .catch(() => {});
-  await markAction(window, 'organize-details-scroll');
-  await hold(window, 700);
-  await scroller
-    .evaluate((el) => {
-      el.scrollTo({ top: Math.min(el.scrollHeight, 520), behavior: 'smooth' });
-    })
-    .catch(() => {});
-  await hold(window, 500);
-  const closeBtn = window.getByRole('button', { name: 'Close panel' });
-  if (await closeBtn.isVisible().catch(() => false)) {
-    await moveAndClick(window, closeBtn);
-  } else {
-    await window.keyboard.press('Escape').catch(() => {});
-  }
-  await hold(window, 350);
   return true;
 }
 
 async function showAtlas(window) {
+  const webgpu = await window
+    .evaluate(async () => {
+      const gpu = navigator.gpu;
+      if (!gpu || typeof gpu.requestAdapter !== 'function') return false;
+      try {
+        return Boolean(await gpu.requestAdapter());
+      } catch {
+        return false;
+      }
+    })
+    .catch(() => false);
+  if (!webgpu) {
+    console.warn('[tour] WebGPU unavailable; Atlas stays out of the cut');
+    await markAction(window, 'atlas', { ok: false });
+    return false;
+  }
   if (!(await clickTab(window, 'Atlas'))) return false;
   const projecting = window.getByText(/Projecting your library/i);
   const empty = window.getByText(/No embedded documents yet/i);
+  const smallLibrary = window.getByText(/more meaningful as you analyze more files/i);
   const deadline = Date.now() + 25000;
   while (Date.now() < deadline && (await projecting.isVisible().catch(() => false))) {
     await hold(window, 500);
@@ -938,60 +984,78 @@ async function showAtlas(window) {
       .catch(() => false)) &&
     !(await empty.isVisible().catch(() => false)) &&
     !(await projecting.isVisible().catch(() => false));
-  console.log(`[tour] atlas ready=${ready}`);
-  if (!ready) {
+  const tooSmall = await smallLibrary.isVisible().catch(() => false);
+  console.log(`[tour] atlas ready=${ready} smallLibrary=${tooSmall}`);
+  if (!ready || tooSmall) {
     await markAction(window, 'atlas', { ok: false });
     return false;
   }
   await moveTo(window, canvas, 'atlas');
   await canvas.hover().catch(() => {});
-  await window.mouse.wheel(0, -220).catch(() => {});
-  await hold(window, 500);
-  await window.mouse.wheel(0, 140).catch(() => {});
-  await hold(window, 700);
+  await hold(window, 5200);
   return true;
 }
 
-async function reviewDestinations(window, files) {
-  const mapping = files.filter((file) => file.folder);
-  const seen = new Set();
-  let assigned = 0;
-  for (const file of mapping) {
-    if (seen.has(file.folder)) continue;
-    const title = window.getByText(file.name, { exact: true }).first();
-    await title.scrollIntoViewIfNeeded().catch(() => {});
-    if (!(await title.isVisible().catch(() => false))) continue;
-    const card = title.locator('xpath=ancestor::*[.//*[@role="combobox"]][1]');
-    const combo = card.getByRole('combobox').first();
-    if (!(await combo.isVisible().catch(() => false))) continue;
-    const current = String(await combo.innerText().catch(() => ''))
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (
-      current.toLowerCase().includes(file.folder.toLowerCase()) &&
-      !/uncategorized|fallback|unmapped/i.test(current)
-    ) {
-      seen.add(file.folder);
-      continue;
-    }
-    await moveAndClick(window, combo, assigned === 0 ? 'organize-review' : undefined);
-    const option = window.getByRole('option', { name: file.folder, exact: true });
-    const opened = await option
-      .waitFor({ state: 'visible', timeout: 2500 })
-      .then(() => true)
-      .catch(() => false);
-    if (!opened) {
-      await window.keyboard.press('Escape').catch(() => {});
-      continue;
-    }
-    await moveAndClick(window, option);
-    seen.add(file.folder);
-    assigned += 1;
-    await hold(window, 500);
-    if (seen.size >= 3) break;
+/**
+ * The review beat is a change the viewer can see: one typed name, one folder
+ * change. The details drawer is not the product's promise.
+ */
+async function reviewOneFile(window) {
+  const nameInput = window.getByLabel('Suggested name').first();
+  const visible = await nameInput
+    .waitFor({ state: 'visible', timeout: 8000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!visible) {
+    console.warn('[tour] suggested-name field missing');
+    await markAction(window, 'organize-rename', { ok: false });
+    await markAction(window, 'organize-category', { ok: false });
+    return false;
   }
-  console.log(`[tour] destination reviews=${assigned}`);
-  return assigned;
+  await nameInput.scrollIntoViewIfNeeded().catch(() => {});
+  // The category menu opens downward. Park the card high so the options fit.
+  await nameInput
+    .evaluate((el) => el.scrollIntoView({ block: 'start', inline: 'nearest' }))
+    .catch(() => {});
+  await hold(window, 250);
+  await movePointer(window, nameInput, 20);
+  await markAction(window, 'organize-rename');
+  await nameInput.click({ timeout: 5000 });
+  await nameInput.fill('');
+  await nameInput.pressSequentially('Budget forecast 2026', { delay: 55 });
+  await hold(window, 500);
+
+  const card = nameInput.locator('xpath=ancestor::*[.//*[@role="combobox"]][1]');
+  const combo = card.getByRole('combobox').first();
+  if (!(await combo.isVisible().catch(() => false))) {
+    await markAction(window, 'organize-category', { ok: false });
+    return false;
+  }
+  const current = String(await combo.innerText().catch(() => ''))
+    .replace(/\s+/g, ' ')
+    .trim();
+  const target = /nature/i.test(current) ? 'Research' : 'Nature';
+  await moveAndClick(window, combo, 'organize-category');
+  const option = window.getByRole('option', { name: new RegExp(`^${target}\\b`, 'i') }).first();
+  const opened = await option
+    .waitFor({ state: 'visible', timeout: 2500 })
+    .then(() => true)
+    .catch(() => false);
+  if (!opened) {
+    console.warn(`[tour] category option ${target} did not open (was "${current}")`);
+    await window.keyboard.press('Escape').catch(() => {});
+    return false;
+  }
+  // The menu is portaled and can sit past the capture window. A normal click
+  // then times out and aborts the rest of the tour.
+  await movePointer(window, option, 12).catch(() => {});
+  await option.evaluate((el) => {
+    el.click();
+  });
+  await hold(window, 280);
+  await hold(window, 600);
+  console.log(`[tour] reviewed name + category → ${target}`);
+  return true;
 }
 
 async function goToOrganize(window, nav, where) {
@@ -1336,7 +1400,9 @@ async function run() {
   // CI determinism. A product recording wants the real machine: GPU inference
   // is what makes analysis and Chat fast enough to watch.
   const env = {
-    STRATOSORT_REDACT_PATHS: '1',
+    // Demo copies only. Redaction would label every row "Hidden file" /
+    // "Destination hidden", which reads as files vanishing.
+    STRATOSORT_REDACT_PATHS: '0',
     STRATOSORT_FORCE_SOFTWARE_GPU: '0',
     ELECTRON_DISABLE_GPU: '0'
   };
@@ -1366,6 +1432,8 @@ async function run() {
     await closeDetachedDevTools(app);
     window = await preferAppWindow(app, window);
     window.setDefaultTimeout(60_000);
+    await quietNotifications(window);
+    await dismissLeftoverNotices(window);
     await installTourPointer(window);
     await clapper(window);
     await evaluateInMain(
@@ -1401,6 +1469,7 @@ async function run() {
     await captureModelWizard(window);
     await installTourPointer(window);
     await quietNotifications(window);
+    await dismissLeftoverNotices(window);
 
     const nav = new NavigationPage(window);
 
@@ -1457,7 +1526,10 @@ async function run() {
 
       const dropZone = window.getByRole('button', { name: 'Select files' }).first();
       if (await dropZone.isVisible().catch(() => false)) {
-        await moveTo(window, dropZone);
+        await moveTo(window, dropZone, 'discover-empty');
+        await hold(window, 900);
+      } else {
+        await markAction(window, 'discover-empty');
       }
       await dropDemoFiles(window, workspace.files);
       await window
@@ -1470,9 +1542,25 @@ async function run() {
         .waitFor({ state: 'visible', timeout: 12000 })
         .then(() => true)
         .catch(() => false);
+      const allListed = listed
+        ? (
+            await Promise.all(
+              workspace.files.map((file) =>
+                window
+                  .getByText(file.name, { exact: true })
+                  .first()
+                  .isVisible()
+                  .catch(() => false)
+              )
+            )
+          ).every(Boolean)
+        : false;
+      if (!allListed) {
+        console.warn(`[tour] expected ${workspace.files.length} dropped names; not all visible yet`);
+      }
       if (listed) await moveTo(window, droppedName, 'discover-drop');
       else await markAction(window, 'discover-drop');
-      await hold(window, 1200);
+      await hold(window, 900);
       await shot(window, '03-discover');
       const analyzed = await waitForAnalysis(window, workspace.files.length);
       await hold(window, 600);
@@ -1489,17 +1577,13 @@ async function run() {
       await installTourPointer(window);
       await shot(window, '04-organize');
 
-      const fileCard = window
-        .getByText(/annual-budget-forecast|arctic-sea-ice|Suggested name/i)
-        .first();
-      if (await fileCard.isVisible().catch(() => false)) {
-        await moveTo(window, fileCard, 'organize-file');
-      } else {
-        await markAction(window, 'organize-file');
+      try {
+        await reviewOneFile(window);
+      } catch (err) {
+        console.warn('[tour] review:', err.message);
+        await markAction(window, 'organize-category', { ok: false }).catch(() => {});
       }
-      await inspectFileDetails(window);
-      const reviewed = await reviewDestinations(window, workspace.files);
-      await hold(window, reviewed > 0 ? 800 : 400);
+      await hold(window, 400);
 
       const moveBtn = window.getByRole('button', { name: /Move \d+/i });
       if (
@@ -1574,7 +1658,10 @@ async function run() {
         console.warn('[tour] relate:', err.message);
       }
 
-      if (TOPIC !== 'library') {
+      // Atlas needs WebGPU and a library of a few hundred files. The highlight
+      // tour is six files, so the map is the small-library fallback. Leave it
+      // out unless a separate take sets STRATOSORT_TOUR_ATLAS=1.
+      if (TOPIC !== 'library' && process.env.STRATOSORT_TOUR_ATLAS === '1') {
         try {
           if (await showAtlas(window)) {
             await shot(window, '09b-knowledge-os-atlas');
