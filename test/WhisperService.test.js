@@ -151,11 +151,11 @@ describe('WhisperService — model path resolution', () => {
   });
 
   test('migrates the whisper model from a legacy userData folder when the current path is empty', async () => {
-    // Regression: simple-main.js sets `app.name = 'StratoSort Core'`
+    // Regression: simple-main.js sets `app.name = 'StratoSort Stack'`
     // (capitals + space) but scripts/setup-whisper-model.js builds its
     // install path from package.json `name` (lowercase). The result is
     // a real divergence between the resolved current userData
-    // (`%APPDATA%\StratoSort Core\…`) and where the model actually
+    // (`%APPDATA%\StratoSort Stack\…`) and where the model actually
     // ends up on disk (`%APPDATA%\stratosort-core\…`). modelPathResolver
     // migrates `.gguf` files but the Whisper model is `.bin`, so the
     // user-visible failure was: setup script reports "present and

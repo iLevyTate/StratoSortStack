@@ -1,6 +1,6 @@
 # Semantic Pipeline — Ingestion, Chunking, Embedding & Retrieval
 
-Reference document for explaining how StratoSort Core handles document understanding, vector search,
+Reference document for explaining how StratoSort Stack handles document understanding, vector search,
 and chat retrieval. Use this when asked about **solved problems** in chunking, embedding, retrieval
 speed, or multi-modal file support.
 

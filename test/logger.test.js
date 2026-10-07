@@ -183,11 +183,11 @@ describe('Logger', () => {
 
     test('reduces userDataPath / logFilePath / homeDir to basename on Windows, hiding username', () => {
       const sanitized = sanitizeLogData({
-        userDataPath: 'C:\\Users\\benja\\AppData\\Roaming\\StratoSort Core',
-        logFilePath: 'C:\\Users\\benja\\AppData\\Roaming\\StratoSort Core\\logs\\session.log',
+        userDataPath: 'C:\\Users\\benja\\AppData\\Roaming\\StratoSort Stack',
+        logFilePath: 'C:\\Users\\benja\\AppData\\Roaming\\StratoSort Stack\\logs\\session.log',
         homeDir: 'C:\\Users\\benja'
       });
-      expect(sanitized.userDataPath).toBe('[REDACTED_PATH]/StratoSort Core');
+      expect(sanitized.userDataPath).toBe('[REDACTED_PATH]/StratoSort Stack');
       expect(sanitized.logFilePath).toBe('[REDACTED_PATH]/session.log');
       expect(sanitized.homeDir).toBe('[REDACTED_PATH]/benja');
       // Username must not survive in the sanitized output for userDataPath
@@ -197,11 +197,11 @@ describe('Logger', () => {
 
     test('reduces userDataPath to basename on macOS and Linux, hiding username', () => {
       const sanitized = sanitizeLogData({
-        userDataPath: '/Users/benja/Library/Application Support/StratoSort Core',
-        logsDir: '/home/benja/.config/StratoSort Core/logs',
+        userDataPath: '/Users/benja/Library/Application Support/StratoSort Stack',
+        logsDir: '/home/benja/.config/StratoSort Stack/logs',
         tempDir: '/var/folders/abc/T'
       });
-      expect(sanitized.userDataPath).toBe('[REDACTED_PATH]/StratoSort Core');
+      expect(sanitized.userDataPath).toBe('[REDACTED_PATH]/StratoSort Stack');
       expect(sanitized.logsDir).toBe('[REDACTED_PATH]/logs');
       expect(sanitized.tempDir).toBe('[REDACTED_PATH]/T');
       expect(JSON.stringify(sanitized)).not.toMatch(/benja/);
@@ -209,10 +209,10 @@ describe('Logger', () => {
 
     test('path-like key redaction is case-insensitive and handles trailing separators', () => {
       const sanitized = sanitizeLogData({
-        UserDataPath: 'C:\\Users\\benja\\AppData\\Roaming\\StratoSort Core\\',
+        UserDataPath: 'C:\\Users\\benja\\AppData\\Roaming\\StratoSort Stack\\',
         LOGFILEPATH: '/var/log/stratosort/app.log/'
       });
-      expect(sanitized.UserDataPath).toBe('[REDACTED_PATH]/StratoSort Core');
+      expect(sanitized.UserDataPath).toBe('[REDACTED_PATH]/StratoSort Stack');
       expect(sanitized.LOGFILEPATH).toBe('[REDACTED_PATH]/app.log');
     });
 

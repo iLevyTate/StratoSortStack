@@ -10,8 +10,8 @@ const {
 const { verifyMac, verifyWin } = require('../scripts/verify-updater-metadata');
 const { channelFile, sha512Base64, writeArtifacts } = require('./utils/updaterMetadataFixtures');
 
-const X64_SETUP = 'StratoSortCore-Setup-4.0.2.exe';
-const ARM64_SETUP = 'StratoSortCore-Setup-4.0.2-arm64.exe';
+const X64_SETUP = 'StratoSortStack-Setup-4.0.2.exe';
+const ARM64_SETUP = 'StratoSortStack-Setup-4.0.2-arm64.exe';
 
 function fixture(name, size) {
   return { name, bytes: Buffer.alloc(size, name.length) };
@@ -75,7 +75,7 @@ releaseDate: '2026-06-08T00:00:00.000Z'
         { label: 'a', text: channelFile('4.0.2', [arm64]) },
         { label: 'b', text: channelFile('4.0.2', [{ ...arm64, bytes: Buffer.alloc(48, 1) }]) }
       ])
-    ).toThrow(/Conflicting sha512 for StratoSortCore-Setup-4\.0\.2-arm64\.exe/);
+    ).toThrow(/Conflicting sha512 for StratoSortStack-Setup-4\.0\.2-arm64\.exe/);
   });
 
   test('throws when channel files disagree on version', () => {
@@ -138,10 +138,10 @@ sha512: x
 
   test('merged macOS output satisfies verifyMac on a two-arch publish root', () => {
     const [x64Zip, x64Dmg, arm64Zip, arm64Dmg] = writeArtifacts(tempDir, {
-      'StratoSortCore-4.0.2-mac-x64.zip': 32,
-      'StratoSortCore-4.0.2-mac-x64.dmg': 40,
-      'StratoSortCore-4.0.2-mac-arm64.zip': 48,
-      'StratoSortCore-4.0.2-mac-arm64.dmg': 56
+      'StratoSortStack-4.0.2-mac-x64.zip': 32,
+      'StratoSortStack-4.0.2-mac-x64.dmg': 40,
+      'StratoSortStack-4.0.2-mac-arm64.zip': 48,
+      'StratoSortStack-4.0.2-mac-arm64.dmg': 56
     });
     const x64Path = path.join(tempDir, 'latest-mac-x64.yml');
     const arm64Path = path.join(tempDir, 'latest-mac-arm64.yml');

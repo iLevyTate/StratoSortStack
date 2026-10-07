@@ -211,7 +211,7 @@ describe('applicationMenu', () => {
       createApplicationMenu(mockGetMainWindow);
 
       const helpMenu = capturedTemplate.find((item) => item.label === 'Help');
-      const about = helpMenu.submenu.find((item) => item.label === 'About StratoSort Core');
+      const about = helpMenu.submenu.find((item) => item.label === 'About StratoSort Stack');
 
       expect(about).toBeDefined();
 

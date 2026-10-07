@@ -68,12 +68,12 @@ jobs:
           # we'll error explicitly below.
           gh release download "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
-            --pattern "StratoSortCore-*-mac-${ARCH}.dmg"
+            --pattern "StratoSortStack-*-mac-${ARCH}.dmg"
 
           shopt -s nullglob
-          dmgs=(StratoSortCore-*-mac-${ARCH}.dmg)
+          dmgs=(StratoSortStack-*-mac-${ARCH}.dmg)
           if [ ${#dmgs[@]} -eq 0 ]; then
-            echo "::error::No DMG matching StratoSortCore-*-mac-${ARCH}.dmg in release $TAG"
+            echo "::error::No DMG matching StratoSortStack-*-mac-${ARCH}.dmg in release $TAG"
             echo "Hint: this workflow only verifies SIGNED + NOTARIZED releases. Unsigned"
             echo "builds (when mac-release.yml's signing secrets were missing) don't publish"
             echo "a Notarized Developer ID asset to verify."
@@ -93,7 +93,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          dmgs=(verify/StratoSortCore-*-mac-${ARCH}.dmg)
+          dmgs=(verify/StratoSortStack-*-mac-${ARCH}.dmg)
           dmg_path="${dmgs[0]}"
 
           # Attach read-only (-nobrowse keeps it out of Finder) and persist the
@@ -101,7 +101,7 @@ jobs:
           # from a pipe/stdin. Walk :system-entities and take the first entity
           # that actually carries a mount-point (the GPT scheme entity has none).
           # Reading the key value directly preserves volume names with spaces --
-          # a `grep -oE '/Volumes/[^ ]+'` truncates "StratoSort Core 4.0.4" at the
+          # a `grep -oE '/Volumes/[^ ]+'` truncates "StratoSort Stack 4.0.4" at the
           # first space and yields a path that fails the -d check below.
           plist_file="$(mktemp)"
           hdiutil attach -nobrowse -readonly -plist "$dmg_path" > "$plist_file"

@@ -13,7 +13,7 @@ header:
   caption: 'System Architecture and Data Flow'
 ---
 
-# StratoSort Core Architecture
+# StratoSort Stack Architecture
 
 > For the strategic principles behind these architectural choices (deep modules, anti-pass-through,
 > generality, hard constraints), see [`PHILOSOPHY.md`](PHILOSOPHY.md).

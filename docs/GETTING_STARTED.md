@@ -18,17 +18,17 @@ header:
 > steps. Current product version is **4.0.6**. Last mechanical setup pass was v4.0.3 on 2026-06-11;
 > Node/npm steps are unchanged.
 
-# Getting Started with StratoSort Core
+# Getting Started with StratoSort Stack
 
 ![Setup Time](https://img.shields.io/badge/setup%20time-~10%20minutes-blue?style=flat-square)
 ![Difficulty](https://img.shields.io/badge/difficulty-beginner-green?style=flat-square) {:
 .text-center }
 
-This guide will walk you through setting up **StratoSort Core** on your local machine.
+This guide will walk you through setting up **StratoSort Stack** on your local machine.
 
 ## System Requirements
 
-Before you begin, ensure your system meets the following requirements. StratoSort Core runs a fully
+Before you begin, ensure your system meets the following requirements. StratoSort Stack runs a fully
 local, in-process AI stack and does not rely on external servers.
 
 ### System Dependencies Chart
@@ -48,8 +48,8 @@ local, in-process AI stack and does not rely on external servers.
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/iLevyTate/StratoSortCore.git
-cd StratoSortCore
+git clone https://github.com/iLevyTate/StratoSortStack.git
+cd StratoSortStack
 ```
 
 ### 2. Install Dependencies
@@ -113,13 +113,13 @@ graph TD
 
 ### Startup Preflight Checks
 
-On each launch, StratoSort Core runs preflight checks to verify model availability, vector DB
+On each launch, StratoSort Stack runs preflight checks to verify model availability, vector DB
 readiness, and OCR health. If a service is slow to respond, you can raise the timeout using
 `SERVICE_CHECK_TIMEOUT` (ms). Check logs if the app reports missing or unreachable dependencies.
 
 ### Tesseract OCR Setup
 
-StratoSort Core uses **Tesseract OCR** to read text from images. The setup script attempts to
+StratoSort Stack uses **Tesseract OCR** to read text from images. The setup script attempts to
 install Tesseract automatically and falls back to the bundled `tesseract.js` implementation if
 native install is unavailable:
 
@@ -195,9 +195,9 @@ For release steps (runtime staging, checksums, and notes), see the [Release Guid
 If you encounter issues during setup:
 
 1.  **Check Logs**:
-    - Windows: `%APPDATA%\StratoSort Core\logs\`
-    - macOS: `~/Library/Application Support/StratoSort Core/logs/`
-    - Linux: `~/.config/StratoSort Core/logs/`
+    - Windows: `%APPDATA%\StratoSort Stack\logs\`
+    - macOS: `~/Library/Application Support/StratoSort Stack/logs/`
+    - Linux: `~/.config/StratoSort Stack/logs/`
 
 2.  **Verify Models**:
     - Run `npm run setup:models:check` to verify models are available.
@@ -220,10 +220,10 @@ Once setup is complete, you're ready to start organizing your files:
 3. **Explore the Knowledge Graph** - Visualize relationships between your files
 
 For more information, see the
-[main README](https://github.com/iLevyTate/StratoSortCore/blob/main/README.md) or explore the
+[main README](https://github.com/iLevyTate/StratoSortStack/blob/main/README.md) or explore the
 [documentation home](/).
 
 ---
 
-Need help? [Open an issue](https://github.com/iLevyTate/StratoSortCore/issues) on GitHub. {:
+Need help? [Open an issue](https://github.com/iLevyTate/StratoSortStack/issues) on GitHub. {:
 .text-center }

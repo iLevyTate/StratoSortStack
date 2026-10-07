@@ -88,7 +88,7 @@ function LegalNoticesSection({ addNotification }) {
       <div className="flex items-start gap-compact text-system-gray-500">
         <ScrollText className="w-4 h-4 mt-0.5 flex-shrink-0" aria-hidden="true" />
         <Text variant="tiny" className="leading-relaxed">
-          StratoSort Core is licensed for personal and noncommercial use; commercial use requires a
+          StratoSort Stack is licensed for personal and noncommercial use; commercial use requires a
           paid license. The notices below apply only to third-party tools incorporated into the
           product—such as Electron, llama.cpp, FFmpeg, and AI model weights—each under its own
           license.

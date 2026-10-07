@@ -1,10 +1,10 @@
 # Third-Party Notices
 
 This file lists attribution and notice obligations for third-party components shipped with
-StratoSort Core. It is bundled into the installer via the `extraResources` declaration in
+StratoSort Stack. It is bundled into the installer via the `extraResources` declaration in
 `electron-builder.json` and is surfaced inside the application via Settings → Third-Party Notices.
 
-**StratoSort Core itself** is licensed under PolyForm Noncommercial 1.0.0 (`LICENSE`). Nothing in
+**StratoSort Stack itself** is licensed under PolyForm Noncommercial 1.0.0 (`LICENSE`). Nothing in
 this file grants commercial rights to StratoSort source code or trademarks; see
 [COMMERCIAL.md](COMMERCIAL.md). The notices below apply only to third-party libraries, runtimes, and
 models incorporated under their respective licenses; those licenses are independent of and not
@@ -37,7 +37,7 @@ modified by `LICENSE`.
   MIT notices preserved in the respective bundled module directories.
 
 - **jszip** (transitive) License: `(MIT OR GPL-3.0-or-later)` — dual license. **Election:**
-  StratoSort Core elects the MIT license for jszip. No GPL obligation applies.
+  StratoSort Stack elects the MIT license for jszip. No GPL obligation applies.
 
 - **MPL-2.0 components** (e.g., `axe-core`, `lightningcss`, `elkjs` is EPL-2.0) Action: Source for
   each MPL-2.0 / EPL-2.0 file is available unmodified in the corresponding bundled module directory;

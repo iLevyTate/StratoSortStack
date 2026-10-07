@@ -37,7 +37,7 @@ const DIM = useColor ? '\x1b[2m' : '';
 const RESET = useColor ? '\x1b[0m' : '';
 
 const pkg = require('../package.json');
-const PRODUCT_NAME = pkg.productName || pkg.name || 'StratoSort Core';
+const PRODUCT_NAME = pkg.productName || pkg.name || 'StratoSort Stack';
 
 // Mirror Electron's `app.getPath('userData')` resolution. This script runs
 // outside Electron, so we synthesize the same path from productName +

@@ -818,8 +818,8 @@ class WhisperService extends EventEmitter {
     }
 
     // Cross-userData migration. simple-main.js:16 sets `app.name =
-    // 'StratoSort Core'` so app.getPath('userData') resolves to
-    // %APPDATA%\StratoSort Core\, but scripts/setup-whisper-model.js
+    // 'StratoSort Stack'` so app.getPath('userData') resolves to
+    // %APPDATA%\StratoSort Stack\, but scripts/setup-whisper-model.js
     // computes its install dir from package.json `name` (lowercase) and
     // installs to %APPDATA%\stratosort-core\. modelPathResolver migrates
     // `.gguf` files automatically, but the Whisper model is `.bin` and
@@ -1684,7 +1684,7 @@ class WhisperService extends EventEmitter {
     // Same cross-userData migration as the primary model. The Silero VAD
     // .bin file is also installed by setup-whisper-model.js into
     // %APPDATA%\stratosort-core\… while the running app reads from
-    // %APPDATA%\StratoSort Core\…  Without this fall-through, opt-in
+    // %APPDATA%\StratoSort Stack\…  Without this fall-through, opt-in
     // VAD silently disables itself on every fresh install with the
     // perverse outcome that the message logged is "VAD model not
     // found" while the file is right there in the legacy folder.

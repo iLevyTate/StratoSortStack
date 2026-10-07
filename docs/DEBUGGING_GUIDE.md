@@ -1,6 +1,6 @@
 # Debugging Guide — Local Dev Failure Modes
 
-A symptom → cause → fix index for things that go wrong while running StratoSort Core locally. If you
+A symptom → cause → fix index for things that go wrong while running StratoSort Stack locally. If you
 hit something that isn't listed here, add it after you've solved it.
 
 ## Build / install
@@ -52,7 +52,7 @@ loaded conditionally, move the conditional inside the bundled code, not at the `
 
 **Fix.** Run `npm run start:debug` and attach Chrome DevTools to the main process
 (`chrome://inspect`). Or add `--enable-logging` (already in the `dev` script) and check
-`%APPDATA%\StratoSort Core\logs\` on Windows or `~/Library/Logs/StratoSort Core/` on macOS.
+`%APPDATA%\StratoSort Stack\logs\` on Windows or `~/Library/Logs/StratoSort Stack/` on macOS.
 
 ### "Cannot detect Electron fuses" verifier failure
 
@@ -163,7 +163,7 @@ Inference then runs on the CPU-only `@node-llama-cpp/linux-x64` addon (slow but 
 `node scripts/restore-gpu-binaries.js` puts the GPU addons back. Two related notes for such hosts:
 large text models (the default 3B model included) can hit `SIGILL` inside Electron's runtime on some
 virtualized CPUs, so prefer a model under roughly 500 MB there; and models must sit in the userData
-models directory (`~/.config/StratoSort Core/models/` on Linux, with the space), which is where
+models directory (`~/.config/StratoSort Stack/models/` on Linux, with the space), which is where
 `LlamaService` looks, not the lowercase legacy path.
 
 ## Tests
@@ -215,5 +215,5 @@ the noise.
 2. Check `CLAUDE.md` "Resolved Gaps" — if your symptom matches a fixed gap, you might be on an old
    branch.
 3. `git log --oneline -20` to see what landed recently.
-4. Open an issue with logs from `%APPDATA%\StratoSort Core\logs\` (Windows) or
-   `~/Library/Logs/StratoSort Core/` (macOS).
+4. Open an issue with logs from `%APPDATA%\StratoSort Stack\logs\` (Windows) or
+   `~/Library/Logs/StratoSort Stack/` (macOS).

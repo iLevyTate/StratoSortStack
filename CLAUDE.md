@@ -1,8 +1,8 @@
-# StratoSort Core - Project Intelligence
+# StratoSort Stack - Project Intelligence
 
 ## What This Is
 
-StratoSort Core is a privacy-first, local AI-powered document organizer built on Electron 41. It
+StratoSort Stack is a privacy-first, local AI-powered document organizer built on Electron 41. It
 uses **node-llama-cpp** for in-process LLM inference and **Orama** for vector search. All processing
 happens on-device with no required external services - no data leaves the machine.
 

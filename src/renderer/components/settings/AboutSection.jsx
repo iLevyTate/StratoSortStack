@@ -130,7 +130,7 @@ function AboutSection({ addNotification }) {
     >
       <SettingRow label="Application">
         <div className="text-sm font-medium text-system-gray-800 sm:text-right">
-          {info?.appName || 'StratoSort Core'}
+          {info?.appName || 'StratoSort Stack'}
           {versionDisplay ? ` ${versionDisplay}` : ''}
         </div>
       </SettingRow>

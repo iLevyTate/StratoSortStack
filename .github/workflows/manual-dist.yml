@@ -103,7 +103,7 @@ jobs:
       - name: Generate SHA256 checksums
         run: |
           $files = Get-ChildItem release/build -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match '^StratoSortCore-.*\.(exe|blockmap)$|^latest\.yml$' }
+            Where-Object { $_.Name -match '^StratoSortStack-.*\.(exe|blockmap)$|^latest\.yml$' }
           if (-not $files -or $files.Count -eq 0) {
             throw "No Windows build artifacts found to checksum."
           }
@@ -119,8 +119,8 @@ jobs:
         with:
           name: stratosort-windows-dist-${{ github.run_number }}
           path: |
-            release/build/StratoSortCore-Setup-*.exe
-            release/build/StratoSortCore-*-win-*.exe
+            release/build/StratoSortStack-Setup-*.exe
+            release/build/StratoSortStack-*-win-*.exe
             release/build/*.blockmap
             release/build/latest.yml
             release/build/checksums-windows.sha256
@@ -173,7 +173,7 @@ jobs:
           cd release/build
           rm -f checksums-macos.sha256
 
-          for f in StratoSortCore-*.dmg StratoSortCore-*.zip; do
+          for f in StratoSortStack-*.dmg StratoSortStack-*.zip; do
             if [ -f "$f" ]; then
               shasum -a 256 "$f" >> checksums-macos.sha256
             fi
@@ -189,7 +189,7 @@ jobs:
           set -euo pipefail
           mkdir -p release/stage-macos-arm64
           shopt -s nullglob
-          for path in release/build/StratoSortCore-*-mac-arm64.dmg release/build/StratoSortCore-*-mac-arm64.zip; do
+          for path in release/build/StratoSortStack-*-mac-arm64.dmg release/build/StratoSortStack-*-mac-arm64.zip; do
             if [ -f "$path" ]; then
               cp "$path" release/stage-macos-arm64/
             fi
@@ -256,7 +256,7 @@ jobs:
           cd release/build
           rm -f checksums-macos-intel.sha256
 
-          for f in StratoSortCore-*.dmg StratoSortCore-*.zip; do
+          for f in StratoSortStack-*.dmg StratoSortStack-*.zip; do
             if [ -f "$f" ]; then
               shasum -a 256 "$f" >> checksums-macos-intel.sha256
             fi
@@ -272,7 +272,7 @@ jobs:
           set -euo pipefail
           mkdir -p release/stage-macos-x64
           shopt -s nullglob
-          for path in release/build/StratoSortCore-*-mac-x64.dmg release/build/StratoSortCore-*-mac-x64.zip; do
+          for path in release/build/StratoSortStack-*-mac-x64.dmg release/build/StratoSortStack-*-mac-x64.zip; do
             if [ -f "$path" ]; then
               cp "$path" release/stage-macos-x64/
             fi

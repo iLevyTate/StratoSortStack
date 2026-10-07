@@ -1,6 +1,6 @@
 # Commercial Compliance Report
 
-This document tracks whether StratoSort Core is ready for commercial distribution.
+This document tracks whether StratoSort Stack is ready for commercial distribution.
 
 ## Current Decision
 

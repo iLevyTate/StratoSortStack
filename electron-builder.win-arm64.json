@@ -1,6 +1,6 @@
 {
   "extends": "./electron-builder.json",
   "nsis": {
-    "artifactName": "StratoSortCore-Setup-${version}-arm64.${ext}"
+    "artifactName": "StratoSortStack-Setup-${version}-arm64.${ext}"
   }
 }

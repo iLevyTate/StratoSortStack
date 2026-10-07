@@ -7,12 +7,12 @@ header:
   overlay_color: '#000'
   overlay_filter: '0.5'
   overlay_image: /assets/e2e-screenshots/05_discover_phase.webp
-  caption: 'Mastering StratoSort Core'
+  caption: 'Mastering StratoSort Stack'
 ---
 
-# StratoSort Core User Guide
+# StratoSort Stack User Guide
 
-This guide explains how to use StratoSort Core day-to-day, including Smart Folders, Knowledge OS
+This guide explains how to use StratoSort Stack day-to-day, including Smart Folders, Knowledge OS
 (search, chat, Relate, Atlas, timeline), Downloads triage, and key settings.
 
 For installation help, use [Install Guide](/INSTALL_GUIDE.html). For beta testing and bug reporting,
@@ -278,7 +278,7 @@ Then run a small batch first and review outcomes before scaling up.
 Use the beta guide for full reporting instructions: [Beta Tester Guide](/BETA_TESTER_GUIDE.html)
 
 Direct bug form:
-[Open a bug report](https://github.com/iLevyTate/StratoSortCore/issues/new?template=bug_report.md)
+[Open a bug report](https://github.com/iLevyTate/StratoSortStack/issues/new?template=bug_report.md)
 
 ---
 

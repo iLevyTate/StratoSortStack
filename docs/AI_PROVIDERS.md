@@ -118,7 +118,7 @@ because API keys are encrypted by the OS keystore and shouldn't be in plaintext 
 API keys are stored via Electron's `safeStorage` API:
 
 - **Windows:** DPAPI (per-user encryption tied to your Windows account).
-- **macOS:** Keychain (entry visible under `StratoSort Core` in Keychain Access).
+- **macOS:** Keychain (entry visible under `StratoSort Stack` in Keychain Access).
 - **Linux:** Whichever backend `safeStorage` resolves (libsecret on most distros).
 
 If `safeStorage` reports the OS keystore as unavailable (rare — happens on some Linux setups without

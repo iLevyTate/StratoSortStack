@@ -2,7 +2,7 @@
 
 ## Our Pledge
 
-We want the StratoSort Core project — including the GitHub repository, its issue tracker, pull
+We want the StratoSort Stack project — including the GitHub repository, its issue tracker, pull
 requests, and any associated communication channels — to be a welcoming, professional, and
 productive space for everyone who participates.
 

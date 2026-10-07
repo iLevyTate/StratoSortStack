@@ -10,7 +10,7 @@ header:
   caption: 'Release Process'
 ---
 
-# Releasing StratoSort Core
+# Releasing StratoSort Stack
 
 This guide covers release packaging for Windows, macOS, and Linux, plus how GitHub Actions publishes
 artifacts.
@@ -86,19 +86,19 @@ npx jest --config test/jest.config.js test/components/PhaseRenderer.test.js test
 2. **Run quality gates**
    - `npm run ci`
 3. **Smoke-test installers**
-   - Windows: run `npm run dist:win`, install `StratoSortCore-Setup-*.exe`
-   - macOS: on a macOS host, run `npm run dist:mac:arm64`, open `StratoSortCore-*.dmg`
+   - Windows: run `npm run dist:win`, install `StratoSortStack-Setup-*.exe`
+   - macOS: on a macOS host, run `npm run dist:mac:arm64`, open `StratoSortStack-*.dmg`
    - Linux: on a Linux host, run `npm run dist:linux`, launch the AppImage or install the `.deb`
    - Confirm the installed app actually launches after install, not just that packaging succeeded
 4. **Verify first-run experience**
    - AI setup confirms bundled OCR runtime availability
    - Base-model download works from the app UI
 5. **Disposable profile (temp demo, Windows)** — optional, for demos or screen recordings without
-   touching your real `$env:APPDATA\StratoSort Core` data. See
+   touching your real `$env:APPDATA\StratoSort Stack` data. See
    [Exact walkthrough: temp demo profile (Windows)](#exact-walkthrough-temp-demo-profile-windows)
    below.
 6. **Confirm release branding inputs**
-   - Either keep `assets/icons/StratoSortCoreLogo.svg` (or legacy `assets/stratosort-logo.png`) in
+   - Either keep `assets/icons/StratoSortStackLogo.svg` (or legacy `assets/stratosort-logo.png`) in
      the repo so workflows can regenerate icons/installer graphics
    - Or commit the generated files under `assets/icons/` and `assets/installer/`
 7. **Confirm docs**
@@ -128,8 +128,8 @@ Release guidance:
 ## Disposable profile (Windows demo)
 
 Use a throwaway `--user-data-dir` when you need first-run–style behavior for a demo or recording,
-without changing your normal profile under `$env:APPDATA\StratoSort Core` (same folder as
-`%APPDATA%\StratoSort Core` in Explorer).
+without changing your normal profile under `$env:APPDATA\StratoSort Stack` (same folder as
+`%APPDATA%\StratoSort Stack` in Explorer).
 
 ### Exact walkthrough: temp demo profile (Windows)
 
@@ -149,19 +149,19 @@ whose path contains spaces.
    **A — Packaged app** (change the `.exe` path if your install location differs):
 
    ```powershell
-   & "C:\Program Files\StratoSort Core\StratoSort Core.exe" --user-data-dir=C:\temp\stratosort-demo-profile
+   & "C:\Program Files\StratoSort Stack\StratoSort Stack.exe" --user-data-dir=C:\temp\stratosort-demo-profile
    ```
 
    **B — From the repo** (after a normal dev build, from the repo root):
 
    ```powershell
-   cd c:\Users\benja\Documents\GitHub\StratoSortCore
+   cd c:\Users\benja\Documents\GitHub\StratoSortStack
    npx cross-env NODE_ENV=development electron . --enable-logging --user-data-dir=C:\temp\stratosort-demo-profile
    ```
 
 4. **Confirm you’re on the temp profile** — open `C:\temp\stratosort-demo-profile` in Explorer.
    After the UI loads, you should see new files (for example `settings.json`, logs, and later models
-   if you download models). Your usual profile folder (`$env:APPDATA\StratoSort Core`) should stay
+   if you download models). Your usual profile folder (`$env:APPDATA\StratoSort Stack`) should stay
    unchanged for this run.
 
 5. **Record your demo** — you should get first-run–style behavior. Allow time if large models
@@ -175,7 +175,7 @@ whose path contains spaces.
    Remove-Item -Recurse -Force C:\temp\stratosort-demo-profile
    ```
 
-   Your real profile under `$env:APPDATA\StratoSort Core` was not used for that session.
+   Your real profile under `$env:APPDATA\StratoSort Stack` was not used for that session.
 
 **Tip:** If something feels stuck or locked, use a new folder name (for example
 `stratosort-demo-profile-2`) for the next take.
@@ -207,8 +207,8 @@ tagging, then use the release workflows to build and upload artifacts.
 
 Windows workflow publishes:
 
-- `StratoSortCore-Setup-*.exe`
-- `StratoSortCore-*-win-*.exe` (portable)
+- `StratoSortStack-Setup-*.exe`
+- `StratoSortStack-*-win-*.exe` (portable)
 - `latest.yml` — one channel file listing both the x64 and `-arm64` installers. electron-updater
   requests exactly `latest.yml` on Windows for every arch, so the x64 and arm64 matrix legs stage
   `latest-x64.yml` / `latest-arm64.yml` as artifacts and the `publish-release` job merges them with
@@ -221,8 +221,8 @@ Windows workflow publishes:
 
 macOS workflow publishes:
 
-- `StratoSortCore-*.dmg`
-- `StratoSortCore-*.zip`
+- `StratoSortStack-*.dmg`
+- `StratoSortStack-*.zip`
 - `latest-mac.yml` — one channel file listing the x64 and arm64 zips/dmgs (signed + notarized builds
   only; unsigned builds ship no updater metadata). electron-updater requests exactly
   `latest-mac.yml` on macOS, so the per-arch `latest-mac-<arch>.yml` staging artifacts are merged in
@@ -231,8 +231,8 @@ macOS workflow publishes:
 
 Linux workflow publishes:
 
-- `StratoSortCore-*-linux-x64.AppImage`
-- `StratoSortCore-*-linux-x64.deb`
+- `StratoSortStack-*-linux-x64.AppImage`
+- `StratoSortStack-*-linux-x64.deb`
 - `latest-linux.yml` (when produced)
 - `checksums-linux.sha256` if you generate/upload it separately
 
@@ -268,7 +268,7 @@ update-enabled release:
 
 ## Post-Install Smoke (Windows NSIS)
 
-Use this after `npm run dist:win` or an official CI-built `StratoSortCore-Setup-*.exe` to confirm
+Use this after `npm run dist:win` or an official CI-built `StratoSortStack-Setup-*.exe` to confirm
 the **install and first-run** path matches [INSTALL_GUIDE.md](INSTALL_GUIDE.md).
 
 ### Preconditions
@@ -288,8 +288,8 @@ npm test -- test/autoUpdater.test.js --runInBand --no-coverage
 
 ### Manual steps
 
-1. **Install** — Run `release\build\StratoSortCore-Setup-<version>.exe` (or your tagged artifact).
-2. **Profile path** — Confirm app data lives under `%APPDATA%\StratoSort Core` (not the legacy
+1. **Install** — Run `release\build\StratoSortStack-Setup-<version>.exe` (or your tagged artifact).
+2. **Profile path** — Confirm app data lives under `%APPDATA%\StratoSort Stack` (not the legacy
    lowercase `stratosort-core` path that older postinstall scripts derived from the npm package
    name).
 3. **First launch** — App opens without an updater error notification (auto-updates are off by
@@ -297,7 +297,7 @@ npm test -- test/autoUpdater.test.js --runInBand --no-coverage
 4. **Settings → Application** — "Software updates" reflects disabled mode until you enable updates
    and host a feed (see [CONFIG.md](CONFIG.md) and [UPDATE_HOST.md](UPDATE_HOST.md)).
 5. **Models** — Complete welcome / model setup; optional "Download Base Models" and confirm `.gguf`
-   files appear under `%APPDATA%\StratoSort Core\models` when downloads succeed.
+   files appear under `%APPDATA%\StratoSort Stack\models` when downloads succeed.
 
 ### Packaged-integrity checks (SW-40)
 
@@ -335,7 +335,7 @@ Two more release-time runtime items pair with this pass, both verifiable only on
 
 ### Portable build
 
-`StratoSortCore-*-win-x64.exe` does **not** use the same auto-update path as the NSIS installer; see
+`StratoSortStack-*-win-x64.exe` does **not** use the same auto-update path as the NSIS installer; see
 [INSTALL_GUIDE.md](INSTALL_GUIDE.md) for portable vs full-installer behavior.
 
 ## Signing And Notarization Requirements
@@ -411,7 +411,7 @@ Windows checksum file:
 
 ```powershell
 Get-ChildItem release/build -File |
-  Where-Object { $_.Name -match '^StratoSortCore-.*\.(exe|blockmap)$|^latest\.yml$' } |
+  Where-Object { $_.Name -match '^StratoSortStack-.*\.(exe|blockmap)$|^latest\.yml$' } |
   ForEach-Object {
     $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
     "$hash *$($_.Name)"
@@ -423,7 +423,7 @@ macOS checksum file:
 
 ```bash
 cd release/build
-shasum -a 256 StratoSortCore-*.dmg StratoSortCore-*.zip > checksums-macos.sha256
+shasum -a 256 StratoSortStack-*.dmg StratoSortStack-*.zip > checksums-macos.sha256
 ```
 
 ## Notes on AI Packaging

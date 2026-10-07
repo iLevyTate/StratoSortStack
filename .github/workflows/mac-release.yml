@@ -261,7 +261,7 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           arch="${{ matrix.arch }}"
-          artifacts=(release/build/StratoSortCore-*-mac-${arch}.dmg release/build/StratoSortCore-*-mac-${arch}.zip)
+          artifacts=(release/build/StratoSortStack-*-mac-${arch}.dmg release/build/StratoSortStack-*-mac-${arch}.zip)
           if [ ${#artifacts[@]} -eq 0 ]; then
             echo "::error::No notarizable mac artifacts found for arch=${arch}."
             ls -R release/build || true
@@ -276,7 +276,7 @@ jobs:
               --wait
           done
 
-          for dmg_path in release/build/StratoSortCore-*-mac-${arch}.dmg; do
+          for dmg_path in release/build/StratoSortStack-*-mac-${arch}.dmg; do
             [ -f "$dmg_path" ] || continue
             xcrun stapler staple "$dmg_path"
             xcrun stapler validate "$dmg_path"
@@ -295,7 +295,7 @@ jobs:
           set -euo pipefail
           arch="${{ matrix.arch }}"
           shopt -s nullglob
-          for dmg in release/build/StratoSortCore-*-mac-${arch}.dmg; do
+          for dmg in release/build/StratoSortStack-*-mac-${arch}.dmg; do
             [ -f "$dmg" ] || continue
             for yml in release/build/latest*.yml; do
               [ -f "$yml" ] || continue
@@ -310,7 +310,7 @@ jobs:
           arch="${{ matrix.arch }}"
           mkdir -p "release/upload/${arch}"
           shopt -s nullglob
-          for path in release/build/StratoSortCore-*-mac-${arch}.dmg release/build/StratoSortCore-*-mac-${arch}.zip; do
+          for path in release/build/StratoSortStack-*-mac-${arch}.dmg release/build/StratoSortStack-*-mac-${arch}.zip; do
             if [ -f "$path" ]; then
               cp "$path" "release/upload/${arch}/"
             fi
@@ -450,11 +450,11 @@ jobs:
           # regression that reintroduces dual-arch output fails loudly here
           # instead of colliding in the publish-release artifact merge.
           if [ "${{ matrix.arch }}" = "arm64" ]; then
-            appimages=(release/build/StratoSortCore-*-linux-arm64.AppImage)
-            debs=(release/build/StratoSortCore-*-linux-arm64.deb)
+            appimages=(release/build/StratoSortStack-*-linux-arm64.AppImage)
+            debs=(release/build/StratoSortStack-*-linux-arm64.deb)
           else
-            appimages=(release/build/StratoSortCore-*-linux-x86_64.AppImage)
-            debs=(release/build/StratoSortCore-*-linux-amd64.deb)
+            appimages=(release/build/StratoSortStack-*-linux-x86_64.AppImage)
+            debs=(release/build/StratoSortStack-*-linux-amd64.deb)
           fi
           if [ ${#appimages[@]} -eq 0 ]; then
             echo "::error::Linux ${{ matrix.arch }} AppImage was not produced."
@@ -494,9 +494,9 @@ jobs:
           # The x64 and arm64 legs merge flat in publish-release; staging
           # cross-arch files here caused the v4.0.3 sha512 metadata mismatch.
           if [ "${{ matrix.arch }}" = "arm64" ]; then
-            artifacts=(release/build/StratoSortCore-*-linux-arm64.AppImage release/build/StratoSortCore-*-linux-arm64.deb)
+            artifacts=(release/build/StratoSortStack-*-linux-arm64.AppImage release/build/StratoSortStack-*-linux-arm64.deb)
           else
-            artifacts=(release/build/StratoSortCore-*-linux-x86_64.AppImage release/build/StratoSortCore-*-linux-amd64.deb)
+            artifacts=(release/build/StratoSortStack-*-linux-x86_64.AppImage release/build/StratoSortStack-*-linux-amd64.deb)
           fi
           for f in "${artifacts[@]}"; do
             cp "$f" release/upload/linux/
@@ -623,14 +623,14 @@ jobs:
           rm -f checksums-macos.sha256 checksums-linux.sha256
 
           # GNU coreutils (ubuntu-latest); BSD shasum is not guaranteed on Linux runners
-          for f in StratoSortCore-*.dmg StratoSortCore-*.zip; do
+          for f in StratoSortStack-*.dmg StratoSortStack-*.zip; do
             if [ -f "$f" ]; then
               h="$(sha256sum -- "$f" | awk '{print $1}')"
               printf '%s *%s\n' "$h" "$f" >> checksums-macos.sha256
             fi
           done
 
-          for f in StratoSortCore-*-linux-*.AppImage StratoSortCore-*-linux-*.deb; do
+          for f in StratoSortStack-*-linux-*.AppImage StratoSortStack-*-linux-*.deb; do
             if [ -f "$f" ]; then
               h="$(sha256sum -- "$f" | awk '{print $1}')"
               printf '%s *%s\n' "$h" "$f" >> checksums-linux.sha256
@@ -677,7 +677,7 @@ jobs:
           upload=()
           # Channel files are listed explicitly (not *latest*.yml) so an
           # unmerged arch-suffixed staging file can never be published.
-          for f in StratoSortCore-*.dmg StratoSortCore-*.zip StratoSortCore-*.AppImage StratoSortCore-*.deb latest-mac.yml latest-linux.yml latest-linux-arm64.yml checksums-*.sha256; do
+          for f in StratoSortStack-*.dmg StratoSortStack-*.zip StratoSortStack-*.AppImage StratoSortStack-*.deb latest-mac.yml latest-linux.yml latest-linux-arm64.yml checksums-*.sha256; do
             [ -f "$f" ] && upload+=("$f")
           done
           if [ ${#upload[@]} -eq 0 ]; then

@@ -38,23 +38,23 @@
 ; ============================================================================
 ; UNINSTALLER PAGES (MUI_UNPAGE_* — separate from MUI_FINISHPAGE_* install strings)
 ; ============================================================================
-!define MUI_UNWELCOMEPAGE_TITLE "Welcome to StratoSort Core Uninstall"
-!define MUI_UNWELCOMEPAGE_TEXT "This wizard will guide you through the removal of StratoSort Core from your computer.$\r$\n$\r$\nClick Next to continue."
+!define MUI_UNWELCOMEPAGE_TITLE "Welcome to StratoSort Stack Uninstall"
+!define MUI_UNWELCOMEPAGE_TEXT "This wizard will guide you through the removal of StratoSort Stack from your computer.$\r$\n$\r$\nClick Next to continue."
 
-!define MUI_UNFINISHPAGE_TITLE "StratoSort Core Uninstall Complete"
-!define MUI_UNFINISHPAGE_TEXT "StratoSort Core has been removed from your computer.$\r$\n$\r$\nClick Finish to close this wizard."
+!define MUI_UNFINISHPAGE_TITLE "StratoSort Stack Uninstall Complete"
+!define MUI_UNFINISHPAGE_TEXT "StratoSort Stack has been removed from your computer.$\r$\n$\r$\nClick Finish to close this wizard."
 
 !define MUI_UNABORTWARNING
-!define MUI_UNABORTWARNING_TEXT "Are you sure you want to cancel StratoSort Core uninstallation?"
+!define MUI_UNABORTWARNING_TEXT "Are you sure you want to cancel StratoSort Stack uninstallation?"
 
 ; StratoSort Custom Installer Hooks
 ; electron-builder already registers uninstaller, shortcuts, and file associations (with
 ; unregisterFileAssociations on uninstall). Only handle setup markers and optional user-data cleanup.
-; Electron userData on Windows is %APPDATA%\StratoSort Core (Roaming), matching productName.
+; Electron userData on Windows is %APPDATA%\StratoSort Stack (Roaming), matching productName.
 !macro customInstall
   Delete "$INSTDIR\first-run.marker"
-  Delete "$APPDATA\StratoSort Core\dependency-setup-complete.marker"
-  Delete "$APPDATA\StratoSort Core\first-run.marker"
+  Delete "$APPDATA\StratoSort Stack\dependency-setup-complete.marker"
+  Delete "$APPDATA\StratoSort Stack\first-run.marker"
   ; Legacy / misrouted paths (see userDataMigration.js)
   Delete "$APPDATA\StratoSort\dependency-setup-complete.marker"
   Delete "$APPDATA\StratoSort\first-run.marker"
@@ -63,15 +63,15 @@
 
 !macro customUnInstall
   Delete "$INSTDIR\first-run.marker"
-  Delete "$APPDATA\StratoSort Core\dependency-setup-complete.marker"
-  Delete "$APPDATA\StratoSort Core\first-run.marker"
+  Delete "$APPDATA\StratoSort Stack\dependency-setup-complete.marker"
+  Delete "$APPDATA\StratoSort Stack\first-run.marker"
   Delete "$APPDATA\StratoSort\dependency-setup-complete.marker"
   Delete "$LOCALAPPDATA\StratoSort\dependency-setup-complete.marker"
 
   ; Optional full profile removal (electron-builder also supports --delete-app-data on uninstall)
-  MessageBox MB_YESNO "Remove all StratoSort Core settings and data?$\r$\n$\r$\nThis includes:$\r$\n• AI embedding database$\r$\n• User settings and preferences$\r$\n• Application logs" IDNO SkipAppData
-    RMDir /r "$APPDATA\StratoSort Core"
-    RMDir /r "$LOCALAPPDATA\StratoSort Core"
+  MessageBox MB_YESNO "Remove all StratoSort Stack settings and data?$\r$\n$\r$\nThis includes:$\r$\n• AI embedding database$\r$\n• User settings and preferences$\r$\n• Application logs" IDNO SkipAppData
+    RMDir /r "$APPDATA\StratoSort Stack"
+    RMDir /r "$LOCALAPPDATA\StratoSort Stack"
     RMDir /r "$APPDATA\StratoSort"
     RMDir /r "$LOCALAPPDATA\StratoSort"
   SkipAppData:

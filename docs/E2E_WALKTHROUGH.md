@@ -11,7 +11,7 @@ header:
   caption: 'Complete Walkthrough'
 ---
 
-# StratoSort Core — End-to-End Walkthrough
+# StratoSort Stack — End-to-End Walkthrough
 
 > **Current product is v4.0.6.** Screenshots below are current stills from `npm run tour:record`
 > (Windows, dark theme). Knowledge OS tabs are **Search**, **Chat**, **Timeline**, **Relate**, and
@@ -19,7 +19,7 @@ header:
 > notices. Some Settings subsections share the Simple-mode still when a dedicated panel shot is not
 > in the tour set.
 
-A visual guide to every screen and feature in StratoSort Core. Each section maps to one phase of the
+A visual guide to every screen and feature in StratoSort Stack. Each section maps to one phase of the
 app workflow. The full clip is [how-to-use.mp4](./walkthrough-assets/how-to-use.mp4).
 
 <!-- prettier-ignore -->
@@ -44,7 +44,7 @@ app workflow. The full clip is [how-to-use.mp4](./walkthrough-assets/how-to-use.
 
 ## 1. First Launch & Model Setup
 
-On first launch, StratoSort checks for AI models in `~/.config/StratoSort Core/models/`. If required
+On first launch, StratoSort checks for AI models in `~/.config/StratoSort Stack/models/`. If required
 models are missing, a setup wizard guides you through downloading them.
 
 ### Model Selection
@@ -596,20 +596,20 @@ Regenerate with `npm run tour:record`. See
 
 ```bash
 # Make executable
-chmod +x StratoSortCore-X.X.X-linux-x86_64.AppImage
+chmod +x StratoSortStack-X.X.X-linux-x86_64.AppImage
 
 # Launch
-./StratoSortCore-X.X.X-linux-x86_64.AppImage
+./StratoSortStack-X.X.X-linux-x86_64.AppImage
 ```
 
 ### Models Directory
 
-Models are stored in `~/.config/StratoSort Core/models/`. The app creates this directory
+Models are stored in `~/.config/StratoSort Stack/models/`. The app creates this directory
 automatically and downloads models on first launch.
 
 ### Settings Location
 
-Application settings are stored in `~/.config/StratoSort Core/settings.json`.
+Application settings are stored in `~/.config/StratoSort Stack/settings.json`.
 
 ### System Tray
 

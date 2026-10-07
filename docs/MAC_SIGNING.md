@@ -132,7 +132,7 @@ label.
 
 ## Phase 6: Add the five GitHub repo secrets
 
-1. Open <https://github.com/iLevyTate/StratoSortCore/settings/secrets/actions>.
+1. Open <https://github.com/iLevyTate/StratoSortStack/settings/secrets/actions>.
 2. For each row below, click **New repository secret**, paste **Name** and **Value**, click **Add
    secret**.
 
@@ -191,7 +191,7 @@ both arm64 and x64. It fails the workflow if Gatekeeper would reject the app on 
 
 Trigger via the GitHub web UI:
 
-1. Open <https://github.com/iLevyTate/StratoSortCore/actions/workflows/verify-mac-signing.yml>
+1. Open <https://github.com/iLevyTate/StratoSortStack/actions/workflows/verify-mac-signing.yml>
 2. Click **Run workflow**.
 3. Enter the tag you want to verify (e.g. `v4.0.0`).
 4. Click **Run workflow**.
@@ -216,18 +216,18 @@ If you happen to have access to a Mac, the same checks run from a terminal:
 
 ```bash
 # 1. Download the signed DMG from the GitHub Release page
-# 2. Mount the DMG, drag StratoSort Core.app to /Applications
+# 2. Mount the DMG, drag StratoSort Stack.app to /Applications
 
 # 3. Verify the signature chain
-codesign --verify --deep --strict --verbose=4 "/Applications/StratoSort Core.app"
+codesign --verify --deep --strict --verbose=4 "/Applications/StratoSort Stack.app"
 # Expect: "satisfies its Designated Requirement" with no errors
 
 # 4. Verify Gatekeeper acceptance (the user-facing check)
-spctl --assess --type exec --verbose=4 "/Applications/StratoSort Core.app"
+spctl --assess --type exec --verbose=4 "/Applications/StratoSort Stack.app"
 # Expect: "accepted" and "source=Notarized Developer ID"
 
 # 5. Verify the stapled ticket on the DMG itself
-xcrun stapler validate StratoSortCore-4.0.0-mac-arm64.dmg
+xcrun stapler validate StratoSortStack-4.0.0-mac-arm64.dmg
 # Expect: "The validate action worked!"
 
 # 6. Open the app. Gatekeeper should NOT show "developer cannot be verified"
@@ -343,7 +343,7 @@ any one secret causes the `signed=false` branch. Re-paste each secret carefully,
 leading/trailing whitespace.
 
 Also check the **`STRATOSORT_FORCE_UNSIGNED_MAC`** repository variable
-(<https://github.com/iLevyTate/StratoSortCore/settings/variables/actions>). If set to `true`, the
+(<https://github.com/iLevyTate/StratoSortStack/settings/variables/actions>). If set to `true`, the
 workflow ignores the signing secrets and builds unsigned. Set to `false` or delete the variable.
 
 ### Want to ship an unsigned interim build temporarily

@@ -82,7 +82,7 @@ function main(
   }
 
   // On macOS, patch the Electron.app Info.plist so the dock label and Activity
-  // Monitor show "StratoSort Core" instead of "Electron" during development.
+  // Monitor show "StratoSort Stack" instead of "Electron" during development.
   if (platform === 'darwin') {
     try {
       const { main: patchMac } = require('./patch-electron-mac');

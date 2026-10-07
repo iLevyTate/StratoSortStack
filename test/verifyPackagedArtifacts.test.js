@@ -42,7 +42,7 @@ function createWindowsBuildRoot({ skipWhisperVariants = false } = {}) {
   const resources = path.join(appRoot, 'resources');
   const unpackedModules = path.join(resources, 'app.asar.unpacked', 'node_modules');
 
-  writeFile(path.join(appRoot, 'StratoSort Core.exe'));
+  writeFile(path.join(appRoot, 'StratoSort Stack.exe'));
   REQUIRED_ELECTRON_RUNTIME_FILES.forEach((fileName) => {
     writeFile(path.join(appRoot, fileName));
   });
@@ -65,7 +65,7 @@ function createMacBuildRoot({
 } = {}) {
   const buildRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'stratosort-packaged-artifacts-'));
   const bundleDir = arch === 'arm64' ? 'mac-arm64' : 'mac';
-  const appRoot = path.join(buildRoot, bundleDir, 'StratoSort Core.app', 'Contents');
+  const appRoot = path.join(buildRoot, bundleDir, 'StratoSort Stack.app', 'Contents');
   const resources = path.join(appRoot, 'Resources');
   const frameworkResources = path.join(
     appRoot,
@@ -77,7 +77,7 @@ function createMacBuildRoot({
   );
   const unpackedModules = path.join(resources, 'app.asar.unpacked', 'node_modules');
 
-  writeFile(path.join(appRoot, 'MacOS', 'StratoSort Core'));
+  writeFile(path.join(appRoot, 'MacOS', 'StratoSort Stack'));
   writeFile(path.join(frameworkResources, MAC_V8_CONTEXT_SNAPSHOT_BY_ARCH[arch]));
   writeFile(path.join(frameworkResources, 'icudtl.dat'));
   if (includeSnapshotBlob) {
@@ -142,7 +142,7 @@ describe('verify-packaged-artifacts', () => {
       path.join(
         buildRoot,
         'mac',
-        'StratoSort Core.app',
+        'StratoSort Stack.app',
         'Contents',
         'Frameworks',
         'Electron Framework.framework',
@@ -219,7 +219,7 @@ describe('verify-packaged-artifacts', () => {
     const unpackedModules = path.join(
       buildRoot,
       'mac-arm64',
-      'StratoSort Core.app',
+      'StratoSort Stack.app',
       'Contents',
       'Resources',
       'app.asar.unpacked',

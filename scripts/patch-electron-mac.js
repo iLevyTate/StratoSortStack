@@ -5,7 +5,7 @@
  * During development, macOS reads the dock label and Activity Monitor process
  * name from the Electron binary's Info.plist, which defaults to "Electron".
  * This script patches CFBundleName and CFBundleDisplayName so the dock shows
- * "StratoSort Core" instead.
+ * "StratoSort Stack" instead.
  *
  * This is safe and idempotent — re-running produces the same result.
  * Only affects node_modules (dev-only); production builds use electron-builder
@@ -19,7 +19,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const APP_NAME = 'StratoSort Core';
+const APP_NAME = 'StratoSort Stack';
 const BUNDLE_ID = 'com.stratosort.app';
 
 /**
@@ -106,7 +106,7 @@ function main() {
 
   // Check if already patched
   if (currentName === APP_NAME && currentDisplayName === APP_NAME) {
-    console.log('[patch-electron-mac] Already patched — dock will show "StratoSort Core"');
+    console.log('[patch-electron-mac] Already patched — dock will show "StratoSort Stack"');
     return 0;
   }
 
@@ -146,7 +146,7 @@ function main() {
   if (currentBundleId && currentBundleId !== BUNDLE_ID) {
     console.log(`  CFBundleIdentifier:  "${currentBundleId}" → "${BUNDLE_ID}"`);
   }
-  console.log('  The macOS dock will now show "StratoSort Core" in development.');
+  console.log('  The macOS dock will now show "StratoSort Stack" in development.');
 
   return 0;
 }

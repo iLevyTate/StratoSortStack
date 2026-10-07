@@ -129,7 +129,7 @@ These all run inside `ci`. Useful to run individually when you broke one and wan
 | `npm run generate:channels`        | Regenerate the preload's IPC channel allowlist from `constants.js`                                             |
 | `npm run generate:channels:check`  | Check whether the generated file is up to date (CI uses this)                                                  |
 | `npm run generate:channels:update` | Regenerate and write the preload IPC channel allowlist file in place                                           |
-| `npm run generate:icons`           | Generate platform icon files from the source logo (`assets/icons/StratoSortCoreLogo.svg`, legacy PNG fallback) |
+| `npm run generate:icons`           | Generate platform icon files from the source logo (`assets/icons/StratoSortStackLogo.svg`, legacy PNG fallback) |
 | `npm run generate:nsis`            | Generate NSIS installer assets                                                                                 |
 | `npm run generate:assets`          | `generate:icons` + `generate:nsis`                                                                             |
 | `npm run audit:ipc-line-data`      | Regenerate (the previously-deleted) IPC line-by-line audit                                                     |

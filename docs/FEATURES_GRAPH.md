@@ -14,7 +14,7 @@ header:
 
 ## Overview
 
-The **Knowledge Graph** in StratoSort Core provides an interactive visualization of your document
+The **Knowledge Graph** in StratoSort Stack provides an interactive visualization of your document
 organization. It moves beyond simple file lists to show you how your documents are connected
 semantically.
 

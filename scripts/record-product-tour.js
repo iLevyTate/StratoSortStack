@@ -57,7 +57,7 @@ const TOPIC = parseTopic();
 const VIDEO_DIR =
   TOPIC === 'highlight' ? path.join(OUT_DIR, 'tour-raw') : path.join(OUT_DIR, 'tour-raw', TOPIC);
 const DEMO_DIR = path.join(OUT_DIR, 'demo-files');
-const HOST_MODELS = path.join(process.env.APPDATA || '', 'StratoSort Core', 'models');
+const HOST_MODELS = path.join(process.env.APPDATA || '', 'StratoSort Stack', 'models');
 
 /** @type {{ id: string, t: number, x: number, y: number, viewportWidth: number, viewportHeight: number }[]} */
 const tourActions = [];

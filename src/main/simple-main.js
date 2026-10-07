@@ -23,7 +23,7 @@ if (process.env.NODE_ENV !== 'production' && !app.isPackaged) {
 // binary in development reports itself as "Electron" to the OS.  An explicit
 // assignment ensures the correct name in all contexts (dock, Activity Monitor menu
 // label, window title fallback) regardless of dev vs packaged mode.
-app.name = 'StratoSort Core';
+app.name = 'StratoSort Stack';
 
 // Allow E2E benchmarks / tests to redirect the user-data directory to an
 // isolated location.  Must run before any code calls app.getPath('userData').

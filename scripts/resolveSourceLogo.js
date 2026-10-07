@@ -8,14 +8,14 @@ const path = require('path');
 
 /** Relative to `assets/` unless noted as repo-root relative. */
 const SOURCE_LOGO_CANDIDATES = [
-  path.join('icons', 'StratoSortCoreLogo.svg'),
-  path.join('icons', 'png', 'StratoSortCoreLogo.png'),
+  path.join('icons', 'StratoSortStackLogo.svg'),
+  path.join('icons', 'png', 'StratoSortStackLogo.png'),
   path.join('icons', 'png', 'StratoSortNewLogo.png'),
   'stratosort-logo.png'
 ];
 
 /** Repo-root relative fallbacks (outside `assets/`). */
-const ROOT_SOURCE_LOGO_CANDIDATES = ['StratoSortCoreLogo.svg'];
+const ROOT_SOURCE_LOGO_CANDIDATES = ['StratoSortStackLogo.svg'];
 
 /**
  * @param {string} projectRoot - repository root (directory containing `assets/`)

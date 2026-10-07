@@ -37,12 +37,12 @@ const { getLegacyUserDataPaths } = require('../src/main/core/userDataMigration')
 const { ensureResolvedModelsPath } = require('../src/main/services/modelPathResolver');
 
 describe('modelPathResolver', () => {
-  const currentModelsPath = path.join('/current', 'StratoSort Core', 'models');
+  const currentModelsPath = path.join('/current', 'StratoSort Stack', 'models');
   const legacyModelsPath = path.join('/legacy', 'stratosort-core', 'models');
 
   beforeEach(() => {
     jest.clearAllMocks();
-    app.getPath.mockReturnValue(path.join('/current', 'StratoSort Core'));
+    app.getPath.mockReturnValue(path.join('/current', 'StratoSort Stack'));
     getLegacyUserDataPaths.mockReturnValue([path.join('/legacy', 'stratosort-core')]);
     fs.mkdir.mockResolvedValue();
     fs.copyFile.mockResolvedValue();

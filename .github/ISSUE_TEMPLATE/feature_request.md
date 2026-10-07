@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest an improvement or a new capability for StratoSort Core
+about: Suggest an improvement or a new capability for StratoSort Stack
 title: ''
 labels: ''
 assignees: ''

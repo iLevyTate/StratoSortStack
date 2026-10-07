@@ -1,6 +1,6 @@
 # Commercial licensing
 
-StratoSort Core is free for **personal and other noncommercial** use under the
+StratoSort Stack is free for **personal and other noncommercial** use under the
 [PolyForm Noncommercial License 1.0.0](../LICENSE).
 
 **Commercial use** (use for a company’s business, a paid product or service, or any purpose that is

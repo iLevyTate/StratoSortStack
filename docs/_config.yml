@@ -1,9 +1,9 @@
 # docs/_config.yml
-title: 'StratoSort Core'
+title: 'StratoSort Stack'
 description: 'Intelligent File Organization with Privacy-First Local AI'
 url: 'https://iLevyTate.github.io'
-baseurl: '/StratoSortCore'
-repository: 'iLevyTate/StratoSortCore'
+baseurl: '/StratoSortStack'
+repository: 'iLevyTate/StratoSortStack'
 
 # Use a pinned Minimal Mistakes release for deterministic GitHub Pages builds.
 # GitHub Pages runs an older Sass engine that can break against upstream HEAD changes.
@@ -25,7 +25,7 @@ navigation:
     - title: 'Docs'
       url: /INSTALL_GUIDE.html
     - title: 'GitHub'
-      url: 'https://github.com/iLevyTate/StratoSortCore'
+      url: 'https://github.com/iLevyTate/StratoSortStack'
 
 # Keep these in git, but do not emit them as GitHub Pages. Baseline snapshots,
 # demo fixtures, and CI inventories are not the public site. Live guides, e2e

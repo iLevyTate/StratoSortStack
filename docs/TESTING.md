@@ -1,6 +1,6 @@
-# StratoSort Core Testing Guide
+# StratoSort Stack Testing Guide
 
-**Applies to:** StratoSort Core 4.0.x  
+**Applies to:** StratoSort Stack 4.0.x  
 **Purpose:** Single source of truth for manual QA and automated test expectations.
 
 ---
@@ -300,9 +300,9 @@ Prioritize these paths when time is limited:
 
 ### Log Locations
 
-- **Windows:** `%APPDATA%/StratoSort Core/logs/`
-- **macOS:** `~/Library/Application Support/StratoSort Core/logs/`
-- **Linux:** `~/.config/StratoSort Core/logs/`
+- **Windows:** `%APPDATA%/StratoSort Stack/logs/`
+- **macOS:** `~/Library/Application Support/StratoSort Stack/logs/`
+- **Linux:** `~/.config/StratoSort Stack/logs/`
 
 ### Common Issues
 

@@ -110,16 +110,16 @@ const RECOMMENDED_MODELS = buildRecommendedModels();
 /**
  * Resolve the app name the way Electron does: `app.name` prefers package.json
  * `productName` and falls back to `name`. The running app resolves models via
- * `app.getPath('userData')` => "<APPDATA>/StratoSort Core/models" — using the
+ * `app.getPath('userData')` => "<APPDATA>/StratoSort Stack/models" — using the
  * npm `name` here ("stratosort-core") downloaded gigabytes into a directory
  * the app never reads.
  */
 function getAppName() {
   try {
     const pkg = require('../package.json');
-    return pkg.productName || pkg.name || 'StratoSort Core';
+    return pkg.productName || pkg.name || 'StratoSort Stack';
   } catch {
-    return 'StratoSort Core';
+    return 'StratoSort Stack';
   }
 }
 

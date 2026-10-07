@@ -41,7 +41,7 @@ These variables affect setup scripts and `postinstall` behavior:
 
 ### Default AI Models
 
-StratoSort Core uses the **Base (Small & Fast)** profile by default (configurable in Settings → AI
+StratoSort Stack uses the **Base (Small & Fast)** profile by default (configurable in Settings → AI
 Configuration). A **Better Quality** profile with larger models is available during setup.
 
 | Role          | Default (Base)                      | Better Quality                                     |
@@ -317,9 +317,9 @@ organized into categories:
 
 User settings are persisted in the application's data directory:
 
-- **Windows**: `%APPDATA%\StratoSort Core\settings.json`
-- **macOS**: `~/Library/Application Support/StratoSort Core/settings.json`
-- **Linux**: `~/.config/StratoSort Core/settings.json`
+- **Windows**: `%APPDATA%\StratoSort Stack\settings.json`
+- **macOS**: `~/Library/Application Support/StratoSort Stack/settings.json`
+- **Linux**: `~/.config/StratoSort Stack/settings.json`
 
 The file holds only the settings the user has changed, plus `settingsSchemaVersion`,
 `experienceMode` and `autoConcurrency`, whose presence carries meaning on load. Anything equal to a

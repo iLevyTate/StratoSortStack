@@ -65,13 +65,13 @@ function validateUrl(rawUrl, label) {
 }
 
 function getAppName() {
-  // Electron's app.name prefers productName ("StratoSort Core") — the app
+  // Electron's app.name prefers productName ("StratoSort Stack") — the app
   // reads models from that userData directory, not the npm package name.
   try {
     const pkg = require('../package.json');
-    return pkg.productName || pkg.name || 'StratoSort Core';
+    return pkg.productName || pkg.name || 'StratoSort Stack';
   } catch {
-    return 'StratoSort Core';
+    return 'StratoSort Stack';
   }
 }
 

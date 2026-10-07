@@ -190,7 +190,7 @@ async function exportRasterLogoExports(sourcePath, projectRoot) {
   await ensureDir(pngDir);
 
   const exports = [
-    { out: path.join(pngDir, 'StratoSortCoreLogo.png'), size: 1024 },
+    { out: path.join(pngDir, 'StratoSortStackLogo.png'), size: 1024 },
     { out: path.join(projectRoot, 'assets', 'stratosort-logo.png'), size: 512 }
   ];
 
@@ -232,7 +232,7 @@ async function generateDmgBackground(sourcePath, outputDir) {
     `<svg width="${WIDTH}" height="${HEIGHT}" xmlns="http://www.w3.org/2000/svg">` +
       `<text x="${WIDTH / 2}" y="138" font-family="Helvetica Neue,Helvetica,Arial,sans-serif" ` +
       `font-size="16" font-weight="500" fill="#333333" text-anchor="middle">` +
-      `StratoSort Core</text>` +
+      `StratoSort Stack</text>` +
       `</svg>`
   );
 
@@ -277,7 +277,7 @@ async function main() {
 
     console.log('\n✅ All icons generated successfully!');
     console.log('\nGenerated assets:');
-    console.log('  • Source SVG: assets/icons/StratoSortCoreLogo.svg');
+    console.log('  • Source SVG: assets/icons/StratoSortStackLogo.svg');
     console.log('  • Windows: assets/icons/win/icon.ico');
     console.log('  • macOS: assets/icons/mac/icon.icns (or iconset)');
     console.log('  • PNG: assets/icons/png/ (all sizes)');

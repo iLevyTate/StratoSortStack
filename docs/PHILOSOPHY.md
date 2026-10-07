@@ -8,7 +8,7 @@ toc_label: 'Principles'
 toc_icon: 'compass'
 ---
 
-# StratoSort Core Design Philosophy
+# StratoSort Stack Design Philosophy
 
 ## Why this document exists
 

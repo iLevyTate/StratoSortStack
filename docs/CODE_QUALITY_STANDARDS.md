@@ -18,7 +18,7 @@ header:
 ## Overview
 
 This document establishes coding standards for consistency, readability, and maintainability across
-the StratoSort Core codebase.
+the StratoSort Stack codebase.
 
 ---
 
@@ -270,7 +270,7 @@ async function caller() {
 
 ## Code Formatting
 
-StratoSort Core standardizes formatting with Prettier and linting with ESLint. Use the following
+StratoSort Stack standardizes formatting with Prettier and linting with ESLint. Use the following
 scripts before committing:
 
 ```bash

@@ -210,13 +210,13 @@ function getWindowIconCandidatePaths() {
     const primary = [
       cwdIco,
       getAssetPath('icons', 'win', 'icon.ico'),
-      getAssetPath('icons', 'png', 'StratoSortCoreLogo.png'),
+      getAssetPath('icons', 'png', 'StratoSortStackLogo.png'),
       getAssetPath('stratosort-logo.png'),
       cwdPng,
       getAssetPath('icons', 'png', '512x512.png')
     ];
     const fallbacks = fallbackPath(path.join('icons', 'win', 'icon.ico')).concat(
-      fallbackPath(path.join('icons', 'png', 'StratoSortCoreLogo.png')),
+      fallbackPath(path.join('icons', 'png', 'StratoSortStackLogo.png')),
       fallbackPath('stratosort-logo.png'),
       fallbackPath(path.join('icons', 'png', '512x512.png'))
     );
@@ -226,11 +226,11 @@ function getWindowIconCandidatePaths() {
   if (process.platform === 'linux') {
     const primary = [
       getAssetPath('icons', 'png', '512x512.png'),
-      getAssetPath('icons', 'png', 'StratoSortCoreLogo.png'),
+      getAssetPath('icons', 'png', 'StratoSortStackLogo.png'),
       getAssetPath('stratosort-logo.png')
     ];
     const fallbacks = fallbackPath(path.join('icons', 'png', '512x512.png')).concat(
-      fallbackPath(path.join('icons', 'png', 'StratoSortCoreLogo.png')),
+      fallbackPath(path.join('icons', 'png', 'StratoSortStackLogo.png')),
       fallbackPath('stratosort-logo.png')
     );
     return Array.from(new Set([...primary, ...fallbacks]));
@@ -239,11 +239,11 @@ function getWindowIconCandidatePaths() {
   // macOS
   const primary = [
     getAssetPath('icons', 'png', '512x512.png'),
-    getAssetPath('icons', 'png', 'StratoSortCoreLogo.png'),
+    getAssetPath('icons', 'png', 'StratoSortStackLogo.png'),
     getAssetPath('stratosort-logo.png')
   ];
   const fallbacks = fallbackPath(path.join('icons', 'png', '512x512.png')).concat(
-    fallbackPath(path.join('icons', 'png', 'StratoSortCoreLogo.png')),
+    fallbackPath(path.join('icons', 'png', 'StratoSortStackLogo.png')),
     fallbackPath('stratosort-logo.png')
   );
   return Array.from(new Set([...primary, ...fallbacks]));

@@ -39,7 +39,7 @@ function patchMacUpdaterMetadata(dmgPath, ymlPath) {
   // Locate the DMG's sha512 in the files: block by matching the url line for
   // this DMG, then capturing the sha512 on the very next sha512: line.
   // The files: entry looks like:
-  //   - url: StratoSortCore-4.0.4-mac-arm64.dmg
+  //   - url: StratoSortStack-4.0.4-mac-arm64.dmg
   //     sha512: <OLDSHA>
   //     size: ...
   const escaped = dmgBasename.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

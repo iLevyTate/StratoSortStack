@@ -5,7 +5,7 @@ sidebar:
   nav: 'docs'
 ---
 
-# StratoSort Core Documentation Index
+# StratoSort Stack Documentation Index
 
 Pick the doc that matches what you need to do.
 

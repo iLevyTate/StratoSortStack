@@ -80,7 +80,7 @@ function buildSupportReportBody(info = {}) {
     '',
     '## Runtime',
     '',
-    `- App: ${info?.appName || 'StratoSort Core'} ${info?.appVersion || ''}`.trim(),
+    `- App: ${info?.appName || 'StratoSort Stack'} ${info?.appVersion || ''}`.trim(),
     `- Platform: ${formatPlatform(info?.platform, info?.arch, info?.osRelease)}`,
     `- Electron: ${info?.electronVersion || 'unknown'}`,
     `- Chrome: ${info?.chromeVersion || 'unknown'}`,
@@ -101,7 +101,7 @@ function buildSupportReportBody(info = {}) {
 function buildVersionString(info) {
   if (!info) return '';
   return [
-    `${info.appName || 'StratoSort Core'} ${info.appVersion || ''}`.trim(),
+    `${info.appName || 'StratoSort Stack'} ${info.appVersion || ''}`.trim(),
     `Platform: ${formatPlatform(info.platform, info.arch, info.osRelease)}`,
     `Electron ${info.electronVersion || '?'} · Chrome ${info.chromeVersion || '?'} · Node ${info.nodeVersion || '?'}`,
     info.isPackaged ? 'Build: packaged' : 'Build: dev',
@@ -118,7 +118,7 @@ function buildVersionString(info) {
  */
 function buildSupportMailtoUrl(info = {}) {
   const versionLabel = info?.appVersion ? `v${info.appVersion}` : 'unknown version';
-  const subject = encodeURIComponent(`StratoSort Core support — ${versionLabel}`);
+  const subject = encodeURIComponent(`StratoSort Stack support — ${versionLabel}`);
   const body = encodeURIComponent(buildSupportReportBody(info));
   return `mailto:${SUPPORT_EMAIL}?subject=${subject}&body=${body}`;
 }
@@ -130,7 +130,7 @@ function buildSupportMailtoUrl(info = {}) {
  */
 function buildCommercialInquiryMailtoUrl(info = {}) {
   const versionLabel = info?.appVersion ? ` v${info.appVersion}` : '';
-  const subject = encodeURIComponent(`StratoSort Core commercial license inquiry${versionLabel}`);
+  const subject = encodeURIComponent(`StratoSort Stack commercial license inquiry${versionLabel}`);
   const body = encodeURIComponent(
     [
       'Please send a quote for a commercial license.',

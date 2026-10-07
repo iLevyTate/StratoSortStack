@@ -373,12 +373,12 @@ async function main() {
   const appDataRoot =
     args.appdata ||
     path.join(repoRoot, '.tmp', 'stability', 'e2e-appdata', `run-${Date.now().toString(36)}`);
-  const userDataPath = path.join(appDataRoot, 'StratoSort Core');
+  const userDataPath = path.join(appDataRoot, 'StratoSort Stack');
   await ensureDir(userDataPath);
 
   const realUserData = path.join(
     process.env.APPDATA || path.join(require('os').homedir(), 'AppData', 'Roaming'),
-    'StratoSort Core'
+    'StratoSort Stack'
   );
   const realModelsDir = path.join(realUserData, 'models');
   const isolatedModelsDir = path.join(userDataPath, 'models');

@@ -5,10 +5,10 @@ const path = require('path');
 const { verifyMac } = require('../scripts/verify-updater-metadata');
 const { channelFile, writeArtifacts } = require('./utils/updaterMetadataFixtures');
 
-const X64_ZIP = 'StratoSortCore-4.0.2-mac-x64.zip';
-const X64_DMG = 'StratoSortCore-4.0.2-mac-x64.dmg';
-const ARM64_ZIP = 'StratoSortCore-4.0.2-mac-arm64.zip';
-const ARM64_DMG = 'StratoSortCore-4.0.2-mac-arm64.dmg';
+const X64_ZIP = 'StratoSortStack-4.0.2-mac-x64.zip';
+const X64_DMG = 'StratoSortStack-4.0.2-mac-x64.dmg';
+const ARM64_ZIP = 'StratoSortStack-4.0.2-mac-arm64.zip';
+const ARM64_DMG = 'StratoSortStack-4.0.2-mac-arm64.dmg';
 
 describe('verify-updater-metadata (mac)', () => {
   let tempDir;

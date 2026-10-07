@@ -56,13 +56,13 @@ function candidateUserDataRoots() {
     roots.push(path.resolve(process.env.STRATOSORT_USERDATA));
   }
   if (process.platform === 'win32' && process.env.APPDATA) {
-    roots.push(path.join(process.env.APPDATA, 'StratoSort Core'));
+    roots.push(path.join(process.env.APPDATA, 'StratoSort Stack'));
     roots.push(path.join(process.env.APPDATA, 'stratosort-core'));
   }
   if (process.env.HOME) {
     roots.push(
-      path.join(process.env.HOME, 'Library', 'Application Support', 'StratoSort Core'),
-      path.join(process.env.HOME, '.config', 'StratoSort Core'),
+      path.join(process.env.HOME, 'Library', 'Application Support', 'StratoSort Stack'),
+      path.join(process.env.HOME, '.config', 'StratoSort Stack'),
       path.join(process.env.HOME, '.config', 'stratosort-core')
     );
   }

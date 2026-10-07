@@ -37,12 +37,12 @@ const DEFAULT_MODEL = 'nomic-embed-text-v1.5-Q8_0.gguf';
 function resolveModelsDir() {
   if (process.platform === 'win32') {
     const appData = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
-    return path.join(appData, 'StratoSort Core', 'models');
+    return path.join(appData, 'StratoSort Stack', 'models');
   }
   if (process.platform === 'darwin') {
-    return path.join(os.homedir(), 'Library', 'Application Support', 'StratoSort Core', 'models');
+    return path.join(os.homedir(), 'Library', 'Application Support', 'StratoSort Stack', 'models');
   }
-  return path.join(os.homedir(), '.config', 'StratoSort Core', 'models');
+  return path.join(os.homedir(), '.config', 'StratoSort Stack', 'models');
 }
 
 function parseArgs(argv) {

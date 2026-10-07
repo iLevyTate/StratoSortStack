@@ -5,8 +5,8 @@ const path = require('path');
 const { verifyWin } = require('../scripts/verify-updater-metadata');
 const { channelFile, writeArtifacts } = require('./utils/updaterMetadataFixtures');
 
-const X64_SETUP = 'StratoSortCore-Setup-4.0.2.exe';
-const ARM64_SETUP = 'StratoSortCore-Setup-4.0.2-arm64.exe';
+const X64_SETUP = 'StratoSortStack-Setup-4.0.2.exe';
+const ARM64_SETUP = 'StratoSortStack-Setup-4.0.2-arm64.exe';
 
 describe('verify-updater-metadata (windows)', () => {
   let tempDir;
@@ -70,7 +70,7 @@ describe('verify-updater-metadata (windows)', () => {
 
   test('fails when metadata references a missing installer', () => {
     const [x64] = writeArtifacts(tempDir, { [X64_SETUP]: 32 });
-    writeChannel('latest.yml', [{ ...x64, name: 'StratoSortCore-Setup-4.0.2-missing.exe' }]);
+    writeChannel('latest.yml', [{ ...x64, name: 'StratoSortStack-Setup-4.0.2-missing.exe' }]);
 
     expect(() => verifyWin(tempDir, 'x64')).toThrow(/missing artifact/);
   });

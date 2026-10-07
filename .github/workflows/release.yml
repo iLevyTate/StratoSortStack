@@ -237,7 +237,7 @@ jobs:
         shell: pwsh
         run: |
           $executables = Get-ChildItem release/build -File -ErrorAction Stop |
-            Where-Object { $_.Name -match '^StratoSortCore-Setup-.*\.exe$|^StratoSortCore-.*-win-.*\.exe$' }
+            Where-Object { $_.Name -match '^StratoSortStack-Setup-.*\.exe$|^StratoSortStack-.*-win-.*\.exe$' }
           if (-not $executables -or $executables.Count -eq 0) {
             throw "No Windows executables found to verify signature."
           }
@@ -256,7 +256,7 @@ jobs:
         shell: pwsh
         run: |
           $files = Get-ChildItem release/build -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match '^StratoSortCore-.*\.(exe|blockmap)$' }
+            Where-Object { $_.Name -match '^StratoSortStack-.*\.(exe|blockmap)$' }
           if (-not $files -or $files.Count -eq 0) {
             throw "No build artifacts found to checksum."
           }
@@ -312,7 +312,7 @@ jobs:
             "- Tesseract OCR is auto-installed or uses bundled tesseract.js fallback.",
             "- Use **Download Base Models** after install to enable AI features.",
             $releaseIntegrityNote,
-            "- See the [Install Guide](https://github.com/iLevyTate/StratoSortCore/blob/main/docs/INSTALL_GUIDE.md) for Windows & Mac — one download, no CLI.",
+            "- See the [Install Guide](https://github.com/iLevyTate/StratoSortStack/blob/main/docs/INSTALL_GUIDE.md) for Windows & Mac — one download, no CLI.",
             ""
           ) + $section
           $notes | Out-File release/build/release-notes.md -Encoding UTF8
@@ -327,7 +327,7 @@ jobs:
           $stage = "release/upload/$arch"
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Get-ChildItem release/build -File |
-            Where-Object { $_.Name -match '^StratoSortCore-Setup-.*\.exe$|^StratoSortCore-.*-win-.*\.exe$|\.blockmap$|^checksums-windows-.*\.sha256$|^release-notes\.md$' } |
+            Where-Object { $_.Name -match '^StratoSortStack-Setup-.*\.exe$|^StratoSortStack-.*-win-.*\.exe$|\.blockmap$|^checksums-windows-.*\.sha256$|^release-notes\.md$' } |
             Copy-Item -Destination $stage
           Copy-Item release/build/latest.yml (Join-Path $stage "latest-$arch.yml")
           Get-ChildItem $stage | Select-Object Name, Length
@@ -403,8 +403,8 @@ jobs:
           # means a leg staged nothing for it.
           fail_on_unmatched_files: true
           files: |
-            release/build/StratoSortCore-Setup-*.exe
-            release/build/StratoSortCore-*-win-*.exe
+            release/build/StratoSortStack-Setup-*.exe
+            release/build/StratoSortStack-*-win-*.exe
             release/build/*.blockmap
             release/build/latest.yml
             release/build/checksums-windows-*.sha256

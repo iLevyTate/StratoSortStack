@@ -142,7 +142,7 @@ function createApplicationMenu(getMainWindow) {
 
   if (!isMacOS) {
     helpMenu.submenu.unshift({
-      label: 'About StratoSort Core',
+      label: 'About StratoSort Stack',
       click: () => {
         const mainWindow = getMainWindow();
         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -160,7 +160,7 @@ function createApplicationMenu(getMainWindow) {
       label: app.name,
       submenu: [
         {
-          label: 'About StratoSort Core',
+          label: 'About StratoSort Stack',
           click: () => {
             const mainWindow = getMainWindow();
             if (mainWindow && !mainWindow.isDestroyed()) {

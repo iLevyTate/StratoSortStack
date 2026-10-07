@@ -784,9 +784,9 @@ describe('createWindow', () => {
       const win = createMainWindow();
       const handlerConfig = win.webContents.setWindowOpenHandler.mock.calls[0][0];
 
-      handlerConfig({ url: 'https://github.com/iLevyTate/StratoSortCore' });
+      handlerConfig({ url: 'https://github.com/iLevyTate/StratoSortStack' });
       expect(shell.openExternal).toHaveBeenCalledWith(
-        'https://github.com/iLevyTate/StratoSortCore'
+        'https://github.com/iLevyTate/StratoSortStack'
       );
     });
 

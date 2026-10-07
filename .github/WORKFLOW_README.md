@@ -65,25 +65,25 @@ This repository is configured with automated dependency updates and release buil
 
 ### Windows
 
-- **NSIS Installer (x64)**: `StratoSortCore-Setup-<version>.exe`
-- **NSIS Installer (arm64)**: `StratoSortCore-Setup-<version>-arm64.exe` (built on the
+- **NSIS Installer (x64)**: `StratoSortStack-Setup-<version>.exe`
+- **NSIS Installer (arm64)**: `StratoSortStack-Setup-<version>-arm64.exe` (built on the
   `windows-11-arm` runner; better-sqlite3 is compiled from source there. Ships **without** bundled
   FFmpeg — no win-arm64 LGPL build exists — and falls back to a system `ffmpeg` on `PATH`.)
-- **Portable (x64)**: `StratoSortCore-<version>-win-x64.exe`
+- **Portable (x64)**: `StratoSortStack-<version>-win-x64.exe`
 - **Checksums**: `checksums-windows-{x64,arm64}.sha256`
 - **Updater metadata**: `latest.yml` (x64), `latest-arm64.yml` (arm64), `*.blockmap`
 
 ### macOS
 
-- **DMG**: `StratoSortCore-<version>-mac-{arm64,x64}.dmg`
-- **ZIP**: `StratoSortCore-<version>-mac-{arm64,x64}.zip`
+- **DMG**: `StratoSortStack-<version>-mac-{arm64,x64}.dmg`
+- **ZIP**: `StratoSortStack-<version>-mac-{arm64,x64}.zip`
 - **Checksums**: `checksums-macos.sha256`
 - **Updater metadata**: `latest-mac-arm64.yml`, `latest-mac-x64.yml`
 
 ### Linux (x64 + arm64, built on the tag release)
 
-- **AppImage**: `StratoSortCore-<version>-linux-{x64,arm64}.AppImage`
-- **DEB**: `StratoSortCore-<version>-linux-{amd64,arm64}.deb`
+- **AppImage**: `StratoSortStack-<version>-linux-{x64,arm64}.AppImage`
+- **DEB**: `StratoSortStack-<version>-linux-{amd64,arm64}.deb`
 - **Checksums**: `checksums-linux.sha256`
 - **Updater metadata**: `latest-linux.yml` (x64), `latest-linux-arm64.yml` (arm64)
 - Bundles a real LGPL FFmpeg (BtbN `*-lgpl.tar.xz`, extracted via system `tar -xJf`). The arm64 leg

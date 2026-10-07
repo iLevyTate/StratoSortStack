@@ -13,11 +13,11 @@ header:
 > Last verified for v4.0.3 on 2026-06-11. Current tagged release is **v4.0.6**; installer filenames
 > and OS prompts may differ slightly on newer builds.
 
-# StratoSort Core -- Install Guide
+# StratoSort Stack -- Install Guide
 
 **One download. No command line. No extra software. No API keys.**
 
-StratoSort Core uses AI that runs entirely on your computer. Nothing is sent to the cloud. You
+StratoSort Stack uses AI that runs entirely on your computer. Nothing is sent to the cloud. You
 download one installer, let the app grab its AI models on first launch, and you are ready to go.
 
 ---
@@ -37,16 +37,16 @@ download one installer, let the app grab its AI models on first launch, and you 
 
 ## Step 1 -- Download One File
 
-Go to **[StratoSort Core Releases](https://github.com/iLevyTate/StratoSortCore/releases)** and
+Go to **[StratoSort Stack Releases](https://github.com/iLevyTate/StratoSortStack/releases)** and
 download the single file that matches your operating system.
 
 ### Which file do I pick?
 
 | Your computer                       | Download this file                            |
 | :---------------------------------- | :-------------------------------------------- |
-| **Windows PC** (any 64-bit)         | **`StratoSortCore-Setup-X.X.X.exe`**          |
-| **Mac** (Apple Silicon M1/M2/M3/M4) | **`StratoSortCore-X.X.X-mac-arm64.dmg`**      |
-| **Linux** (if artifact is attached) | **`StratoSortCore-X.X.X-linux-x64.AppImage`** |
+| **Windows PC** (any 64-bit)         | **`StratoSortStack-Setup-X.X.X.exe`**          |
+| **Mac** (Apple Silicon M1/M2/M3/M4) | **`StratoSortStack-X.X.X-mac-arm64.dmg`**      |
+| **Linux** (if artifact is attached) | **`StratoSortStack-X.X.X-linux-x64.AppImage`** |
 
 Replace **X.X.X** with the version number shown on the Releases page (e.g. `4.0.6`).
 
@@ -54,15 +54,15 @@ Replace **X.X.X** with the version number shown on the Releases page (e.g. `4.0.
 
 | File                                 | What it does                                                                             | Recommended?                                        |
 | :----------------------------------- | :--------------------------------------------------------------------------------------- | :-------------------------------------------------- |
-| **`StratoSortCore-Setup-X.X.X.exe`** | Full installer -- creates Start Menu and desktop shortcuts, supports future auto-updates | Yes                                                 |
-| `StratoSortCore-X.X.X-win-x64.exe`   | Portable -- runs without installing, no shortcuts, no auto-update                        | Only if you cannot install software on your machine |
+| **`StratoSortStack-Setup-X.X.X.exe`** | Full installer -- creates Start Menu and desktop shortcuts, supports future auto-updates | Yes                                                 |
+| `StratoSortStack-X.X.X-win-x64.exe`   | Portable -- runs without installing, no shortcuts, no auto-update                        | Only if you cannot install software on your machine |
 
 ### Linux -- AppImage vs .deb
 
 | File                                          | What it does                                                 |
 | :-------------------------------------------- | :----------------------------------------------------------- |
-| **`StratoSortCore-X.X.X-linux-x64.AppImage`** | Universal, no install needed -- just make executable and run |
-| `StratoSortCore-X.X.X-linux-x64.deb`          | Standard Debian/Ubuntu package installed via `dpkg`          |
+| **`StratoSortStack-X.X.X-linux-x64.AppImage`** | Universal, no install needed -- just make executable and run |
+| `StratoSortStack-X.X.X-linux-x64.deb`          | Standard Debian/Ubuntu package installed via `dpkg`          |
 
 Linux artifacts are optional and may not be attached to every release. Neither format auto-updates;
 download the next version from Releases when one is available.
@@ -73,14 +73,14 @@ download the next version from Releases when one is available.
 
 ### Windows
 
-1. Double-click **`StratoSortCore-Setup-X.X.X.exe`**.
+1. Double-click **`StratoSortStack-Setup-X.X.X.exe`**.
 2. If Windows SmartScreen says **"Windows protected your PC"**:
    - Click **More info**.
    - Click **Run anyway**.
 3. The installer opens. Click **Next**, then **Install**.
    - The app installs to your user profile (no admin required).
    - A **Start Menu** shortcut and a **Desktop** shortcut are created automatically.
-4. When the installer finishes, leave **"Run StratoSort Core"** checked and click **Finish**.
+4. When the installer finishes, leave **"Run StratoSort Stack"** checked and click **Finish**.
 
 <!-- prettier-ignore -->
 **Why SmartScreen?** Beta and unsigned builds trigger SmartScreen because they are not yet code-signed. This is normal for pre-release software. If the checksum matches (see optional step below), the file is safe.
@@ -89,9 +89,9 @@ download the next version from Releases when one is available.
 ### macOS
 
 1. Double-click the **`.dmg`** file.
-2. Drag **StratoSort Core** into the **Applications** folder.
+2. Drag **StratoSort Stack** into the **Applications** folder.
 3. Eject the DMG (right-click in Finder sidebar, select **Eject**).
-4. Open **StratoSort Core** from **Applications**.
+4. Open **StratoSort Stack** from **Applications**.
 
 <!-- prettier-ignore -->
 **v4.0.0 and later:** macOS builds are signed with **Developer ID Application** and **notarized** by Apple. A normal double-click open should work on first launch.
@@ -109,8 +109,8 @@ download the next version from Releases when one is available.
 ### Linux (AppImage)
 
 ```bash
-chmod +x StratoSortCore-X.X.X-linux-x64.AppImage
-./StratoSortCore-X.X.X-linux-x64.AppImage
+chmod +x StratoSortStack-X.X.X-linux-x64.AppImage
+./StratoSortStack-X.X.X-linux-x64.AppImage
 ```
 
 Or double-click the file in your file manager after making it executable.
@@ -118,11 +118,11 @@ Or double-click the file in your file manager after making it executable.
 ### Linux (Debian package)
 
 ```bash
-sudo dpkg -i StratoSortCore-X.X.X-linux-x64.deb
+sudo dpkg -i StratoSortStack-X.X.X-linux-x64.deb
 ```
 
-Then launch **StratoSort Core** from your application menu. The `.deb` version does not auto-update;
-download the next version from [Releases](https://github.com/iLevyTate/StratoSortCore/releases) when
+Then launch **StratoSort Stack** from your application menu. The `.deb` version does not auto-update;
+download the next version from [Releases](https://github.com/iLevyTate/StratoSortStack/releases) when
 available.
 
 ---
@@ -193,13 +193,13 @@ Then compare:
 ### Windows (PowerShell)
 
 ```powershell
-Get-FileHash .\StratoSortCore-Setup-X.X.X.exe -Algorithm SHA256
+Get-FileHash .\StratoSortStack-Setup-X.X.X.exe -Algorithm SHA256
 ```
 
 ### macOS / Linux (Terminal)
 
 ```bash
-shasum -a 256 StratoSortCore-X.X.X-mac-arm64.dmg
+shasum -a 256 StratoSortStack-X.X.X-mac-arm64.dmg
 ```
 
 The hash should match the entry in the checksum file exactly.
@@ -212,7 +212,7 @@ There are two kinds of updates -- they are independent of each other:
 
 | What                                         | How it works                                                                                                                                                                                               |
 | :------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **App updates** (new versions of StratoSort) | In-app auto-update when the project enables a public feed. Until then, download new installers from [Releases](https://github.com/iLevyTate/StratoSortCore/releases). Your settings and models carry over. |
+| **App updates** (new versions of StratoSort) | In-app auto-update when the project enables a public feed. Until then, download new installers from [Releases](https://github.com/iLevyTate/StratoSortStack/releases). Your settings and models carry over. |
 | **AI model updates**                         | Managed inside the app via **Settings** > **AI Configuration**. Models are large files from Hugging Face; they are not part of the installer.                                                              |
 
 You never need to re-download models when you update the app.
@@ -227,7 +227,7 @@ You never need to re-download models when you update the app.
 
 | Data                          | Location                                                                                                                              |
 | :---------------------------- | :------------------------------------------------------------------------------------------------------------------------------------ |
-| **Settings, logs, databases** | `%APPDATA%\StratoSort Core` (Windows) / `~/Library/Application Support/StratoSort Core` (macOS) / `~/.config/StratoSort Core` (Linux) |
+| **Settings, logs, databases** | `%APPDATA%\StratoSort Stack` (Windows) / `~/Library/Application Support/StratoSort Stack` (macOS) / `~/.config/StratoSort Stack` (Linux) |
 | **AI models**                 | Inside the above folder under `models/` (7 to 11 GB)                                                                                  |
 | **Your files**                | StratoSort reads files in place and only moves them when you approve a suggestion. It never copies or uploads your files.             |
 
@@ -245,9 +245,9 @@ unsigned apps -- install on a personal device or contact your IT admin.
 ### macOS: App won't open even after Right-click > Open
 
 Go to **System Settings** > **Privacy & Security**, scroll to the Security section, and click **Open
-Anyway** next to StratoSort Core.
+Anyway** next to StratoSort Stack.
 
-### macOS: "StratoSort Core is damaged and can't be opened"
+### macOS: "StratoSort Stack is damaged and can't be opened"
 
 The quarantine attribute may not have been cleared. Run in Terminal:
 
@@ -279,13 +279,13 @@ is missing, download it from the model management section.
 
 ## Security
 
-StratoSort Core:
+StratoSort Stack:
 
 - Runs 100% locally after the one-time model download.
 - Does not collect, send, or store any data externally.
 - Is licensed under PolyForm Noncommercial 1.0.0 (personal/noncommercial use is free; commercial use
   needs a paid license). There is no trial and nothing expires. Source:
-  [github.com/iLevyTate/StratoSortCore](https://github.com/iLevyTate/StratoSortCore).
+  [github.com/iLevyTate/StratoSortStack](https://github.com/iLevyTate/StratoSortStack).
 
 ---
 
@@ -293,7 +293,7 @@ StratoSort Core:
 
 | Step             | What you do                                                                                |
 | :--------------- | :----------------------------------------------------------------------------------------- |
-| **1. Download**  | One file from [Releases](https://github.com/iLevyTate/StratoSortCore/releases) for your OS |
+| **1. Download**  | One file from [Releases](https://github.com/iLevyTate/StratoSortStack/releases) for your OS |
 | **2. Install**   | Run the installer; allow it if your OS shows a security prompt                             |
 | **3. First run** | Choose a model profile and download AI models (7 to 11 GB, one time)                       |
 | **4. Organize**  | Add files, review AI suggestions, approve moves                                            |

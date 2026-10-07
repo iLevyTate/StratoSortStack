@@ -26,19 +26,19 @@ describe('verify-updater-metadata (linux)', () => {
 
   test('classifyLinuxArtifacts separates x64 and arm64 installers', () => {
     const files = [
-      'StratoSortCore-4.0.2-linux-x64.AppImage',
-      'StratoSortCore-4.0.2-linux-arm64.deb',
+      'StratoSortStack-4.0.2-linux-x64.AppImage',
+      'StratoSortStack-4.0.2-linux-arm64.deb',
       'latest-linux-arm64.yml'
     ];
     expect(classifyLinuxArtifacts(files)).toEqual({
-      x64: ['StratoSortCore-4.0.2-linux-x64.AppImage'],
-      arm64: ['StratoSortCore-4.0.2-linux-arm64.deb']
+      x64: ['StratoSortStack-4.0.2-linux-x64.AppImage'],
+      arm64: ['StratoSortStack-4.0.2-linux-arm64.deb']
     });
   });
 
   test('arm64 matrix leg passes after metadata rename when scoped with --arch=arm64', () => {
-    const appImage = 'StratoSortCore-4.0.2-linux-arm64.AppImage';
-    const deb = 'StratoSortCore-4.0.2-linux-arm64.deb';
+    const appImage = 'StratoSortStack-4.0.2-linux-arm64.AppImage';
+    const deb = 'StratoSortStack-4.0.2-linux-arm64.deb';
     const appBytes = Buffer.alloc(32);
     const debBytes = Buffer.alloc(32);
     const appHash = sha512Base64(appBytes);
@@ -64,7 +64,7 @@ releaseDate: '2026-06-08T00:00:00.000Z'
   });
 
   test('arm64 matrix leg does not require x64 metadata after rename', () => {
-    const appImage = 'StratoSortCore-4.0.2-linux-arm64.AppImage';
+    const appImage = 'StratoSortStack-4.0.2-linux-arm64.AppImage';
     const appBytes = Buffer.alloc(32);
     const appHash = sha512Base64(appBytes);
     const metadata = `version: 4.0.2
@@ -80,8 +80,8 @@ releaseDate: '2026-06-08T00:00:00.000Z'
   });
 
   test('merged publish root still requires both feeds when both arches are present', () => {
-    const x64Image = 'StratoSortCore-4.0.2-linux-x64.AppImage';
-    const arm64Image = 'StratoSortCore-4.0.2-linux-arm64.AppImage';
+    const x64Image = 'StratoSortStack-4.0.2-linux-x64.AppImage';
+    const arm64Image = 'StratoSortStack-4.0.2-linux-arm64.AppImage';
     const x64Bytes = Buffer.alloc(32);
     const arm64Bytes = Buffer.alloc(48);
     const x64Hash = sha512Base64(x64Bytes);

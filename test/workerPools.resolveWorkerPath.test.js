@@ -1,7 +1,7 @@
 const path = require('path');
 
 const WORKER_POOLS_DIR = path.resolve(__dirname, '..', 'src', 'main', 'utils');
-const RESOURCES_PATH = path.join('C:', 'Program Files', 'StratoSort Core', 'resources');
+const RESOURCES_PATH = path.join('C:', 'Program Files', 'StratoSort Stack', 'resources');
 const UNPACKED_WORKER = path.join(RESOURCES_PATH, 'app.asar.unpacked', 'dist', 'ocrWorker.js');
 
 describe('workerPools resolveWorkerPath', () => {

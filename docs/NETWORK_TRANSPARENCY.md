@@ -1,6 +1,6 @@
 # Network Transparency
 
-StratoSort Core's headline claim is that your files and their contents never leave your machine.
+StratoSort Stack's headline claim is that your files and their contents never leave your machine.
 This document makes that claim verifiable: it enumerates every network connection the shipped app
 can make, the exact conditions that trigger each one, and a test you can run yourself. Every row is
 backed by a source reference so the claim can be re-audited against the code.

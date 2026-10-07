@@ -54,7 +54,7 @@ describe('supportInfo', () => {
 
   test('buildSupportMailtoUrl targets support email with runtime details', () => {
     const url = buildSupportMailtoUrl({
-      appName: 'StratoSort Core',
+      appName: 'StratoSort Stack',
       appVersion: '3.1.1',
       platform: 'win32',
       arch: 'x64',
@@ -77,7 +77,7 @@ describe('supportInfo', () => {
 
   test('buildVersionString includes whisper idle status', () => {
     const text = buildVersionString({
-      appName: 'StratoSort Core',
+      appName: 'StratoSort Stack',
       appVersion: '3.1.1',
       platform: 'win32',
       arch: 'x64',

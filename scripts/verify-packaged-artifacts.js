@@ -165,7 +165,7 @@ function findMacAppBundles(buildRoot, arch) {
 
   const found = [];
   for (const dirName of ordered) {
-    const appPath = path.join(buildRoot, dirName, 'StratoSort Core.app');
+    const appPath = path.join(buildRoot, dirName, 'StratoSort Stack.app');
     if (fs.existsSync(appPath)) {
       found.push(appPath);
     }
@@ -207,7 +207,7 @@ function verifyWindowsArtifacts(buildRoot, arch) {
   const resources = path.join(appRoot, 'resources');
   const unpackedModules = path.join(resources, 'app.asar.unpacked', 'node_modules');
 
-  ensureExists(path.join(appRoot, 'StratoSort Core.exe'), 'Windows executable');
+  ensureExists(path.join(appRoot, 'StratoSort Stack.exe'), 'Windows executable');
   verifyRequiredFiles(appRoot, REQUIRED_ELECTRON_RUNTIME_FILES, 'Windows runtime file');
   ensureExists(resources, 'Windows resources directory');
   ensureExists(path.join(resources, 'app.asar'), 'Windows app.asar');
@@ -243,7 +243,7 @@ function verifyMacArtifacts(buildRoot, arch) {
     );
     const unpackedModules = path.join(resources, 'app.asar.unpacked', 'node_modules');
 
-    ensureExists(path.join(contents, 'MacOS', 'StratoSort Core'), 'macOS executable');
+    ensureExists(path.join(contents, 'MacOS', 'StratoSort Stack'), 'macOS executable');
     verifyRequiredFiles(
       frameworkResources,
       getRequiredMacElectronRuntimeFiles(arch),

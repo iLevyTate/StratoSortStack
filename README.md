@@ -1,17 +1,17 @@
 <p align="center">
-  <img src="assets/icons/StratoSortCoreLogo.svg" alt="StratoSort Logo" width="128" />
+  <img src="assets/icons/StratoSortStackLogo.svg" alt="StratoSort Logo" width="128" />
 </p>
 
-<h1 align="center">StratoSort Core</h1>
+<h1 align="center">StratoSort Stack</h1>
 
 <p align="center">
   <strong>Intelligent File Organization with Privacy-First Local AI</strong>
 </p>
 
 <p align="center">
-  <a href="https://github.com/iLevyTate/StratoSortCore/releases"><img src="https://img.shields.io/github/v/release/iLevyTate/StratoSortCore?style=flat-square&label=version" alt="Version" /></a>
-  <a href="https://github.com/iLevyTate/StratoSortCore/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue?style=flat-square" alt="License" /></a>
-  <a href="https://github.com/iLevyTate/StratoSortCore/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/iLevyTate/StratoSortCore/ci.yml?style=flat-square&label=CI" alt="CI Status" /></a>
+  <a href="https://github.com/iLevyTate/StratoSortStack/releases"><img src="https://img.shields.io/github/v/release/iLevyTate/StratoSortStack?style=flat-square&label=version" alt="Version" /></a>
+  <a href="https://github.com/iLevyTate/StratoSortStack/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue?style=flat-square" alt="License" /></a>
+  <a href="https://github.com/iLevyTate/StratoSortStack/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/iLevyTate/StratoSortStack/ci.yml?style=flat-square&label=CI" alt="CI Status" /></a>
 </p>
 
 <p align="center">
@@ -22,7 +22,7 @@
 </p>
 
 <p align="center">
-  <strong><a href="https://iLevyTate.github.io/StratoSortCore/">Visit the Official Website & Documentation</a></strong>
+  <strong><a href="https://iLevyTate.github.io/StratoSortStack/">Visit the Official Website & Documentation</a></strong>
 </p>
 
 <p align="center">
@@ -37,7 +37,7 @@
 
 ---
 
-StratoSort Core is a privacy-first, AI-powered file organizer. Drop a folder full of messy files and
+StratoSort Stack is a privacy-first, AI-powered file organizer. Drop a folder full of messy files and
 StratoSort understands what's actually inside each one — not just the filename — and proposes a
 clean structure you can accept or edit. Everything runs locally on your machine by default; your
 files never leave the device unless you explicitly opt in to cloud AI.
@@ -71,7 +71,7 @@ files never leave the device unless you explicitly opt in to cloud AI.
 Official tagged releases are intended to be signed on Windows and signed/notarized on macOS.
 Preview, beta, or manually built artifacts can still trigger OS security prompts. If that happens,
 verify that you downloaded the file from
-[GitHub Releases](https://github.com/iLevyTate/StratoSortCore/releases) and compare its checksum
+[GitHub Releases](https://github.com/iLevyTate/StratoSortStack/releases) and compare its checksum
 with the published `checksums-*.sha256` file before proceeding.
 
 ### On Windows
@@ -87,7 +87,7 @@ protected your PC" popup because the publisher is not trusted yet.
 If you open an unsigned or unstapled preview build, Gatekeeper may block it saying "the developer
 cannot be verified".
 
-1. **Right-click** (or Control-click) the StratoSort Core app in your Applications folder
+1. **Right-click** (or Control-click) the StratoSort Stack app in your Applications folder
 2. Select **Open**
 3. Click **Open** again in the warning dialog
 
@@ -105,11 +105,11 @@ xattr -cr /Applications/StratoSort\ Core.app
 ### End Users (No CLI)
 
 <p>
-  <a href="https://github.com/iLevyTate/StratoSortCore/releases"><img src="https://img.shields.io/badge/Download-Latest%20Release-2ea44f?style=for-the-badge" alt="Download Latest Release" /></a>
+  <a href="https://github.com/iLevyTate/StratoSortStack/releases"><img src="https://img.shields.io/badge/Download-Latest%20Release-2ea44f?style=for-the-badge" alt="Download Latest Release" /></a>
 </p>
 
 - **Windows/macOS installers:**
-  [GitHub Releases](https://github.com/iLevyTate/StratoSortCore/releases)
+  [GitHub Releases](https://github.com/iLevyTate/StratoSortStack/releases)
 - **Step-by-step install help:** [Install Guide](docs/INSTALL_GUIDE.md)
 - **How to use the app:** [User Guide](docs/USER_GUIDE.md)
 - **Want to help test?** [Beta Tester Guide](docs/BETA_TESTER_GUIDE.md)
@@ -118,11 +118,11 @@ xattr -cr /Applications/StratoSort\ Core.app
 
 If you run into an issue or have an idea, these links are the fastest way to help:
 
-- **Issues tab:** [View all issues](https://github.com/iLevyTate/StratoSortCore/issues)
+- **Issues tab:** [View all issues](https://github.com/iLevyTate/StratoSortStack/issues)
 - **Report a bug:**
-  [Open bug report template](https://github.com/iLevyTate/StratoSortCore/issues/new?template=bug_report.md)
+  [Open bug report template](https://github.com/iLevyTate/StratoSortStack/issues/new?template=bug_report.md)
 - **Request a feature:**
-  [Open feature request issue](https://github.com/iLevyTate/StratoSortCore/issues/new)
+  [Open feature request issue](https://github.com/iLevyTate/StratoSortStack/issues/new)
 - **Contributing guide:** [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Demo
@@ -152,11 +152,11 @@ Shipped in the app you build from this tree:
 
 > **Note:** The `main` branch may include unreleased work. For the latest stable build, download the
 > newest tagged release from
-> [GitHub Releases](https://github.com/iLevyTate/StratoSortCore/releases).
+> [GitHub Releases](https://github.com/iLevyTate/StratoSortStack/releases).
 
 ## Provenance
 
-StratoSort Core is the successor to the original
+StratoSort Stack is the successor to the original
 [StratoSort Stack (legacy repository)](https://github.com/iLevyTate/elstratosort). This repository
 represents a clean break starting from v2.0.0, focusing on a streamlined, in-process AI
 architecture. For versions prior to v2.0.0, or to view the legacy codebase, please visit the
@@ -198,7 +198,7 @@ original repository.
 
 ## Supported File Types
 
-StratoSort Core currently processes the following file types in the Discover/analysis pipeline:
+StratoSort Stack currently processes the following file types in the Discover/analysis pipeline:
 
 - **Documents & office:** `.pdf`, `.doc`, `.docx`, `.xlsx`, `.pptx`, `.odt`, `.ods`, `.odp`, `.epub`
   (chapters in reading order, title and authors first), `.eml`, `.msg`, `.kml`, `.kmz`, `.ipynb`
@@ -233,7 +233,7 @@ contents analyzed.
 
 ### End Users — One Download, No CLI
 
-1. **[Download the installer](https://github.com/iLevyTate/StratoSortCore/releases)** for Windows,
+1. **[Download the installer](https://github.com/iLevyTate/StratoSortStack/releases)** for Windows,
    macOS, or Linux.
 2. **Run it** — allow the app if your OS shows a security prompt (see
    [Install Guide](docs/INSTALL_GUIDE.md)).
@@ -263,8 +263,8 @@ for step-by-step instructions on both platforms and how to handle unsigned-app p
 Recommended Node version is `20.19.0` (see `.nvmrc`).
 
 ```bash
-git clone https://github.com/iLevyTate/StratoSortCore.git
-cd StratoSortCore
+git clone https://github.com/iLevyTate/StratoSortStack.git
+cd StratoSortStack
 nvm use
 npm ci
 npm run dev
@@ -454,9 +454,9 @@ attribution. Third-party components remain governed by their own licenses (see
 ---
 
 <p align="center">
-  <a href="https://github.com/iLevyTate/StratoSortCore">GitHub</a> •
-  <a href="https://github.com/iLevyTate/StratoSortCore/issues">Report Bug</a> •
-  <a href="https://github.com/iLevyTate/StratoSortCore/issues">Request Feature</a>
+  <a href="https://github.com/iLevyTate/StratoSortStack">GitHub</a> •
+  <a href="https://github.com/iLevyTate/StratoSortStack/issues">Report Bug</a> •
+  <a href="https://github.com/iLevyTate/StratoSortStack/issues">Request Feature</a>
 </p>
 
 <p align="center">

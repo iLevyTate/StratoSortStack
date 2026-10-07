@@ -4,7 +4,7 @@ Platform-specific application icons for packaging. All raster sizes are generate
 
 ## Source logo
 
-**`StratoSortCoreLogo.svg`** — edit this file, then regenerate:
+**`StratoSortStackLogo.svg`** — edit this file, then regenerate:
 
 ```bash
 npm run generate:icons

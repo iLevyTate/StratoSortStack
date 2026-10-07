@@ -1,8 +1,8 @@
 {
-  "name": "stratosort-core",
-  "productName": "StratoSort Core",
+  "name": "stratosort-stack",
+  "productName": "StratoSort Stack",
   "version": "4.0.6",
-  "description": "StratoSort Core - Local AI Document Organizer. Privacy-focused document organization using in-process AI (node-llama-cpp + Orama). No required external services: inference, embeddings, and search run on-device.",
+  "description": "StratoSort Stack - Local AI Document Organizer. Privacy-focused document organization using in-process AI (node-llama-cpp + Orama). No required external services: inference, embeddings, and search run on-device.",
   "keywords": [
     "electron",
     "ai",
@@ -16,20 +16,20 @@
     "vector-search",
     "llm"
   ],
-  "homepage": "https://github.com/iLevyTate/StratoSortCore#readme",
+  "homepage": "https://github.com/iLevyTate/StratoSortStack#readme",
   "bugs": {
-    "url": "https://github.com/iLevyTate/StratoSortCore/issues"
+    "url": "https://github.com/iLevyTate/StratoSortStack/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/iLevyTate/StratoSortCore.git"
+    "url": "git+https://github.com/iLevyTate/StratoSortStack.git"
   },
   "license": "PolyForm-Noncommercial-1.0.0",
   "private": true,
   "author": {
     "name": "Kennedy Applied Sciences, Inc.",
     "email": "contact@kennedyappliedsciences.com",
-    "url": "https://github.com/iLevyTate/StratoSortCore"
+    "url": "https://github.com/iLevyTate/StratoSortStack"
   },
   "main": "./dist/main.js",
   "engines": {

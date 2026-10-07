@@ -1,15 +1,15 @@
 {
-  "productName": "StratoSort Core",
+  "productName": "StratoSort Stack",
   "appId": "com.stratosort.app",
   "copyright": "Copyright © 2026 Kennedy Applied Sciences, Inc.",
   "publish": [
     {
       "provider": "github",
       "owner": "iLevyTate",
-      "repo": "StratoSortCore"
+      "repo": "StratoSortStack"
     }
   ],
-  "artifactName": "StratoSortCore-${version}-${os}-${arch}.${ext}",
+  "artifactName": "StratoSortStack-${version}-${os}-${arch}.${ext}",
   "compression": "maximum",
   "asar": true,
   "electronFuses": {
@@ -88,7 +88,7 @@
     "allowToChangeInstallationDirectory": false,
     "createDesktopShortcut": "always",
     "createStartMenuShortcut": true,
-    "shortcutName": "StratoSort Core",
+    "shortcutName": "StratoSort Stack",
     "runAfterFinish": true,
     "allowElevation": false,
     "installerIcon": "assets/icons/win/icon.ico",
@@ -96,7 +96,7 @@
     "installerHeaderIcon": "assets/icons/win/icon.ico",
     "include": "build/installer-themed.nsh",
     "license": "build/license_en.txt",
-    "artifactName": "StratoSortCore-Setup-${version}.exe"
+    "artifactName": "StratoSortStack-Setup-${version}.exe"
   },
   "mac": {
     "icon": "assets/icons/mac/icon.icns",
@@ -108,7 +108,7 @@
     "target": ["dmg", "zip"]
   },
   "dmg": {
-    "title": "StratoSort Core ${version}",
+    "title": "StratoSort Stack ${version}",
     "icon": "assets/icons/mac/icon.icns",
     "window": {
       "width": 540,

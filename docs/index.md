@@ -1,6 +1,6 @@
 ---
 layout: splash
-title: 'StratoSort Core'
+title: 'StratoSort Stack'
 permalink: /
 header:
   overlay_color: '#000'
@@ -9,7 +9,7 @@ header:
   caption: 'Privacy-first local AI document organizer.'
   actions:
     - label: 'Download Latest Release'
-      url: 'https://github.com/iLevyTate/StratoSortCore/releases'
+      url: 'https://github.com/iLevyTate/StratoSortStack/releases'
       btn_class: 'btn--primary'
     - label: 'Read the Docs'
       url: '/INSTALL_GUIDE.html'

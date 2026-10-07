@@ -24,7 +24,7 @@ const { pressOpenSearchShortcut } = require('./helpers/e2eShortcuts');
 const { ensureAdvancedExperienceMode } = require('./helpers/e2eSettings');
 const { waitForLoadedTextModel, normalizeAnalysisPayload } = require('./helpers/liveLlm');
 
-const REAL_MODELS_DIR = path.join(process.env.APPDATA || '', 'StratoSort Core', 'models');
+const REAL_MODELS_DIR = path.join(process.env.APPDATA || '', 'StratoSort Stack', 'models');
 
 const DOCS = {
   'acme_q3_revenue_report.txt': [

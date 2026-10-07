@@ -10,7 +10,7 @@ header:
   caption: 'Beta Testing Guide'
 ---
 
-# StratoSort Core — Beta Tester Guide
+# StratoSort Stack — Beta Tester Guide
 
 **Goal:** Install the app, use it like you would for real work, then tell us what breaks or feels
 confusing. No coding and no command line required (optional Linux tip below).
@@ -27,11 +27,11 @@ confusing. No coding and no command line required (optional Linux tip below).
 | **4** | Run through the [beta checklist](#beta-test-checklist-one-session) (about 20–45 minutes) |
 | **5** | [Report problems](#report-a-bug) with steps + screenshots + logs if possible             |
 
-**Links:** [Downloads (GitHub Releases)](https://github.com/iLevyTate/StratoSortCore/releases) ·
+**Links:** [Downloads (GitHub Releases)](https://github.com/iLevyTate/StratoSortStack/releases) ·
 [E2E Walkthrough](./E2E_WALKTHROUGH.md) (stills + how-to clip) · [Install Guide](./INSTALL_GUIDE.md)
 (detailed install help) · [Beta Tester Sign-Up](https://forms.gle/uCsCH1mtoa7ZmCfm7) ·
 [Submit beta feedback](https://forms.gle/7VsfvVG2AoPB2U6d8) ·
-[All issues](https://github.com/iLevyTate/StratoSortCore/issues)
+[All issues](https://github.com/iLevyTate/StratoSortStack/issues)
 
 ---
 
@@ -54,7 +54,7 @@ key, entered in **Settings → License**.
 
 ## 1. Download one installer
 
-1. Open **[GitHub Releases](https://github.com/iLevyTate/StratoSortCore/releases)**.
+1. Open **[GitHub Releases](https://github.com/iLevyTate/StratoSortStack/releases)**.
 2. Pick the newest release and find the assets for your OS (current product version is **4.0.6**).
 3. Download **exactly one app installer/package** for your OS (do not download checksum or `.yml`
    files unless asked).
@@ -71,17 +71,17 @@ key, entered in **Settings → License**.
 
 | Your computer                              | Typical filename pattern                  |
 | :----------------------------------------- | :---------------------------------------- |
-| **Windows** (64-bit, preferred)            | `StratoSortCore-Setup-4.0.6.exe`          |
-| **Windows** (portable / alt build)         | `StratoSortCore-4.0.6-win-x64.exe`        |
-| **Mac** (Apple Silicon: M1 / M2 / M3 / M4) | `StratoSortCore-4.0.6-mac-arm64.dmg`      |
-| **Linux** (64-bit)                         | `StratoSortCore-4.0.6-linux-x64.AppImage` |
+| **Windows** (64-bit, preferred)            | `StratoSortStack-Setup-4.0.6.exe`          |
+| **Windows** (portable / alt build)         | `StratoSortStack-4.0.6-win-x64.exe`        |
+| **Mac** (Apple Silicon: M1 / M2 / M3 / M4) | `StratoSortStack-4.0.6-mac-arm64.dmg`      |
+| **Linux** (64-bit)                         | `StratoSortStack-4.0.6-linux-x64.AppImage` |
 
 Filenames on GitHub Releases may include a slightly different arch suffix. Always take the
 **newest** installer for your OS, not an older `2.0.8` drop.
 
 **Notes**
 
-- **Windows:** Prefer `StratoSortCore-Setup-….exe` for normal installs.
+- **Windows:** Prefer `StratoSortStack-Setup-….exe` for normal installs.
 - **Mac:** Apple Silicon and Intel builds both ship. Prefer the `arm64` DMG on M1–M4.
 - **Linux:** Use the `.AppImage` build.
 - **Do not install:** `checksums-*.sha256`, `latest (1).yml`, `latest-mac-arm64.yml`, or `.blockmap`
@@ -102,13 +102,13 @@ Filenames on GitHub Releases may include a slightly different arch suffix. Alway
 
 ### Windows
 
-1. Double-click `StratoSortCore-Setup-….exe`.
+1. Double-click `StratoSortStack-Setup-….exe`.
 2. If **Windows SmartScreen** warns you: click **More info** → **Run anyway** (common for new apps).
-3. Finish the installer, then start **StratoSort Core** from the Start menu or desktop shortcut.
+3. Finish the installer, then start **StratoSort Stack** from the Start menu or desktop shortcut.
 
 ### macOS
 
-1. Open the `.dmg`, drag **StratoSort Core** into **Applications**.
+1. Open the `.dmg`, drag **StratoSort Stack** into **Applications**.
 2. Open the app from Applications. If macOS says it can’t be opened: **Control-click** the app →
    **Open** → **Open** again in the dialog.
 
@@ -117,7 +117,7 @@ Filenames on GitHub Releases may include a slightly different arch suffix. Alway
 1. **If double-click doesn’t run the app:** Right-click the file → **Properties** → **Permissions**
    → turn on **Allow executing file as program** (wording varies by distro). Then double-click
    again.
-2. **Optional (terminal):** `chmod +x StratoSortCore-*.AppImage` then run it.
+2. **Optional (terminal):** `chmod +x StratoSortStack-*.AppImage` then run it.
 
 More detail: [Install Guide](./INSTALL_GUIDE.md).
 
@@ -248,9 +248,9 @@ that becomes your bug report.
 
 **If you prefer manual files**
 
-- **Windows:** `%APPDATA%\StratoSort Core\logs\`
-- **macOS:** `~/Library/Application Support/StratoSort Core/logs/`
-- **Linux:** `~/.config/StratoSort Core/logs/`
+- **Windows:** `%APPDATA%\StratoSort Stack\logs\`
+- **macOS:** `~/Library/Application Support/StratoSort Stack/logs/`
+- **Linux:** `~/.config/StratoSort Stack/logs/`
 
 ### Example (good bug report)
 
@@ -266,7 +266,7 @@ that becomes your bug report.
 
 **Actual:** Empty results and a warning about model mismatch.
 
-**Environment:** Windows 11, StratoSort Core 2.0.x (installer), 32 GB RAM, RTX 3060.
+**Environment:** Windows 11, StratoSort Stack 2.0.x (installer), 32 GB RAM, RTX 3060.
 
 **Attachment:** Exported logs from Settings → Export Logs.
 
@@ -282,5 +282,5 @@ that becomes your bug report.
 
 ## Want to contribute code later?
 
-See **[Contributing](https://github.com/iLevyTate/StratoSortCore/blob/main/CONTRIBUTING.md)**.
+See **[Contributing](https://github.com/iLevyTate/StratoSortStack/blob/main/CONTRIBUTING.md)**.
 Testing today still helps a lot.

@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report a reproducible issue in StratoSort Core
+about: Report a reproducible issue in StratoSort Stack
 title: ''
 labels: ''
 assignees: ''
@@ -31,9 +31,9 @@ assignees: ''
 The easiest route is **Settings → Diagnostics → Export logs**, which produces a redacted archive. If
 you prefer to attach files directly, the log directory is:
 
-- Windows: `%APPDATA%\StratoSort Core\logs\`
-- macOS: `~/Library/Application Support/StratoSort Core/logs/`
-- Linux: `~/.config/StratoSort Core/logs/`
+- Windows: `%APPDATA%\StratoSort Stack\logs\`
+- macOS: `~/Library/Application Support/StratoSort Stack/logs/`
+- Linux: `~/.config/StratoSort Stack/logs/`
 
 **Screenshots / Recordings** If applicable, include UI screenshots or short recordings.
 

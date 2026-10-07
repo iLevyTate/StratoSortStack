@@ -24,7 +24,7 @@ This command will:
 
 ```
 assets/
-├── icons/StratoSortCoreLogo.svg   # Source logo (master file; preferred)
+├── icons/StratoSortStackLogo.svg   # Source logo (master file; preferred)
 ├── stratosort-logo.png      # Legacy raster alias (generated from SVG)
 ├── icons/
 │   ├── win/
@@ -97,7 +97,7 @@ assets/
 ## Design Guidelines
 
 ### Logo Requirements
-- **Source File**: `icons/StratoSortCoreLogo.svg` (legacy PNG fallbacks still supported)
+- **Source File**: `icons/StratoSortStackLogo.svg` (legacy PNG fallbacks still supported)
 - **Minimum Size**: 1024x1024 pixels
 - **Format**: PNG with transparency
 - **Color Space**: sRGB
@@ -122,14 +122,14 @@ If ICO generation fails:
 
 ### Missing Assets
 If assets are missing after generation:
-1. Check source logo exists: `assets/icons/StratoSortCoreLogo.svg`
+1. Check source logo exists: `assets/icons/StratoSortStackLogo.svg`
 2. Ensure sufficient disk space
 3. Run with verbose output: `node scripts/generate-icons.js`
 
 ## CI/CD Integration
 
 GitHub Actions regenerates assets during release builds when a source logo is committed
-(`assets/icons/StratoSortCoreLogo.svg` or legacy PNG). If neither is present, the workflows require the generated assets under
+(`assets/icons/StratoSortStackLogo.svg` or legacy PNG). If neither is present, the workflows require the generated assets under
 `assets/icons/` and `assets/installer/` to already exist.
 
 ## Manual Asset Creation

@@ -40,9 +40,9 @@ function resolveUserDataPath() {
   if (process.env.STRATOSORT_E2E_USER_DATA) {
     return process.env.STRATOSORT_E2E_USER_DATA;
   }
-  // simple-main.js sets `app.name = 'StratoSort Core'` before any getPath call;
+  // simple-main.js sets `app.name = 'StratoSort Stack'` before any getPath call;
   // package.json `productName` is the canonical source for that value.
-  const productName = pkg.productName || pkg.name || 'StratoSort Core';
+  const productName = pkg.productName || pkg.name || 'StratoSort Stack';
   switch (process.platform) {
     case 'win32':
       return path.join(

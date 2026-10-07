@@ -70,7 +70,7 @@ if (!globalThis.__electronMockSingleton) {
         };
         return paths[name] || `/mock/${name}`;
       }),
-      getName: jest.fn(() => 'StratoSort Core'),
+      getName: jest.fn(() => 'StratoSort Stack'),
       getVersion: jest.fn(() => '1.0.0'),
       isPackaged: false,
       quit: jest.fn(),

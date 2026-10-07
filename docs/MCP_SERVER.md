@@ -350,7 +350,7 @@ file onto the analyze dropzone (or wait for Smart Folder Watcher to pick it up),
 
 **Server stuck in `error` state:** Settings shows `lastError` text. Common causes: another process
 holding the port (kill it or restart StratoSort to claim a fresh port), or filesystem lock during
-token rotation. Check the StratoSort log (`%APPDATA%\StratoSort Core\logs\stratosort-*.log` on
+token rotation. Check the StratoSort log (`%APPDATA%\StratoSort Stack\logs\stratosort-*.log` on
 Windows) for the full stack.
 
 ---

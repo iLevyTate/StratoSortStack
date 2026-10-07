@@ -4,7 +4,7 @@
  * Fail fast when release branding assets are unavailable.
  *
  * Release workflows can either:
- * 1. Regenerate packaging assets from the resolved source logo (StratoSortCoreLogo.svg or legacy PNG), or
+ * 1. Regenerate packaging assets from the resolved source logo (StratoSortStackLogo.svg or legacy PNG), or
  * 2. Use pre-committed generated assets under assets/icons and assets/installer.
  *
  * This script verifies that at least one of those paths is available so
@@ -92,7 +92,7 @@ function verifyPlatform(platform) {
 
   throw new Error(
     `Missing ${platform} release branding assets.\n` +
-      `Either commit the generated assets below or add assets/icons/StratoSortCoreLogo.svg (or legacy PNG under assets/) so the workflow can regenerate them.\n` +
+      `Either commit the generated assets below or add assets/icons/StratoSortStackLogo.svg (or legacy PNG under assets/) so the workflow can regenerate them.\n` +
       `${missingList}`
   );
 }

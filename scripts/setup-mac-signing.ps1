@@ -306,7 +306,7 @@ Write-Host "     Label: 'StratoSort GitHub Actions'"
 Write-Host "     Copy the xxxx-xxxx-xxxx-xxxx token NOW (shown once)."
 Write-Host ""
 Write-Host "2. Open GitHub repo secrets:" -ForegroundColor Yellow
-Write-Host "     https://github.com/iLevyTate/StratoSortCore/settings/secrets/actions"
+Write-Host "     https://github.com/iLevyTate/StratoSortStack/settings/secrets/actions"
 Write-Host ""
 Write-Host "3. Add the five secrets:" -ForegroundColor Yellow
 Write-Host ""
@@ -331,7 +331,7 @@ Write-Host "     git tag v<x.y.z>    (use the version from package.json)"
 Write-Host "     git push origin v<x.y.z>"
 Write-Host ""
 Write-Host "5. Watch the workflow run:" -ForegroundColor Yellow
-Write-Host "     https://github.com/iLevyTate/StratoSortCore/actions/workflows/mac-release.yml"
+Write-Host "     https://github.com/iLevyTate/StratoSortStack/actions/workflows/mac-release.yml"
 Write-Host ""
 Write-Host "6. CLEANUP (do this once secrets are saved in GitHub):" -ForegroundColor Yellow
 Write-Host "     Remove-Item -Recurse -Force '$resolvedOut'"

@@ -1,6 +1,6 @@
 # FFmpeg LGPL Runtime — Attribution and Source Offer
 
-StratoSort Core ships an LGPL-3.0-or-later build of FFmpeg in this directory and invokes it
+StratoSort Stack ships an LGPL-3.0-or-later build of FFmpeg in this directory and invokes it
 exclusively via `child_process.spawn()` (no static or dynamic linking into the application).
 Because StratoSort does not link against libavcodec/libavformat/etc., the LGPL "user must be
 able to relink" obligation does not apply, and only the standard LGPL attribution and
@@ -36,7 +36,7 @@ above:
 
 - Windows / Linux: https://github.com/BtbN/FFmpeg-Builds (the BtbN build scripts and source
             mirror for the LGPL binaries bundled on those platforms)
-- macOS:   https://github.com/iLevyTate/StratoSortCore/releases — the release that holds the
+- macOS:   https://github.com/iLevyTate/StratoSortStack/releases — the release that holds the
             self-hosted LGPL binaries also carries `ffmpeg-<version>-source.tar.xz`, the
             exact upstream source tarball those binaries were built from
 

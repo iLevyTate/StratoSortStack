@@ -1,6 +1,6 @@
-# Contributing to StratoSort Core
+# Contributing to StratoSort Stack
 
-Thanks for your interest in StratoSort Core. Please read this document fully before opening an issue
+Thanks for your interest in StratoSort Stack. Please read this document fully before opening an issue
 or a pull request — contributions are accepted under the terms below so ownership stays clear.
 
 ## Table of Contents
@@ -16,7 +16,7 @@ or a pull request — contributions are accepted under the terms below so owners
 
 ## License and Contribution Terms
 
-StratoSort Core is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE). Personal and
+StratoSort Stack is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE). Personal and
 other noncommercial use is free. Commercial use requires a [paid license](docs/COMMERCIAL.md).
 
 We do, however, accept community **bug reports**, **feature requests**, and **pull requests** under
@@ -48,15 +48,15 @@ space — issues, pull requests, discussions — you agree to abide by it.
 
 ## Reporting Issues
 
-Open a GitHub issue: <https://github.com/iLevyTate/StratoSortCore/issues>. Include:
+Open a GitHub issue: <https://github.com/iLevyTate/StratoSortStack/issues>. Include:
 
 - Clear reproduction steps
 - Expected vs actual behavior
 - App version and platform (you can grab this from **Settings → About → Copy Version Info**)
 - Relevant logs (the directory is `app.getPath('userData')/logs/`, which resolves to
-  `%APPDATA%\StratoSort Core\logs\` on Windows,
-  `~/Library/Application Support/StratoSort Core/logs/` on macOS, and
-  `~/.config/StratoSort Core/logs/` on Linux). Use **Settings → Diagnostics → Export Logs** for a
+  `%APPDATA%\StratoSort Stack\logs\` on Windows,
+  `~/Library/Application Support/StratoSort Stack/logs/` on macOS, and
+  `~/.config/StratoSort Stack/logs/` on Linux). Use **Settings → Diagnostics → Export Logs** for a
   redacted archive suitable for sharing.
 
 From **Settings → About** you can use **Copy Version Info** to grab your runtime details, then open
@@ -80,8 +80,8 @@ Do **not** report security vulnerabilities through public GitHub issues. Follow 
 ### Setup
 
 ```powershell
-git clone https://github.com/iLevyTate/StratoSortCore.git
-cd StratoSortCore
+git clone https://github.com/iLevyTate/StratoSortStack.git
+cd StratoSortStack
 npm ci
 npm run dev
 ```
@@ -128,5 +128,5 @@ See `docs/TESTING.md` for test patterns, priorities, and the manual QA checklist
 ---
 
 <p align="center">
-  Thank you for helping make StratoSort Core better!
+  Thank you for helping make StratoSort Stack better!
 </p>

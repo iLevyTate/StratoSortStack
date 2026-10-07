@@ -63,7 +63,7 @@ function copyBuildOutput(targetDir, leg) {
     if (
       leg === 'arm64' &&
       new RegExp(
-        `^StratoSortCore-${packageVersion.replace(/\./g, '\\.')}-win-x64\\.exe$`,
+        `^StratoSortStack-${packageVersion.replace(/\./g, '\\.')}-win-x64\\.exe$`,
         'i'
       ).test(name)
     ) {
@@ -95,7 +95,7 @@ function mergeIntoCombined() {
       if (
         leg === 'arm64' &&
         new RegExp(
-          `^StratoSortCore-${packageVersion.replace(/\./g, '\\.')}-win-x64\\.exe$`,
+          `^StratoSortStack-${packageVersion.replace(/\./g, '\\.')}-win-x64\\.exe$`,
           'i'
         ).test(name)
       ) {

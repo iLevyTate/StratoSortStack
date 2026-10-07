@@ -95,9 +95,9 @@ describe('check-running-instance dev guard', () => {
       expect(resolveUserDataPath()).toBe(tmpDir);
     });
 
-    it('resolves to a "StratoSort Core" directory by default', () => {
+    it('resolves to a "StratoSort Stack" directory by default', () => {
       delete process.env.STRATOSORT_E2E_USER_DATA;
-      expect(resolveUserDataPath().endsWith(path.join('', 'StratoSort Core'))).toBe(true);
+      expect(resolveUserDataPath().endsWith(path.join('', 'StratoSort Stack'))).toBe(true);
     });
   });
 });

@@ -27,7 +27,7 @@
  *             (ffmpeg-mac-{x64,arm64}.zip) plus the exact upstream source
  *             tarball (ffmpeg-<version>-source.tar.xz, the LGPL §6 offer)
  *             to a release tagged STRATOSORT_FFMPEG_TAG (default
- *             "ffmpeg-lgpl-latest") on iLevyTate/StratoSortCore. Override the
+ *             "ffmpeg-lgpl-latest") on iLevyTate/StratoSortStack. Override the
  *             entire URL via STRATOSORT_FFMPEG_URL when working with a fork.
  *             The two common public mac builders (evermeet.cx and
  *             martin-riedl.de) both ship GPL FFmpeg with x264/x265 — fatal for
@@ -192,7 +192,7 @@ function getAssetConfig() {
       tag: macTag,
       assetName,
       archiveType: 'zip',
-      url: `https://github.com/iLevyTate/StratoSortCore/releases/download/${macTag}/${assetName}`
+      url: `https://github.com/iLevyTate/StratoSortStack/releases/download/${macTag}/${assetName}`
     };
   }
 

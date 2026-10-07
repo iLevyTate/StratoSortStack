@@ -2,7 +2,7 @@
 
 **Effective date: 2026-09-26**
 
-StratoSort Core ("StratoSort", "the application", "we") is built and distributed by Kennedy Applied
+StratoSort Stack ("StratoSort", "the application", "we") is built and distributed by Kennedy Applied
 Sciences, Inc. ("we", "us"). This document explains what data StratoSort handles, where it lives,
 and your rights with respect to it.
 
@@ -48,9 +48,9 @@ All persistent state lives under your operating system's standard application da
 
 | OS      | Application data directory                       |
 | ------- | ------------------------------------------------ |
-| Windows | `%APPDATA%\StratoSort Core\`                     |
-| macOS   | `~/Library/Application Support/StratoSort Core/` |
-| Linux   | `~/.config/StratoSort Core/`                     |
+| Windows | `%APPDATA%\StratoSort Stack\`                     |
+| macOS   | `~/Library/Application Support/StratoSort Stack/` |
+| Linux   | `~/.config/StratoSort Stack/`                     |
 
 Inside this directory you will find:
 
@@ -203,10 +203,10 @@ take effect.
 For privacy-related questions, including data-subject requests:
 
 - General contact: open an issue at
-  [github.com/iLevyTate/StratoSortCore/issues](https://github.com/iLevyTate/StratoSortCore/issues).
+  [github.com/iLevyTate/StratoSortStack/issues](https://github.com/iLevyTate/StratoSortStack/issues).
 - For sensitive disclosures (security issues that touch privacy), follow the process in
   [SECURITY.md](SECURITY.md) — use GitHub Security Advisories on the repository's Security tab.
 
 ---
 
-_Document version: 1.2 · Effective 2026-09-26 · StratoSort Core 4.0.6_
+_Document version: 1.2 · Effective 2026-09-26 · StratoSort Stack 4.0.6_

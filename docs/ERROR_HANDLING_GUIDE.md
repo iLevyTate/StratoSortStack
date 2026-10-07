@@ -18,7 +18,7 @@ header:
 ## Overview
 
 This guide provides comprehensive patterns and best practices for error handling across the
-StratoSort Core codebase. It consolidates all error handling utilities and provides clear guidance
+StratoSort Stack codebase. It consolidates all error handling utilities and provides clear guidance
 on when to use each pattern.
 
 ---

@@ -78,8 +78,8 @@ describe('systemAnalytics.collectMetrics recentErrors sanitization', () => {
       'Error: ...\n    at readCreds (C:\\Users\\benja\\project\\src\\secrets.js:42:9)';
     systemAnalytics.recordFailure(failure);
     systemAnalytics.recordFailure(
-      Object.assign(new Error('boom /home/ubuntu/.config/StratoSort Core/settings.json'), {
-        stack: 'Error\n  at secret (/home/ubuntu/.config/StratoSort Core/settings.js:1:1)'
+      Object.assign(new Error('boom /home/ubuntu/.config/StratoSort Stack/settings.json'), {
+        stack: 'Error\n  at secret (/home/ubuntu/.config/StratoSort Stack/settings.js:1:1)'
       })
     );
 

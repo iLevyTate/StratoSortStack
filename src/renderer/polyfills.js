@@ -42,18 +42,18 @@ function describeLogsPath() {
   try {
     var ua = (navigator && navigator.userAgent) || '';
     if (/Windows/i.test(ua)) {
-      return '%APPDATA%\\StratoSort Core\\logs\\';
+      return '%APPDATA%\\StratoSort Stack\\logs\\';
     }
     if (/Mac OS|Macintosh/i.test(ua)) {
-      return '~/Library/Application Support/StratoSort Core/logs/';
+      return '~/Library/Application Support/StratoSort Stack/logs/';
     }
     if (/Linux/i.test(ua)) {
-      return '~/.config/StratoSort Core/logs/';
+      return '~/.config/StratoSort Stack/logs/';
     }
   } catch {
     // ignore — fall through to generic hint
   }
-  return 'the app data folder (StratoSort Core/logs/)';
+  return 'the app data folder (StratoSort Stack/logs/)';
 }
 
 // Splash safety timeout: if the React app doesn't remove the splash within 15 seconds,
