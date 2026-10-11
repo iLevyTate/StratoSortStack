@@ -1556,7 +1556,9 @@ async function run() {
           ).every(Boolean)
         : false;
       if (!allListed) {
-        console.warn(`[tour] expected ${workspace.files.length} dropped names; not all visible yet`);
+        console.warn(
+          `[tour] expected ${workspace.files.length} dropped names; not all visible yet`
+        );
       }
       if (listed) await moveTo(window, droppedName, 'discover-drop');
       else await markAction(window, 'discover-drop');

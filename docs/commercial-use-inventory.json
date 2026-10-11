@@ -1,12 +1,12 @@
 {
-  "generatedAt": "2026-10-02T23:01:46.826Z",
+  "generatedAt": "2026-10-11T02:42:42.978Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
     "detectedLicense": "PolyForm Noncommercial 1.0.0 (commercial license sold separately)"
   },
   "dependencySummary": {
-    "allowed": 2327,
+    "allowed": 2326,
     "review_required": 31,
     "high_risk": 0,
     "unknown": 0
@@ -5711,7 +5711,7 @@
     },
     {
       "packageName": "@electron/rebuild",
-      "version": "4.2.0",
+      "version": "4.2.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -6131,7 +6131,7 @@
     },
     {
       "packageName": "@img/sharp-darwin-arm64",
-      "version": "0.35.4",
+      "version": "0.35.5",
       "license": "Apache-2.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -6141,7 +6141,7 @@
     },
     {
       "packageName": "@img/sharp-darwin-x64",
-      "version": "0.35.4",
+      "version": "0.35.5",
       "license": "Apache-2.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -6151,7 +6151,7 @@
     },
     {
       "packageName": "@img/sharp-freebsd-wasm32",
-      "version": "0.35.4",
+      "version": "0.35.5",
       "license": "Apache-2.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -6161,7 +6161,7 @@
     },
     {
       "packageName": "@img/sharp-libvips-darwin-arm64",
-      "version": "1.3.3",
+      "version": "1.3.4",
       "license": "LGPL-3.0-or-later",
       "riskLevel": "review_required",
       "directRuntime": false,
@@ -6171,7 +6171,7 @@
     },
     {
       "packageName": "@img/sharp-libvips-darwin-x64",
-      "version": "1.3.3",
+      "version": "1.3.4",
       "license": "LGPL-3.0-or-later",
       "riskLevel": "review_required",
       "directRuntime": false,
@@ -6181,7 +6181,7 @@
     },
     {
       "packageName": "@img/sharp-libvips-linux-arm",
-      "version": "1.3.3",
+      "version": "1.3.4",
       "license": "LGPL-3.0-or-later",
       "riskLevel": "review_required",
       "directRuntime": false,
@@ -6191,7 +6191,7 @@
     },
     {
       "packageName": "@img/sharp-libvips-linux-arm64",
-      "version": "1.3.3",
+      "version": "1.3.4",
       "license": "LGPL-3.0-or-later",
       "riskLevel": "review_required",
       "directRuntime": false,
@@ -6201,7 +6201,7 @@
     },
     {
       "packageName": "@img/sharp-libvips-linux-ppc64",
-      "version": "1.3.3",
+      "version": "1.3.4",
       "license": "LGPL-3.0-or-later",
       "riskLevel": "review_required",
       "directRuntime": false,
@@ -6211,7 +6211,7 @@
     },
     {
       "packageName": "@img/sharp-libvips-linux-riscv64",
-      "version": "1.3.3",
+      "version": "1.3.4",
       "license": "LGPL-3.0-or-later",
       "riskLevel": "review_required",
       "directRuntime": false,
@@ -6221,7 +6221,7 @@
     },
     {
       "packageName": "@img/sharp-libvips-linux-s390x",
-      "version": "1.3.3",
+      "version": "1.3.4",
       "license": "LGPL-3.0-or-later",
       "riskLevel": "review_required",
       "directRuntime": false,
@@ -6231,7 +6231,7 @@
     },
     {
       "packageName": "@img/sharp-libvips-linux-x64",
-      "version": "1.3.3",
+      "version": "1.3.4",
       "license": "LGPL-3.0-or-later",
       "riskLevel": "review_required",
       "directRuntime": false,
@@ -6241,7 +6241,7 @@
     },
     {
       "packageName": "@img/sharp-libvips-linuxmusl-arm64",
-      "version": "1.3.3",
+      "version": "1.3.4",
       "license": "LGPL-3.0-or-later",
       "riskLevel": "review_required",
       "directRuntime": false,
@@ -6251,7 +6251,7 @@
     },
     {
       "packageName": "@img/sharp-libvips-linuxmusl-x64",
-      "version": "1.3.3",
+      "version": "1.3.4",
       "license": "LGPL-3.0-or-later",
       "riskLevel": "review_required",
       "directRuntime": false,
@@ -6261,7 +6261,7 @@
     },
     {
       "packageName": "@img/sharp-linux-arm",
-      "version": "0.35.4",
+      "version": "0.35.5",
       "license": "Apache-2.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -6271,7 +6271,7 @@
     },
     {
       "packageName": "@img/sharp-linux-arm64",
-      "version": "0.35.4",
+      "version": "0.35.5",
       "license": "Apache-2.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -6281,7 +6281,7 @@
     },
     {
       "packageName": "@img/sharp-linux-ppc64",
-      "version": "0.35.4",
+      "version": "0.35.5",
       "license": "Apache-2.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -6291,7 +6291,7 @@
     },
     {
       "packageName": "@img/sharp-linux-riscv64",
-      "version": "0.35.4",
+      "version": "0.35.5",
       "license": "Apache-2.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -6301,7 +6301,7 @@
     },
     {
       "packageName": "@img/sharp-linux-s390x",
-      "version": "0.35.4",
+      "version": "0.35.5",
       "license": "Apache-2.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -6311,7 +6311,7 @@
     },
     {
       "packageName": "@img/sharp-linux-x64",
-      "version": "0.35.4",
+      "version": "0.35.5",
       "license": "Apache-2.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -6321,7 +6321,7 @@
     },
     {
       "packageName": "@img/sharp-linuxmusl-arm64",
-      "version": "0.35.4",
+      "version": "0.35.5",
       "license": "Apache-2.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -6331,7 +6331,7 @@
     },
     {
       "packageName": "@img/sharp-linuxmusl-x64",
-      "version": "0.35.4",
+      "version": "0.35.5",
       "license": "Apache-2.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -6341,7 +6341,7 @@
     },
     {
       "packageName": "@img/sharp-wasm32",
-      "version": "0.35.4",
+      "version": "0.35.5",
       "license": "Apache-2.0 AND LGPL-3.0-or-later AND MIT",
       "riskLevel": "review_required",
       "directRuntime": false,
@@ -6361,7 +6361,7 @@
     },
     {
       "packageName": "@img/sharp-webcontainers-wasm32",
-      "version": "0.35.4",
+      "version": "0.35.5",
       "license": "Apache-2.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -6371,7 +6371,7 @@
     },
     {
       "packageName": "@img/sharp-win32-arm64",
-      "version": "0.35.4",
+      "version": "0.35.5",
       "license": "Apache-2.0 AND LGPL-3.0-or-later",
       "riskLevel": "review_required",
       "directRuntime": false,
@@ -6381,7 +6381,7 @@
     },
     {
       "packageName": "@img/sharp-win32-ia32",
-      "version": "0.35.4",
+      "version": "0.35.5",
       "license": "Apache-2.0 AND LGPL-3.0-or-later",
       "riskLevel": "review_required",
       "directRuntime": false,
@@ -6391,7 +6391,7 @@
     },
     {
       "packageName": "@img/sharp-win32-x64",
-      "version": "0.35.4",
+      "version": "0.35.5",
       "license": "Apache-2.0 AND LGPL-3.0-or-later",
       "riskLevel": "review_required",
       "directRuntime": false,
@@ -7061,7 +7061,7 @@
     },
     {
       "packageName": "@jsonjoy.com/fs-core",
-      "version": "4.78.1",
+      "version": "4.80.0",
       "license": "Apache-2.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7071,7 +7071,7 @@
     },
     {
       "packageName": "@jsonjoy.com/fs-fsa",
-      "version": "4.78.1",
+      "version": "4.80.0",
       "license": "Apache-2.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7081,7 +7081,7 @@
     },
     {
       "packageName": "@jsonjoy.com/fs-node",
-      "version": "4.78.1",
+      "version": "4.80.0",
       "license": "Apache-2.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7091,7 +7091,7 @@
     },
     {
       "packageName": "@jsonjoy.com/fs-node-builtins",
-      "version": "4.78.1",
+      "version": "4.80.0",
       "license": "Apache-2.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7101,7 +7101,7 @@
     },
     {
       "packageName": "@jsonjoy.com/fs-node-to-fsa",
-      "version": "4.78.1",
+      "version": "4.80.0",
       "license": "Apache-2.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7111,7 +7111,7 @@
     },
     {
       "packageName": "@jsonjoy.com/fs-node-utils",
-      "version": "4.78.1",
+      "version": "4.80.0",
       "license": "Apache-2.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7121,7 +7121,7 @@
     },
     {
       "packageName": "@jsonjoy.com/fs-print",
-      "version": "4.78.1",
+      "version": "4.80.0",
       "license": "Apache-2.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7131,7 +7131,7 @@
     },
     {
       "packageName": "@jsonjoy.com/fs-snapshot",
-      "version": "4.78.1",
+      "version": "4.80.0",
       "license": "Apache-2.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7341,7 +7341,7 @@
     },
     {
       "packageName": "@modelcontextprotocol/sdk",
-      "version": "1.30.0",
+      "version": "1.32.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -7381,7 +7381,7 @@
     },
     {
       "packageName": "@napi-rs/canvas",
-      "version": "1.0.9",
+      "version": "1.0.10",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -7391,7 +7391,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-android-arm64",
-      "version": "1.0.9",
+      "version": "1.0.10",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7401,7 +7401,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-darwin-arm64",
-      "version": "1.0.9",
+      "version": "1.0.10",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7411,7 +7411,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-darwin-x64",
-      "version": "1.0.9",
+      "version": "1.0.10",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7421,7 +7421,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-linux-arm-gnueabihf",
-      "version": "1.0.9",
+      "version": "1.0.10",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7431,7 +7431,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-linux-arm64-gnu",
-      "version": "1.0.9",
+      "version": "1.0.10",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7441,7 +7441,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-linux-arm64-musl",
-      "version": "1.0.9",
+      "version": "1.0.10",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7451,7 +7451,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-linux-riscv64-gnu",
-      "version": "1.0.9",
+      "version": "1.0.10",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7461,7 +7461,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-linux-x64-gnu",
-      "version": "1.0.9",
+      "version": "1.0.10",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7471,7 +7471,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-linux-x64-musl",
-      "version": "1.0.9",
+      "version": "1.0.10",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7481,7 +7481,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-win32-arm64-msvc",
-      "version": "1.0.9",
+      "version": "1.0.10",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7491,7 +7491,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-win32-x64-msvc",
-      "version": "1.0.9",
+      "version": "1.0.10",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7711,7 +7711,7 @@
     },
     {
       "packageName": "@node-llama-cpp/linux-arm64",
-      "version": "3.21.1",
+      "version": "3.22.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7721,7 +7721,7 @@
     },
     {
       "packageName": "@node-llama-cpp/linux-armv7l",
-      "version": "3.21.1",
+      "version": "3.22.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7731,7 +7731,7 @@
     },
     {
       "packageName": "@node-llama-cpp/linux-riscv64",
-      "version": "3.21.1",
+      "version": "3.22.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7741,7 +7741,7 @@
     },
     {
       "packageName": "@node-llama-cpp/linux-x64",
-      "version": "3.21.1",
+      "version": "3.22.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7751,7 +7751,7 @@
     },
     {
       "packageName": "@node-llama-cpp/linux-x64-cuda",
-      "version": "3.21.1",
+      "version": "3.22.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7761,7 +7761,7 @@
     },
     {
       "packageName": "@node-llama-cpp/linux-x64-cuda-ext",
-      "version": "3.21.1",
+      "version": "3.22.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7771,7 +7771,7 @@
     },
     {
       "packageName": "@node-llama-cpp/linux-x64-vulkan",
-      "version": "3.21.1",
+      "version": "3.22.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7781,7 +7781,7 @@
     },
     {
       "packageName": "@node-llama-cpp/mac-arm64-metal",
-      "version": "3.21.1",
+      "version": "3.22.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7791,7 +7791,7 @@
     },
     {
       "packageName": "@node-llama-cpp/mac-x64",
-      "version": "3.21.1",
+      "version": "3.22.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7801,7 +7801,7 @@
     },
     {
       "packageName": "@node-llama-cpp/win-arm64",
-      "version": "3.21.1",
+      "version": "3.22.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7811,7 +7811,7 @@
     },
     {
       "packageName": "@node-llama-cpp/win-x64",
-      "version": "3.21.1",
+      "version": "3.22.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7821,7 +7821,7 @@
     },
     {
       "packageName": "@node-llama-cpp/win-x64-cuda",
-      "version": "3.21.1",
+      "version": "3.22.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7831,7 +7831,7 @@
     },
     {
       "packageName": "@node-llama-cpp/win-x64-cuda-ext",
-      "version": "3.21.1",
+      "version": "3.22.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7841,7 +7841,7 @@
     },
     {
       "packageName": "@node-llama-cpp/win-x64-vulkan",
-      "version": "3.21.1",
+      "version": "3.22.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -8521,7 +8521,7 @@
     },
     {
       "packageName": "@reduxjs/toolkit",
-      "version": "2.12.0",
+      "version": "2.13.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -8631,7 +8631,7 @@
     },
     {
       "packageName": "@simple-git/args-pathspec",
-      "version": "1.0.3",
+      "version": "1.0.4",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -8641,7 +8641,7 @@
     },
     {
       "packageName": "@simple-git/argv-parser",
-      "version": "1.1.1",
+      "version": "2.0.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -10027,7 +10027,7 @@
     },
     {
       "packageName": "@types/d3-selection",
-      "version": "3.0.11",
+      "version": "3.0.12",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -10049,7 +10049,7 @@
     },
     {
       "packageName": "@types/d3-zoom",
-      "version": "3.0.8",
+      "version": "3.0.9",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -10746,7 +10746,7 @@
     },
     {
       "packageName": "@uwdata/mosaic-core",
-      "version": "0.31.0",
+      "version": "0.32.0",
       "license": "BSD-3-Clause",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -10757,7 +10757,7 @@
     },
     {
       "packageName": "@uwdata/mosaic-sql",
-      "version": "0.31.0",
+      "version": "0.32.0",
       "license": "BSD-3-Clause",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -10948,7 +10948,7 @@
     },
     {
       "packageName": "@xyflow/react",
-      "version": "12.11.6",
+      "version": "12.12.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -10959,7 +10959,7 @@
     },
     {
       "packageName": "@xyflow/system",
-      "version": "0.0.82",
+      "version": "0.0.83",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -11803,16 +11803,6 @@
     {
       "packageName": "bl/node_modules/readable-stream",
       "version": "3.6.2",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": false,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "bluebird",
-      "version": "3.4.7",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -13891,7 +13881,7 @@
     },
     {
       "packageName": "eslint",
-      "version": "10.11.0",
+      "version": "10.12.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -14814,7 +14804,7 @@
     },
     {
       "packageName": "framer-motion",
-      "version": "13.4.0",
+      "version": "14.0.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -15078,7 +15068,7 @@
     },
     {
       "packageName": "globals",
-      "version": "17.12.0",
+      "version": "17.13.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -17576,7 +17566,7 @@
     },
     {
       "packageName": "knip",
-      "version": "6.37.0",
+      "version": "6.40.0",
       "license": "ISC",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -17656,7 +17646,7 @@
     },
     {
       "packageName": "lifecycle-utils",
-      "version": "4.4.1",
+      "version": "4.5.2",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -17806,7 +17796,7 @@
     },
     {
       "packageName": "lint-staged",
-      "version": "17.5.1",
+      "version": "17.6.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -17968,7 +17958,7 @@
     },
     {
       "packageName": "lucide-react",
-      "version": "1.47.0",
+      "version": "1.52.0",
       "license": "ISC",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -18029,30 +18019,10 @@
     },
     {
       "packageName": "mammoth",
-      "version": "1.12.3",
+      "version": "1.13.0",
       "license": "BSD-2-Clause",
       "riskLevel": "allowed",
       "directRuntime": true,
-      "directDev": false,
-      "lockfileDev": false,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "mammoth/node_modules/argparse",
-      "version": "1.0.10",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": false,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "mammoth/node_modules/sprintf-js",
-      "version": "1.0.3",
-      "license": "BSD-3-Clause",
-      "riskLevel": "allowed",
-      "directRuntime": false,
       "directDev": false,
       "lockfileDev": false,
       "lockfileOptional": false
@@ -18110,7 +18080,7 @@
     },
     {
       "packageName": "memfs",
-      "version": "4.78.1",
+      "version": "4.80.0",
       "license": "Apache-2.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -18390,7 +18360,7 @@
     },
     {
       "packageName": "motion-dom",
-      "version": "13.3.0",
+      "version": "14.0.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -18401,7 +18371,7 @@
     },
     {
       "packageName": "motion-utils",
-      "version": "13.3.0",
+      "version": "14.0.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -18632,7 +18602,7 @@
     },
     {
       "packageName": "node-llama-cpp",
-      "version": "3.21.1",
+      "version": "3.22.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -19299,7 +19269,7 @@
       "riskLevel": "allowed",
       "directRuntime": false,
       "directDev": false,
-      "lockfileDev": false,
+      "lockfileDev": true,
       "lockfileOptional": false
     },
     {
@@ -19364,7 +19334,7 @@
     },
     {
       "packageName": "pdfjs-dist",
-      "version": "6.3.289",
+      "version": "6.4.299",
       "license": "Apache-2.0",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -19414,7 +19384,7 @@
     },
     {
       "packageName": "pino",
-      "version": "10.3.1",
+      "version": "10.4.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -19434,11 +19404,21 @@
     },
     {
       "packageName": "pino-pretty",
-      "version": "13.1.3",
+      "version": "13.2.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
       "directDev": true,
+      "lockfileDev": true,
+      "lockfileOptional": false
+    },
+    {
+      "packageName": "pino-pretty/node_modules/sonic-boom",
+      "version": "5.0.1",
+      "license": "MIT",
+      "riskLevel": "allowed",
+      "directRuntime": false,
+      "directDev": false,
       "lockfileDev": true,
       "lockfileOptional": false
     },
@@ -19455,6 +19435,16 @@
     {
       "packageName": "pino-std-serializers",
       "version": "7.1.0",
+      "license": "MIT",
+      "riskLevel": "allowed",
+      "directRuntime": false,
+      "directDev": false,
+      "lockfileDev": false,
+      "lockfileOptional": false
+    },
+    {
+      "packageName": "pino/node_modules/real-require",
+      "version": "1.0.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -19644,7 +19634,7 @@
     },
     {
       "packageName": "postal-mime",
-      "version": "4.0.2",
+      "version": "4.0.4",
       "license": "MIT-0",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -19654,7 +19644,7 @@
     },
     {
       "packageName": "postcss",
-      "version": "8.5.28",
+      "version": "8.5.29",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -20134,7 +20124,7 @@
     },
     {
       "packageName": "prettier",
-      "version": "3.9.8",
+      "version": "3.9.9",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -20275,7 +20265,7 @@
     },
     {
       "packageName": "proxy-addr",
-      "version": "2.0.7",
+      "version": "2.0.8",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -20521,7 +20511,7 @@
     },
     {
       "packageName": "react-window",
-      "version": "2.3.2",
+      "version": "2.3.3",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -21234,7 +21224,7 @@
     },
     {
       "packageName": "sharp",
-      "version": "0.35.4",
+      "version": "0.35.5",
       "license": "Apache-2.0",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -21348,7 +21338,7 @@
     },
     {
       "packageName": "simple-git",
-      "version": "3.36.0",
+      "version": "4.0.2",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -21448,7 +21438,7 @@
     },
     {
       "packageName": "source-map-js",
-      "version": "1.2.1",
+      "version": "1.2.2",
       "license": "BSD-3-Clause",
       "riskLevel": "allowed",
       "directRuntime": false,
