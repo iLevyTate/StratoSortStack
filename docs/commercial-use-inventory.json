@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-11T02:07:43.768Z",
+  "generatedAt": "2026-10-11T02:42:42.978Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
@@ -14804,7 +14804,7 @@
     },
     {
       "packageName": "framer-motion",
-      "version": "13.4.0",
+      "version": "14.0.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -18360,7 +18360,7 @@
     },
     {
       "packageName": "motion-dom",
-      "version": "13.3.0",
+      "version": "14.0.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -18371,7 +18371,7 @@
     },
     {
       "packageName": "motion-utils",
-      "version": "13.3.0",
+      "version": "14.0.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
