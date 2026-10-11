@@ -3,7 +3,7 @@
  */
 'use strict';
 import React from 'react';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, cleanup } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { configureStore } from '@reduxjs/toolkit';
 import '@testing-library/jest-dom';
@@ -100,7 +100,13 @@ describe('AIProviderConfigModal', () => {
     // Left pending, that work landed during the NEXT test, where React then
     // dropped that test's setSaving(false) and its DOM froze on the stale
     // "Saving..." label, with no warning and no error to point at it.
-    await act(async () => {});
+    // An empty act() tick only drains microtasks and still froze about half
+    // of full-file runs, so wait out a macrotask inside act and unmount here,
+    // while the IPC mock still exists, rather than in RTL's later auto-cleanup.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    cleanup();
     delete global.window.electronAPI;
     window.localStorage.clear();
   });
