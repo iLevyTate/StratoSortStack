@@ -745,16 +745,21 @@ function truncateText(text) {
 /**
  * Coerce an officeparser parse result into plain text.
  *
- * officeparser v6+ resolves to an `OfficeParserAST` object exposing `toText()`
- * (no `.text` property and no `parseOfficeAsync`), whereas v5 resolved to a
- * plain string. This keeps the extractor agnostic to either shape.
+ * officeparser v8 resolves to an AST whose async `to('text')` yields
+ * `{ value }`; v6-v7 exposed a synchronous `toText()` instead (no `.text`
+ * property and no `parseOfficeAsync`), and v5 resolved to a plain string.
+ * This keeps the extractor agnostic to every shape.
  *
  * @param {any} result - Value resolved by parseOffice/parseOfficeAsync.
- * @returns {string} Plain-text representation, or '' when none is available.
+ * @returns {Promise<string>} Plain-text representation, or '' when none is available.
  */
-function officeResultToText(result) {
+async function officeResultToText(result) {
   if (typeof result === 'string') return result;
   if (!result || typeof result !== 'object') return '';
+  if (typeof result.to === 'function') {
+    const generated = await result.to('text');
+    return typeof generated?.value === 'string' ? generated.value : '';
+  }
   if (typeof result.toText === 'function') {
     const text = result.toText();
     return typeof text === 'string' ? text : '';
