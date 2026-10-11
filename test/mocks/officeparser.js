@@ -1,10 +1,11 @@
 /**
  * Mock for the `officeparser` package.
  *
- * officeparser v6+ exposes `parseOffice(filePath)` which resolves to an
- * `OfficeParserAST` object (`{ type, metadata, content, attachments, toText() }`).
+ * officeparser v8 exposes `parseOffice(filePath)` which resolves to an
+ * `OfficeParserAST` object (`{ type, metadata, content, attachments, to() }`).
  * It does NOT expose `parseOfficeAsync` and the AST has no `.text` property —
- * plain text is obtained via `ast.toText()`. The mock mirrors that contract so
+ * plain text is obtained via `(await ast.to('text')).value` (v6-v7 used a
+ * synchronous `ast.toText()` instead). The mock mirrors the v8 contract so
  * tests exercise the same code path as production.
  */
 
@@ -20,7 +21,7 @@ const mockOfficeParser = {
     },
     content: [{ type: 'paragraph', text: MOCK_TEXT }],
     attachments: [],
-    toText: () => MOCK_TEXT
+    to: async (destination) => ({ value: destination === 'text' ? MOCK_TEXT : '', messages: [] })
   }),
 
   terminateOcr: jest.fn().mockResolvedValue(undefined)

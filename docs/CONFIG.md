@@ -168,12 +168,13 @@ These settings are configurable via **Settings > Performance > Processing limits
 
 ### Feature Flags
 
-| Variable                   | Default  | Description                                                                                                         |
-| :------------------------- | :------- | :------------------------------------------------------------------------------------------------------------------ |
-| `STRATOSORT_DEBUG`         | `0`      | Enable debug mode with verbose logging                                                                              |
-| `STRATOSORT_REDACT_PATHS`  | `0`      | Redact file/folder paths in the UI (demo-safe)                                                                      |
-| `STRATOSORT_TOUR_HEADED`   | `0`      | Show the Electron window while `npm run tour:record` captures the product tour (`scripts/record-product-tour.js`)   |
-| `STRATOSORT_GRAPH_ENABLED` | `1` / on | Master toggle for Knowledge Graph / advanced graph UI (`src/shared/featureFlags.js`; set `0` or `false` to disable) |
+| Variable                   | Default  | Description                                                                                                                                                                   |
+| :------------------------- | :------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `STRATOSORT_DEBUG`         | `0`      | Enable debug mode with verbose logging                                                                                                                                        |
+| `STRATOSORT_REDACT_PATHS`  | `0`      | Redact file/folder paths in the UI (demo-safe)                                                                                                                                |
+| `STRATOSORT_TOUR_HEADED`   | `0`      | Show the Electron window while `npm run tour:record` captures the product tour (`scripts/record-product-tour.js`)                                                             |
+| `STRATOSORT_TOUR_ATLAS`    | `0`      | Set `1` to add the Atlas map shot to a non-`library` tour take. Atlas needs WebGPU and a library of a few hundred files, so the default six-file highlight tour leaves it out |
+| `STRATOSORT_GRAPH_ENABLED` | `1` / on | Master toggle for Knowledge Graph / advanced graph UI (`src/shared/featureFlags.js`; set `0` or `false` to disable)                                                           |
 
 Other `STRATOSORT_GRAPH_*` names may appear in older docs; they are **not** read by the codebase.
 Graph behavior besides this master toggle is controlled in-app (experience mode and settings).

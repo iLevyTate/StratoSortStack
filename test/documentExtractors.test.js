@@ -906,9 +906,31 @@ describe('documentExtractors', () => {
       expect(result).toBe('Presentation content');
     });
 
-    test('should extract text from an officeparser AST result', async () => {
+    test('should extract text from an officeparser v8 AST result', async () => {
       const officeParser = require('officeparser');
-      // officeparser v6+ resolves to an OfficeParserAST exposing toText().
+      // officeparser v8 dropped toText(); text comes from (await ast.to('text')).value.
+      const to = jest.fn(async (destination) => ({
+        value: destination === 'text' ? 'Presentation content' : '',
+        messages: []
+      }));
+      officeParser.parseOffice.mockResolvedValue({
+        type: 'pptx',
+        metadata: {},
+        content: [{ type: 'slide', text: 'Presentation content' }],
+        attachments: [],
+        to
+      });
+      jest.spyOn(fs, 'stat').mockResolvedValue({ size: 1000 });
+
+      const result = await extractTextFromPptx(mockFilePath);
+
+      expect(result).toBe('Presentation content');
+      expect(to).toHaveBeenCalledWith('text');
+    });
+
+    test('should extract text from an officeparser v6-v7 AST result', async () => {
+      const officeParser = require('officeparser');
+      // officeparser v6-v7 resolve to an OfficeParserAST exposing toText().
       officeParser.parseOffice.mockResolvedValue({
         type: 'pptx',
         metadata: {},
