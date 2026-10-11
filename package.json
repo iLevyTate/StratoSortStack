@@ -277,7 +277,7 @@
     "cross-env": "^10.1.0",
     "css-loader": "^7.1.5",
     "cssnano": "^7.1.9",
-    "dotenv": "^17.4.0",
+    "dotenv": "^18.0.6",
     "electron": "^41.10.1",
     "electron-builder": "^26.15.3",
     "electron-devtools-installer": "^4.0.0",

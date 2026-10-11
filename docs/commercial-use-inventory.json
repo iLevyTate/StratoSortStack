@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-11T02:42:42.978Z",
+  "generatedAt": "2026-10-11T17:32:29.684Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
@@ -13345,7 +13345,7 @@
     },
     {
       "packageName": "dotenv",
-      "version": "17.4.2",
+      "version": "18.0.6",
       "license": "BSD-2-Clause",
       "riskLevel": "allowed",
       "directRuntime": false,
