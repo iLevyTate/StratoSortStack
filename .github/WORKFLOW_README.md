@@ -14,10 +14,12 @@ This repository is configured with automated dependency updates and release buil
 
 ### 2. Dependabot Auto-merge (`.github/workflows/dependabot-automerge.yml`)
 
-- **Automatically merges** safe dependency updates
-- Enables auto-merge for all Dependabot PRs
-- Immediately merges patch and minor updates if checks pass
-- Major updates wait for manual review
+- **Off unless the repo Variable `DEPENDABOT_AUTOMERGE` is `true`.**
+- When on, enables GitHub auto-merge (squash) for patch and minor Dependabot updates; major updates
+  wait for manual review.
+- Auto-merge waits only for checks that branch protection marks **required**. With no required
+  checks on `main` it merges immediately, before CI runs. Before setting the variable, add a branch
+  protection rule or ruleset on `main` that requires the `CI` checks to pass.
 
 **Optional Setup**: If your repository has branch protection requiring PR approval:
 
