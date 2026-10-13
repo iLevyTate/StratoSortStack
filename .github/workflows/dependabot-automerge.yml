@@ -14,7 +14,15 @@ jobs:
     # Key off the PR author, not the workflow actor: a maintainer re-running
     # this workflow (or a synchronize event they trigger) would otherwise
     # change github.actor and skip/mis-fire the gate.
-    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    #
+    # Opt-in via the repo Variable DEPENDABOT_AUTOMERGE=true. Off by default:
+    # when main has no rule requiring the CI checks, GitHub auto-merge has
+    # nothing to wait for and merges the moment it is enabled (PRs #5, #6
+    # and #8 merged ~12 s after opening, before CI started). Turn it on only
+    # after main requires the CI checks to pass.
+    if: >-
+      vars.DEPENDABOT_AUTOMERGE == 'true' &&
+      github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Fetch Dependabot metadata
