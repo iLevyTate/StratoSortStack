@@ -328,21 +328,21 @@ jobs:
 
       - name: Download Windows artifacts
         if: ${{ inputs.build_windows }}
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: stratosort-windows-dist-${{ github.run_number }}
           path: release-upload/windows
 
       - name: Download macOS artifacts
         if: ${{ inputs.build_macos }}
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: stratosort-macos-dist-${{ github.run_number }}
           path: release-upload/macos
 
       - name: Download macOS Intel artifacts
         if: ${{ inputs.build_macos_intel }}
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: stratosort-macos-intel-dist-${{ github.run_number }}
           path: release-upload/macos-intel
