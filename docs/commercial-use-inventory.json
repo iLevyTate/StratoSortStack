@@ -1,12 +1,12 @@
 {
-  "generatedAt": "2026-10-19T01:24:25.641Z",
+  "generatedAt": "2026-10-26T01:41:30.554Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
     "detectedLicense": "PolyForm Noncommercial 1.0.0 (commercial license sold separately)"
   },
   "dependencySummary": {
-    "allowed": 2332,
+    "allowed": 2331,
     "review_required": 31,
     "high_risk": 0,
     "unknown": 0
@@ -230,7 +230,7 @@
     },
     {
       "packageName": "@axe-core/playwright",
-      "version": "4.13.0",
+      "version": "4.14.0",
       "license": "MPL-2.0",
       "riskLevel": "review_required",
       "directRuntime": false,
@@ -7301,7 +7301,7 @@
     },
     {
       "packageName": "@kenjiuno/msgreader",
-      "version": "1.28.0",
+      "version": "1.29.0",
       "license": "Apache-2.0",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -7431,7 +7431,7 @@
     },
     {
       "packageName": "@napi-rs/canvas",
-      "version": "1.0.11",
+      "version": "1.0.13",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -7441,7 +7441,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-android-arm64",
-      "version": "1.0.11",
+      "version": "1.0.13",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7451,7 +7451,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-darwin-arm64",
-      "version": "1.0.11",
+      "version": "1.0.13",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7461,7 +7461,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-darwin-x64",
-      "version": "1.0.11",
+      "version": "1.0.13",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7471,7 +7471,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-linux-arm-gnueabihf",
-      "version": "1.0.11",
+      "version": "1.0.13",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7481,7 +7481,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-linux-arm64-gnu",
-      "version": "1.0.11",
+      "version": "1.0.13",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7491,7 +7491,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-linux-arm64-musl",
-      "version": "1.0.11",
+      "version": "1.0.13",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7501,7 +7501,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-linux-riscv64-gnu",
-      "version": "1.0.11",
+      "version": "1.0.13",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7511,7 +7511,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-linux-x64-gnu",
-      "version": "1.0.11",
+      "version": "1.0.13",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7521,7 +7521,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-linux-x64-musl",
-      "version": "1.0.11",
+      "version": "1.0.13",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7531,7 +7531,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-win32-arm64-msvc",
-      "version": "1.0.11",
+      "version": "1.0.13",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7541,7 +7541,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-win32-x64-msvc",
-      "version": "1.0.11",
+      "version": "1.0.13",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7761,7 +7761,7 @@
     },
     {
       "packageName": "@node-llama-cpp/linux-arm64",
-      "version": "3.22.1",
+      "version": "3.22.2",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7771,7 +7771,7 @@
     },
     {
       "packageName": "@node-llama-cpp/linux-armv7l",
-      "version": "3.22.1",
+      "version": "3.22.2",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7781,7 +7781,7 @@
     },
     {
       "packageName": "@node-llama-cpp/linux-riscv64",
-      "version": "3.22.1",
+      "version": "3.22.2",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7791,7 +7791,7 @@
     },
     {
       "packageName": "@node-llama-cpp/linux-x64",
-      "version": "3.22.1",
+      "version": "3.22.2",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7801,7 +7801,7 @@
     },
     {
       "packageName": "@node-llama-cpp/linux-x64-cuda",
-      "version": "3.22.1",
+      "version": "3.22.2",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7811,7 +7811,7 @@
     },
     {
       "packageName": "@node-llama-cpp/linux-x64-cuda-ext",
-      "version": "3.22.1",
+      "version": "3.22.2",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7821,7 +7821,7 @@
     },
     {
       "packageName": "@node-llama-cpp/linux-x64-vulkan",
-      "version": "3.22.1",
+      "version": "3.22.2",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7831,7 +7831,7 @@
     },
     {
       "packageName": "@node-llama-cpp/mac-arm64-metal",
-      "version": "3.22.1",
+      "version": "3.22.2",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7841,7 +7841,7 @@
     },
     {
       "packageName": "@node-llama-cpp/mac-x64",
-      "version": "3.22.1",
+      "version": "3.22.2",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7851,7 +7851,7 @@
     },
     {
       "packageName": "@node-llama-cpp/win-arm64",
-      "version": "3.22.1",
+      "version": "3.22.2",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7861,7 +7861,7 @@
     },
     {
       "packageName": "@node-llama-cpp/win-x64",
-      "version": "3.22.1",
+      "version": "3.22.2",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7871,7 +7871,7 @@
     },
     {
       "packageName": "@node-llama-cpp/win-x64-cuda",
-      "version": "3.22.1",
+      "version": "3.22.2",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7881,7 +7881,7 @@
     },
     {
       "packageName": "@node-llama-cpp/win-x64-cuda-ext",
-      "version": "3.22.1",
+      "version": "3.22.2",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7891,7 +7891,7 @@
     },
     {
       "packageName": "@node-llama-cpp/win-x64-vulkan",
-      "version": "3.22.1",
+      "version": "3.22.2",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7931,7 +7931,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-android-arm-eabi",
-      "version": "0.153.0",
+      "version": "0.155.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7941,7 +7941,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-android-arm64",
-      "version": "0.153.0",
+      "version": "0.155.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7951,7 +7951,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-darwin-arm64",
-      "version": "0.153.0",
+      "version": "0.155.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7961,7 +7961,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-darwin-x64",
-      "version": "0.153.0",
+      "version": "0.155.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7971,7 +7971,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-freebsd-x64",
-      "version": "0.153.0",
+      "version": "0.155.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7981,7 +7981,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-linux-arm-gnueabihf",
-      "version": "0.153.0",
+      "version": "0.155.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7991,7 +7991,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-linux-arm-musleabihf",
-      "version": "0.153.0",
+      "version": "0.155.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -8001,7 +8001,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-linux-arm64-gnu",
-      "version": "0.153.0",
+      "version": "0.155.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -8011,7 +8011,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-linux-arm64-musl",
-      "version": "0.153.0",
+      "version": "0.155.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -8021,7 +8021,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-linux-ppc64-gnu",
-      "version": "0.153.0",
+      "version": "0.155.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -8031,7 +8031,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-linux-riscv64-gnu",
-      "version": "0.153.0",
+      "version": "0.155.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -8041,7 +8041,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-linux-riscv64-musl",
-      "version": "0.153.0",
+      "version": "0.155.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -8051,7 +8051,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-linux-s390x-gnu",
-      "version": "0.153.0",
+      "version": "0.155.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -8061,7 +8061,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-linux-x64-gnu",
-      "version": "0.153.0",
+      "version": "0.155.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -8071,7 +8071,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-linux-x64-musl",
-      "version": "0.153.0",
+      "version": "0.155.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -8081,7 +8081,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-openharmony-arm64",
-      "version": "0.153.0",
+      "version": "0.155.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -8091,7 +8091,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-win32-arm64-msvc",
-      "version": "0.153.0",
+      "version": "0.155.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -8101,7 +8101,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-win32-ia32-msvc",
-      "version": "0.153.0",
+      "version": "0.155.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -8111,7 +8111,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-win32-x64-msvc",
-      "version": "0.153.0",
+      "version": "0.155.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -8121,7 +8121,7 @@
     },
     {
       "packageName": "@oxc-project/types",
-      "version": "0.153.0",
+      "version": "0.155.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -8531,7 +8531,7 @@
     },
     {
       "packageName": "@playwright/test",
-      "version": "1.64.0",
+      "version": "1.64.1",
       "license": "Apache-2.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -10796,7 +10796,7 @@
     },
     {
       "packageName": "@uwdata/mosaic-core",
-      "version": "0.32.1",
+      "version": "0.33.0",
       "license": "BSD-3-Clause",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -10807,7 +10807,7 @@
     },
     {
       "packageName": "@uwdata/mosaic-sql",
-      "version": "0.32.1",
+      "version": "0.33.0",
       "license": "BSD-3-Clause",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -11633,7 +11633,7 @@
     },
     {
       "packageName": "axe-core",
-      "version": "4.13.0",
+      "version": "4.14.0",
       "license": "MPL-2.0",
       "riskLevel": "review_required",
       "directRuntime": false,
@@ -11883,7 +11883,7 @@
     },
     {
       "packageName": "body-parser",
-      "version": "2.3.0",
+      "version": "2.4.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -11893,7 +11893,7 @@
     },
     {
       "packageName": "body-parser/node_modules/content-type",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -11903,7 +11903,7 @@
     },
     {
       "packageName": "body-parser/node_modules/iconv-lite",
-      "version": "0.7.2",
+      "version": "0.7.3",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -12666,7 +12666,7 @@
     },
     {
       "packageName": "core-js",
-      "version": "3.50.0",
+      "version": "3.51.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -13406,7 +13406,7 @@
     },
     {
       "packageName": "dotenv",
-      "version": "18.0.7",
+      "version": "18.0.9",
       "license": "BSD-2-Clause",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -13729,7 +13729,7 @@
     },
     {
       "packageName": "enhanced-resolve",
-      "version": "5.25.1",
+      "version": "5.26.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -13942,7 +13942,7 @@
     },
     {
       "packageName": "eslint",
-      "version": "10.12.0",
+      "version": "10.13.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -14533,7 +14533,7 @@
     },
     {
       "packageName": "fast-uri",
-      "version": "3.1.8",
+      "version": "3.1.9",
       "license": "BSD-3-Clause",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -14865,7 +14865,7 @@
     },
     {
       "packageName": "framer-motion",
-      "version": "14.1.0",
+      "version": "14.6.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -15303,7 +15303,7 @@
     },
     {
       "packageName": "hono",
-      "version": "4.13.7",
+      "version": "4.13.14",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -15694,7 +15694,7 @@
     },
     {
       "packageName": "ip-address",
-      "version": "10.7.3",
+      "version": "10.7.5",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -17627,7 +17627,7 @@
     },
     {
       "packageName": "knip",
-      "version": "6.41.0",
+      "version": "6.43.0",
       "license": "ISC",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -18019,7 +18019,7 @@
     },
     {
       "packageName": "lucide-react",
-      "version": "1.55.0",
+      "version": "1.61.0",
       "license": "ISC",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -18281,7 +18281,7 @@
     },
     {
       "packageName": "minimizer-webpack-plugin",
-      "version": "5.10.1",
+      "version": "5.13.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -18421,7 +18421,7 @@
     },
     {
       "packageName": "motion-dom",
-      "version": "14.1.0",
+      "version": "14.6.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -18432,7 +18432,7 @@
     },
     {
       "packageName": "motion-utils",
-      "version": "14.1.0",
+      "version": "14.6.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -18663,7 +18663,7 @@
     },
     {
       "packageName": "node-llama-cpp",
-      "version": "3.22.1",
+      "version": "3.22.2",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -18995,7 +18995,7 @@
     },
     {
       "packageName": "officeparser",
-      "version": "8.1.1",
+      "version": "8.2.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -19105,7 +19105,7 @@
     },
     {
       "packageName": "oxc-parser",
-      "version": "0.153.0",
+      "version": "0.155.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -19155,20 +19155,10 @@
     },
     {
       "packageName": "p-queue",
-      "version": "9.3.3",
+      "version": "10.0.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": true,
-      "directDev": false,
-      "lockfileDev": false,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "p-timeout",
-      "version": "7.0.1",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
       "directDev": false,
       "lockfileDev": false,
       "lockfileOptional": false
@@ -19615,7 +19605,7 @@
     },
     {
       "packageName": "playwright",
-      "version": "1.64.0",
+      "version": "1.64.1",
       "license": "Apache-2.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -19625,7 +19615,7 @@
     },
     {
       "packageName": "playwright-core",
-      "version": "1.64.0",
+      "version": "1.64.1",
       "license": "Apache-2.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -19695,7 +19685,7 @@
     },
     {
       "packageName": "postal-mime",
-      "version": "4.0.5",
+      "version": "4.1.4",
       "license": "MIT-0",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -19705,7 +19695,7 @@
     },
     {
       "packageName": "postcss",
-      "version": "8.5.30",
+      "version": "8.5.31",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -20498,7 +20488,7 @@
     },
     {
       "packageName": "react",
-      "version": "19.3.0",
+      "version": "19.3.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -20509,7 +20499,7 @@
     },
     {
       "packageName": "react-dom",
-      "version": "19.3.0",
+      "version": "19.3.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -20572,7 +20562,7 @@
     },
     {
       "packageName": "react-window",
-      "version": "2.3.4",
+      "version": "2.5.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -21085,7 +21075,7 @@
     },
     {
       "packageName": "schema-utils",
-      "version": "4.5.0",
+      "version": "4.8.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -22823,7 +22813,7 @@
     },
     {
       "packageName": "unbash",
-      "version": "5.1.0",
+      "version": "6.0.1",
       "license": "ISC",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -22923,7 +22913,7 @@
     },
     {
       "packageName": "unpdf",
-      "version": "1.8.1",
+      "version": "1.9.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -23174,7 +23164,7 @@
     },
     {
       "packageName": "watchpack",
-      "version": "2.5.2",
+      "version": "2.6.3",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -23204,7 +23194,7 @@
     },
     {
       "packageName": "webpack",
-      "version": "5.111.1",
+      "version": "5.112.2",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -23304,7 +23294,7 @@
     },
     {
       "packageName": "webpack-sources",
-      "version": "3.5.1",
+      "version": "3.6.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
