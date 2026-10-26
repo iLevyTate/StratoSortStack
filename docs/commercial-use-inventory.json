@@ -1,12 +1,12 @@
 {
-  "generatedAt": "2026-10-26T01:41:30.554Z",
+  "generatedAt": "2026-10-26T02:10:58.844Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
     "detectedLicense": "PolyForm Noncommercial 1.0.0 (commercial license sold separately)"
   },
   "dependencySummary": {
-    "allowed": 2331,
+    "allowed": 2330,
     "review_required": 31,
     "high_risk": 0,
     "unknown": 0
@@ -5801,7 +5801,7 @@
     },
     {
       "packageName": "@electron/universal/node_modules/fs-extra",
-      "version": "11.3.5",
+      "version": "11.4.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7741,7 +7741,7 @@
     },
     {
       "packageName": "@noble/hashes",
-      "version": "2.2.0",
+      "version": "1.8.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -8461,7 +8461,7 @@
     },
     {
       "packageName": "@peculiar/asn1-schema",
-      "version": "2.8.0",
+      "version": "2.11.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -10785,7 +10785,7 @@
     },
     {
       "packageName": "@uwdata/flechette",
-      "version": "2.7.0",
+      "version": "2.7.1",
       "license": "BSD-3-Clause",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -10796,7 +10796,7 @@
     },
     {
       "packageName": "@uwdata/mosaic-core",
-      "version": "0.33.0",
+      "version": "0.34.1",
       "license": "BSD-3-Clause",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -10807,7 +10807,7 @@
     },
     {
       "packageName": "@uwdata/mosaic-sql",
-      "version": "0.33.0",
+      "version": "0.34.1",
       "license": "BSD-3-Clause",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -11242,7 +11242,7 @@
     },
     {
       "packageName": "app-builder-lib",
-      "version": "26.15.3",
+      "version": "26.18.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -11493,7 +11493,7 @@
     },
     {
       "packageName": "asn1js",
-      "version": "3.0.10",
+      "version": "3.1.0",
       "license": "BSD-3-Clause",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -11872,6 +11872,16 @@
       "lockfileOptional": false
     },
     {
+      "packageName": "bluebird",
+      "version": "3.7.2",
+      "license": "MIT",
+      "riskLevel": "allowed",
+      "directRuntime": false,
+      "directDev": false,
+      "lockfileDev": true,
+      "lockfileOptional": false
+    },
+    {
       "packageName": "bmp-js",
       "version": "0.1.0",
       "license": "MIT",
@@ -11993,7 +12003,7 @@
     },
     {
       "packageName": "builder-util",
-      "version": "26.15.3",
+      "version": "26.16.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -13306,7 +13316,7 @@
     },
     {
       "packageName": "dmg-builder",
-      "version": "26.15.3",
+      "version": "26.18.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -13517,7 +13527,7 @@
     },
     {
       "packageName": "electron-builder",
-      "version": "26.15.3",
+      "version": "26.18.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -13567,7 +13577,7 @@
     },
     {
       "packageName": "electron-publish",
-      "version": "26.15.3",
+      "version": "26.18.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -13617,7 +13627,7 @@
     },
     {
       "packageName": "electron-updater",
-      "version": "6.8.9",
+      "version": "6.8.11",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -15119,7 +15129,7 @@
     },
     {
       "packageName": "global-agent/node_modules/semver",
-      "version": "7.8.4",
+      "version": "7.8.5",
       "license": "ISC",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -15433,7 +15443,7 @@
     },
     {
       "packageName": "http-cache-semantics",
-      "version": "4.2.0",
+      "version": "4.3.0",
       "license": "BSD-2-Clause",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -19585,18 +19595,8 @@
     },
     {
       "packageName": "pkijs",
-      "version": "3.4.0",
+      "version": "3.4.3",
       "license": "BSD-3-Clause",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "pkijs/node_modules/@noble/hashes",
-      "version": "1.4.0",
-      "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
       "directDev": false,
@@ -20366,7 +20366,7 @@
     },
     {
       "packageName": "pvutils",
-      "version": "1.1.5",
+      "version": "1.2.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -22953,17 +22953,7 @@
     },
     {
       "packageName": "unzipper",
-      "version": "0.12.3",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "unzipper/node_modules/bluebird",
-      "version": "3.7.2",
+      "version": "0.12.5",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -22973,7 +22963,7 @@
     },
     {
       "packageName": "unzipper/node_modules/fs-extra",
-      "version": "11.3.5",
+      "version": "11.3.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
