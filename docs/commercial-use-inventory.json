@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-19T01:24:25.641Z",
+  "generatedAt": "2026-10-26T01:14:39.523Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
@@ -11883,7 +11883,7 @@
     },
     {
       "packageName": "body-parser",
-      "version": "2.3.0",
+      "version": "2.4.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -11893,7 +11893,7 @@
     },
     {
       "packageName": "body-parser/node_modules/content-type",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -11903,7 +11903,7 @@
     },
     {
       "packageName": "body-parser/node_modules/iconv-lite",
-      "version": "0.7.2",
+      "version": "0.7.3",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -14533,7 +14533,7 @@
     },
     {
       "packageName": "fast-uri",
-      "version": "3.1.8",
+      "version": "3.1.9",
       "license": "BSD-3-Clause",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -15303,7 +15303,7 @@
     },
     {
       "packageName": "hono",
-      "version": "4.13.7",
+      "version": "4.13.14",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -15694,7 +15694,7 @@
     },
     {
       "packageName": "ip-address",
-      "version": "10.7.3",
+      "version": "10.7.5",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -19695,7 +19695,7 @@
     },
     {
       "packageName": "postal-mime",
-      "version": "4.0.5",
+      "version": "4.1.4",
       "license": "MIT-0",
       "riskLevel": "allowed",
       "directRuntime": true,
