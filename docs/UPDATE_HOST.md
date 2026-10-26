@@ -1,7 +1,8 @@
-# Application update host (Phase B)
+# Application update host
 
-When you are ready to turn **automatic application updates** back on, provide the following so the
-team can wire [electron-updater](https://www.electron.build/auto-update) correctly.
+Packaged builds check the public GitHub Releases feed configured in `electron-builder.json` by
+default. Use this page only if you move updates to your own host; provide the following so the team
+can wire [electron-updater](https://www.electron.build/auto-update) correctly.
 
 ## What to decide
 
@@ -23,7 +24,7 @@ team can wire [electron-updater](https://www.electron.build/auto-update) correct
 
 | Variable                               | Purpose                                                                                                                                          |
 | :------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `STRATOSORT_ENABLE_AUTO_UPDATES`       | Set to `true` to enable the updater in production builds. Default is off until a feed is ready.                                                  |
+| `STRATOSORT_ENABLE_AUTO_UPDATES`       | Unset: on in packaged builds (public GitHub Releases feed), off in development. Set to `false` to disable the updater.                           |
 | `STRATOSORT_UPDATE_FEED_URL`           | Optional. When set (and auto-updates enabled), sets a **generic** feed so the app does not rely on GitHub `app-update.yml`.                      |
 | `STRATOSORT_UPDATE_FEED_ALLOWED_HOSTS` | Required when using a custom `STRATOSORT_UPDATE_FEED_URL` in a **packaged** build: a comma-separated allowlist of hosts the updater may contact. |
 

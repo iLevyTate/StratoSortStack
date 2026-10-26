@@ -318,9 +318,7 @@ We maintain separate queues to manage different types of bottlenecks:
 
 ## Service Depth Audit (2026-05-16)
 
-A Phase 3 audit (see
-[`baselines/phase-3-shallow-service-audit.md`](baselines/phase-3-shallow-service-audit.md)) reviewed
-three services flagged as candidates for merging or collapsing:
+A Phase 3 audit reviewed three services flagged as candidates for merging or collapsing:
 
 - **`SettingsService` (1,205 LOC, 13 callers) — KEPT.** Custom mutex error, TTL cache, file watcher,
   atomic-write protocol, backup rotation, schema validation, corruption recovery. Genuine deep

@@ -1,16 +1,16 @@
 ---
 layout: single
-title: 'Beta Tester Guide'
+title: 'Tester Guide'
 sidebar:
   nav: 'docs'
 header:
   overlay_color: '#000'
   overlay_filter: '0.5'
   overlay_image: /assets/e2e-screenshots/09_analysis_in_progress.webp
-  caption: 'Beta Testing Guide'
+  caption: 'Testing Guide'
 ---
 
-# StratoSort Stack — Beta Tester Guide
+# StratoSort Stack — Tester Guide
 
 **Goal:** Install the app, use it like you would for real work, then tell us what breaks or feels
 confusing. No coding and no command line required (optional Linux tip below).
@@ -19,18 +19,18 @@ confusing. No coding and no command line required (optional Linux tip below).
 
 ## At a glance
 
-| Step  | What you do                                                                              |
-| :---- | :--------------------------------------------------------------------------------------- |
-| **1** | [Download](#1-download-one-installer) the installer for your computer                    |
-| **2** | [Install & open](#2-install-and-open-the-app) the app                                    |
-| **3** | Complete [first-run AI setup](#3-first-launch-ai-setup) (downloads models once)          |
-| **4** | Run through the [beta checklist](#beta-test-checklist-one-session) (about 20–45 minutes) |
-| **5** | [Report problems](#report-a-bug) with steps + screenshots + logs if possible             |
+| Step  | What you do                                                                         |
+| :---- | :---------------------------------------------------------------------------------- |
+| **1** | [Download](#1-download-one-installer) the installer for your computer               |
+| **2** | [Install & open](#2-install-and-open-the-app) the app                               |
+| **3** | Complete [first-run AI setup](#3-first-launch-ai-setup) (downloads models once)     |
+| **4** | Run through the [test checklist](#test-checklist-one-session) (about 20–45 minutes) |
+| **5** | [Report problems](#report-a-bug) with steps + screenshots + logs if possible        |
 
 **Links:** [Downloads (GitHub Releases)](https://github.com/iLevyTate/StratoSortStack/releases) ·
 [E2E Walkthrough](./E2E_WALKTHROUGH.md) (stills + how-to clip) · [Install Guide](./INSTALL_GUIDE.md)
-(detailed install help) · [Beta Tester Sign-Up](https://forms.gle/uCsCH1mtoa7ZmCfm7) ·
-[Submit beta feedback](https://forms.gle/7VsfvVG2AoPB2U6d8) ·
+(detailed install help) ·
+[Report a bug](https://github.com/iLevyTate/StratoSortStack/issues/new?template=bug_report.md) ·
 [All issues](https://github.com/iLevyTate/StratoSortStack/issues)
 
 ---
@@ -43,38 +43,34 @@ what went wrong in a few clear steps.
 Personal/noncommercial use is free, with no trial and nothing to activate. Commercial use needs a
 key, entered in **Settings → License**.
 
-## Beta sign-up and feedback forms
-
-- **StratoSort Beta Tester Sign-Up (includes Beta Tester agreement upload):**
-  [https://forms.gle/uCsCH1mtoa7ZmCfm7](https://forms.gle/uCsCH1mtoa7ZmCfm7)
-- **Feedback form (use this for all tester feedback):**
-  [https://forms.gle/7VsfvVG2AoPB2U6d8](https://forms.gle/7VsfvVG2AoPB2U6d8)
+No sign-up is needed: download the public release and send feedback through
+[GitHub Issues](https://github.com/iLevyTate/StratoSortStack/issues).
 
 ---
 
 ## 1. Download one installer
 
 1. Open **[GitHub Releases](https://github.com/iLevyTate/StratoSortStack/releases)**.
-2. Pick the newest release and find the assets for your OS (current product version is **4.0.6**).
+2. Pick the newest release and find the assets for your OS (current product version is **5.0.0**).
 3. Download **exactly one app installer/package** for your OS (do not download checksum or `.yml`
    files unless asked).
 
 **What is happening**
 
-- You are selecting the correct beta build for your operating system so install and updates behave
-  as expected.
+- You are selecting the correct build for your operating system so install and updates behave as
+  expected.
 
 **What you should see**
 
 - App installers/packages attached to the release (`.exe`, `.dmg`, `.AppImage`) plus separate
   checksum/update files.
 
-| Your computer                              | Typical filename pattern                  |
-| :----------------------------------------- | :---------------------------------------- |
-| **Windows** (64-bit, preferred)            | `StratoSortStack-Setup-4.0.6.exe`          |
-| **Windows** (portable / alt build)         | `StratoSortStack-4.0.6-win-x64.exe`        |
-| **Mac** (Apple Silicon: M1 / M2 / M3 / M4) | `StratoSortStack-4.0.6-mac-arm64.dmg`      |
-| **Linux** (64-bit)                         | `StratoSortStack-4.0.6-linux-x64.AppImage` |
+| Your computer                              | Typical filename pattern                   |
+| :----------------------------------------- | :----------------------------------------- |
+| **Windows** (64-bit, preferred)            | `StratoSortStack-Setup-5.0.0.exe`          |
+| **Windows** (portable / alt build)         | `StratoSortStack-5.0.0-win-x64.exe`        |
+| **Mac** (Apple Silicon: M1 / M2 / M3 / M4) | `StratoSortStack-5.0.0-mac-arm64.dmg`      |
+| **Linux** (64-bit)                         | `StratoSortStack-5.0.0-linux-x64.AppImage` |
 
 Filenames on GitHub Releases may include a slightly different arch suffix. Always take the
 **newest** installer for your OS, not an older `2.0.8` drop.
@@ -146,7 +142,7 @@ later under **Settings → AI Configuration**.
 
 ---
 
-## Beta test checklist (one session)
+## Test checklist (one session)
 
 Use this in order. Check items off mentally or on paper. **Real folders** (Downloads, projects,
 photos) give better feedback than empty test folders.
@@ -217,8 +213,9 @@ that becomes your bug report.
 
 ## Report a bug
 
-**Primary feedback form (use this first):**
-[Submit beta feedback](https://forms.gle/7VsfvVG2AoPB2U6d8)
+Open a
+[bug report on GitHub](https://github.com/iLevyTate/StratoSortStack/issues/new?template=bug_report.md).
+Do not attach documents or logs that contain private information; GitHub issues are public.
 
 ### Always include
 

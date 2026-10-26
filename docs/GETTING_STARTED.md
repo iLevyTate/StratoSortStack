@@ -15,7 +15,7 @@ header:
 
 > **Note:** For a guided clone-to-first-PR walkthrough including architecture context, IPC tracing,
 > and common gotchas, see [`ONBOARDING.md`](ONBOARDING.md). This doc focuses on the mechanical setup
-> steps. Current product version is **4.0.6**. Last mechanical setup pass was v4.0.3 on 2026-06-11;
+> steps. Current product version is **5.0.0**. Last mechanical setup pass was v4.0.3 on 2026-06-11;
 > Node/npm steps are unchanged.
 
 # Getting Started with StratoSort Stack

@@ -10,8 +10,8 @@ header:
   caption: 'Get StratoSort up and running'
 ---
 
-> Last verified for v4.0.3 on 2026-06-11. Current tagged release is **v4.0.6**; installer filenames
-> and OS prompts may differ slightly on newer builds.
+> Last verified for v4.0.3 on 2026-06-11. Current release is **v5.0.0**; installer filenames and OS
+> prompts may differ slightly on newer builds.
 
 # StratoSort Stack -- Install Guide
 
@@ -42,25 +42,25 @@ download the single file that matches your operating system.
 
 ### Which file do I pick?
 
-| Your computer                       | Download this file                            |
-| :---------------------------------- | :-------------------------------------------- |
+| Your computer                       | Download this file                             |
+| :---------------------------------- | :--------------------------------------------- |
 | **Windows PC** (any 64-bit)         | **`StratoSortStack-Setup-X.X.X.exe`**          |
 | **Mac** (Apple Silicon M1/M2/M3/M4) | **`StratoSortStack-X.X.X-mac-arm64.dmg`**      |
 | **Linux** (if artifact is attached) | **`StratoSortStack-X.X.X-linux-x64.AppImage`** |
 
-Replace **X.X.X** with the version number shown on the Releases page (e.g. `4.0.6`).
+Replace **X.X.X** with the version number shown on the Releases page (e.g. `5.0.0`).
 
 ### Windows -- installer vs portable
 
-| File                                 | What it does                                                                             | Recommended?                                        |
-| :----------------------------------- | :--------------------------------------------------------------------------------------- | :-------------------------------------------------- |
+| File                                  | What it does                                                                             | Recommended?                                        |
+| :------------------------------------ | :--------------------------------------------------------------------------------------- | :-------------------------------------------------- |
 | **`StratoSortStack-Setup-X.X.X.exe`** | Full installer -- creates Start Menu and desktop shortcuts, supports future auto-updates | Yes                                                 |
 | `StratoSortStack-X.X.X-win-x64.exe`   | Portable -- runs without installing, no shortcuts, no auto-update                        | Only if you cannot install software on your machine |
 
 ### Linux -- AppImage vs .deb
 
-| File                                          | What it does                                                 |
-| :-------------------------------------------- | :----------------------------------------------------------- |
+| File                                           | What it does                                                 |
+| :--------------------------------------------- | :----------------------------------------------------------- |
 | **`StratoSortStack-X.X.X-linux-x64.AppImage`** | Universal, no install needed -- just make executable and run |
 | `StratoSortStack-X.X.X-linux-x64.deb`          | Standard Debian/Ubuntu package installed via `dpkg`          |
 
@@ -121,9 +121,9 @@ Or double-click the file in your file manager after making it executable.
 sudo dpkg -i StratoSortStack-X.X.X-linux-x64.deb
 ```
 
-Then launch **StratoSort Stack** from your application menu. The `.deb` version does not auto-update;
-download the next version from [Releases](https://github.com/iLevyTate/StratoSortStack/releases) when
-available.
+Then launch **StratoSort Stack** from your application menu. The `.deb` version does not
+auto-update; download the next version from
+[Releases](https://github.com/iLevyTate/StratoSortStack/releases) when available.
 
 ---
 
@@ -210,10 +210,10 @@ The hash should match the entry in the checksum file exactly.
 
 There are two kinds of updates -- they are independent of each other:
 
-| What                                         | How it works                                                                                                                                                                                               |
-| :------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| What                                         | How it works                                                                                                                                                                                                |
+| :------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **App updates** (new versions of StratoSort) | In-app auto-update when the project enables a public feed. Until then, download new installers from [Releases](https://github.com/iLevyTate/StratoSortStack/releases). Your settings and models carry over. |
-| **AI model updates**                         | Managed inside the app via **Settings** > **AI Configuration**. Models are large files from Hugging Face; they are not part of the installer.                                                              |
+| **AI model updates**                         | Managed inside the app via **Settings** > **AI Configuration**. Models are large files from Hugging Face; they are not part of the installer.                                                               |
 
 You never need to re-download models when you update the app.
 
@@ -225,11 +225,11 @@ You never need to re-download models when you update the app.
 
 ## Where Does StratoSort Store Data?
 
-| Data                          | Location                                                                                                                              |
-| :---------------------------- | :------------------------------------------------------------------------------------------------------------------------------------ |
+| Data                          | Location                                                                                                                                 |
+| :---------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------- |
 | **Settings, logs, databases** | `%APPDATA%\StratoSort Stack` (Windows) / `~/Library/Application Support/StratoSort Stack` (macOS) / `~/.config/StratoSort Stack` (Linux) |
-| **AI models**                 | Inside the above folder under `models/` (7 to 11 GB)                                                                                  |
-| **Your files**                | StratoSort reads files in place and only moves them when you approve a suggestion. It never copies or uploads your files.             |
+| **AI models**                 | Inside the above folder under `models/` (7 to 11 GB)                                                                                     |
+| **Your files**                | StratoSort reads files in place and only moves them when you approve a suggestion. It never copies or uploads your files.                |
 
 StratoSort never sends data over the internet after the initial model download.
 
@@ -291,12 +291,12 @@ StratoSort Stack:
 
 ## Quick Summary
 
-| Step             | What you do                                                                                |
-| :--------------- | :----------------------------------------------------------------------------------------- |
+| Step             | What you do                                                                                 |
+| :--------------- | :------------------------------------------------------------------------------------------ |
 | **1. Download**  | One file from [Releases](https://github.com/iLevyTate/StratoSortStack/releases) for your OS |
-| **2. Install**   | Run the installer; allow it if your OS shows a security prompt                             |
-| **3. First run** | Choose a model profile and download AI models (7 to 11 GB, one time)                       |
-| **4. Organize**  | Add files, review AI suggestions, approve moves                                            |
+| **2. Install**   | Run the installer; allow it if your OS shows a security prompt                              |
+| **3. First run** | Choose a model profile and download AI models (7 to 11 GB, one time)                        |
+| **4. Organize**  | Add files, review AI suggestions, approve moves                                             |
 
 **No terminal. No Python. No Docker. No API keys. No cloud.**
 
@@ -305,4 +305,4 @@ StratoSort Stack:
 ## Next Steps
 
 - **Learn the app:** [User Guide](/USER_GUIDE.html)
-- **Help test and report bugs:** [Beta Tester Guide](/BETA_TESTER_GUIDE.html)
+- **Help test and report bugs:** [Tester Guide](/BETA_TESTER_GUIDE.html)

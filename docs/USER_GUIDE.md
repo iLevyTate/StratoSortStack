@@ -15,8 +15,8 @@ header:
 This guide explains how to use StratoSort Stack day-to-day, including Smart Folders, Knowledge OS
 (search, chat, Relate, Atlas, timeline), Downloads triage, and key settings.
 
-For installation help, use [Install Guide](/INSTALL_GUIDE.html). For beta testing and bug reporting,
-use [Beta Tester Guide](/BETA_TESTER_GUIDE.html).
+For installation help, use [Install Guide](/INSTALL_GUIDE.html). For testing and bug reporting, use
+the [Tester Guide](/BETA_TESTER_GUIDE.html).
 
 ---
 
@@ -275,7 +275,7 @@ Then run a small batch first and review outcomes before scaling up.
 
 ## 11) Reporting Problems
 
-Use the beta guide for full reporting instructions: [Beta Tester Guide](/BETA_TESTER_GUIDE.html)
+Use the tester guide for full reporting instructions: [Tester Guide](/BETA_TESTER_GUIDE.html)
 
 Direct bug form:
 [Open a bug report](https://github.com/iLevyTate/StratoSortStack/issues/new?template=bug_report.md)

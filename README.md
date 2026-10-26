@@ -37,8 +37,8 @@
 
 ---
 
-StratoSort Stack is a privacy-first, AI-powered file organizer. Drop a folder full of messy files and
-StratoSort understands what's actually inside each one — not just the filename — and proposes a
+StratoSort Stack is a privacy-first, AI-powered file organizer. Drop a folder full of messy files
+and StratoSort understands what's actually inside each one — not just the filename — and proposes a
 clean structure you can accept or edit. Everything runs locally on your machine by default; your
 files never leave the device unless you explicitly opt in to cloud AI.
 
@@ -112,7 +112,7 @@ xattr -cr /Applications/StratoSort\ Core.app
   [GitHub Releases](https://github.com/iLevyTate/StratoSortStack/releases)
 - **Step-by-step install help:** [Install Guide](docs/INSTALL_GUIDE.md)
 - **How to use the app:** [User Guide](docs/USER_GUIDE.md)
-- **Want to help test?** [Beta Tester Guide](docs/BETA_TESTER_GUIDE.md)
+- **Want to help test?** [Tester Guide](docs/BETA_TESTER_GUIDE.md)
 
 ## Support and Feedback
 
@@ -137,9 +137,9 @@ https://github.com/user-attachments/assets/7cd1f974-33cb-4d2d-ac8d-ea30c015389b
 
 ## What you get today
 
-The latest **tagged** release is **v4.0.6**. `main` also includes work not in that tag yet (Atlas
-map, Downloads triage, personal/commercial licensing). Use GitHub Releases for a stable installer;
-see **[CHANGELOG.md](CHANGELOG.md)** for the versioned history.
+The current release is **v5.0.0**, the first public release of StratoSort Stack. `main` may include
+unreleased work; use GitHub Releases for a stable installer and see **[CHANGELOG.md](CHANGELOG.md)**
+for the versioned history.
 
 Shipped in the app you build from this tree:
 
@@ -404,7 +404,7 @@ See **[SECURITY.md](SECURITY.md)** for the complete security policy.
 | **[MCP Server](docs/MCP_SERVER.md)**                     | Use StratoSort from Claude Desktop / Cursor / Zed             |
 | **[AI Providers](docs/AI_PROVIDERS.md)**                 | Multi-provider routing: local + Anthropic + OpenAI-compatible |
 | **[Network Transparency](docs/NETWORK_TRANSPARENCY.md)** | Every network call the shipped app can make                   |
-| **[Beta Tester Guide](docs/BETA_TESTER_GUIDE.md)**       | Testing + bug reporting for contributors                      |
+| **[Tester Guide](docs/BETA_TESTER_GUIDE.md)**            | Testing + bug reporting for contributors                      |
 
 ### For developers
 

@@ -30,7 +30,7 @@ docs:
     children:
       - title: 'Getting Started Dev'
         url: /GETTING_STARTED.html
-      - title: 'Beta Tester Guide'
+      - title: 'Tester Guide'
         url: /BETA_TESTER_GUIDE.html
       - title: 'Code Quality Standards'
         url: /CODE_QUALITY_STANDARDS.html

@@ -46,8 +46,8 @@ We do not collect:
 
 All persistent state lives under your operating system's standard application data directory:
 
-| OS      | Application data directory                       |
-| ------- | ------------------------------------------------ |
+| OS      | Application data directory                        |
+| ------- | ------------------------------------------------- |
 | Windows | `%APPDATA%\StratoSort Stack\`                     |
 | macOS   | `~/Library/Application Support/StratoSort Stack/` |
 | Linux   | `~/.config/StratoSort Stack/`                     |
@@ -76,15 +76,14 @@ StratoSort is designed to operate without network access after first run.
   download is fetched over HTTPS, the source host is on a hard-coded allowlist, and the file's
   SHA-256 hash is verified before the model is loaded. The destination of each download is visible
   in the install wizard.
-- **Update checks.** Update checks run only in builds where the vendor has configured an update feed
-  (`STRATOSORT_ENABLE_AUTO_UPDATES`); builds without one perform **no update checks at all**. In
-  update-enabled builds, background checks follow the `autoUpdateCheck` preference (on by default)
-  and can be disabled in Settings → Application → Background Update Checks; a manual "Check for
-  updates" remains available either way. When a check runs, the only network call is to the
-  configured update feed (GitHub Releases by default), to fetch a metadata file describing the
-  latest version. No personal data is sent. No file contents, no usage data, and no identifiers are
-  transmitted in update checks. Microsoft Store installs never self-update — the Store manages
-  updates.
+- **Update checks.** Installed (packaged) builds check for updates by default; development runs
+  never do, and `STRATOSORT_ENABLE_AUTO_UPDATES=false` disables the updater entirely. Background
+  checks follow the `autoUpdateCheck` preference (on by default) and can be disabled in Settings →
+  Application → Background Update Checks; a manual "Check for updates" remains available either way.
+  When a check runs, the only network call is to the configured update feed (GitHub Releases by
+  default), to fetch a metadata file describing the latest version. No personal data is sent. No
+  file contents, no usage data, and no identifiers are transmitted in update checks. Microsoft Store
+  installs never self-update — the Store manages updates.
 - **Optional cloud AI providers.** If you explicitly configure an external provider in Settings → AI
   Provider (Anthropic, OpenAI, Ollama on a remote host, LM Studio, vLLM, or any other
   OpenAI-compatible endpoint), then text from the specific operations you route through that
@@ -209,4 +208,4 @@ For privacy-related questions, including data-subject requests:
 
 ---
 
-_Document version: 1.2 · Effective 2026-09-26 · StratoSort Stack 4.0.6_
+_Document version: 1.3 · Effective 2026-10-26 · StratoSort Stack 5.0.0_

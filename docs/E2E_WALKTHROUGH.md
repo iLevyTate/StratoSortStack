@@ -13,14 +13,14 @@ header:
 
 # StratoSort Stack — End-to-End Walkthrough
 
-> **Current product is v4.0.6.** Screenshots below are current stills from `npm run tour:record`
+> **Current product is v5.0.0.** Screenshots below are current stills from `npm run tour:record`
 > (Windows, dark theme). Knowledge OS tabs are **Search**, **Chat**, **Timeline**, **Relate**, and
 > **Atlas**. Settings includes Experience, Appearance, AI Provider, MCP Server, License, and Legal
 > notices. Some Settings subsections share the Simple-mode still when a dedicated panel shot is not
 > in the tour set.
 
-A visual guide to every screen and feature in StratoSort Stack. Each section maps to one phase of the
-app workflow. The full clip is [how-to-use.mp4](./walkthrough-assets/how-to-use.mp4).
+A visual guide to every screen and feature in StratoSort Stack. Each section maps to one phase of
+the app workflow. The full clip is [how-to-use.mp4](./walkthrough-assets/how-to-use.mp4).
 
 <!-- prettier-ignore -->
 **Platform shown:** Current recorded tour (Windows). Installers also ship for macOS and Linux.
@@ -44,8 +44,8 @@ app workflow. The full clip is [how-to-use.mp4](./walkthrough-assets/how-to-use.
 
 ## 1. First Launch & Model Setup
 
-On first launch, StratoSort checks for AI models in `~/.config/StratoSort Stack/models/`. If required
-models are missing, a setup wizard guides you through downloading them.
+On first launch, StratoSort checks for AI models in `~/.config/StratoSort Stack/models/`. If
+required models are missing, a setup wizard guides you through downloading them.
 
 ### Model Selection
 

@@ -12,6 +12,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [5.0.0] - 2026-10-26
+
+First public release of StratoSort Stack: source published on GitHub under the PolyForm
+Noncommercial License 1.0.0, with signed installers on GitHub Releases.
+
 ### Added
 
 - Atlas map, timeline, knowledge stats card, Downloads triage trust pack, MCP server kit, and
@@ -27,6 +32,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Product name:** StratoSort Core is now StratoSort Stack. Existing `StratoSort Core` user data is
   migrated on first launch (`src/main/core/userDataMigration.js`). Source and releases live at
   [iLevyTate/StratoSortStack](https://github.com/iLevyTate/StratoSortStack).
+- **Auto-updates on by default:** installed (packaged) builds now check GitHub Releases for updates
+  at startup and every 4 hours. Turn background checks off in Settings → Application → Background
+  Update Checks, or disable the updater with `STRATOSORT_ENABLE_AUTO_UPDATES=false`. Development
+  runs never check.
 
 ### Fixed
 
@@ -709,28 +718,8 @@ notes.
 - **Fixed**: Bug fixes
 - **Security**: Security-related changes
 
-Note: `v1.x` release links intentionally point to the predecessor repository for historical
-traceability.
+Note: versions before 5.0.0 were released from predecessor repositories whose tags are not part of
+this repository's history, so they are listed without links.
 
-[Unreleased]: https://github.com/iLevyTate/StratoSortStack/commits/main
-[4.0.4]: https://github.com/iLevyTate/StratoSortStack/compare/v4.0.3...v4.0.4
-[4.0.3]: https://github.com/iLevyTate/StratoSortStack/compare/v4.0.2...v4.0.3
-[4.0.2]: https://github.com/iLevyTate/StratoSortStack/compare/v4.0.1...v4.0.2
-[4.0.1]: https://github.com/iLevyTate/StratoSortStack/compare/v4.0.0...v4.0.1
-[4.0.0]: https://github.com/iLevyTate/StratoSortStack/compare/v3.2.1...v4.0.0
-[3.2.1]: https://github.com/iLevyTate/StratoSortStack/compare/v3.2.0...v3.2.1
-[3.2.0]: https://github.com/iLevyTate/StratoSortStack/compare/v3.1.1...v3.2.0
-[2.0.8]: https://github.com/iLevyTate/StratoSortStack/compare/v2.0.7...v2.0.8
-[2.0.7]: https://github.com/iLevyTate/StratoSortStack/compare/v2.0.6...v2.0.7
-[2.0.6]: https://github.com/iLevyTate/StratoSortStack/compare/v2.0.5...v2.0.6
-[2.0.5]: https://github.com/iLevyTate/StratoSortStack/compare/v2.0.4...v2.0.5
-[2.0.4]: https://github.com/iLevyTate/StratoSortStack/compare/v2.0.3...v2.0.4
-[2.0.3]: https://github.com/iLevyTate/StratoSortStack/compare/v2.0.2...v2.0.3
-[2.0.2]: https://github.com/iLevyTate/StratoSortStack/compare/v2.0.1...v2.0.2
-[2.0.1]: https://github.com/iLevyTate/StratoSortStack/compare/v2.0.0...v2.0.1
-[2.0.0]: https://github.com/iLevyTate/StratoSortStack/compare/v1.2.2...v2.0.0
-[1.2.2]: https://github.com/iLevyTate/elstratosort/compare/v1.2.1...v1.2.2
-[1.2.1]: https://github.com/iLevyTate/elstratosort/releases/tag/v1.2.1
-[1.2.0]: https://github.com/iLevyTate/elstratosort/releases/tag/v1.2.0
-[1.1.0]: https://github.com/iLevyTate/elstratosort/releases/tag/v1.1.0
-[1.0.0]: https://github.com/iLevyTate/elstratosort/releases/tag/v1.0.0
+[Unreleased]: https://github.com/iLevyTate/StratoSortStack/compare/v5.0.0...HEAD
+[5.0.0]: https://github.com/iLevyTate/StratoSortStack/releases/tag/v5.0.0

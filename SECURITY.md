@@ -153,4 +153,4 @@ Contributors who report valid security issues will be acknowledged here (with pe
 
 ---
 
-_Last updated: 2026-09-26 — applies to StratoSort Stack 4.0.6._
+_Last updated: 2026-10-26 — applies to StratoSort Stack 5.0.0._

@@ -88,20 +88,28 @@ describe('autoUpdater', () => {
     expect(mockAutoUpdater.checkForUpdates).not.toHaveBeenCalled();
   });
 
-  test('packaged build keeps startup update check disabled without env var', async () => {
-    mockElectronApp.isPackaged = true;
-
-    const mockWindow = {
-      isDestroyed: jest.fn().mockReturnValue(false),
-      webContents: {}
-    };
-    mockGetAllWindows.mockReturnValue([mockWindow]);
+  test('non-packaged build keeps startup update check disabled without env var', async () => {
+    mockElectronApp.isPackaged = false;
 
     const { initializeAutoUpdater } = require('../src/main/core/autoUpdater');
     await initializeAutoUpdater(false, jest.fn().mockReturnValue(null));
 
     expect(mockAutoUpdater.on).not.toHaveBeenCalled();
     expect(mockAutoUpdater.checkForUpdates).not.toHaveBeenCalled();
+  });
+
+  testIfSupported('packaged build enables the updater by default without env var', async () => {
+    mockElectronApp.isPackaged = true;
+    mockGetAllWindows.mockReturnValue([]);
+
+    const {
+      initializeAutoUpdater,
+      __test: { areAutomaticUpdatesEnabled }
+    } = require('../src/main/core/autoUpdater');
+    await initializeAutoUpdater(false, jest.fn().mockReturnValue(null));
+
+    expect(areAutomaticUpdatesEnabled()).toBe(true);
+    expect(mockAutoUpdater.on).toHaveBeenCalled();
   });
 
   test('STRATOSORT_ENABLE_AUTO_UPDATES=false disables updater even when packaged', async () => {
