@@ -37,9 +37,33 @@ describe('Collapsible', () => {
       </Collapsible>
     );
 
-    const headingBtn = screen.getByRole('button', { name: /expand section: AI bit/i });
+    const headingBtn = screen.getByRole('button', { name: 'AI bit' });
     fireEvent.click(headingBtn);
     expect(screen.getByText('Body content')).toBeInTheDocument();
+  });
+
+  test('rich titles provide the visible heading as the accessible name', () => {
+    render(
+      <Collapsible
+        title={
+          <span>
+            AI <strong>Provider</strong>
+          </span>
+        }
+        defaultOpen={false}
+      >
+        <p>Provider settings</p>
+      </Collapsible>
+    );
+
+    const headingBtn = screen.getByRole('button', { name: 'AI Provider' });
+    expect(headingBtn).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(headingBtn);
+    expect(headingBtn).toHaveAccessibleName('AI Provider');
+    expect(headingBtn).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('region', { name: 'AI Provider' })).toContainElement(
+      screen.getByText('Provider settings')
+    );
   });
 
   test('collapsed preview toggles section when helper row is clicked', () => {

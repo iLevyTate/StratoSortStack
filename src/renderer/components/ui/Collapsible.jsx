@@ -85,9 +85,6 @@ const Collapsible = memo(function Collapsible({
     ? ''
     : 'px-[var(--panel-padding)] pb-[calc(var(--panel-padding)*0.75)]';
 
-  const titleLabel =
-    typeof title === 'string' || typeof title === 'number' ? String(title) : 'Section';
-
   return (
     <section className={`${sectionClasses} flex flex-col flex-shrink-0`}>
       <div
@@ -99,7 +96,7 @@ const Collapsible = memo(function Collapsible({
           className="text-left min-w-0 flex-1 mr-2 rounded-md px-1 py-0.5 -mx-1 hover:bg-system-gray-100/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-stratosort-blue focus-visible:ring-offset-2"
           aria-expanded={isOpen}
           aria-controls={contentId}
-          aria-label={`${isOpen ? 'Collapse' : 'Expand'} section: ${titleLabel}`}
+          aria-labelledby={titleId}
         >
           <Heading as="h3" variant="h6" id={titleId} className="m-0 leading-tight">
             {title}
