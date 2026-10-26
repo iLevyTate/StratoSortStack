@@ -201,7 +201,7 @@
     "@kenjiuno/decompressrtf": "^0.1.4",
     "@kenjiuno/msgreader": "^1.29.0",
     "@modelcontextprotocol/sdk": "^1.32.1",
-    "@napi-rs/canvas": "^1.0.13",
+    "@napi-rs/canvas": "1.0.11",
     "@orama/orama": "^3.0.0",
     "@orama/plugin-data-persistence": "^3.0.0",
     "@orama/stemmers": "^3.1.18",
