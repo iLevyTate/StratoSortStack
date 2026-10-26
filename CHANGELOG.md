@@ -17,6 +17,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Atlas map, timeline, knowledge stats card, Downloads triage trust pack, MCP server kit, and
   repository history visualization (PRs #375–#407).
 
+### Changed
+
+- **License:** StratoSort Stack is now released under the PolyForm Noncommercial License 1.0.0.
+  Personal and other noncommercial use is free with every feature; commercial use needs a paid key
+  (see [docs/COMMERCIAL.md](docs/COMMERCIAL.md)).
+- **No trial, no feature gate:** the app runs the same with or without a license key. Settings →
+  License only reports `free`, `licensed`, or `version_not_covered`; nothing is locked.
+- **Product name:** StratoSort Core is now StratoSort Stack. Existing `StratoSort Core` user data is
+  migrated on first launch (`src/main/core/userDataMigration.js`). Source and releases live at
+  [iLevyTate/StratoSortStack](https://github.com/iLevyTate/StratoSortStack).
+
 ### Fixed
 
 - July feature-burst follow-up: F-150..F-186 (typecheck, atomicMove destination lock, file-operation
@@ -701,7 +712,7 @@ notes.
 Note: `v1.x` release links intentionally point to the predecessor repository for historical
 traceability.
 
-[Unreleased]: https://github.com/iLevyTate/StratoSortStack/compare/v4.0.4...HEAD
+[Unreleased]: https://github.com/iLevyTate/StratoSortStack/commits/main
 [4.0.4]: https://github.com/iLevyTate/StratoSortStack/compare/v4.0.3...v4.0.4
 [4.0.3]: https://github.com/iLevyTate/StratoSortStack/compare/v4.0.2...v4.0.3
 [4.0.2]: https://github.com/iLevyTate/StratoSortStack/compare/v4.0.1...v4.0.2

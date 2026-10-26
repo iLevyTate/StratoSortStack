@@ -22,7 +22,7 @@
 </p>
 
 <p align="center">
-  <strong><a href="https://stratosort.com/">Visit the Official Website</a></strong>
+  <strong><a href="https://stratosort.com/">Official Website</a> • <a href="https://iLevyTate.github.io/StratoSortStack/">Documentation</a></strong>
 </p>
 
 <p align="center">
