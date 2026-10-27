@@ -405,7 +405,7 @@ const OUTPUTS = {
     zoomScale: 0.75,
     storyFade: 0,
     outroFade: OUTRO_FADE,
-    lossless: true,
+    highQuality: true,
     dest: () => path.join(SHORT_DIR, 'stratosort-short.mp4'),
     frame: shortLetterboxFilter,
     caption: shortCaption,
@@ -417,7 +417,7 @@ const OUTPUTS = {
     zoomScale: 0.75,
     storyFade: 0,
     outroFade: OUTRO_FADE,
-    lossless: true,
+    highQuality: true,
     dest: () => path.join(OUT_DIR, 'how-to-use.mp4'),
     frame: howToFilter,
     caption: howToCaption,
@@ -479,11 +479,24 @@ const even = (n) => Math.max(2, Math.floor(n / 2) * 2);
 const num = (n) => Number(n.toFixed(4)).toString();
 
 const X264 = ['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'fast', '-crf', '18'];
-// CRF 0 is x264's lossless mode. Preset only changes size and encode time.
-const X264_LOSSLESS = ['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'medium', '-crf', '0'];
+// Near-lossless, but still H.264 High profile. CRF 0 (true lossless) makes x264 emit the
+// High 4:4:4 Predictive profile, which Chrome, Firefox and Safari cannot decode, so the published
+// tour and Short would not play in a browser or on the docs site.
+const X264_HIGH_QUALITY = [
+  '-c:v',
+  'libx264',
+  '-profile:v',
+  'high',
+  '-pix_fmt',
+  'yuv420p',
+  '-preset',
+  'slow',
+  '-crf',
+  '12'
+];
 
 function videoEncode(output) {
-  return output?.lossless ? X264_LOSSLESS : X264;
+  return output?.highQuality ? X264_HIGH_QUALITY : X264;
 }
 
 // ---------------------------------------------------------------------------
@@ -1021,7 +1034,7 @@ function assemble(ctx, sceneFiles, dest) {
     '-c:a',
     'aac',
     '-b:a',
-    ctx.output.lossless ? '320k' : '128k',
+    ctx.output.highQuality ? '320k' : '128k',
     '-movflags',
     '+faststart',
     dest
