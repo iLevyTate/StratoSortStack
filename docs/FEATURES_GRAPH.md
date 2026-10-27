@@ -48,9 +48,11 @@ The graph doesn't just show files; it shows _meaning_.
 
 ### Frontend (`Renderer`)
 
-- `UnifiedSearchModal.jsx`: Main search modal and graph container (Discover, Relate, Understand
-  tabs). Hosts the React Flow canvas, graph state, and search results.
-- `src/renderer/hooks/useGraphState.js`: Manages the complex state of nodes and edges.
+- `src/renderer/components/search/UnifiedSearchModal.jsx`: The Knowledge OS modal and its tabs
+  (Search, Chat, Timeline, Relate, Atlas).
+- `src/renderer/components/search/GraphTabContent.jsx` + `search/hooks/useGraphTab.js`: The Relate
+  tab — the React Flow canvas, layout, expansion and graph interactions.
+- `src/renderer/hooks/useGraphState.js`: Node/edge state used by `useGraphTab`.
 
 ### Backend (`Main Process`)
 

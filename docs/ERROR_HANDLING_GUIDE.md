@@ -17,671 +17,266 @@ header:
 
 ## Overview
 
-This guide provides comprehensive patterns and best practices for error handling across the
-StratoSort Stack codebase. It consolidates all error handling utilities and provides clear guidance
-on when to use each pattern.
+This guide covers the error-handling building blocks that exist in the StratoSort Stack codebase
+today and when to reach for each one. Every function named here is a real export; if you find one
+that no longer matches the code, the code wins — please fix this page.
+
+| Layer                         | Module                                                                |
+| :---------------------------- | :-------------------------------------------------------------------- |
+| Response envelopes + codes    | `src/shared/errorHandlingUtils.js`, `src/shared/errorCodes.js`        |
+| IPC handler wrapping          | `src/main/ipc/ipcWrappers.js`                                         |
+| Timeouts, retries, cleanup    | `src/shared/promiseUtils.js`                                          |
+| Typed errors (main process)   | `src/main/errors/AnalysisError.js`, `FileSystemError.js`              |
+| Classification                | `src/shared/errorClassifier.js`, `src/shared/llamaErrorClassifier.js` |
+| Process-level handler         | `src/main/errors/ErrorHandler.js`                                     |
+| Renderer display + boundaries | `src/renderer/utils/errorMapping.js`, `ErrorBoundary.jsx`             |
 
 ---
 
-## Error Handling Utilities
+## 1. Response envelopes (`errorHandlingUtils.js`)
 
-### 1. `errorHandlingUtils.js` (Shared)
+`src/shared/errorHandlingUtils.js` exports `ERROR_CODES`, `createErrorResponse`,
+`createSuccessResponse`, `withRetry`, `logFallback`, `getErrorMessage` and `attachErrorCode`.
 
-**Location:** `src/shared/errorHandlingUtils.js`
+- `createErrorResponse(error, context = {})` returns the canonical failure envelope:
 
-**Purpose:** Centralized error handling for general async operations
-
-**Functions:**
-
-- `createErrorResponse(error, context = {})` - Standardized error response. Returns
-  `{ success: false, error: { code, message, details } }` (the canonical IPC error envelope).
-- `createSuccessResponse(data)` - Standardized success response (`{ success: true, ...data }`).
-- `getErrorMessage(error, fallback)` - Extract a human-readable string from any error shape.
-- `attachErrorCode(error, code)` - Stamp an `ERROR_CODES` value onto a thrown error.
-- `withRetry(fn, options)` - Retry logic with exponential backoff (re-exported from
-  `promiseUtils.js`).
-- `logFallback(logger, context, operation, error, fallbackValue, options)` - Structured logging when
-  swallowing an error in favor of a fallback value.
-
-Error codes themselves are defined in `src/shared/errorCodes.js` (`ERROR_CODES`) and re-exported
-through `errorHandlingUtils.js`.
-
-**Use When:**
-
-- General async operations
-- Service-level error handling
-- Operations that need retry logic
-
-### 2. `ipcWrappers.js` (IPC)
-
-**Location:** `src/main/ipc/ipcWrappers.js`
-
-**Purpose:** IPC handler-specific wrapping, validation, and error formatting
-
-**Functions:**
-
-- `createHandler({ ... })` / `registerHandlers({ ipcMain, logger, handlers, context })` - Register
-  IPC handlers with consistent error/validation wrapping.
-- `withErrorLogging(logger, fn, options)` - Wraps an IPC handler with error logging.
-- `withValidation(logger, schema, handler, options)` - Adds Zod schema validation to a handler.
-- `createErrorResponse(error, context)` / `createSuccessResponse(data)` - IPC envelope helpers
-  (delegate to the shared shape above).
-
-**Use When:**
-
-- IPC handlers (`ipcMain.handle`)
-- Need validation with Zod schemas
-- IPC-specific error formatting required
-
-### 3. `promiseUtils.js` (Shared)
-
-**Location:** `src/shared/promiseUtils.js`
-
-**Purpose:** Promise-specific utilities
-
-**Functions:**
-
-- `withTimeout(promise, timeoutMs, operationName)` - Promise timeout
-- `withRetry(fn, options)` - Retry with exponential backoff
-- `delay(ms)` - Simple delay utility
-
-**Use When:**
-
-- Need timeout protection for promises
-- Need retry logic for operations
-- Simple delay needed
-
-### 4. `safeAccess.js` (Main Utils)
-
-**Location:** `src/main/utils/safeAccess.js`
-
-**Purpose:** Safe file path validation
-
-**Functions:**
-
-- `safeFilePath(path)` - Safe file path validation
-
-**Use When:**
-
-- Validating file paths before filesystem calls
-
-### 5. Renderer error consumption & boundaries
-
-**Normalize IPC errors before rendering.** IPC handlers return the structured envelope
-`{ success: false, error: { code, message, details } }`. Rendering `response.error` (an object)
-directly into JSX throws React error #31 ("Objects are not valid as a React child"). Always convert
-it to a string first with `toErrorMessage(response.error, fallback)` from
-`src/renderer/utils/errorMapping.js` before placing it in state that feeds JSX or a notification.
-`mapErrorToNotification({ error, errorType, errorCode, operationType })` is also available for
-richer toast mapping.
-
-**Error boundary locations:**
-
-- `src/renderer/components/ErrorBoundary.jsx` (also exports `GlobalErrorBoundary`)
-- `src/renderer/components/PhaseErrorBoundary.jsx`
-
-**Purpose:** React error boundaries for UI error handling
-
-**Use When:**
-
-- React component errors
-- Need graceful UI fallback
-- Phase-specific error handling
-
----
-
-## When to Use Each Pattern
-
-### Pattern 1: Standard Async Function with Standardized Responses
-
-**Utility:** `createSuccessResponse` / `createErrorResponse` from `errorHandlingUtils.js`
-
-**Use When:**
-
-- General async operations
-- Service methods
-- Operations that should return standardized responses
-
-**Example:**
-
-```javascript
-const { createSuccessResponse, createErrorResponse } = require('../../shared/errorHandlingUtils');
-
-async function analyzeFile(filePath) {
-  try {
-    const result = await performAnalysis(filePath);
-    return createSuccessResponse({ result });
-  } catch (error) {
-    return createErrorResponse(error, { context: 'FileAnalysis', operation: 'analyze-file' });
-  }
-}
-```
-
-### Pattern 2: IPC Handler Wrapper
-
-**Utility:** `withErrorLogging` from `ipcWrappers.js`
-
-**Use When:**
-
-- IPC handlers (`ipcMain.handle`)
-- Need automatic error logging
-- IPC communication
-
-**Example:**
-
-```javascript
-const { withErrorLogging } = require('./ipcWrappers');
-
-ipcMain.handle(
-  IPC_CHANNELS.ANALYSIS.ANALYZE_DOCUMENT,
-  withErrorLogging(logger, async (event, filePath) => {
-    const result = await analyzeFile(filePath);
-    return createSuccessResponse(result);
-  })
-);
-```
-
-### Pattern 3: IPC Handler with Validation
-
-**Utility:** `withValidation` from `withErrorLogging.js`
-
-**Use When:**
-
-- IPC handlers need input validation
-- Using Zod schemas
-- Need structured validation errors
-
-**Example:**
-
-```javascript
-const { withValidation } = require('./ipcWrappers');
-const z = require('zod');
-
-const schema = z.object({
-  filePath: z.string().min(1),
-  options: z.object({}).optional()
-});
-
-ipcMain.handle(
-  IPC_CHANNELS.ANALYSIS.ANALYZE_DOCUMENT,
-  withValidation(logger, schema, async (event, { filePath, options }) => {
-    const result = await analyzeFile(filePath, options);
-    return createSuccessResponse(result);
-  })
-);
-```
-
-### Pattern 4: Retry Logic
-
-**Utility:** `withRetry` from `errorHandlingUtils.js` or `promiseUtils.js`
-
-**Use When:**
-
-- Network operations
-- Transient failures expected
-- Operations that can be safely retried
-
-**Example:**
-
-```javascript
-const { withRetry } = require('../../shared/errorHandlingUtils');
-
-const result = await withRetry(
-  async () => {
-    return await fetchDataFromAPI();
-  },
+  ```javascript
   {
-    maxAttempts: 3,
-    delay: 1000,
-    backoff: 2,
-    operationName: 'FetchData',
-    shouldRetry: (error) => {
-      return error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT';
+    success: false,
+    error: {
+      code: 'FILE_NOT_FOUND', // error.code || error.errorCode || ERROR_CODES.UNKNOWN_ERROR
+      message: 'File not found',
+      details: { errorType: 'Error', correlationId, ...context } // omitted when empty
     }
   }
-);
-```
+  ```
 
-### Pattern 5: Timeout Protection
+  The first argument is the **error** (or an error-like `{ message, name, code }` object), not a
+  message string. The code is read from `error.code`; use `attachErrorCode` to set it.
 
-**Utility:** `withTimeout` from `promiseUtils.js` or `errorHandlingUtils.js`
+- `createSuccessResponse(data)` returns `{ success: true, data }`.
+- `getErrorMessage(error, fallback = 'Unknown error')` extracts a string from any error shape.
+- `attachErrorCode(error, code)` stamps an `ERROR_CODES` value onto an error (if it has none) and
+  returns it.
+- `logFallback(logger, context, operation, error, fallbackValue, { level })` logs a swallowed error
+  (default level `debug`) and returns `fallbackValue`.
 
-**Use When:**
-
-- Long-running operations
-- Network requests
-- Operations that might hang
-
-**Example:**
-
-```javascript
-const { withTimeout } = require('../../shared/promiseUtils');
-
-const result = await withTimeout(
-  performLongOperation(),
-  30000, // 30 seconds
-  'LongOperation'
-);
-```
-
-### Pattern 6: Safe Property Access
-
-**Utility:** `safeGet` from `safeAccess.js`
-
-**Use When:**
-
-- Accessing nested object properties
-- Properties might not exist
-- Need default values
-
-**Example:**
+Error codes are defined in `src/shared/errorCodes.js` (`ERROR_CODES`) and re-exported here.
 
 ```javascript
-const { safeGet } = require('../utils/safeAccess');
+const {
+  createErrorResponse,
+  createSuccessResponse,
+  attachErrorCode,
+  ERROR_CODES
+} = require('../../shared/errorHandlingUtils');
 
-const userName = safeGet(user, 'profile.name', 'Anonymous');
-const settings = safeGet(config, 'app.settings', {});
-```
-
-### Pattern 7: Safe Function Execution
-
-**Utility:** `safeCall` from `safeAccess.js`
-
-**Use When:**
-
-- Calling functions that might throw
-- Need fallback values
-- Optional operations
-
-**Example:**
-
-```javascript
-const { safeCall } = require('../utils/safeAccess');
-
-const result = await safeCall(async () => await riskyOperation(), [], {
-  default: 'fallback'
-});
-```
-
-### Pattern 8: React Error Boundaries
-
-**Utility:** Error Boundary components
-
-**Use When:**
-
-- React component errors
-- Need UI fallback
-- Prevent full app crash
-
-**Example:**
-
-```javascript
-import GlobalErrorBoundary from './components/GlobalErrorBoundary';
-
-function App() {
-  return (
-    <GlobalErrorBoundary>
-      <YourComponent />
-    </GlobalErrorBoundary>
-  );
+async function readSummary(filePath) {
+  if (typeof filePath !== 'string' || !filePath) {
+    return createErrorResponse(
+      attachErrorCode(new Error('Invalid file path'), ERROR_CODES.INVALID_INPUT)
+    );
+  }
+  try {
+    const summary = await loadSummary(filePath);
+    return createSuccessResponse({ summary }); // → { success: true, data: { summary } }
+  } catch (error) {
+    return createErrorResponse(error, { operation: 'readSummary' });
+  }
 }
 ```
 
 ---
 
-## Decision Tree
+## 2. IPC handlers (`ipcWrappers.js`)
 
+Every IPC handler is registered through the IPC registry (`src/main/core/ipcRegistry.js`), which
+also applies `ipcSenderValidator`. Never call `ipcMain.handle` directly. The helpers in
+`src/main/ipc/ipcWrappers.js`:
+
+- `createHandler({ logger, handler, schema, ... })` composes service checks (`serviceName`,
+  `getService`, `fallbackResponse`), Zod (or fallback-validator) input validation (`schema`,
+  `normalize`), optional result wrapping (`wrapResponse`) and error logging into one handler.
+- `safeHandle(ipcMain, channel, handler)` registers a single handler with the registry.
+- `registerHandlers({ ipcMain, logger, handlers, context })` builds and registers a map of
+  `channel → createHandler config`.
+- Lower-level wrappers: `withErrorLogging(logger, fn, { context })`,
+  `withValidation(logger, schema, handler, { context })`, `withServiceCheck`, `withVectorDbInit`.
+
+Two behaviors to know:
+
+1. **Validation failures return an envelope.** An input that fails the schema returns a
+   `createErrorResponse` failure (message `'Invalid input'`, `details.errorType: 'ValidationError'`,
+   `details.validationErrors`) without calling your handler.
+2. **Thrown errors are logged and re-thrown.** `withErrorLogging` (which `createHandler` always
+   applies) logs and then re-throws, so `ipcRenderer.invoke` rejects. If the renderer should get a
+   structured envelope instead, catch inside the handler and return `createErrorResponse(...)`.
+
+```javascript
+const { createHandler, safeHandle, z } = require('./ipcWrappers');
+
+const handler = createHandler({
+  logger,
+  context: 'Analysis',
+  schema: z.object({ filePath: z.string().min(1) }),
+  handler: async (event, { filePath }) => performDocumentAnalysis(filePath)
+});
+
+safeHandle(ipcMain, IPC_CHANNELS.ANALYSIS.ANALYZE_DOCUMENT, handler);
 ```
-Start: Need error handling?
-│
-├─ Is it an IPC handler?
-│  ├─ Yes → Use `withErrorLogging` or `withValidation`
-│  │         └─ Need validation? → Use `withValidation`
-│  │         └─ No validation? → Use `withErrorLogging`
-│  │
-│  └─ No → Continue
-│
-├─ Is it a React component?
-│  ├─ Yes → Use Error Boundary
-│  │         └─ Global? → `GlobalErrorBoundary`
-│  │         └─ Phase-specific? → `PhaseErrorBoundary`
-│  │
-│  └─ No → Continue
-│
-├─ Need retry logic?
-│  ├─ Yes → Use `withRetry`
-│  │         └─ Also need timeout? → Combine with `withTimeout`
-│  │
-│  └─ No → Continue
-│
-├─ Need timeout protection?
-│  ├─ Yes → Use `withTimeout`
-│  │
-│  └─ No → Continue
-│
-├─ Accessing nested properties?
-│  ├─ Yes → Use `safeGet`
-│  │
-│  └─ No → Continue
-│
-├─ Calling function that might throw?
-│  ├─ Yes → Use `safeCall` or try/catch
-│  │
-│  └─ No → Continue
-│
-└─ General async operation?
-   └─ Yes → Use `withErrorHandling`
-```
+
+See `src/main/ipc/analysis.js` for real examples.
+
+**Success shapes differ by helper.** `ipcWrappers.createSuccessResponse(data)` spreads plain-object
+data into the response (`{ success: true, ...data }`) for backward compatibility, while the shared
+`errorHandlingUtils.createSuccessResponse(data)` nests it (`{ success: true, data }`). The simple
+helpers `successResponse(data, warnings)`, `errorResponse(error, extras)` and `canceledResponse()`
+(`{ success: false, canceled: true }`) are used by settings-style handlers. Check which helper a
+channel uses before reading its result in the renderer. Failure envelopes from `createErrorResponse`
+always use the nested `error: { code, message, details }` shape.
 
 ---
 
-## Code Examples
+## 3. Timeouts, retries and cleanup (`promiseUtils.js`)
 
-### Example 1: Service Method with Error Handling
-
-```javascript
-const { createSuccessResponse, createErrorResponse } = require('../../shared/errorHandlingUtils');
-
-class FileAnalysisService {
-  async analyzeFile(filePath) {
-    try {
-      const result = await performAnalysis(filePath);
-      return createSuccessResponse({ result });
-    } catch (error) {
-      logger.error('File analysis failed', { filePath, error: error.message });
-      return createErrorResponse(error, {
-        context: 'FileAnalysisService',
-        operation: 'analyzeFile'
-      });
-    }
-  }
-}
-```
-
-### Example 2: IPC Handler with Validation
+- `withTimeout(promiseOrFn, timeoutMs, operationName)` rejects with
+  `"<operationName> timed out after <ms>ms"`.
+- `withAbortableTimeout(fn, timeoutMs, operationName)` passes an `AbortController` to `fn` and
+  aborts it on timeout. Prefer it when the underlying work can actually be cancelled.
+- `withRetry(fn, options)` **returns a wrapped function**; call the result to run it. Options:
+  `maxRetries` (alias `maxAttempts`, default 3), `initialDelay` (alias `delay`, default 1000),
+  `maxDelay`, `backoff` (alias `backoffFactor`, default 2), `jitterFactor`,
+  `shouldRetry(error, attempt)`, `onRetry`, `operationName`.
+- `retry(fn, options)` runs `withRetry(fn, options)()` immediately and returns the result.
+- `swallow(promise, logger, context, level = 'debug')` awaits a best-effort operation (for example
+  temp-file cleanup), logs any rejection and resolves to `undefined`.
+- Also available: `delay`, `debounce`, `throttle`, `mapWithConcurrency`, `Semaphore`,
+  `createInitGuard`.
 
 ```javascript
-const { withValidation } = require('./ipcWrappers');
-const z = require('zod');
+const { retry, withTimeout, swallow } = require('../../shared/promiseUtils');
 
-const analyzeSchema = z.object({
-  filePath: z.string().min(1),
-  options: z
-    .object({
-      includeMetadata: z.boolean().optional()
-    })
-    .optional()
+const result = await retry(() => withTimeout(fetchModelManifest(), 10000, 'FetchManifest'), {
+  maxRetries: 3,
+  initialDelay: 1000,
+  shouldRetry: (error) => error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT'
 });
 
-ipcMain.handle(
-  IPC_CHANNELS.ANALYSIS.ANALYZE_DOCUMENT,
-  withValidation(logger, analyzeSchema, async (event, { filePath, options }) => {
-    const result = await analyzeFile(filePath, options);
-    return createSuccessResponse(result);
-  })
-);
+await swallow(fs.promises.unlink(tempPath), logger, 'cleanup:temp-file');
 ```
 
-### Example 3: Retry with Timeout
+`errorHandlingUtils.js` re-exports `withRetry` (same wrapper semantics) but not `withTimeout` or
+`retry`; import those from `promiseUtils.js`.
+
+---
+
+## 4. Typed errors (`src/main/errors/`)
+
+Main-process code throws typed, operational errors (`isOperational = true`) that carry a `code`,
+structured `metadata`, `getUserFriendlyMessage()` and `getActionableSteps()`.
+
+**`AnalysisError.js`** — `AnalysisError(code, metadata)` (message is generated from `code`; pass
+`{ cause }` in metadata to chain), plus `ModelMissingError(modelName)`,
+`DependencyMissingError(dependencyName)`, `AiEngineConnectionError(details)` and
+`FileProcessingError(code, fileName, metadata)`.
+
+**`FileSystemError.js`** — `FileSystemError(code, metadata)` with `FILE_SYSTEM_ERROR_CODES` and
+`NODE_ERROR_CODE_MAP`, plus `isRecoverable()`, `shouldRetry()`, `getRetryDelay()` and `toJSON()`.
+Convenience subclasses: `FileNotFoundError`, `PermissionDeniedError`, `WriteFailedError`,
+`WatcherError`, `AtomicOperationError`, `IntegrityError`. Convert raw Node errors with the static
+factories:
 
 ```javascript
-const { withRetry } = require('../../shared/errorHandlingUtils');
-const { withTimeout } = require('../../shared/promiseUtils');
+const { FileSystemError } = require('../errors/FileSystemError');
 
-async function fetchWithRetryAndTimeout() {
-  return await withRetry(
-    async () => {
-      return await withTimeout(
-        fetchDataFromAPI(),
-        10000, // 10 second timeout
-        'FetchData'
-      );
-    },
-    {
-      maxAttempts: 3,
-      delay: 1000,
-      operationName: 'FetchData'
-    }
-  );
+try {
+  await fs.promises.rename(src, dest);
+} catch (nodeError) {
+  throw FileSystemError.forOperation('rename', nodeError, src);
+  // or: FileSystemError.fromNodeError(nodeError, { path: src, operation: 'rename' })
 }
 ```
 
-### Example 4: Safe Property Access
+**`ErrorHandler.js`** exports a singleton (not a class). `simple-main.js` initializes it; it listens
+for Electron `render-process-gone` / `child-process-gone`, writes to `userData/logs`, and escalates
+critical failures via `handleCriticalError` (`uncaughtException` / `unhandledRejection` are handled
+in `src/main/core/lifecycle.js`, not here). Call `errorHandler.handleError(error, context)` only for
+errors that should reach that central path; most code should throw or return an envelope instead.
+
+---
+
+## 5. Classification (`errorClassifier.js`)
+
+`src/shared/errorClassifier.js` turns arbitrary errors (usually Node `code`s) into decisions:
+
+- `classifyError(error, { context })` returns `category`, `userMessage`, `code`, `originalMessage`
+  and the booleans `isRetryable`, `isNetworkError`, `isPermissionError`, `isNotFoundError` and
+  `isCriticalError`
+- `getErrorCategory(error)` (an `ErrorCategory` value), `getUserMessage(error, context)`
+- Predicates: `isRetryable`, `isNetworkError`, `isPermissionError`, `isNotFoundError`,
+  `isCrossDeviceError`, `isExistsError`, `isCriticalError`
+
+Use `isRetryable` as the `shouldRetry` for filesystem retries rather than hand-rolling code lists.
+Errors from node-llama-cpp have their own classifier, `src/shared/llamaErrorClassifier.js`
+(`classifyLlamaError` plus `looksLikeVramExhausted`, `looksLikeCorruptGguf`, etc.).
+
+---
+
+## 6. Renderer: displaying errors and boundaries
+
+**Normalize IPC errors before rendering.** The failure envelope's `error` is an object; placing it
+directly into JSX throws React error #31 ("Objects are not valid as a React child"). Convert it with
+`toErrorMessage(response.error, fallback)` from `src/renderer/utils/errorMapping.js` before putting
+it in state that feeds JSX or a notification.
+`mapErrorToNotification({ error, errorType, errorCode, operationType })` builds richer toast
+content, and `isIpcTimeoutError(error)` detects preload invoke timeouts.
+
+**Error boundaries:**
+
+- `src/renderer/components/ErrorBoundary.jsx` — default export `ErrorBoundaryCore` (props include
+  `variant`, `contextName`, `fallback`, `onReset`) and the named export `GlobalErrorBoundary`, which
+  wraps the whole app in `src/renderer/index.js`.
+- `src/renderer/components/PhaseErrorBoundary.jsx` — default export; requires `phaseName`.
 
 ```javascript
-const { safeGet } = require('../utils/safeAccess');
-
-function getUserDisplayName(user) {
-  // Safe access with fallback
-  return safeGet(user, 'profile.displayName', safeGet(user, 'email', 'Anonymous'));
-}
-```
-
-### Example 5: Error Boundary Usage
-
-```javascript
+import ErrorBoundary from './components/ErrorBoundary';
 import PhaseErrorBoundary from './components/PhaseErrorBoundary';
 
-function DiscoverPhase() {
-  return (
-    <PhaseErrorBoundary phaseName="DISCOVER">
-      <DiscoverContent />
-    </PhaseErrorBoundary>
-  );
-}
+<PhaseErrorBoundary phaseName="Discover">
+  <DiscoverPhase />
+</PhaseErrorBoundary>;
+
+<ErrorBoundary contextName="NavigationBar" fallback={() => null}>
+  <NavigationBar />
+</ErrorBoundary>;
 ```
 
 ---
 
-## Best Practices
+## Decision guide
 
-### 1. Always Log Errors
+| Situation                                     | Use                                                                          |
+| :-------------------------------------------- | :--------------------------------------------------------------------------- |
+| New IPC handler                               | `createHandler` + Zod schema, registered via `safeHandle`/`registerHandlers` |
+| Handler must return a failure the UI can show | catch and return `createErrorResponse(error, context)`                       |
+| Filesystem failure in main                    | `FileSystemError.forOperation` / `fromNodeError`                             |
+| Analysis/model failure in main                | `AnalysisError` family                                                       |
+| Deciding whether to retry                     | `isRetryable` / `classifyError`, then `retry` or `withRetry`                 |
+| Work that can hang                            | `withAbortableTimeout` (cancellable) or `withTimeout`                        |
+| Best-effort cleanup                           | `swallow`                                                                    |
+| Catch block that returns a default            | `logFallback`                                                                |
+| Showing an IPC error in the UI                | `toErrorMessage` / `mapErrorToNotification`                                  |
+| React subtree that may throw                  | `ErrorBoundary` (`contextName`) or `PhaseErrorBoundary`                      |
 
-```javascript
-// Bad: Silent failure
-try {
-  await operation();
-} catch (error) {
-  // Nothing
-}
+## Best practices
 
-// Good: Log errors
-try {
-  await operation();
-} catch (error) {
-  logger.error('Operation failed', {
-    error: error.message,
-    stack: error.stack
-  });
-  throw error;
-}
-```
-
-### 2. Use Standardized Responses
-
-```javascript
-// Bad: Inconsistent response format
-return { success: true, data: result };
-return { ok: true, result };
-return result;
-
-// Good: Standardized format. createErrorResponse takes the error first; the code is read
-// from error.code (use attachErrorCode to set it), and context is the optional second arg.
-return createSuccessResponse(result);
-return createErrorResponse(
-  attachErrorCode(new Error('File not found'), ERROR_CODES.FILE_NOT_FOUND)
-);
-```
-
-### 3. Provide Context in Errors
-
-```javascript
-// Bad: Generic error
-throw new Error('Failed');
-
-// Good: Contextual error
-throw new Error(`Failed to analyze file: ${filePath}`, {
-  filePath,
-  errorCode: ERROR_CODES.ANALYSIS_FAILED
-});
-```
-
-### 4. Use Appropriate Error Codes
-
-```javascript
-// Use ERROR_CODES from errorHandlingUtils.js
-const { ERROR_CODES } = require('../../shared/errorCodes');
-
-return createErrorResponse('File not found', ERROR_CODES.FILE_NOT_FOUND, {
-  filePath
-});
-```
-
-### 5. Handle Errors at the Right Level
-
-```javascript
-// Bad: Catching and swallowing at low level
-function helper() {
-  try {
-    riskyOperation();
-  } catch (error) {
-    // Swallowed
-  }
-}
-
-// Good: Let errors bubble up to appropriate handler
-function helper() {
-  return riskyOperation(); // Let caller handle
-}
-```
-
-### 6. Use Error Boundaries for UI Errors
-
-```javascript
-// Always wrap components that might error
-<GlobalErrorBoundary>
-  <App />
-</GlobalErrorBoundary>
-```
+- **Never swallow silently.** Log with context (`logFallback`, `swallow`, or `logger.error`) or
+  re-throw.
+- **Throw typed errors in main, return envelopes at the IPC edge.** Services throw; handlers decide
+  whether the renderer gets a rejection or a `{ success: false, error }` envelope.
+- **Keep codes in `ERROR_CODES`.** Don't invent ad-hoc string codes in handlers.
+- **Handle errors where you can act on them.** Low-level helpers should usually let errors bubble.
 
 ---
 
-## Common Patterns
-
-### Pattern: Try-Catch with Logging
-
-```javascript
-try {
-  const result = await operation();
-  return result;
-} catch (error) {
-  logger.error('Operation failed', {
-    error: error.message,
-    stack: error.stack,
-    context: 'additional context'
-  });
-  throw error; // Re-throw or return error response
-}
-```
-
-### Pattern: Validation Before Operation
-
-```javascript
-if (!filePath || typeof filePath !== 'string') {
-  return createErrorResponse('Invalid file path', ERROR_CODES.INVALID_INPUT, {
-    filePath
-  });
-}
-
-try {
-  const result = await processFile(filePath);
-  return createSuccessResponse(result);
-} catch (error) {
-  logger.error('File processing failed', { filePath, error: error.message });
-  return createErrorResponse(error.message, ERROR_CODES.FILE_READ_ERROR);
-}
-```
-
-### Pattern: Retry with Exponential Backoff
-
-```javascript
-const { withRetry } = require('../../shared/errorHandlingUtils');
-
-const result = await withRetry(async () => await networkOperation(), {
-  maxAttempts: 3,
-  delay: 1000, // Initial delay: 1 second
-  backoff: 2 // Double each time
-  // Attempt 1: 1s delay
-  // Attempt 2: 2s delay
-  // Attempt 3: 4s delay
-});
-```
-
-### Pattern: Timeout with Fallback
-
-```javascript
-const { withTimeout } = require('../../shared/promiseUtils');
-
-try {
-  const result = await withTimeout(
-    slowOperation(),
-    5000, // 5 second timeout
-    'SlowOperation'
-  );
-  return result;
-} catch (error) {
-  if (error.message.includes('timed out')) {
-    logger.warn('Operation timed out, using fallback');
-    return fallbackValue;
-  }
-  throw error;
-}
-```
-
----
-
-## Error Response Format
-
-All error responses follow this structure (the error is a nested object, not a bare string):
-
-```javascript
-{
-  success: false,
-  error: {
-    code: "ERROR_CODE",
-    message: "Error message",
-    details: {
-      // Optional additional context (errorType, correlationId, validationErrors, ...)
-    }
-  }
-}
-```
-
-All success responses follow this structure:
-
-```javascript
-{
-  success: true,
-  data: {
-    // Response data
-  }
-}
-```
-
----
-
-## Summary
-
-1. **IPC Handlers** → Use `withErrorLogging` or `withValidation`
-2. **React Components** → Use Error Boundaries
-3. **General Async** → Use `withErrorHandling`
-4. **Need Retry** → Use `withRetry`
-5. **Need Timeout** → Use `withTimeout`
-6. **Safe Access** → Use `safeGet` or `safeCall`
-7. **Always Log** → Never swallow errors silently
-8. **Standardize** → Use `createErrorResponse` and `createSuccessResponse`
-
----
-
-**Last Updated:** 2026-02-09  
-**Version:** 1.0
+**Last Updated:** 2026-10-27

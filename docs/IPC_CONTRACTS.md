@@ -38,8 +38,9 @@ If Zod is not available, a fallback validator performs basic checks for critical
 ## Event Payloads (Main -> Renderer)
 
 Event payloads are validated in `ipcMiddleware.js` using schemas in `ipcEventSchemas.js`. If a
-schema exists for a channel, invalid payloads are logged and passed through to avoid breaking
-functionality.
+schema exists for a channel, an invalid payload is logged and **dropped** (not dispatched). Channels
+without a schema pass through unvalidated. `npm run verify:ipc-event-schemas` (part of `ci`) fails
+when a push event sent from main has no schema.
 
 ## Adding or Modifying a Contract
 
@@ -80,6 +81,8 @@ scans) and are serialized via `CONCURRENCY_LIMITED_CHANNELS`, defined in
 | `embeddings:diagnose-search`     | Walks the full retrieval pipeline; holds a model slot           |
 | `analysis:analyze-batch`         | Batch IO + pipeline coordination                                |
 | `analysis:analyze-media`         | Per-file ffmpeg + Whisper slot pinning                          |
+| `organize:auto`                  | LLM analysis + atomic moves over the same files                 |
+| `organize:batch`                 | Atomic batch moves; overlapping runs could double-move or race  |
 | `llama:download-model`           | Multi-GB download                                               |
 | `llama:delete-model`             | Filesystem mutation against active models dir                   |
 | `llama:update-config`            | Reloads model in-place                                          |

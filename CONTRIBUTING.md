@@ -1,7 +1,7 @@
 # Contributing to StratoSort Stack
 
-Thanks for your interest in StratoSort Stack. Please read this document fully before opening an issue
-or a pull request — contributions are accepted under the terms below so ownership stays clear.
+Thanks for your interest in StratoSort Stack. Please read this document fully before opening an
+issue or a pull request — contributions are accepted under the terms below so ownership stays clear.
 
 ## Table of Contents
 
@@ -90,7 +90,8 @@ npm run dev
 
 | Document                                       | Purpose                       |
 | ---------------------------------------------- | ----------------------------- |
-| [Onboarding](docs/ONBOARDING.md)               | Onboarding and glossary       |
+| [Onboarding](docs/ONBOARDING.md)               | Clone to first PR             |
+| [Glossary](docs/GLOSSARY.md)                   | Project terminology           |
 | [Architecture](docs/ARCHITECTURE.md)           | System design and data flow   |
 | [DI Patterns](docs/DI_PATTERNS.md)             | Dependency injection patterns |
 | [Error Handling](docs/ERROR_HANDLING_GUIDE.md) | Error handling standards      |
@@ -113,7 +114,9 @@ npm run lint
 npm test
 ```
 
-Use `npm run ci` for core quality gates; CI additionally runs E2E and IPC channel checks.  
+Use `npm run ci` for the full quality gate (it already includes the IPC channel and contract
+checks); cloud CI additionally runs native-module verification and an E2E smoke subset.
+`npm run local:gate` adds the native-module check locally.  
 See `docs/TESTING.md` for test patterns, priorities, and the manual QA checklist.
 
 ## Pull Request Checklist

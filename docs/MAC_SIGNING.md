@@ -173,7 +173,9 @@ git push origin v4.0.0
 4. **`Notarize and staple artifacts`** uploads to Apple via `xcrun notarytool submit --wait`, then
    `xcrun stapler staple` attaches the ticket to each DMG. First submission from a new Team ID
    typically takes 5–15 minutes; subsequent ones complete in 2–5 minutes.
-5. **`publish-release`** uploads DMG + ZIP + `latest-mac-<arch>.yml` to the GitHub Release page.
+5. **`publish-release`** merges the per-arch `latest-mac-<arch>.yml` staging files into a single
+   `latest-mac.yml` (the only name electron-updater requests on macOS) and uploads it with the DMG +
+   ZIP files to the GitHub Release page. The per-arch staging files are never published.
 
 If the workflow fails, see **Troubleshooting** below.
 

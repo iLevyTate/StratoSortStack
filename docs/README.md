@@ -17,20 +17,20 @@ surprises that bite senior devs.
 
 Then keep these tabs open:
 
-| Doc                                                    | What it answers                                   |
-| ------------------------------------------------------ | ------------------------------------------------- |
-| [GETTING_STARTED.md](GETTING_STARTED.md)               | "What are the mechanical setup steps?"            |
-| [GLOSSARY.md](GLOSSARY.md)                             | "What does this term mean in this codebase?"      |
-| [PHILOSOPHY.md](PHILOSOPHY.md)                         | "What design principles guide this codebase?"     |
-| [PACKAGE_SCRIPTS.md](PACKAGE_SCRIPTS.md)               | "Which `npm run` do I want?"                      |
-| [DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md)               | "My local dev is broken — what now?"              |
-| [ARCHITECTURE.md](ARCHITECTURE.md)                     | "How are main / preload / renderer wired?"        |
-| [IPC_CONTRACTS.md](IPC_CONTRACTS.md)                   | "What's the wire format for channel X?"           |
-| [DI_PATTERNS.md](DI_PATTERNS.md)                       | "How does `ServiceContainer.getInstance()` work?" |
-| [ERROR_HANDLING_GUIDE.md](ERROR_HANDLING_GUIDE.md)     | "What error type / classifier should I use?"      |
-| [CODE_QUALITY_STANDARDS.md](CODE_QUALITY_STANDARDS.md) | "What does this project consider 'clean code'?"   |
-| [TESTING.md](TESTING.md)                               | "How do I write/run tests for this change?"       |
-| [CONFIG.md](CONFIG.md)                                 | "Which `STRATOSORT_*` env var controls X?"        |
+| Doc                                                    | What it answers                                 |
+| ------------------------------------------------------ | ----------------------------------------------- |
+| [GETTING_STARTED.md](GETTING_STARTED.md)               | "What are the mechanical setup steps?"          |
+| [GLOSSARY.md](GLOSSARY.md)                             | "What does this term mean in this codebase?"    |
+| [PHILOSOPHY.md](PHILOSOPHY.md)                         | "What design principles guide this codebase?"   |
+| [PACKAGE_SCRIPTS.md](PACKAGE_SCRIPTS.md)               | "Which `npm run` do I want?"                    |
+| [DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md)               | "My local dev is broken — what now?"            |
+| [ARCHITECTURE.md](ARCHITECTURE.md)                     | "How are main / preload / renderer wired?"      |
+| [IPC_CONTRACTS.md](IPC_CONTRACTS.md)                   | "What's the wire format for channel X?"         |
+| [DI_PATTERNS.md](DI_PATTERNS.md)                       | "How do I register/resolve a service?"          |
+| [ERROR_HANDLING_GUIDE.md](ERROR_HANDLING_GUIDE.md)     | "What error type / classifier should I use?"    |
+| [CODE_QUALITY_STANDARDS.md](CODE_QUALITY_STANDARDS.md) | "What does this project consider 'clean code'?" |
+| [TESTING.md](TESTING.md)                               | "How do I write/run tests for this change?"     |
+| [CONFIG.md](CONFIG.md)                                 | "Which `STRATOSORT_*` env var controls X?"      |
 
 ## Licensing
 
