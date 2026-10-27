@@ -184,7 +184,7 @@
     "fast-xml-parser": "$fast-xml-parser",
     "ip-address": "^10.7.1",
     "nanoid": "^5.1.16",
-    "qs": "^6.16.0",
+    "qs": "^6.17.0",
     "simple-git": "^4.0.2",
     "proxy-addr": "^2.0.8",
     "mammoth": {

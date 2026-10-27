@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-26T02:40:52.440Z",
+  "generatedAt": "2026-10-27T19:56:15.540Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
@@ -260,7 +260,7 @@
     },
     {
       "packageName": "@babel/core",
-      "version": "8.0.7",
+      "version": "8.0.9",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -320,7 +320,7 @@
     },
     {
       "packageName": "@babel/core/node_modules/@babel/helper-string-parser",
-      "version": "8.0.6",
+      "version": "8.0.8",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -350,7 +350,7 @@
     },
     {
       "packageName": "@babel/core/node_modules/@babel/parser",
-      "version": "8.0.7",
+      "version": "8.0.8",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -380,7 +380,7 @@
     },
     {
       "packageName": "@babel/core/node_modules/@babel/types",
-      "version": "8.0.6",
+      "version": "8.0.8",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -930,7 +930,7 @@
     },
     {
       "packageName": "@babel/helpers",
-      "version": "8.0.7",
+      "version": "8.0.8",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -950,7 +950,7 @@
     },
     {
       "packageName": "@babel/helpers/node_modules/@babel/helper-string-parser",
-      "version": "8.0.6",
+      "version": "8.0.8",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -970,7 +970,7 @@
     },
     {
       "packageName": "@babel/helpers/node_modules/@babel/parser",
-      "version": "8.0.7",
+      "version": "8.0.8",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -990,7 +990,7 @@
     },
     {
       "packageName": "@babel/helpers/node_modules/@babel/types",
-      "version": "8.0.6",
+      "version": "8.0.8",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7391,7 +7391,7 @@
     },
     {
       "packageName": "@modelcontextprotocol/sdk",
-      "version": "1.32.1",
+      "version": "1.32.2",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -12279,7 +12279,7 @@
     },
     {
       "packageName": "chokidar",
-      "version": "5.0.0",
+      "version": "6.0.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -20396,7 +20396,7 @@
     },
     {
       "packageName": "qs",
-      "version": "6.16.0",
+      "version": "6.17.0",
       "license": "BSD-3-Clause",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -20593,7 +20593,7 @@
     },
     {
       "packageName": "readdirp",
-      "version": "5.0.0",
+      "version": "5.1.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
