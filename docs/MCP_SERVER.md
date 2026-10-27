@@ -292,8 +292,8 @@ renderer.
 ### Port collisions
 
 If the configured port (default `53827`, override via `STRATOSORT_MCP_PORT`) is already taken, the
-server tries the next free port and surfaces the actual bound port in the status payload — copy the
-snippet again to refresh.
+server binds an OS-assigned ephemeral port (`listen(0)`) instead and surfaces the actual bound port
+in the status payload — copy the snippet again to refresh.
 
 ### Concurrency
 

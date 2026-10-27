@@ -44,8 +44,10 @@ the app workflow. The full clip is [how-to-use.mp4](./walkthrough-assets/how-to-
 
 ## 1. First Launch & Model Setup
 
-On first launch, StratoSort checks for AI models in `~/.config/StratoSort Stack/models/`. If
-required models are missing, a setup wizard guides you through downloading them.
+On first launch, StratoSort checks for AI models in the `models/` folder under its app data
+directory (`%APPDATA%\StratoSort Stack` on Windows, `~/Library/Application Support/StratoSort Stack`
+on macOS, `~/.config/StratoSort Stack` on Linux). If required models are missing, a setup wizard
+guides you through downloading them.
 
 ### Model Selection
 
@@ -54,18 +56,22 @@ On first launch a setup wizard can download models. The recorded tour stills sta
 
 The wizard presents installation profiles and lets you choose which models to install:
 
-| Model Type                                  | Purpose                                       | Required? |
-| :------------------------------------------ | :-------------------------------------------- | :-------- |
-| **Embedding Model** (Nomic Embed Text v1.5) | Converts text to vectors for semantic search  | Yes       |
-| **Text Analysis Model** (Qwen / Llama)      | Analyzes documents and generates descriptions | Yes       |
-| **Vision Model** (LLaVA)                    | Analyzes images and screenshots               | Optional  |
+| Model Type                                                     | Purpose                                       | Required? |
+| :------------------------------------------------------------- | :-------------------------------------------- | :-------- |
+| **Embedding Model** (all-MiniLM-L6-v2 / Nomic Embed Text v1.5) | Converts text to vectors for semantic search  | Yes       |
+| **Text Analysis Model** (Llama 3.2 3B / Qwen2.5 7B)            | Analyzes documents and generates descriptions | Yes       |
+| **Vision Model** (LLaVA v1.6 Mistral 7B)                       | Analyzes images and screenshots               | Optional  |
+
+The **Base (Small & Fast)** profile (about 7 GB) uses the first model in each pair; **Better Quality
+(Larger)** (about 10 GB) uses the second.
 
 {% include figure image_path="/assets/e2e-screenshots/13_model_setup_wizard_detailed.webp" alt="Model setup wizard" caption="First-launch model setup — pick a profile, then download local GGUF models" %}
 
 The wizard shows installation status for each model (Installed / Not installed) with download size
-estimates. Three action buttons are available:
+estimates, plus a **Start in Advanced mode** checkbox (leave it off to start in Simple mode). Three
+action buttons are available:
 
-- **Download Models** — begins downloading selected models
+- **Download models** — begins downloading selected models
 - **Refresh** — re-checks local model availability
 - **Continue with limited AI** — skips setup and enters the app immediately
 
@@ -90,28 +96,33 @@ The top bar is always visible and contains:
 
 - **StratoSort logo** with connection status indicator (green = AI engine ready)
 - **Phase tabs:** Welcome → Setup → Discover → Organize → Complete
-- **Search button** — opens the floating search widget / Knowledge Graph
+- **Guided / Dashboard toggle** — switches between the step-by-step phases and a single overview
+  screen
+- **Search button** — opens Knowledge OS (same as Ctrl+K / Cmd+K)
 - **Settings gear** — opens the configuration panel
 - **Window controls** — minimize, maximize, close
 
 ### Welcome Actions
 
-| Action                        | What It Does                                             |
-| :---------------------------- | :------------------------------------------------------- |
-| **Organize files now**        | Jumps straight to Discover with smart defaults           |
-| **AI & model settings**       | Opens the Settings panel to the AI Configuration section |
-| **Configure smart folders**   | Goes to the Setup phase                                  |
-| **How does StratoSort work?** | Opens a modal explaining the 3-step flow                 |
+| Action                      | What It Does                                                                              |
+| :-------------------------- | :---------------------------------------------------------------------------------------- |
+| **Organize files now**      | Goes to Discover; if you have no Smart Folders yet (besides Uncategorized), goes to Setup |
+| **AI & model settings**     | Opens the Settings panel                                                                  |
+| **Configure smart folders** | Goes to the Setup phase                                                                   |
+| **Guided steps**            | Walk through Setup, Discover, and Organize one step at a time (default)                   |
+| **Dashboard**               | A single overview screen (sets up your folders first)                                     |
+| **See the full workflow**   | Opens the "How StratoSort works" modal                                                    |
 
 ### How StratoSort Works Modal
 
-Clicking "How does StratoSort work?" reveals the three core steps:
+Clicking **See the full workflow** shows the four steps:
 
 {% include figure image_path="/assets/e2e-screenshots/02_how_stratosort_works_modal.webp" alt="How StratoSort Works" caption="'How it Works' onboarding modal — Setup, Discover, Organize, Complete" %}
 
-1. **Discover** — Drop folders, run system scans, or watch Downloads automatically
-2. **Analyze** — Local AI reads file contents, context, and prior choices
-3. **Organize** — Approve suggestions, rename intelligently, undo instantly
+1. **Setup** — Choose the folders StratoSort is allowed to organize into
+2. **Discover** — Add files or folders and let local AI understand them
+3. **Organize** — Review suggestions, rename where needed, and stay in control
+4. **Complete** — See what changed and start the next batch
 
 ---
 
@@ -124,8 +135,8 @@ and description that the AI reads to decide where files belong.
 
 ### Default Folder
 
-A default "Uncategorized" folder is created at `~/StratoSort/Uncategorized` for files that don't
-match any other folder.
+A default "Uncategorized" folder is created at `Documents/Uncategorized` for files that don't match
+any other folder.
 
 ### Adding a Smart Folder
 
@@ -208,22 +219,22 @@ The app automatically advances to the Organize phase once analysis is done.
 
 ### Naming Strategy
 
-Click **Naming Strategy** in the upper right to configure how files are renamed:
+Click **Naming strategy** in the upper right to configure how files are renamed:
 
 {% include figure image_path="/assets/e2e-screenshots/06_naming_strategy_modal.webp" alt="Discover" caption="Discover — naming strategy is configured from this phase before or during import" %}
 
-| Setting         | Options                                       | Default      |
-| :-------------- | :-------------------------------------------- | :----------- |
-| **Convention**  | subject-date, date-subject, subject-only      | subject-date |
-| **Date Format** | YYYY-MM-DD, MM-DD-YYYY, DD-MM-YYYY            | YYYY-MM-DD   |
-| **Case**        | kebab-case, snake_case, camelCase, Title Case | kebab-case   |
-| **Separator**   | dash, dot, underscore, none                   | dash         |
+| Setting         | Options                                                                           | Default      |
+| :-------------- | :-------------------------------------------------------------------------------- | :----------- |
+| **Convention**  | subject-date, date-subject, project-subject-date, category-subject, keep-original | subject-date |
+| **Date Format** | YYYY-MM-DD, MM-DD-YYYY, DD-MM-YYYY, YYYYMMDD                                      | YYYY-MM-DD   |
+| **Case**        | kebab-case, snake_case, camelCase, PascalCase, lowercase, UPPERCASE               | kebab-case   |
+| **Separator**   | dash, dot, underscore, none                                                       | dash         |
 
 A live **Preview** shows the resulting filename format.
 
-### Knowledge Graph Panel
+### Knowledge OS Panel
 
-Click **Knowledge Graph** to open the semantic search and relationship panel:
+Click **Knowledge OS** to open the semantic search and relationship panel:
 
 {% include figure image_path="/assets/e2e-screenshots/07_knowledge_os_panel.webp" alt="Knowledge OS" caption="Knowledge OS — Search, Chat, Timeline, Relate, and Atlas" %}
 
@@ -235,7 +246,8 @@ Current tabs:
 - **Relate** — Knowledge Graph of clusters and similarity edges
 - **Atlas** — Map of the library (nearby = similar)
 
-The panel needs embeddings. Rebuild from Settings → AI Configuration if search is empty.
+The panel needs embeddings. If search is empty, switch Settings to Advanced and use **Rebuild all
+embeddings** under AI Configuration → Embeddings maintenance.
 
 ---
 
@@ -301,17 +313,12 @@ After executing organization, the Complete phase shows a summary of:
 
 ## 7. Search & Knowledge Graph
 
-### Search Widget
+### Opening Knowledge OS
 
-Click the **Search** button in the navigation bar to open the floating search widget:
+Click the **Search** button in the navigation bar, or press **Ctrl+K** (**Cmd+K** on macOS) from
+anywhere in the app, to open Knowledge OS directly on the Search tab:
 
 {% include figure image_path="/assets/e2e-screenshots/16_search_widget.webp" alt="Knowledge OS Search" caption="Knowledge OS Search — Ctrl+K / Cmd+K from anywhere in the app" %}
-
-The widget provides:
-
-- Quick explanation of Knowledge Graph capabilities
-- **Open Knowledge Graph** button to launch the full interface
-- Keyboard shortcut: **Ctrl+K** from anywhere in the app
 
 ### Knowledge Graph Full Interface
 
@@ -411,11 +418,9 @@ near-duplicates, and scattered files.
 ### Building the Search Index
 
 Knowledge Graph requires embeddings to function. Embeddings are generated automatically during
-analysis when "Embedding Timing" is set to "During analysis" (the default). Two manual rebuild
-options are also available:
-
-- **Build Folder Embeddings** — Index files in Smart Folders
-- **Build File Embeddings** — Index all analyzed files
+analysis when "Embedding timing" is set to "During analysis" (the default). To rebuild manually,
+switch Settings to Advanced and use **Rebuild all embeddings** under AI Configuration → Embeddings
+maintenance.
 
 **Timeline** sorts analyzed files by date. **Atlas** maps the library so nearby files are similar.
 
@@ -443,17 +448,19 @@ diagnostics.
 - **GPU Acceleration** — Toggle between CPU-only and GPU-accelerated inference
 - **Refresh Models** / **View All Models** — Manage available GGUF model files
 
-#### Default AI Models
+#### Default AI Models (Advanced)
 
 - **Text Model** — The LLM used for document analysis (e.g., Qwen, Llama)
 - **Vision Model** — The model used for image analysis (e.g., LLaVA)
 - **Embedding Model** — The model used for vector search (e.g., Nomic Embed)
 
-#### Model Management
+#### Model Management (Advanced)
 
 {% include figure image_path="/assets/e2e-screenshots/20_settings_ai_model_management.webp" alt="Model management" caption="Settings — download and switch GGUF models from the registry" %}
 
-Download additional GGUF models by entering the exact filename from the model registry.
+Click **Download** next to a model in the catalog, or add another GGUF model by entering its exact
+filename from the model registry. In Simple mode, the Local AI engine card offers **Download
+recommended models** instead.
 
 #### Embedding Behavior
 
@@ -464,8 +471,8 @@ Download additional GGUF models by entering the exact filename from the model re
 | **Default Embedding Policy**       | Embed locally, Skip                      | Embed locally      |
 | **Auto-generate Chunk Embeddings** | On/Off toggle                            | On                 |
 
-**Rebuild All Embeddings** — Use after changing embedding models. Preserves analysis data while
-regenerating the search index.
+**Rebuild all embeddings** (Embeddings maintenance) — Use after changing embedding models. Preserves
+analysis data while regenerating the search index.
 
 {% include figure image_path="/assets/e2e-screenshots/21_settings_embedding_maintenance.webp" alt="Embedding maintenance" caption="Settings — embedding scope, timing, and rebuild" %}
 
@@ -493,22 +500,24 @@ regenerating the search index.
 - **Max file sizes** — Separate limits for images (100 MB), documents (200 MB) and text files (50
   MB; larger text files are analyzed from their first 50 MB)
 
-#### Graph Retrieval
+#### Search Enrichment (Advanced)
 
 {% include figure image_path="/assets/e2e-screenshots/23_settings_graph_retrieval.webp" alt="Graph retrieval" caption="Settings — graph expansion weight and neighbor limits for search" %}
 
-- **Enable Graph Expansion** — Use relationship edges to pull related files into search results
-- **Graph Expansion Weight** — Slider (0–100%) controlling how much graph neighbors influence
+- **Enable relationship expansion** — Use relationship edges to pull related files into search
+  results
+- **Relationship expansion weight** — Slider (0–100%) controlling how much related files influence
   ranking (default: 20%)
-- **Graph Neighbors Limit** — Maximum neighbor files per query (default: 120)
-- **Contextual Chunk Expansion** — Use adjacent chunks for more context
+- **Related files limit** — Maximum related files per query (default: 120)
+- **Contextual chunk expansion** — Use adjacent chunks for more context
+- **Rebuild** — Rebuild the relationship index now instead of waiting for the next scheduled rebuild
 
 ### 8.3 Default Locations
 
 {% include figure image_path="/assets/e2e-screenshots/24_settings_default_locations.webp" alt="Default locations" caption="Settings — default Smart Folder location" %}
 
-- **Default Smart Folder Location** — Base path where new Smart Folders are created (default: home
-  directory)
+- **Default Smart Folder location** — Base path where new Smart Folders are created (default: your
+  Documents folder)
 - **Browse** button — Select a different base path
 
 #### File Naming Defaults
@@ -525,7 +534,9 @@ Same options as the Naming Strategy modal in Discover.
 {% include figure image_path="/assets/e2e-screenshots/26_settings_application.webp" alt="Application preferences" caption="Settings — launch on startup, updates, and license" %}
 
 - **Launch on Startup** — Auto-start StratoSort when you log in
-- **Software Updates** — Check for new versions with one click
+- **Background update checks** — Check GitHub Releases for a new version at startup and every 4
+  hours (on by default in installed builds)
+- **Software updates** — **Check for updates** now
 
 #### Notifications
 
@@ -556,18 +567,18 @@ Same options as the Naming Strategy modal in Discover.
 - **View Analysis History** — Opens a viewer showing past analysis results and statistics
 - Useful for reviewing what the AI detected and how files were categorized
 
-### 8.6 Diagnostics
+### 8.6 Diagnostics (Advanced)
 
 {% include figure image_path="/assets/e2e-screenshots/30_settings_diagnostics.webp" alt="Diagnostics" caption="Settings — log export and backend API tests" %}
 
 #### Troubleshooting Logs
 
-- **Open Folder** — Opens the log directory in your file manager
-- **Export Logs** — Creates a log bundle for support tickets
+- **Open folder** — Opens the log directory in your file manager
+- **Export logs** — Creates a log bundle for support tickets
 
 #### Backend API Test
 
-- **Test All APIs** — Runs connectivity checks against all core services (LLM, vector DB, file
+- **Test all APIs** — Runs connectivity checks against all core services (LLM, vector DB, file
   system, etc.)
 
 ---

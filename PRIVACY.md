@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Effective date: 2026-09-26**
+**Effective date: 2026-10-26**
 
 StratoSort Stack ("StratoSort", "the application", "we") is built and distributed by Kennedy Applied
 Sciences, Inc. ("we", "us"). This document explains what data StratoSort handles, where it lives,
@@ -15,17 +15,19 @@ Nothing is sent to a server we operate.**
 ## 1. What StratoSort processes
 
 StratoSort organizes files on your computer using on-device AI. To do that, the application reads
-the contents of files you explicitly choose, generates analyses (categories, suggested filenames,
-summaries), produces vector embeddings, and writes those results to a local database so search and
-re-organization stay fast.
+the contents of files you explicitly choose, plus new files that appear in your Smart Folders while
+folder watching is on (the default; switch it off in Settings). It generates analyses (categories,
+suggested filenames, summaries), produces vector embeddings, and writes those results to a local
+database so search and re-organization stay fast.
 
 We process the following categories of data:
 
-- **File contents and metadata of files you select.** Including text extracted from documents,
-  images you ask the application to analyze (via vision and OCR), filenames, paths, sizes,
-  timestamps, and file format.
+- **File contents and metadata of files you select or that land in a watched Smart Folder.**
+  Including text extracted from documents, images analyzed via vision and OCR, transcripts of audio
+  and video files, filenames, paths, sizes, timestamps, and file format.
 - **AI analysis output.** Suggested categories, suggested filenames, summaries, tags, and confidence
-  scores produced by the bundled local language model.
+  scores produced by the bundled local language model (or by a cloud provider you opted into — see
+  section 3).
 - **Vector embeddings of file content.** Mathematical fingerprints of the documents you analyze,
   used by semantic search.
 - **Settings.** Your preferences (Smart Folders, watchers, AI provider configuration, theme, model
@@ -54,8 +56,8 @@ All persistent state lives under your operating system's standard application da
 
 Inside this directory you will find:
 
-- The Orama vector database and full-text index (`*.orama` files or equivalent).
-- Cached AI analyses (one file per analyzed document).
+- The Orama vector database and full-text index (`vector-db/`).
+- Cached AI analyses (the `analysis-history.db` SQLite database).
 - Your settings (`settings.json` and related state files).
 - Application logs (`logs/`).
 - Crash dumps, if any (`crash-dumps/`).
@@ -70,12 +72,21 @@ remote copy.
 
 StratoSort is designed to operate without network access after first run.
 
-- **First run, model download.** The first time you launch StratoSort and choose a model profile,
-  the application downloads AI model files (roughly 7–10 GB depending on the profile you pick) from
-  the public model hosts that those models are published on (for example, Hugging Face). Each
-  download is fetched over HTTPS, the source host is on a hard-coded allowlist, and the file's
-  SHA-256 hash is verified before the model is loaded. The destination of each download is visible
-  in the install wizard.
+- **First run, model download.** The first time you launch StratoSort, the default text and
+  embedding models start downloading automatically in the background unless you pick "Continue with
+  limited AI" on the welcome screen; the vision model downloads when you choose a profile in the
+  setup wizard. A full profile is roughly 7–10 GB, fetched from Hugging Face. Each download is
+  fetched over HTTPS, the source host is on a hard-coded allowlist, and the file's SHA-256 hash is
+  verified before the model is loaded. The destination of each download is visible in the install
+  wizard.
+- **Speech model, on request.** Audio and video transcription needs the Whisper model (about 150
+  MB). It is downloaded from Hugging Face only when you click **Install model** after a
+  transcription reports it missing; its SHA-256 is taken from the Hugging Face repository at
+  download time.
+- **Missing bundled components.** If an install is missing its bundled vision runtime or OCR
+  language data, the application fetches them from `github.com` or `cdn.jsdelivr.net`. See
+  [docs/NETWORK_TRANSPARENCY.md](docs/NETWORK_TRANSPARENCY.md) for every connection and its
+  integrity checks.
 - **Update checks.** Installed (packaged) builds check for updates by default; development runs
   never do, and `STRATOSORT_ENABLE_AUTO_UPDATES=false` disables the updater entirely. Background
   checks follow the `autoUpdateCheck` preference (on by default) and can be disabled in Settings →
@@ -121,8 +132,8 @@ data directory. The crash reporter is configured with `uploadToServer: false` �
 never automatically transmitted anywhere. They exist only to help you (or to be voluntarily attached
 to a bug report by you).
 
-You can open the logs folder, export a log archive, or delete logs at any time from Settings →
-Diagnostics → Troubleshooting logs (advanced experience mode).
+You can open the logs folder or export a log archive at any time from Settings → Diagnostics →
+Troubleshooting logs (advanced experience mode). To delete logs, delete the files in that folder.
 
 ---
 
@@ -140,8 +151,9 @@ Diagnostics → Troubleshooting logs (advanced experience mode).
 
 - **Per-file:** Removing a file's analysis is available in the UI; the cached analysis and its
   vector embedding are deleted from the local database.
-- **All analyses:** Settings → AI Configuration → "Rebuild All Embeddings" (advanced experience
-  mode) rebuilds the vector database; clearing/rebuilding leaves your original files untouched.
+- **All analyses:** "Clear history" in the Analysis history & statistics window deletes every cached
+  analysis. Settings → AI Configuration → "Rebuild All Embeddings" (advanced experience mode) clears
+  and rebuilds the vector database. Neither touches your original files.
 - **Everything:** Quit StratoSort and delete the application data directory listed in section 2.
   This removes all settings, indexes, analyses, logs, crash dumps, and downloaded models.
 

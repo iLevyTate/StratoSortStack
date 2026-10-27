@@ -16,7 +16,7 @@ header:
 # Configuration Reference
 
 This document lists all environment variables and configuration options available in StratoSort
-Core.
+Stack.
 
 ## Model & OCR Setup
 
@@ -96,13 +96,13 @@ All-MiniLM vs 768 for Nomic). The index must be rebuilt when switching; the UI p
 
 ### Performance Tuning
 
-| Variable                                    | Default | Description                                                                                                                                                                      |
-| :------------------------------------------ | :------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MAX_IMAGE_CACHE`                           | `300`   | Maximum cached image analyses (50-1000)                                                                                                                                          |
-| `AUTO_ORGANIZE_BATCH_SIZE`                  | `10`    | Files processed per auto-organize batch (1-100)                                                                                                                                  |
-| `STRATOSORT_INFERENCE_CONCURRENCY`          | auto    | Override the inference slot count used by `ModelAccessCoordinator`. Accepts a positive integer; non-numeric / non-positive values fall back to the platform-aware auto value.    |
-| `STRATOSORT_ORAMA_COMPRESS`                 | `true`  | When `false`, disables gzip compression of persisted Orama indexes (faster writes, larger on-disk footprint). Used for debugging corruption suspected to be compression-related. |
-| `STRATOSORT_ORAMA_BATCH_UPSERT_CONCURRENCY` | auto    | Override concurrent batch-upsert workers in `OramaVectorService`. Non-numeric values fall back to the service default.                                                           |
+| Variable                                    | Default | Description                                                                                                                                                                     |
+| :------------------------------------------ | :------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `MAX_IMAGE_CACHE`                           | `300`   | Maximum cached image analyses (50-1000)                                                                                                                                         |
+| `AUTO_ORGANIZE_BATCH_SIZE`                  | `10`    | Files processed per auto-organize batch (1-100)                                                                                                                                 |
+| `STRATOSORT_INFERENCE_CONCURRENCY`          | auto    | Override the inference slot count used by `ModelAccessCoordinator`. Accepts a positive integer; non-numeric / non-positive values fall back to the platform-aware auto value.   |
+| `STRATOSORT_ORAMA_COMPRESS`                 | `true`  | When `false`, disables LZ4 compression of persisted Orama indexes (faster writes, larger on-disk footprint). Used for debugging corruption suspected to be compression-related. |
+| `STRATOSORT_ORAMA_BATCH_UPSERT_CONCURRENCY` | auto    | Override concurrent batch-upsert workers in `OramaVectorService`. Non-numeric values fall back to the service default.                                                          |
 
 ### Embeddings and embedding queue (environment)
 
@@ -392,7 +392,7 @@ They are listed here for support engineers and contributors who need to debug ed
 | `STRATOSORT_LLAMA_CPP_URL`           | (auto)          | **Override the binary download URL.** Pair with `STRATOSORT_LLAMA_CPP_SHA256` to keep integrity checking — overriding without a matching SHA256 disables verification |
 | `STRATOSORT_LLAMA_CPP_SHA256`        | (auto)          | Expected SHA-256 of the downloaded binary; mismatches abort with a clear error                                                                                        |
 | `STRATOSORT_LLAMA_CPP_ALLOWED_HOSTS` | github releases | Comma-separated allowlist of hosts that may serve the binary download                                                                                                 |
-| `STRATOSORT_CUDA_VERSION`            | (auto)          | Force a specific CUDA release variant for GPU builds                                                                                                                  |
+| `STRATOSORT_CUDA_VERSION`            | `12.4`          | CUDA release variant of the Windows GPU vision runtime to download (`12.4` or `13.1`)                                                                                 |
 | `STRATOSORT_LLM_GPU_BACKEND`         | (auto-detected) | `cuda`, `metal`, `vulkan`, or `cpu` — overrides backend autoselection                                                                                                 |
 | `STRATOSORT_LLAMA_SERVER_PATH`       | (bundled)       | Absolute path to the llama-server binary; bypasses the bundled download                                                                                               |
 
@@ -403,8 +403,8 @@ They are listed here for support engineers and contributors who need to debug ed
 | `STRATOSORT_PERSISTENCE_BACKEND`     | `sqlite`          | Global backend default for on-disk stores (analysis history, embedding queue). `sqlite` uses better-sqlite3; any other value (e.g. `json`) selects the legacy JSON-file backend |
 | `STRATOSORT_EMBEDDINGQUEUE_BACKEND`  | (inherits global) | Per-store override for the embedding queue; `sqlite` vs any other value (JSON-file backend). Takes precedence over `STRATOSORT_PERSISTENCE_BACKEND`                             |
 | `STRATOSORT_ANALYSISHISTORY_BACKEND` | (inherits global) | Per-store override for analysis history; `sqlite` vs any other value (JSON-file backend). Takes precedence over `STRATOSORT_PERSISTENCE_BACKEND`                                |
-| `STRATOSORT_SQLITE_COMPRESS`         | `0`               | Compress SQLite payloads on write (read transparently)                                                                                                                          |
-| `STRATOSORT_USE_OFFICIAL_PDFJS`      | `0`               | Use the official pdf.js distribution instead of the bundled extractor                                                                                                           |
+| `STRATOSORT_SQLITE_COMPRESS`         | on                | Compresses SQLite payloads on write (read transparently). Set `false` to store them uncompressed                                                                                |
+| `STRATOSORT_USE_OFFICIAL_PDFJS`      | `false`           | Set `true` to load the official `pdfjs-dist` build instead of the pdf.js bundled with unpdf                                                                                     |
 
 ### Worker pool tuning
 
@@ -466,12 +466,12 @@ copy under `userData/tessdata-cache` → tesseract.js's own CDN default (`cdn.js
 warned once per process. Bundling keeps OCR fully offline; without it, the first OCR fetches the
 model from jsdelivr and caches it.
 
-| Variable                      | Default | Purpose                                                                                                                                                   |
-| :---------------------------- | :------ | :-------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `STRATOSORT_TESSDATA_URL`     | (auto)  | Override the download URL entirely. Hostname is allowlist-validated (`cdn.jsdelivr.net`); non-HTTPS, credentialed, or off-allowlist hosts are rejected.   |
-| `STRATOSORT_TESSDATA_VARIANT` | `4.0.0` | `@tesseract.js-data/<lang>/<variant>/` directory segment — the model quality variant tesseract.js itself would fetch. Pin for reproducibility.            |
-| `STRATOSORT_TESSDATA_SHA256`  | (unset) | Pin the expected sha256 of the downloaded model. Verified when set (mismatch aborts); a loud warning is emitted when absent.                              |
-| `SKIP_TESSDATA_RUNTIME`       | `false` | Skip the download step in CI / fast-dev workflows. The runtime resolver falls back to the userData cache, then the tesseract.js CDN default on first OCR. |
+| Variable                      | Default  | Purpose                                                                                                                                                                                  |
+| :---------------------------- | :------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `STRATOSORT_TESSDATA_URL`     | (auto)   | Override the download URL entirely. Hostname is allowlist-validated (`cdn.jsdelivr.net`); non-HTTPS, credentialed, or off-allowlist hosts are rejected.                                  |
+| `STRATOSORT_TESSDATA_VARIANT` | `4.0.0`  | `@tesseract.js-data/<lang>/<variant>/` directory segment — the model quality variant tesseract.js itself would fetch. Pin for reproducibility.                                           |
+| `STRATOSORT_TESSDATA_SHA256`  | (pinned) | Override the expected sha256. The default `eng` model is pinned in the script and always verified (mismatch aborts); other languages or a custom URL are verified only when this is set. |
+| `SKIP_TESSDATA_RUNTIME`       | `false`  | Skip the download step in CI / fast-dev workflows. The runtime resolver falls back to the userData cache, then the tesseract.js CDN default on first OCR.                                |
 
 ### Whisper variant resolution (audio/video transcription)
 
@@ -528,7 +528,7 @@ is **off by default** and must be explicitly enabled in Settings → MCP Server.
 | :-------------------- | :------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `STRATOSORT_MCP_PORT` | `53827` | Initial bind port. If taken, binds an OS-assigned ephemeral port (`listen(0)`) and reports the actual port. Loopback (`127.0.0.1`) only — non-loopback binds are not supported. |
 
-The bearer token is generated locally on first enable and stored under `userData/mcp-token`,
+The bearer token is generated locally on first enable and stored under `userData/mcp-token.bin`,
 encrypted via `safeStorage` when the OS keystore is available (DPAPI on Windows, Keychain on macOS,
 libsecret on Linux). There is no env var to override it; rotate from Settings if it leaks.
 

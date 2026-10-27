@@ -29,7 +29,9 @@
  *   SKIP_TESSDATA_RUNTIME=true        Skip download entirely (CI / fast dev)
  *   STRATOSORT_TESSDATA_URL           Override the download URL entirely (host-allowlisted)
  *   STRATOSORT_TESSDATA_VARIANT       tesseract.js-data variant dir (default: '4.0.0')
- *   STRATOSORT_TESSDATA_SHA256        Pin the expected sha256 (verified when set; warned when absent)
+ *   STRATOSORT_TESSDATA_SHA256        Override the expected sha256. The default lang/variant is
+ *                                     pinned below (package version + sha256); other langs or a
+ *                                     custom URL are verified only when this is set.
  */
 
 const fs = require('fs');
@@ -49,6 +51,16 @@ const MAX_REDIRECTS = 5;
 // Anchors on a language code, no path separators — stops traversal via --lang=.
 const SUPPORTED_LANG_PATTERN = /^[a-z]{2,8}(_[a-z]{2,8})?$/i;
 const REQUIRED_SHA256_REGEX = /^[a-f0-9]{64}$/i;
+// Pinned @tesseract.js-data package version + sha256 of `<lang>.traineddata.gz`, keyed by
+// `<lang>/<variant>`. Pinning the package version keeps jsdelivr from serving a newer publish;
+// pinning the hash makes the bundled OCR model reproducible and tamper-evident. Verified against
+// both cdn.jsdelivr.net and the npm registry tarball (eng-1.0.0.tgz) on 2026-10-27.
+const PINNED_TESSDATA = Object.freeze({
+  'eng/4.0.0': Object.freeze({
+    packageVersion: '1.0.0',
+    sha256: 'ed350f3752f81ee8f38769edc14d92d997dababe23b565c59879372cc46a2468'
+  })
+});
 
 const TESSDATA_DIR = path.join(__dirname, '..', 'assets', 'runtime', 'tessdata');
 
@@ -80,7 +92,30 @@ function downloadUrlFor(lang) {
   if (process.env.STRATOSORT_TESSDATA_URL && process.env.STRATOSORT_TESSDATA_URL.trim()) {
     return process.env.STRATOSORT_TESSDATA_URL.trim();
   }
-  return `https://cdn.jsdelivr.net/npm/@tesseract.js-data/${lang}/${DEFAULT_VARIANT}/${lang}.traineddata.gz`;
+  const pin = PINNED_TESSDATA[`${lang}/${DEFAULT_VARIANT}`];
+  const pkg = pin ? `${lang}@${pin.packageVersion}` : lang;
+  return `https://cdn.jsdelivr.net/npm/@tesseract.js-data/${pkg}/${DEFAULT_VARIANT}/${lang}.traineddata.gz`;
+}
+
+/**
+ * Expected sha256 for a download: an explicit STRATOSORT_TESSDATA_SHA256 wins; otherwise the
+ * pinned hash applies when the default (pinned) URL is used. Returns null when nothing is pinned.
+ * @param {string} lang
+ * @returns {string | null}
+ */
+function expectedSha256For(lang) {
+  const explicit = (process.env.STRATOSORT_TESSDATA_SHA256 || '').trim();
+  if (explicit) {
+    if (!REQUIRED_SHA256_REGEX.test(explicit)) {
+      throw new Error('STRATOSORT_TESSDATA_SHA256 must be a 64-character hex sha256');
+    }
+    return explicit.toLowerCase();
+  }
+  if (process.env.STRATOSORT_TESSDATA_URL && process.env.STRATOSORT_TESSDATA_URL.trim()) {
+    return null;
+  }
+  const pin = PINNED_TESSDATA[`${lang}/${DEFAULT_VARIANT}`];
+  return pin ? pin.sha256 : null;
 }
 
 /**
@@ -223,7 +258,16 @@ async function main() {
     process.exit(2);
   }
 
+  const expectedSha = expectedSha256For(lang);
+
   if (existing && !args.force) {
+    // A cached .gz from an earlier run is reused only if it still matches the pin, so a stale or
+    // tampered copy can't slip into a packaged build. Un-gzipped dev copies can't be compared.
+    if (expectedSha && existing.endsWith('.gz') && !(await verifyChecksum(existing, expectedSha))) {
+      throw new Error(
+        `Checksum mismatch for existing ${existing}; delete it or re-run with --force to re-download`
+      );
+    }
     console.log(`[tessdata] already present: ${existing}`);
     return;
   }
@@ -240,8 +284,7 @@ async function main() {
     throw new Error('Downloaded traineddata is empty');
   }
 
-  const expectedSha = process.env.STRATOSORT_TESSDATA_SHA256;
-  if (expectedSha && REQUIRED_SHA256_REGEX.test(expectedSha)) {
+  if (expectedSha) {
     const ok = await verifyChecksum(partialPath, expectedSha);
     if (!ok) {
       await fsp.unlink(partialPath).catch(() => {});
@@ -270,6 +313,8 @@ module.exports = {
   isAllowedHost,
   findBundled,
   downloadUrlFor,
+  expectedSha256For,
+  PINNED_TESSDATA,
   TESSDATA_DIR,
   DEFAULT_LANG,
   SUPPORTED_LANG_PATTERN

@@ -17,21 +17,22 @@ header:
 
 **One download. No command line. No extra software. No API keys.**
 
-StratoSort Stack uses AI that runs entirely on your computer. Nothing is sent to the cloud. You
-download one installer, let the app grab its AI models on first launch, and you are ready to go.
+StratoSort Stack uses AI that runs entirely on your computer. Your files are not sent to the cloud
+unless you turn on optional cloud AI with your own API key. You download one installer, let the app
+grab its AI models on first launch, and you are ready to go.
 
 ---
 
 ## What You Need
 
-| Requirement    | Details                                                                        |
-| :------------- | :----------------------------------------------------------------------------- |
-| **Windows**    | Windows 10 or 11, 64-bit                                                       |
-| **macOS**      | macOS 10.15+ on Apple Silicon (M1 / M2 / M3 / M4)                              |
-| **Linux**      | 64-bit x86; AppImage or .deb (when attached to a release)                      |
-| **RAM**        | 8 GB minimum; 16 GB and a GPU with 8 GB for the Better Quality profile         |
-| **Disk space** | ~500 MB for the app, plus 7 to 11 GB for AI models (downloaded inside the app) |
-| **Internet**   | Needed once to download AI models; the app runs fully offline afterward        |
+| Requirement    | Details                                                                                                         |
+| :------------- | :-------------------------------------------------------------------------------------------------------------- |
+| **Windows**    | Windows 10 (22H2) or 11, x64 or arm64                                                                           |
+| **macOS**      | macOS 12 (Monterey) or later, Apple Silicon (arm64) or Intel (x64)                                              |
+| **Linux**      | x64 or arm64; AppImage or .deb (when attached to a release)                                                     |
+| **RAM**        | 8 GB minimum; 16 GB and a GPU with 8 GB for the Better Quality profile                                          |
+| **Disk space** | ~500 MB for the app, plus about 7 to 10 GB for AI models (downloaded inside the app)                            |
+| **Internet**   | Needed once to download AI models; after that the app works offline (it still checks for app updates if online) |
 
 ---
 
@@ -42,13 +43,17 @@ download the single file that matches your operating system.
 
 ### Which file do I pick?
 
-| Your computer                       | Download this file                             |
-| :---------------------------------- | :--------------------------------------------- |
-| **Windows PC** (any 64-bit)         | **`StratoSortStack-Setup-X.X.X.exe`**          |
-| **Mac** (Apple Silicon M1/M2/M3/M4) | **`StratoSortStack-X.X.X-mac-arm64.dmg`**      |
-| **Linux** (if artifact is attached) | **`StratoSortStack-X.X.X-linux-x64.AppImage`** |
+| Your computer                             | Download this file                                |
+| :---------------------------------------- | :------------------------------------------------ |
+| **Windows PC** (x64, most PCs)            | **`StratoSortStack-Setup-X.X.X.exe`**             |
+| **Windows on Arm** (arm64)                | **`StratoSortStack-Setup-X.X.X-arm64.exe`**       |
+| **Mac** (Apple Silicon M1/M2/M3/M4)       | **`StratoSortStack-X.X.X-mac-arm64.dmg`**         |
+| **Mac** (Intel)                           | **`StratoSortStack-X.X.X-mac-x64.dmg`**           |
+| **Linux** x64 (if artifact is attached)   | **`StratoSortStack-X.X.X-linux-x86_64.AppImage`** |
+| **Linux** arm64 (if artifact is attached) | **`StratoSortStack-X.X.X-linux-arm64.AppImage`**  |
 
-Replace **X.X.X** with the version number shown on the Releases page (e.g. `5.0.0`).
+Replace **X.X.X** with the version number shown on the Releases page (e.g. `5.0.0`). The Windows
+arm64 build ships without bundled FFmpeg, so audio/video analysis there needs FFmpeg on your `PATH`.
 
 ### Windows -- installer vs portable
 
@@ -59,13 +64,14 @@ Replace **X.X.X** with the version number shown on the Releases page (e.g. `5.0.
 
 ### Linux -- AppImage vs .deb
 
-| File                                           | What it does                                                 |
-| :--------------------------------------------- | :----------------------------------------------------------- |
-| **`StratoSortStack-X.X.X-linux-x64.AppImage`** | Universal, no install needed -- just make executable and run |
-| `StratoSortStack-X.X.X-linux-x64.deb`          | Standard Debian/Ubuntu package installed via `dpkg`          |
+| File                                              | What it does                                                               |
+| :------------------------------------------------ | :------------------------------------------------------------------------- |
+| **`StratoSortStack-X.X.X-linux-x86_64.AppImage`** | Universal, no install needed -- just make executable and run; auto-updates |
+| `StratoSortStack-X.X.X-linux-amd64.deb`           | Standard Debian/Ubuntu package installed via `dpkg`; does not auto-update  |
 
-Linux artifacts are optional and may not be attached to every release. Neither format auto-updates;
-download the next version from Releases when one is available.
+On arm64 the files end in `-linux-arm64.AppImage` and `-linux-arm64.deb`. Linux artifacts are
+optional and may not be attached to every release. The AppImage updates itself in the app; for the
+`.deb`, download the next version from Releases when one is available.
 
 ---
 
@@ -77,7 +83,7 @@ download the next version from Releases when one is available.
 2. If Windows SmartScreen says **"Windows protected your PC"**:
    - Click **More info**.
    - Click **Run anyway**.
-3. The installer opens. Click **Next**, then **Install**.
+3. The installer opens. Accept the license agreement, then click **Install**.
    - The app installs to your user profile (no admin required).
    - A **Start Menu** shortcut and a **Desktop** shortcut are created automatically.
 4. When the installer finishes, leave **"Run StratoSort Stack"** checked and click **Finish**.
@@ -109,8 +115,8 @@ download the next version from Releases when one is available.
 ### Linux (AppImage)
 
 ```bash
-chmod +x StratoSortStack-X.X.X-linux-x64.AppImage
-./StratoSortStack-X.X.X-linux-x64.AppImage
+chmod +x StratoSortStack-X.X.X-linux-x86_64.AppImage
+./StratoSortStack-X.X.X-linux-x86_64.AppImage
 ```
 
 Or double-click the file in your file manager after making it executable.
@@ -118,7 +124,7 @@ Or double-click the file in your file manager after making it executable.
 ### Linux (Debian package)
 
 ```bash
-sudo dpkg -i StratoSortStack-X.X.X-linux-x64.deb
+sudo dpkg -i StratoSortStack-X.X.X-linux-amd64.deb
 ```
 
 Then launch **StratoSort Stack** from your application menu. The `.deb` version does not
@@ -139,12 +145,16 @@ The wizard shows two profiles:
 
 | Profile                     | Best for                                                     | Download size |
 | :-------------------------- | :----------------------------------------------------------- | :------------ |
-| **Base (Small & Fast)**     | All computers, including older machines and CPU-only systems | ~7.4 GB       |
-| **Better Quality (Larger)** | 16 GB+ RAM and a GPU with 8 GB or more                       | ~10.4 GB      |
+| **Base (Small & Fast)**     | All computers, including older machines and CPU-only systems | about 7 GB    |
+| **Better Quality (Larger)** | 16 GB+ RAM and a GPU with 8 GB or more                       | about 10 GB   |
 
 The wizard reads your RAM and GPU memory and marks the profile this computer can carry; pick either
-one and click **Download Models**. Both profiles include the same LLaVA vision model (about 5 GB
+one and click **Download models**. Both profiles include the same LLaVA vision model (about 5 GB
 with its projector), which is most of the download.
+
+The wizard also has a **Start in Advanced mode** checkbox. Leave it off to start in **Simple** mode,
+which hides the advanced Settings panels; you can switch between Simple and Advanced in Settings at
+any time.
 
 ### 3b. Wait for downloads
 
@@ -158,11 +168,14 @@ All models are GGUF files stored locally on your computer. Nothing is sent anywh
 
 ### 3c. Done
 
-When all downloads finish, click **Get Started**. You are now on the Welcome screen.
+When all downloads finish, click **Continue**, then **Get started**. You are now on the Welcome
+screen.
 
 **Can I skip this?** Yes. Click **Continue with limited AI** to explore the app immediately. AI
-features activate once the models finish downloading in the background. You can also open the wizard
-later from **Settings** > **AI Configuration**.
+features activate once the models finish downloading in the background. If you skip before
+downloading, the Welcome screen offers **Open model setup** until you dismiss it; you can always
+download the models later from **Settings** > **AI Configuration** > **Download recommended
+models**.
 
 ---
 
@@ -170,14 +183,19 @@ later from **Settings** > **AI Configuration**.
 
 From the Welcome screen you have three options:
 
-| Button                      | What it does                                                            |
-| :-------------------------- | :---------------------------------------------------------------------- |
-| **Organize files now**      | Opens the Discover phase where you add files or folders for AI analysis |
-| **AI & model settings**     | Opens Settings to change models or preferences                          |
-| **Configure smart folders** | Choose which folders StratoSort is allowed to organize into             |
+| Button                      | What it does                                                                                                                        |
+| :-------------------------- | :---------------------------------------------------------------------------------------------------------------------------------- |
+| **Organize files now**      | Opens the Discover phase where you add files or folders for AI analysis (sends you to Setup first if you have no Smart Folders yet) |
+| **AI & model settings**     | Opens Settings to change models or preferences                                                                                      |
+| **Configure smart folders** | Choose which folders StratoSort is allowed to organize into                                                                         |
 
-A typical first session: click **Organize files now**, drag in a folder, and let the AI analyze the
-files. StratoSort never moves a file without your approval.
+A typical first session: click **Configure smart folders** and add a few folders with plain-language
+descriptions (the built-in Uncategorized folder does not count), then go to **Discover**, drag in a
+folder, and let the AI analyze the files. StratoSort never moves a file without your approval.
+
+Below these buttons you can also pick a working style: **Guided steps** (Setup, Discover, Organize
+one step at a time; the default) or **Dashboard** (a single overview screen). Switch later with the
+Guided / Dashboard toggle in the top bar.
 
 ---
 
@@ -185,8 +203,9 @@ files. StratoSort never moves a file without your approval.
 
 Download the matching checksum file from the same Releases page:
 
-- Windows: `checksums-windows.sha256`
+- Windows: `checksums-windows-x64.sha256` (or `checksums-windows-arm64.sha256`)
 - macOS: `checksums-macos.sha256`
+- Linux: `checksums-linux.sha256`
 
 Then compare:
 
@@ -210,15 +229,15 @@ The hash should match the entry in the checksum file exactly.
 
 There are two kinds of updates -- they are independent of each other:
 
-| What                                         | How it works                                                                                                                                                                                                |
-| :------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **App updates** (new versions of StratoSort) | In-app auto-update when the project enables a public feed. Until then, download new installers from [Releases](https://github.com/iLevyTate/StratoSortStack/releases). Your settings and models carry over. |
-| **AI model updates**                         | Managed inside the app via **Settings** > **AI Configuration**. Models are large files from Hugging Face; they are not part of the installer.                                                               |
+| What                                         | How it works                                                                                                                                                                                                                                                                                  |
+| :------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **App updates** (new versions of StratoSort) | Installed builds check [GitHub Releases](https://github.com/iLevyTate/StratoSortStack/releases) for a new version at startup and every 4 hours, and offer to install it. Turn this off in **Settings** > **Application** > **Background update checks**. Your settings and models carry over. |
+| **AI model updates**                         | Managed inside the app via **Settings** > **AI Configuration**. Models are large files from Hugging Face; they are not part of the installer.                                                                                                                                                 |
 
 You never need to re-download models when you update the app.
 
 <!-- prettier-ignore -->
-**Note:** Portable `.exe`, Linux artifacts, and some ad-hoc builds do not use the same app update channel as the full installer; check release notes. See [CONFIG.md](CONFIG.md#application-auto-updates-electron-updater) and [RELEASING.md](RELEASING.md#application-auto-updates-temporary).
+**Note:** The Windows installer, macOS builds and the Linux AppImage update in place. The portable `.exe` and the Linux `.deb` cannot; download the next version from Releases. See [CONFIG.md](CONFIG.md#application-auto-updates-electron-updater) and [Network Transparency](NETWORK_TRANSPARENCY.md).
 {: .notice--info}
 
 ---
@@ -228,10 +247,12 @@ You never need to re-download models when you update the app.
 | Data                          | Location                                                                                                                                 |
 | :---------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------- |
 | **Settings, logs, databases** | `%APPDATA%\StratoSort Stack` (Windows) / `~/Library/Application Support/StratoSort Stack` (macOS) / `~/.config/StratoSort Stack` (Linux) |
-| **AI models**                 | Inside the above folder under `models/` (7 to 11 GB)                                                                                     |
+| **AI models**                 | Inside the above folder under `models/` (about 7 to 10 GB)                                                                               |
 | **Your files**                | StratoSort reads files in place and only moves them when you approve a suggestion. It never copies or uploads your files.                |
 
-StratoSort never sends data over the internet after the initial model download.
+After the model download, the only network traffic by default is the app update check described
+above; your files and their contents stay on your computer unless you turn on optional cloud AI. See
+[Network Transparency](NETWORK_TRANSPARENCY.md) for every network call the app can make.
 
 ---
 
@@ -252,7 +273,7 @@ Anyway** next to StratoSort Stack.
 The quarantine attribute may not have been cleared. Run in Terminal:
 
 ```bash
-xattr -cr /Applications/StratoSort\ Core.app
+xattr -cr /Applications/StratoSort\ Stack.app
 ```
 
 Then open the app again.
@@ -260,14 +281,17 @@ Then open the app again.
 ### Models failed to download
 
 - Check your internet connection.
-- Retry from **Settings** > **AI Configuration** > **Model Management** > **Download Models**.
+- Retry from **Settings** > **AI Configuration** > **Download recommended models** (Simple mode). In
+  Advanced mode, use **Settings** > **AI Configuration** > **Model management** and click
+  **Download** next to each model.
 - Make sure you have at least 12 GB of free disk space.
 - If downloads keep failing, check if a firewall or VPN is blocking `huggingface.co`.
 
 ### Vision / image analysis not working
 
 Open **Settings** > **AI Configuration** and check that the vision model shows as downloaded. If it
-is missing, download it from the model management section.
+is missing, download it with **Download recommended models**, or switch to Advanced mode and use the
+**Model management** section.
 
 ### App feels slow
 
@@ -281,8 +305,9 @@ is missing, download it from the model management section.
 
 StratoSort Stack:
 
-- Runs 100% locally after the one-time model download.
-- Does not collect, send, or store any data externally.
+- Runs AI locally after the one-time model download (cloud AI is optional and off by default).
+- Has no telemetry and does not upload your files. By default its only network call after setup is
+  the app update check; see [Network Transparency](NETWORK_TRANSPARENCY.md).
 - Is licensed under PolyForm Noncommercial 1.0.0 (personal/noncommercial use is free; commercial use
   needs a paid license). There is no trial and nothing expires. Source:
   [github.com/iLevyTate/StratoSortStack](https://github.com/iLevyTate/StratoSortStack).
@@ -295,10 +320,10 @@ StratoSort Stack:
 | :--------------- | :------------------------------------------------------------------------------------------ |
 | **1. Download**  | One file from [Releases](https://github.com/iLevyTate/StratoSortStack/releases) for your OS |
 | **2. Install**   | Run the installer; allow it if your OS shows a security prompt                              |
-| **3. First run** | Choose a model profile and download AI models (7 to 11 GB, one time)                        |
+| **3. First run** | Choose a model profile and download AI models (about 7 to 10 GB, one time)                  |
 | **4. Organize**  | Add files, review AI suggestions, approve moves                                             |
 
-**No terminal. No Python. No Docker. No API keys. No cloud.**
+**No terminal. No Python. No Docker. No API keys required. Cloud AI is optional.**
 
 ---
 

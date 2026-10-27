@@ -61,6 +61,11 @@ risk classification used by the compliance gate is in `docs/commercial-use-inven
   `child_process.spawn()` only — no static or dynamic linking into the application). Sources and
   obligations: see `assets/runtime/ffmpeg/NOTICE.md` (also shipped in the installer).
 
+- **Tesseract OCR language data** (`assets/runtime/tessdata/eng.traineddata.gz`) Source: the
+  `@tesseract.js-data/eng` package as served by `cdn.jsdelivr.net` (the same file tesseract.js would
+  otherwise download), staged by `scripts/setup-tessdata-runtime.js` during `npm run dist*`.
+  License: Apache-2.0 (tessdata). Action: Apache-2.0 notice and attribution retained.
+
 ---
 
 ## Model Artifacts (downloaded by end user at first run)
@@ -85,6 +90,16 @@ pinned SHA-256 checksums (see docs/NETWORK_TRANSPARENCY.md).
   notice and attribution retained when redistributing model weights.
 
 - **MIT model artifacts** (Phi-3 Mini 4K Instruct) Action: MIT notice retained.
+
+- **Whisper speech model** (`ggml-base.en.bin`) Source: the `ggerganov/whisper.cpp` Hugging Face
+  repository (https://huggingface.co/ggerganov/whisper.cpp), downloaded only when the user clicks
+  **Install model** after a transcription finds it missing. License: MIT (per the repository's model
+  card). Action: retain the license notice.
+
+- **Silero VAD model** (`ggml-silero-v5.1.2.bin`) Source: the same `ggerganov/whisper.cpp` Hugging
+  Face repository; fetched only by `npm run setup:whisper-model -- --vad`, never by the app's
+  install button. License: MIT (Copyright (c) 2020-present Silero Team,
+  https://github.com/snakers4/silero-vad). Action: retain the license notice.
 
 ---
 
