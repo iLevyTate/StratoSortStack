@@ -300,4 +300,5 @@ the key/config first.
 - [USER_GUIDE.md](USER_GUIDE.md) — the desktop app walkthrough.
 - [MCP_SERVER.md](MCP_SERVER.md) — exposing your StratoSort corpus to MCP-aware AI clients.
 - [CONFIG.md](CONFIG.md) — environment variables for the local LLM stack.
-- [SECURITY.md](../SECURITY.md) — full security policy.
+- [SECURITY.md](https://github.com/iLevyTate/StratoSortStack/blob/main/SECURITY.md) — full security
+  policy.

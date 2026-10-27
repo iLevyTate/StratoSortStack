@@ -124,8 +124,8 @@ const folderMatchScore = calculateSimilarity();
 
 ## Error Handling Standards
 
-**See [Error Handling Guide](/ERROR_HANDLING_GUIDE.html) for comprehensive error handling patterns
-and decision tree.**
+**See [Error Handling Guide](ERROR_HANDLING_GUIDE.md) for comprehensive error handling patterns and
+decision tree.**
 
 ### Use Centralized Error Utilities
 

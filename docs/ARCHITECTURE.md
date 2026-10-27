@@ -338,6 +338,6 @@ No code changes from the audit. Outcome recorded for future contributors.
 For information on coding patterns, error handling, and dependency injection, refer to the other
 documentation files:
 
-- [Code Quality Standards](/CODE_QUALITY_STANDARDS.html)
-- [Dependency Injection Patterns](/DI_PATTERNS.html)
-- [Error Handling Guide](/ERROR_HANDLING_GUIDE.html)
+- [Code Quality Standards](CODE_QUALITY_STANDARDS.md)
+- [Dependency Injection Patterns](DI_PATTERNS.md)
+- [Error Handling Guide](ERROR_HANDLING_GUIDE.md)

@@ -34,11 +34,11 @@ Then keep these tabs open:
 
 ## Licensing
 
-| Doc                                                  | What it is                                                             |
-| ---------------------------------------------------- | ---------------------------------------------------------------------- |
-| [`LICENSE`](../LICENSE) (repo root)                  | Live grant: PolyForm Noncommercial 1.0.0 (personal/noncommercial free) |
-| [COMMERCIAL.md](COMMERCIAL.md)                       | How to buy a commercial license                                        |
-| [COMMERCIAL_COMPLIANCE.md](COMMERCIAL_COMPLIANCE.md) | Pre-release third-party license audit + appendices                     |
+| Doc                                                                                     | What it is                                                             |
+| --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| [`LICENSE`](https://github.com/iLevyTate/StratoSortStack/blob/main/LICENSE) (repo root) | Live grant: PolyForm Noncommercial 1.0.0 (personal/noncommercial free) |
+| [COMMERCIAL.md](COMMERCIAL.md)                                                          | How to buy a commercial license                                        |
+| [COMMERCIAL_COMPLIANCE.md](COMMERCIAL_COMPLIANCE.md)                                    | Pre-release third-party license audit + appendices                     |
 
 ## Privacy and network
 
@@ -83,7 +83,7 @@ These docs are for non-developer audiences. Skip them if you're working on the c
 Everything above is live. Tour media:
 [walkthrough-assets/HOW_TO_USE_TOUR.md](walkthrough-assets/HOW_TO_USE_TOUR.md), `how-to-use.mp4`,
 `shorts/stratosort-short.mp4`, and `demo-files/`. Public stills for Pages live in
-[assets/e2e-screenshots/](assets/e2e-screenshots/).
+[assets/e2e-screenshots/](https://github.com/iLevyTate/StratoSortStack/tree/main/docs/assets/e2e-screenshots).
 
 Load-bearing files that must stay: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md),
 `commercial-use-inventory.json`, `commercial-model-licenses.json`,

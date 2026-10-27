@@ -10,6 +10,16 @@ docs:
         url: /USER_GUIDE.html
       - title: 'E2E Walkthrough'
         url: /E2E_WALKTHROUGH.html
+  - title: Privacy, AI & Licensing
+    children:
+      - title: 'Network Transparency'
+        url: /NETWORK_TRANSPARENCY.html
+      - title: 'AI Providers'
+        url: /AI_PROVIDERS.html
+      - title: 'MCP Server'
+        url: /MCP_SERVER.html
+      - title: 'Licensing & Commercial Use'
+        url: /COMMERCIAL.html
   - title: Architecture & Features
     children:
       - title: 'Architecture'

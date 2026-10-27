@@ -188,7 +188,7 @@ The UI stays usable while installs/downloads run in the background.
 
 ## Release Process (Developers)
 
-For release steps (runtime staging, checksums, and notes), see the [Release Guide](/RELEASING.html).
+For release steps (runtime staging, checksums, and notes), see the [Release Guide](RELEASING.md).
 
 ## Troubleshooting
 
@@ -221,7 +221,7 @@ Once setup is complete, you're ready to start organizing your files:
 
 For more information, see the
 [main README](https://github.com/iLevyTate/StratoSortStack/blob/main/README.md) or explore the
-[documentation home](/).
+[documentation home](index.md).
 
 ---
 

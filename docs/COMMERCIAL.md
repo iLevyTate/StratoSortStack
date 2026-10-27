@@ -1,7 +1,7 @@
 # Commercial licensing
 
 StratoSort Stack is free for **personal and other noncommercial** use under the
-[PolyForm Noncommercial License 1.0.0](../LICENSE).
+[PolyForm Noncommercial License 1.0.0](https://github.com/iLevyTate/StratoSortStack/blob/main/LICENSE).
 
 **Commercial use** (use for a company’s business, a paid product or service, or any purpose that is
 not a permitted noncommercial purpose under that license) requires a separate paid license from

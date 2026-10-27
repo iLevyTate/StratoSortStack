@@ -365,5 +365,5 @@ the cert is mid-renewal or notarization credentials are stale.
   [MacConfiguration](https://www.electron.build/electron-builder.Interface.MacConfiguration.html)
 - `@electron/notarize` — <https://github.com/electron/notarize>
 - StratoSort release workflow —
-  [`.github/workflows/mac-release.yml`](../.github/workflows/mac-release.yml)
+  [`.github/workflows/mac-release.yml`](https://github.com/iLevyTate/StratoSortStack/blob/main/.github/workflows/mac-release.yml)
 - StratoSort release process — [`RELEASING.md`](./RELEASING.md)

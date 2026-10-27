@@ -374,6 +374,7 @@ encryption availability changes between runs; a plaintext token is re-encrypted 
 
 - [USER_GUIDE.md](USER_GUIDE.md) — the desktop app walkthrough.
 - [AI_PROVIDERS.md](AI_PROVIDERS.md) — using cloud AI alongside the local LLM.
-- [SECURITY.md](../SECURITY.md) — full security policy.
+- [SECURITY.md](https://github.com/iLevyTate/StratoSortStack/blob/main/SECURITY.md) — full security
+  policy.
 - [Model Context Protocol spec](https://modelcontextprotocol.io/) — the open standard this
   implements.

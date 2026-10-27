@@ -304,5 +304,5 @@ StratoSort Stack:
 
 ## Next Steps
 
-- **Learn the app:** [User Guide](/USER_GUIDE.html)
-- **Help test and report bugs:** [Tester Guide](/BETA_TESTER_GUIDE.html)
+- **Learn the app:** [User Guide](USER_GUIDE.md)
+- **Help test and report bugs:** [Tester Guide](BETA_TESTER_GUIDE.md)

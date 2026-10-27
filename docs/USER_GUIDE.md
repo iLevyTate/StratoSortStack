@@ -15,8 +15,8 @@ header:
 This guide explains how to use StratoSort Stack day-to-day, including Smart Folders, Knowledge OS
 (search, chat, Relate, Atlas, timeline), Downloads triage, and key settings.
 
-For installation help, use [Install Guide](/INSTALL_GUIDE.html). For testing and bug reporting, use
-the [Tester Guide](/BETA_TESTER_GUIDE.html).
+For installation help, use [Install Guide](INSTALL_GUIDE.md). For testing and bug reporting, use the
+[Tester Guide](BETA_TESTER_GUIDE.md).
 
 ---
 
@@ -275,7 +275,7 @@ Then run a small batch first and review outcomes before scaling up.
 
 ## 11) Reporting Problems
 
-Use the tester guide for full reporting instructions: [Tester Guide](/BETA_TESTER_GUIDE.html)
+Use the tester guide for full reporting instructions: [Tester Guide](BETA_TESTER_GUIDE.md)
 
 Direct bug form:
 [Open a bug report](https://github.com/iLevyTate/StratoSortStack/issues/new?template=bug_report.md)
@@ -284,8 +284,9 @@ Direct bug form:
 
 ## 12) License
 
-Personal and other noncommercial use is free under [PolyForm Noncommercial 1.0.0](../LICENSE). There
-is no trial, nothing expires, and no feature needs a key.
+Personal and other noncommercial use is free under
+[PolyForm Noncommercial 1.0.0](https://github.com/iLevyTate/StratoSortStack/blob/main/LICENSE).
+There is no trial, nothing expires, and no feature needs a key.
 
 Commercial use (a company’s business, a paid product or service, or any use that is not a permitted
 noncommercial purpose) needs a paid license. See [Commercial licensing](COMMERCIAL.md) or email
