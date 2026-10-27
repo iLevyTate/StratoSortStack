@@ -5,14 +5,15 @@ sidebar:
   nav: 'docs'
 header:
   overlay_color: '#000'
-  overlay_filter: '0.5'
+  overlay_filter: '0.85'
   overlay_image: /assets/e2e-screenshots/05_discover_phase.webp
   caption: 'Dependency Injection Patterns'
 ---
 
 # Dependency Injection Patterns
 
-This document describes the dependency injection (DI) patterns used in the StratoSort Stack codebase.
+This document describes the dependency injection (DI) patterns used in the StratoSort Stack
+codebase.
 
 ## Overview
 

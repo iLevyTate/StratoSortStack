@@ -1,4 +1,15 @@
 # docs/_data/navigation.yml
+main:
+  - title: 'Website'
+    url: https://stratosort.com/
+  - title: 'Install'
+    url: /INSTALL_GUIDE.html
+  - title: 'User Guide'
+    url: /USER_GUIDE.html
+  - title: 'Download'
+    url: https://github.com/iLevyTate/StratoSortStack/releases
+  - title: 'GitHub'
+    url: https://github.com/iLevyTate/StratoSortStack
 docs:
   - title: Getting Started
     children:

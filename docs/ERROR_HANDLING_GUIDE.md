@@ -8,7 +8,7 @@ toc_label: 'Guide Sections'
 toc_icon: 'exclamation-triangle'
 header:
   overlay_color: '#000'
-  overlay_filter: '0.5'
+  overlay_filter: '0.85'
   overlay_image: /assets/e2e-screenshots/30_settings_diagnostics.webp
   caption: 'Error Handling Patterns'
 ---

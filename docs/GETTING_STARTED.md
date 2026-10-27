@@ -8,7 +8,7 @@ toc_label: 'On This Page'
 toc_icon: 'cog'
 header:
   overlay_color: '#000'
-  overlay_filter: '0.5'
+  overlay_filter: '0.85'
   overlay_image: /assets/e2e-screenshots/02_how_stratosort_works_modal.webp
   caption: 'Developer Setup & System Requirements'
 ---

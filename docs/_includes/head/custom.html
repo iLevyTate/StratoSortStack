@@ -5,20 +5,24 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 
-<!-- GLightbox — image zoom/lightbox for doc screenshots -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/glightbox/dist/css/glightbox.min.css">
+<!-- GLightbox — image zoom/lightbox for doc screenshots (exact version pinned) -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/glightbox@3.3.1/dist/css/glightbox.min.css">
 
-<!-- Mermaid diagrams -->
-<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<!-- Mermaid diagrams (exact version pinned) -->
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.8/dist/mermaid.min.js"></script>
 <script>
   document.addEventListener('DOMContentLoaded', function () {
-    if (window.mermaid) {
-      mermaid.initialize({
-        startOnLoad: true,
-        securityLevel: 'loose',
-        theme: 'dark',
-      });
-    }
+    if (!window.mermaid) return;
+    // Kramdown renders ```mermaid fences as <code class="language-mermaid">, which Mermaid does not
+    // scan for. Swap each block for a <div class="mermaid"> holding the diagram source.
+    document.querySelectorAll('code.language-mermaid').forEach(function (code) {
+      var div = document.createElement('div');
+      div.className = 'mermaid';
+      div.textContent = code.textContent;
+      (code.closest('div.language-mermaid') || code.closest('pre') || code).replaceWith(div);
+    });
+    mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'dark' });
+    mermaid.run();
   });
 </script>
 

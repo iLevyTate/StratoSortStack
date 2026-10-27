@@ -4,7 +4,7 @@ title: 'StratoSort Stack'
 permalink: /
 header:
   overlay_color: '#000'
-  overlay_filter: '0.6'
+  overlay_filter: '0.85'
   overlay_image: /assets/e2e-screenshots/01_welcome_screen.webp
   caption: 'Privacy-first local AI document organizer.'
   actions:

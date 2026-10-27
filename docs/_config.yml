@@ -15,17 +15,27 @@ plugins:
 
 # Minimal Mistakes Specific Configuration
 minimal_mistakes_skin: 'dark' # We use dark mode to match the app's aesthetic
-search: false
+search: true # built-in Lunr index; runs in the browser, no external service
 
-# Sidebar and main navigation configuration
-navigation:
-  main:
-    - title: 'Home'
-      url: /
-    - title: 'Docs'
-      url: /INSTALL_GUIDE.html
-    - title: 'GitHub'
+# Top-bar and sidebar navigation live in _data/navigation.yml (`main` and `docs`).
+
+# The marketing site is stratosort.com (separate repo); this site is the documentation.
+atom_feed:
+  hide: true
+footer:
+  links:
+    - label: 'stratosort.com'
+      icon: 'fas fa-fw fa-globe'
+      url: 'https://stratosort.com/'
+    - label: 'GitHub'
+      icon: 'fab fa-fw fa-github'
       url: 'https://github.com/iLevyTate/StratoSortStack'
+    - label: 'License (PolyForm Noncommercial 1.0.0)'
+      icon: 'fas fa-fw fa-file-contract'
+      url: 'https://github.com/iLevyTate/StratoSortStack/blob/main/LICENSE'
+    - label: 'Privacy'
+      icon: 'fas fa-fw fa-user-shield'
+      url: 'https://stratosort.com/privacy.html'
 
 # Keep these in git, but do not emit them as GitHub Pages. Baseline snapshots,
 # demo fixtures, and CI inventories are not the public site. Live guides, e2e

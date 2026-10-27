@@ -5,7 +5,7 @@ sidebar:
   nav: 'docs'
 header:
   overlay_color: '#000'
-  overlay_filter: '0.5'
+  overlay_filter: '0.85'
   overlay_image: /assets/e2e-screenshots/35_organize_phase_stable.webp
   caption: 'Release Process'
 ---

@@ -5,7 +5,7 @@ sidebar:
   nav: 'docs'
 header:
   overlay_color: '#000'
-  overlay_filter: '0.5'
+  overlay_filter: '0.85'
   overlay_image: /assets/e2e-screenshots/54_relate_full_graph_legend.webp
   caption: 'Knowledge Graph & Semantic Clustering'
 ---

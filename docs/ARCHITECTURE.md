@@ -8,7 +8,7 @@ toc_label: 'Contents'
 toc_icon: 'sitemap'
 header:
   overlay_color: '#000'
-  overlay_filter: '0.5'
+  overlay_filter: '0.85'
   overlay_image: /assets/e2e-screenshots/47_understand_ai_searching.webp
   caption: 'System Architecture and Data Flow'
 ---
