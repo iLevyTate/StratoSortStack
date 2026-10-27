@@ -1,6 +1,6 @@
 # StratoSort Stack Testing Guide
 
-**Applies to:** StratoSort Stack 4.0.x  
+**Applies to:** StratoSort Stack 5.0.x  
 **Purpose:** Single source of truth for manual QA and automated test expectations.
 
 ---
@@ -270,10 +270,11 @@ npm run test:all      # npm test + test:stress
 
 Notes:
 
-- `npm run ci` runs the full quality gate: `format:check`, `lint`, `typecheck`, `audit:production`,
-  `compliance:commercial:verify`, `test:coverage`, `generate:channels:check`, the `verify:*` suite
-  (IPC handlers/schemas/contracts/enforcement, MCP, AI-provider, analysis routing, electron fuses,
-  env docs, version tag), and `build`. See [`PACKAGE_SCRIPTS.md`](PACKAGE_SCRIPTS.md) for the
+- `npm run ci` runs the full quality gate: `format:check`, `lint`, `typecheck` + `typecheck:js`,
+  `audit:production` + `audit:bundled`, `compliance:commercial:verify`, `test:coverage`,
+  `generate:channels:check`, the `verify:*` suite (IPC handlers/schemas/contracts/enforcement/event
+  schemas, MCP, AI-provider, analysis routing, electron fuses, env docs, checkjs ratchet, version
+  tag), `knip:files`, and `build`. See [`PACKAGE_SCRIPTS.md`](PACKAGE_SCRIPTS.md) for the
   authoritative list.
 - `npm run test:critical-path` runs the seven Jest files listed in
   `scripts/stability/smokeSuiteConfig.js`. Release workflows do **not** run

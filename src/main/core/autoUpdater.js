@@ -81,10 +81,15 @@ function areAutoUpdatesEnabled() {
   if (raw !== undefined && raw !== null && String(raw).trim() !== '') {
     return getEnvBool('STRATOSORT_ENABLE_AUTO_UPDATES', false);
   }
-  // Packaged installs: off by default until an operator opts in with
-  // STRATOSORT_ENABLE_AUTO_UPDATES=true and provides a working feed/channel.
-  // This avoids noisy 404s for local/ad-hoc builds that are not published.
-  return false;
+  // Unset: packaged installs check the public GitHub Releases feed baked into
+  // app-update.yml; dev/unpackaged runs never do. STRATOSORT_ENABLE_AUTO_UPDATES=false
+  // turns updates off for locked-down or ad-hoc builds, and the user's
+  // autoUpdateCheck setting still gates the automatic checks below.
+  try {
+    return Boolean(app?.isPackaged);
+  } catch {
+    return false;
+  }
 }
 
 // User preference mirrored from settings.autoUpdateCheck, layered on top of the
@@ -401,7 +406,7 @@ async function initializeAutoUpdater(isDev, getMainWindow) {
     // guessing game when a packaged build shipped with the flag unset.
     const reason = !app.isPackaged
       ? 'non-packaged build'
-      : 'STRATOSORT_ENABLE_AUTO_UPDATES is not enabled';
+      : 'STRATOSORT_ENABLE_AUTO_UPDATES is set to false';
     logger.info(`[UPDATER] Auto-updates skipped (${reason})`);
     return { cleanup: () => {} };
   }

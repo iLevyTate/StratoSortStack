@@ -124,8 +124,8 @@ const folderMatchScore = calculateSimilarity();
 
 ## Error Handling Standards
 
-**See [Error Handling Guide](/ERROR_HANDLING_GUIDE.html) for comprehensive error handling patterns
-and decision tree.**
+**See [Error Handling Guide](ERROR_HANDLING_GUIDE.md) for comprehensive error handling patterns and
+decision tree.**
 
 ### Use Centralized Error Utilities
 
@@ -562,7 +562,8 @@ function determineAction(type, status, user) {
 - From `src/renderer/`: `import { logger } from '../shared/logger'`
 - From `src/renderer/components/`, `src/renderer/phases/`:
   `import { logger } from '../../shared/logger'`
-- From `src/renderer/utils/`, `src/renderer/contexts/`: `import { logger } from '../shared/logger'`
+- From `src/renderer/utils/`, `src/renderer/contexts/`:
+  `import { logger } from '../../shared/logger'`
 - From `src/renderer/components/ui/`, `src/renderer/components/organize/`:
   `import { logger } from '../../../shared/logger'`
 
@@ -581,10 +582,10 @@ const fs = require('fs').promises;
 const path = require('path');
 
 // 2. External packages
-const { getInstance: getLlamaService } = require('../services/LlamaService');
 const sharp = require('sharp');
 
 // 3. Internal absolute imports (from src/)
+const { container, ServiceIds } = require('../services/ServiceContainer');
 const { logger } = require('../shared/logger');
 const { ERROR_CODES } = require('../shared/errorHandlingUtils');
 
@@ -613,8 +614,8 @@ const path = require('path');
 const fs = require('fs').promises;
 const path = require('path');
 
-// AI services
-const { getInstance: getLlamaService } = require('../services/LlamaService');
+// AI services (resolve via the DI container; see DI_PATTERNS.md)
+const { container, ServiceIds } = require('../services/ServiceContainer');
 const { analyzeWithLLM } = require('./llmService');
 
 // Utilities

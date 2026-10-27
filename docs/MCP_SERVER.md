@@ -292,8 +292,8 @@ renderer.
 ### Port collisions
 
 If the configured port (default `53827`, override via `STRATOSORT_MCP_PORT`) is already taken, the
-server tries the next free port and surfaces the actual bound port in the status payload — copy the
-snippet again to refresh.
+server binds an OS-assigned ephemeral port (`listen(0)`) instead and surfaces the actual bound port
+in the status payload — copy the snippet again to refresh.
 
 ### Concurrency
 
@@ -374,6 +374,7 @@ encryption availability changes between runs; a plaintext token is re-encrypted 
 
 - [USER_GUIDE.md](USER_GUIDE.md) — the desktop app walkthrough.
 - [AI_PROVIDERS.md](AI_PROVIDERS.md) — using cloud AI alongside the local LLM.
-- [SECURITY.md](../SECURITY.md) — full security policy.
+- [SECURITY.md](https://github.com/iLevyTate/StratoSortStack/blob/main/SECURITY.md) — full security
+  policy.
 - [Model Context Protocol spec](https://modelcontextprotocol.io/) — the open standard this
   implements.

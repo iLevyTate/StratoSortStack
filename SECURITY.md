@@ -11,8 +11,8 @@ Security fixes land in the latest minor release line. Older lines are not back-p
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 4.0.x   | :white_check_mark: |
-| < 4.0   | :x:                |
+| 5.0.x   | :white_check_mark: |
+| < 5.0   | :x:                |
 
 ## Security Design Principles
 
@@ -114,9 +114,14 @@ the maintainers’ key in an initial advisory-only message. The project may publ
 
 - StratoSort runs entirely in-process for AI and vector search
 - No telemetry or analytics are ever sent. The only outbound requests are: HTTPS update-metadata
-  checks when `autoUpdateCheck` is enabled (on by default; disable in Settings → Application), model
-  downloads on first run, and any cloud AI provider you explicitly opt into (Anthropic / an
-  OpenAI-compatible endpoint). Embeddings and vector search always stay local.
+  checks when `autoUpdateCheck` is enabled (on by default; disable in Settings → Application); AI
+  model downloads from Hugging Face — the default text and embedding models download automatically
+  at first launch unless you pick "Continue with limited AI", and the Whisper speech model downloads
+  when you click **Install model** after a transcription finds it missing; fallback downloads of the
+  vision runtime from `github.com` or OCR language data from `cdn.jsdelivr.net`, only when the
+  bundled copy is missing; and any cloud AI provider you explicitly opt into (Anthropic / an
+  OpenAI-compatible endpoint). Embeddings and vector search always stay local. The full list, with
+  triggers and integrity checks, is in [docs/NETWORK_TRANSPARENCY.md](docs/NETWORK_TRANSPARENCY.md).
 
 ## Known Security Considerations
 
@@ -141,7 +146,7 @@ the maintainers’ key in an initial advisory-only message. The project may publ
 
 ## Security Updates
 
-Security updates will be released as patch versions (e.g., 4.0.1, 4.0.2) and announced via:
+Security updates will be released as patch versions (e.g., 5.0.1, 5.0.2) and announced via:
 
 - GitHub Releases
 - In-app update notifications (if auto-update is enabled)
@@ -153,4 +158,4 @@ Contributors who report valid security issues will be acknowledged here (with pe
 
 ---
 
-_Last updated: 2026-09-26 — applies to StratoSort Stack 4.0.6._
+_Last updated: 2026-10-26 — applies to StratoSort Stack 5.0.0._

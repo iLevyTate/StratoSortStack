@@ -52,12 +52,13 @@ method**. The deep services we already have:
 
 | Service              | LOC    | Public methods | LOC per method |
 | -------------------- | ------ | -------------- | -------------- |
-| `OramaVectorService` | ~4,500 | ~105           | ~43            |
-| `LlamaService`       | ~4,200 | ~40            | ~105           |
-| `SearchService`      | ~4,100 | ~43            | ~95            |
-| `SmartFolderWatcher` | ~4,800 | ~35            | ~137           |
+| `OramaVectorService` | ~5,400 | ~105           | ~51            |
+| `LlamaService`       | ~4,300 | ~40            | ~107           |
+| `SearchService`      | ~3,700 | ~43            | ~86            |
+| `SmartFolderWatcher` | ~4,100 | ~35            | ~117           |
 
-(LOC are approximate and drift as the code evolves — treat them as illustrative, not exact.)
+(LOC as of 2026-10; method counts are from the last hand count. Both drift as the code evolves —
+treat them as illustrative, not exact.)
 
 These are textbook deep modules: small public API, large hidden implementation (state machines,
 retries, caching, fallback paths). **Do not split them** to chase a LOC target — the splits would be
@@ -67,7 +68,7 @@ Conversely, if a new service exposes 20 methods over 600 LOC, that's ~30 LOC/met
 flag. Ask: is the interface too wide? Could most of those methods be private?
 
 **Caveat: count `async` methods.** A naive regex that matches `^  methodName(` will miss
-`async methodName(` and produce misleadingly low ratios. The Phase 3 shallow-service audit flagged
+`async methodName(` and produce misleadingly low ratios. An earlier shallow-service review flagged
 three services as "shallow" using such a regex; once async methods were counted, all three were
 within the deep-module band (43–71 LOC/method). When in doubt, count by hand or use an AST.
 
@@ -254,10 +255,12 @@ These belong to other docs; this one points at them rather than duplicating:
 The principles above are guidance. The following are non-negotiable: any change that violates one is
 reverted regardless of how well it scores on the principles.
 
-- **Electron is pinned at 41.x.** Bumping breaks `@electron/rebuild` (missing ABI 137) and
-  `better-sqlite3` prebuilts. See `.github/dependabot.yml` for the unblock signal. Do not bump the
-  major even transitively.
-- **Sandbox stays on; CSP has no `unsafe-eval`.** Enforced in `src/main/core/createWindow.js`.
+- **Electron is pinned at 41.x — and the pin is stale.** The original ABI/prebuild blockers are
+  resolved upstream, and 41.x is now behind upstream security support, so a major bump is a pending
+  security item. Do not bump it casually: follow the verification recipe in `.github/dependabot.yml`
+  (the canonical rationale) in a separate worktree first.
+- **Sandbox stays on; CSP has no `unsafe-eval`.** Sandbox is set in `src/main/core/createWindow.js`;
+  the CSP is built in `src/main/core/securityHeaders.js`.
 - **Every IPC handler goes through `ipcRegistry`.** No direct `ipcMain.handle`. The registry wraps
   handlers with `ipcSenderValidator` (defense in depth).
 - **All input-accepting IPC channels have Zod schemas.** Only the `SCHEMA_OPTIONAL_CHANNELS`
@@ -266,8 +269,9 @@ reverted regardless of how well it scores on the principles.
   `src/renderer/store/migrations.js` and ship a tested migration. Old fixtures must still load.
 - **Settings and state writes go through `atomicFileOperations.js`.** No direct `fs.writeFile`
   shortcuts on persisted state.
-- **Coverage threshold ≥ 50%** (branches / functions / lines / statements) in `test/jest.config.js`.
-  Don't lower it to make CI green; write tests instead.
+- **Coverage thresholds are a ratchet** (global: branches 52 / functions 62 / lines 63 / statements
+  62, plus tighter per-directory floors) in `test/jest.config.js`. Don't lower them to make CI
+  green; write tests instead.
 - **`STRATOSORT_*` env vars must be documented** (`npm run verify:env-docs` gates CI).
 - **License posture is PolyForm Noncommercial 1.0.0** (commercial licenses sold separately) —
   third-party obligations (LGPL FFmpeg attribution, etc.) are enforced by

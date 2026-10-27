@@ -22,8 +22,9 @@ StratoSort runs with `sandbox: true`, which is why preload cannot `require()` at
 bundle has to be self-contained.
 
 **CSP (Content Security Policy)** — Header that restricts what the renderer can execute.
-StratoSort's CSP forbids dynamic code evaluation and inline scripts; only `wasm-unsafe-eval` is
-permitted (needed for some AI dependencies). Defined in `src/main/core/createWindow.js`.
+StratoSort's CSP forbids dynamic code evaluation (no `unsafe-eval`) and inline scripts other than
+the hash-pinned splash script (`script-src 'self'` + hashes). Built in
+`src/main/core/securityHeaders.js` and applied by `src/main/core/createWindow.js`.
 
 **Electron fuses** — Compile-time flags that harden the packaged Electron binary (e.g.
 "only-load-app-from-asar"). Declared in `electron-builder.json` and verified by
@@ -63,11 +64,14 @@ atomic on POSIX and (with retries for AV/indexer locks) on Windows.
 **OramaVectorService** — In-process Orama vector DB plus BM25 full-text index. Persists to a sidecar
 file under userData. Implements degradation events (`dimension-mismatch`, `embedding-blocked`).
 
-**Embedding queue** — `ParallelEmbeddingService` worker pool that batches embedding requests.
+**Embedding queue** — The persistent, retrying queue in `src/main/analysis/embeddingQueue/` that
+batches vector upserts after analysis (separate stages for files and folders). The embeddings
+themselves are computed by `ParallelEmbeddingService` (semaphore-limited, main process by default).
 Backpressure is configurable via `STRATOSORT_ANALYSIS_EMBEDDING_QUEUE_WAIT` and
 `STRATOSORT_ORGANIZE_EMBEDDING_QUEUE_WAIT` (see [`CONFIG.md`](CONFIG.md)).
 
-**EmbeddingCache** — LRU + persisted cache so the same content isn't re-embedded.
+**EmbeddingCache** — In-memory LRU cache (with TTL) keyed on text + model so the same content isn't
+re-embedded within a session.
 
 **ReRanker** — LLM prompt that scores each search candidate 0-10 against the query after hybrid
 retrieval (not a cross-encoder). Used by Chat's Deep mode; off by default elsewhere.
@@ -98,29 +102,34 @@ servers. StratoSort has an experimental MCP server feature; see [`MCP_SERVER.md`
 **Smart folder** — A user-defined folder with embedding-based auto-routing rules. The
 `SmartFoldersLLMService` decides which smart folder a new file belongs in.
 
-**ServiceContainer** — The DI registry singleton. `getInstance().resolve('LlamaService')` returns
-the lazy-initialized service. See [`DI_PATTERNS.md`](DI_PATTERNS.md) for the full pattern.
+**ServiceContainer** — The DI registry.
+`const { container, ServiceIds } = require('./ServiceContainer')`, then
+`container.resolve(ServiceIds.LLAMA_SERVICE)` returns the lazy-initialized service. See
+[`DI_PATTERNS.md`](DI_PATTERNS.md) for the full pattern.
 
 **persistenceMiddleware** — Redux middleware that debounces (1s + 5s max wait) renderer state writes
 to localStorage. Stamps state with a schema version for migration on rehydration.
 
-**ipcMiddleware** — Redux middleware that forwards dispatched actions to main when the action type
-matches an IPC channel.
+**ipcMiddleware** — Redux middleware that subscribes to main→renderer IPC events, validates them
+against `src/shared/ipcEventSchemas.js` (invalid payloads are dropped) and dispatches them into the
+store.
 
 ## Process / release
 
 **Local gate** — `npm run local:gate`. Pre-push verification: `verify:installed-electron`, then the
-full `ci` pipeline (format, lint, typecheck, audit:production, compliance, test:coverage, every
-`verify:*`, build), then native-modules check. Cloud CI (`.github/workflows/ci.yml`) also runs `ci`
-plus native-module verification on every PR and on pushes to the main branches.
+full `ci` pipeline (format, lint, typecheck, audits, compliance, test:coverage, the IPC/MCP/
+AI-provider/fuses/env-docs `verify:*` checks, build), then native-modules check. Cloud CI
+(`.github/workflows/ci.yml`) also runs `ci` plus native-module verification on every PR and on
+pushes to the main branches.
 
 **Pre-flight** — `npm run preflight:release[:quick]`. Runs before tagging a release: native module
-check, critical-path smoke ×2, dist build, packaged-artifact verify. See
-[`RELEASING.md`](RELEASING.md) § Pre-Flight Checks.
+check, the critical-path baseline comparison, commercial compliance, then (full mode only) dist
+build and packaged-artifact verify. See [`RELEASING.md`](RELEASING.md) § Pre-Flight Checks.
 
-**Critical-path smoke** — `test:critical-path:twice`. Runs the critical-path stability baseline
-comparison (`scripts/stability/compare-baseline.js`) to catch latency drift / non-determinism
-against the recorded baseline.
+**Critical-path smoke** — `test:critical-path:twice`. Runs the critical-path smoke suite twice — on
+the previous release tag and on `HEAD`, each in a temporary git worktree
+(`scripts/stability/compare-baseline.js`) — then checks for failures and ≥50% latency regressions
+(`scripts/stability/check-release-thresholds.js`).
 
 ## License / compliance
 

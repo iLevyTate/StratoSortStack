@@ -25,8 +25,10 @@ Run these before creating a beta or release tag.
 npm run preflight:release:quick
 ```
 
-Verifies Electron-runtime loading for `sharp`, `better-sqlite3`, `@napi-rs/canvas`, `lz4-napi`, and
-`node-llama-cpp`. Use this to catch native-binding breakage early.
+Runs everything in the full pre-flight below **except** the dist build and packaged-artifact checks
+(`--skip-dist`): native-module loading (`sharp`, `better-sqlite3`, `@napi-rs/canvas`, `lz4-napi`,
+`node-llama-cpp`), the critical-path baseline comparison and commercial compliance. It also needs a
+clean git worktree. Use it to catch native-binding breakage and regressions early.
 
 ### Full pre-flight (recommended before every tag)
 
@@ -37,20 +39,23 @@ npm run preflight:release
 It requires a clean git worktree before it begins. On the current platform this runs:
 
 1. Native module verification (`verify:native-modules`)
-2. Commercial compliance verification (`compliance:commercial:verify`, unless `--skip-commercial`)
-3. Critical-path smoke suite twice on the same SHA (`test:critical-path:twice`)
+2. Critical-path baseline comparison (`test:critical-path:twice`, unless `--skip-critical`)
+3. Commercial compliance verification (`compliance:commercial:verify`, unless `--skip-commercial`)
 4. Clean `release/build`
 5. Platform dist build (e.g. `dist:win` on Windows)
 6. Packaged artifact verification (`verify:packaged-artifacts`)
 
 ### What `test:critical-path:twice` actually does
 
-1. Fixed smoke suite pass #1 (`scripts/stability/run-smoke-suite.js`)
-2. Fixed smoke suite pass #2 on the same commit
-3. Threshold check (`scripts/stability/check-release-thresholds.js`) catching:
+`scripts/stability/compare-baseline.js` checks out two temporary git worktrees under
+`.tmp/stability-worktrees/` — the previous release tag (the baseline) and `HEAD` (the target) — and:
+
+1. Runs the fixed smoke suite (`scripts/stability/run-smoke-suite.js`) on the baseline
+2. Runs the same smoke suite on the target
+3. Runs the threshold check (`scripts/stability/check-release-thresholds.js`), catching:
    - Required-journey failures
    - Baseline-pass to target-fail regressions
-   - ≥50% latency drift between pass #1 and pass #2
+   - ≥50% latency regressions from baseline to target
 
 If system-metrics exports are provided to the threshold script, it also enforces fallback-rate
 guardrails for search and Uncategorized routing.
@@ -65,7 +70,7 @@ npx jest --config test/jest.config.js test/components/PhaseRenderer.test.js test
 ### Pass criteria — do not tag until all are true
 
 - Pre-flight command exits with code `0`
-- Critical-path smoke suite passes twice on the same candidate SHA
+- Critical-path smoke suite passes on the candidate SHA with no regressions against the baseline tag
 - Wizard/phase regression suites pass
 - Dist artifacts are generated under `release/build`
 - No unexpected warnings/errors in command output
@@ -123,7 +128,7 @@ Release guidance:
 - When smoke-testing macOS releases, confirm the packaged app launches on the oldest macOS version
   you still support.
 - Revisit this workaround after any Electron runtime upgrade, especially when moving beyond Electron
-  `41.7.1` (the currently pinned line).
+  41.x (currently `^41.10.1` in `package.json`; see `.github/dependabot.yml` for the pin rationale).
 
 ## Disposable profile (Windows demo)
 
@@ -155,7 +160,7 @@ whose path contains spaces.
    **B — From the repo** (after a normal dev build, from the repo root):
 
    ```powershell
-   cd c:\Users\benja\Documents\GitHub\StratoSortStack
+   cd <path-to-your-clone>
    npx cross-env NODE_ENV=development electron . --enable-logging --user-data-dir=C:\temp\stratosort-demo-profile
    ```
 
@@ -189,8 +194,7 @@ git tag vX.Y.Z
 git push origin vX.Y.Z
 ```
 
-For the next release (current tag series includes `v4.0.0`), replace `X.Y.Z` with the version from
-`package.json` after you bump it.
+Replace `X.Y.Z` with the version from `package.json` after you bump it (for example `v5.0.0`).
 
 This triggers:
 
@@ -231,16 +235,16 @@ macOS workflow publishes:
 
 Linux workflow publishes:
 
-- `StratoSortStack-*-linux-x64.AppImage`
-- `StratoSortStack-*-linux-x64.deb`
-- `latest-linux.yml` (when produced)
-- `checksums-linux.sha256` if you generate/upload it separately
+- `StratoSortStack-*-linux-x86_64.AppImage` and `StratoSortStack-*-linux-arm64.AppImage`
+- `StratoSortStack-*-linux-amd64.deb` and `StratoSortStack-*-linux-arm64.deb`
+- `latest-linux.yml` (x64) and `latest-linux-arm64.yml` (when produced)
+- `checksums-linux.sha256`
 
-## Application auto-updates (temporary)
+## Application auto-updates
 
-Shipped installers default to **automatic updates disabled** until a public update base URL is
-configured (private GitHub releases are not visible to `electron-updater` without auth). Operators
-can set `STRATOSORT_ENABLE_AUTO_UPDATES=true` to smoke-test the updater; optional
+Shipped installers check the public GitHub Releases feed for updates by default, so the repository
+and its releases must stay public (private releases are not visible to `electron-updater` without
+auth). `STRATOSORT_ENABLE_AUTO_UPDATES=false` disables the updater; optional
 `STRATOSORT_UPDATE_FEED_URL` points at a **generic** HTTPS directory with `latest.yml`. See
 [CONFIG.md](CONFIG.md#application-auto-updates-electron-updater) and
 [UPDATE_HOST.md](UPDATE_HOST.md).
@@ -256,8 +260,7 @@ update-enabled release:
 2. Stage v(N+1)'s `latest.yml` + installer + `.blockmap` in an HTTPS directory with a valid
    certificate (Cloudflare R2 / any static host). `scripts/verify-updater-metadata.js` must pass on
    the staged files.
-3. On a clean Windows VM: install v(N), then launch with `STRATOSORT_ENABLE_AUTO_UPDATES=true`,
-   `STRATOSORT_UPDATE_FEED_URL=<staging URL>`,
+3. On a clean Windows VM: install v(N), then launch with `STRATOSORT_UPDATE_FEED_URL=<staging URL>`,
    `STRATOSORT_UPDATE_FEED_ALLOWED_HOSTS=<staging host>`.
 4. Verify the full chain: update event → background download → "Update Ready" indicator → Apply →
    in-flight-op drain → relaunch **as v(N+1)**.
@@ -292,14 +295,14 @@ npm test -- test/autoUpdater.test.js --runInBand --no-coverage
 2. **Profile path** — Confirm app data lives under `%APPDATA%\StratoSort Stack` (not the legacy
    lowercase `stratosort-core` path that older postinstall scripts derived from the npm package
    name).
-3. **First launch** — App opens without an updater error notification (auto-updates are off by
-   default unless `STRATOSORT_ENABLE_AUTO_UPDATES=true`).
-4. **Settings → Application** — "Software updates" reflects disabled mode until you enable updates
-   and host a feed (see [CONFIG.md](CONFIG.md) and [UPDATE_HOST.md](UPDATE_HOST.md)).
+3. **First launch** — App opens without an updater error notification; the startup update check
+   against GitHub Releases succeeds (or reports "up to date").
+4. **Settings → Application** — "Background Update Checks" is on and can be switched off (see
+   [CONFIG.md](CONFIG.md) and [UPDATE_HOST.md](UPDATE_HOST.md)).
 5. **Models** — Complete welcome / model setup; optional "Download Base Models" and confirm `.gguf`
    files appear under `%APPDATA%\StratoSort Stack\models` when downloads succeed.
 
-### Packaged-integrity checks (SW-40)
+### Packaged-integrity checks
 
 Run these once per release on a packaged build. Every path below exists **only** when packaged:
 `main`, `preload` and the renderer live inside the integrity-validated `app.asar`, while seven
@@ -330,13 +333,14 @@ Two more release-time runtime items pair with this pass, both verifiable only on
 - the **updater live smoke** —
   [§ Updater live smoke](#updater-live-smoke-run-before-every-update-enabled-release), including the
   portable/Store negative checks, and
-- the **license smoke** on a fresh `--user-data-dir` (see [`LAUNCH_RUNBOOK.md`](LAUNCH_RUNBOOK.md)
-  Phase 3).
+- the **license smoke** on a fresh `--user-data-dir`: with no key, Settings → License reports `free`
+  and every feature works; after pasting a valid key it reports `licensed` with the licensee and
+  update window; a key whose update window ended before this build reports `version_not_covered`.
 
 ### Portable build
 
-`StratoSortStack-*-win-x64.exe` does **not** use the same auto-update path as the NSIS installer; see
-[INSTALL_GUIDE.md](INSTALL_GUIDE.md) for portable vs full-installer behavior.
+`StratoSortStack-*-win-x64.exe` does **not** use the same auto-update path as the NSIS installer;
+see [INSTALL_GUIDE.md](INSTALL_GUIDE.md) for portable vs full-installer behavior.
 
 ## Signing And Notarization Requirements
 

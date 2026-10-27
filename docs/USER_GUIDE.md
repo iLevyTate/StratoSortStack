@@ -15,8 +15,8 @@ header:
 This guide explains how to use StratoSort Stack day-to-day, including Smart Folders, Knowledge OS
 (search, chat, Relate, Atlas, timeline), Downloads triage, and key settings.
 
-For installation help, use [Install Guide](/INSTALL_GUIDE.html). For beta testing and bug reporting,
-use [Beta Tester Guide](/BETA_TESTER_GUIDE.html).
+For installation help, use [Install Guide](INSTALL_GUIDE.md). For testing and bug reporting, use the
+[Tester Guide](BETA_TESTER_GUIDE.md).
 
 ---
 
@@ -49,6 +49,10 @@ StratoSort is organized into five phases. You move through them in order:
 4. **Organize** — Review each suggestion. Accept, reject, or edit the destination and filename. Use
    Undo/Redo if you change your mind.
 5. **Complete** — See a summary of everything that was organized. Undo is still available here.
+
+Prefer one screen over steps? Choose **Dashboard** on the Welcome screen, or use the **Guided /
+Dashboard** toggle in the top bar, for a single overview screen. **Guided** (the phases above) is
+the default.
 
 ---
 
@@ -130,7 +134,8 @@ Tabs:
 - **Relate** is for "how do these files connect?" — follow edges, expand a cluster, inspect bridges.
 - **Atlas** is for a bird's-eye view — outliers, likely mis-files, bulk select.
 
-Both use the same analysis. If search is empty, rebuild embeddings in Settings → AI Configuration.
+Both use the same analysis. If search is empty, switch Settings to Advanced and use **Rebuild all
+embeddings** under Settings → AI Configuration.
 
 ### Downloads triage
 
@@ -155,8 +160,9 @@ Open **Settings**. Use **Simple** unless you need model, retrieval, or diagnosti
 
 ### AI Configuration
 
-- **Local AI Engine**: Model and GPU status.
-- **Default AI models**: Text, vision, and embedding models.
+- **Local AI Engine**: Model and GPU status. In Simple mode it also has **Download recommended
+  models**.
+- **Default AI models**: Text, vision, and embedding models (Advanced).
 - **Model Management**: Download or add GGUF models (Advanced).
 - **Embedding behavior / rebuild**: Rebuild the index after changing the embedding model (Advanced).
 - **Chat Persona**: How the in-app assistant responds (Advanced).
@@ -184,7 +190,8 @@ See [MCP_SERVER.md](MCP_SERVER.md).
 - **Auto-organize**: Watch Downloads (and related routing).
 - **Background Mode**: Keep running in the tray.
 - **Exclusion rules**: Skip paths or patterns from watchers and triage.
-- **Processing limits** and **Graph retrieval** (Advanced).
+- **Processing limits** and **Search enrichment** (relationship expansion and the relationship index
+  **Rebuild** button) (Advanced).
 
 ### Default locations
 
@@ -193,7 +200,9 @@ See [MCP_SERVER.md](MCP_SERVER.md).
 
 ### Application
 
-- Launch on startup, software updates, notifications.
+- Launch on startup, notifications, and software updates. Installed builds check GitHub Releases for
+  a new version at startup and every 4 hours; turn this off with **Background update checks**, or
+  use **Check for updates** to check now. See [Network Transparency](NETWORK_TRANSPARENCY.md).
 - **License**: commercial key status. Every feature works without a key.
 - **About** and **Third-party notices**.
 - Settings backup/restore (Advanced).
@@ -214,7 +223,9 @@ On first launch, the setup wizard offers two profiles:
 | **Base (Small & Fast)** | Llama 3.2 3B | LLaVA 1.6 Mistral 7B | all-MiniLM-L6-v2      | All computers, CPU-only, low memory |
 | **Better Quality**      | Qwen2.5 7B   | LLaVA 1.6 Mistral 7B | nomic-embed-text v1.5 | Modern hardware, 16GB+ RAM, GPU     |
 
-You can switch models later in **Settings -> AI Configuration -> Default AI Models**.
+You can switch models later in **Settings -> AI Configuration -> Default AI Models** (switch
+Settings to **Advanced** first; Simple mode hides this panel). Base downloads about 7 GB and Better
+Quality about 10 GB.
 
 Changing the embedding model requires an index rebuild. The app prompts you when this is needed,
 both in Settings and when you re-run the setup wizard with files already indexed.
@@ -275,7 +286,7 @@ Then run a small batch first and review outcomes before scaling up.
 
 ## 11) Reporting Problems
 
-Use the beta guide for full reporting instructions: [Beta Tester Guide](/BETA_TESTER_GUIDE.html)
+Use the tester guide for full reporting instructions: [Tester Guide](BETA_TESTER_GUIDE.md)
 
 Direct bug form:
 [Open a bug report](https://github.com/iLevyTate/StratoSortStack/issues/new?template=bug_report.md)
@@ -284,8 +295,9 @@ Direct bug form:
 
 ## 12) License
 
-Personal and other noncommercial use is free under [PolyForm Noncommercial 1.0.0](../LICENSE). There
-is no trial, nothing expires, and no feature needs a key.
+Personal and other noncommercial use is free under
+[PolyForm Noncommercial 1.0.0](https://github.com/iLevyTate/StratoSortStack/blob/main/LICENSE).
+There is no trial, nothing expires, and no feature needs a key.
 
 Commercial use (a company’s business, a paid product or service, or any use that is not a permitted
 noncommercial purpose) needs a paid license. See [Commercial licensing](COMMERCIAL.md) or email

@@ -1,10 +1,12 @@
 # Semantic Pipeline — Ingestion, Chunking, Embedding & Retrieval
 
-Reference document for explaining how StratoSort Stack handles document understanding, vector search,
-and chat retrieval. Use this when asked about **solved problems** in chunking, embedding, retrieval
-speed, or multi-modal file support.
+Reference for how StratoSort Stack handles document understanding, vector search and chat retrieval:
+the problems each stage solves in chunking, embedding, retrieval speed and multi-modal file support.
 
-All processing is **local and in-process** (node-llama-cpp + Orama). No data leaves the machine.
+By default all processing is **local and in-process** (node-llama-cpp + Orama) and no data leaves
+the machine. If a user opts into a BYOK cloud provider, text analysis, chat and organization
+suggestions can be routed to it (see [`AI_PROVIDERS.md`](AI_PROVIDERS.md)); embeddings, search and
+image pixels always stay local.
 
 ---
 
@@ -73,7 +75,8 @@ invalidation, and `_embedAnalyzedFile()` (file vector + optional chunks).
 
 - **Whisper** (`WhisperService`) transcribes via ffmpeg → PCM → whisper.cpp.
 - **Video only:** optional keyframe extraction (ffmpeg) and vision captions on stills
-  (`captionKeyframes` — **off by default** in `mediaAnalyzerAdapter`).
+  (`captionKeyframes` in `mediaAnalyzerAdapter`, driven by the `captionVideoKeyframes` setting —
+  **off by default**).
 - **Text LLM** analyzes the transcript (or multimodal merge when captions exist).
 - **`extractedText`** = the same blob the LLM saw — critical for search and chunking.
 - If Whisper is not installed, adapter returns a skip-shape (empty transcript, no meaningful embed).
@@ -131,7 +134,9 @@ When a document exceeds the analysis budget:
 
 ### C. Map-reduce summarization (`documentLlm.summarizeChunks`) — intelligent, for **deep analysis**
 
-**Used when:** `deepAnalysis` setting is on and document exceeds ~100k characters.
+**Used when:** the `deepAnalysis` analysis option is on (default off,
+`AI_DEFAULTS.TEXT.DEEP_ANALYSIS` in `src/shared/aiModelConfig.js`) and the document exceeds ~100k
+characters.
 
 - Split into 8k non-overlapping chunks.
 - LLM summarizes each (batched, 256 tokens per chunk).
@@ -291,10 +296,10 @@ Generation uses the **text model**, not the embedding model.
 | ------------------------------------------ | ------------------------------------------------------------------- |
 | `settings.autoChunkOnAnalysis`             | Toggle chunk embedding on analysis                                  |
 | Simple experience mode                     | Skips chunk rebuild in semantic IPC                                 |
-| `settings.deepAnalysis`                    | Map-reduce summarization for 100k+ docs (analysis only)             |
+| `deepAnalysis` option (default off)        | Map-reduce summarization for 100k+ docs (analysis only)             |
 | `STRATOSORT_ENABLE_EMBEDDING_WORKER`       | Optional isolated embedding worker (off by default)                 |
 | Embedding model in settings                | Which GGUF model produces vectors                                   |
-| `captionKeyframes` (media adapter wiring)  | Vision captions on video keyframes (off by default)                 |
+| `settings.captionVideoKeyframes`           | Vision captions on video keyframes (off by default)                 |
 | `STRATOSORT_ANALYSIS_EMBEDDING_QUEUE_WAIT` | Backpressure: defer media/image analysis when embed queue saturated |
 
 See also `docs/CONFIG.md` (embedding queue environment and the embedding worker operational notes).
@@ -321,7 +326,7 @@ See also `docs/CONFIG.md` (embedding queue environment and the embedding worker 
 
 ---
 
-## Talking points for “solved problems” interviews
+## Design decisions in brief
 
 **Chunking:** We use a two-tier model — cheap file-level vectors for broad recall, optional
 fixed-window overlapping chunks (capped at 80) for deep in-document search, with atomic index swaps
@@ -345,4 +350,4 @@ and latency predictable.
 
 ---
 
-_Last updated: 2026-05-26 — reflects codebase as discussed in architecture review._
+_Last updated: 2026-10-27._

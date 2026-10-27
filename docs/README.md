@@ -17,28 +17,28 @@ surprises that bite senior devs.
 
 Then keep these tabs open:
 
-| Doc                                                    | What it answers                                   |
-| ------------------------------------------------------ | ------------------------------------------------- |
-| [GETTING_STARTED.md](GETTING_STARTED.md)               | "What are the mechanical setup steps?"            |
-| [GLOSSARY.md](GLOSSARY.md)                             | "What does this term mean in this codebase?"      |
-| [PHILOSOPHY.md](PHILOSOPHY.md)                         | "What design principles guide this codebase?"     |
-| [PACKAGE_SCRIPTS.md](PACKAGE_SCRIPTS.md)               | "Which `npm run` do I want?"                      |
-| [DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md)               | "My local dev is broken — what now?"              |
-| [ARCHITECTURE.md](ARCHITECTURE.md)                     | "How are main / preload / renderer wired?"        |
-| [IPC_CONTRACTS.md](IPC_CONTRACTS.md)                   | "What's the wire format for channel X?"           |
-| [DI_PATTERNS.md](DI_PATTERNS.md)                       | "How does `ServiceContainer.getInstance()` work?" |
-| [ERROR_HANDLING_GUIDE.md](ERROR_HANDLING_GUIDE.md)     | "What error type / classifier should I use?"      |
-| [CODE_QUALITY_STANDARDS.md](CODE_QUALITY_STANDARDS.md) | "What does this project consider 'clean code'?"   |
-| [TESTING.md](TESTING.md)                               | "How do I write/run tests for this change?"       |
-| [CONFIG.md](CONFIG.md)                                 | "Which `STRATOSORT_*` env var controls X?"        |
+| Doc                                                    | What it answers                                 |
+| ------------------------------------------------------ | ----------------------------------------------- |
+| [GETTING_STARTED.md](GETTING_STARTED.md)               | "What are the mechanical setup steps?"          |
+| [GLOSSARY.md](GLOSSARY.md)                             | "What does this term mean in this codebase?"    |
+| [PHILOSOPHY.md](PHILOSOPHY.md)                         | "What design principles guide this codebase?"   |
+| [PACKAGE_SCRIPTS.md](PACKAGE_SCRIPTS.md)               | "Which `npm run` do I want?"                    |
+| [DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md)               | "My local dev is broken — what now?"            |
+| [ARCHITECTURE.md](ARCHITECTURE.md)                     | "How are main / preload / renderer wired?"      |
+| [IPC_CONTRACTS.md](IPC_CONTRACTS.md)                   | "What's the wire format for channel X?"         |
+| [DI_PATTERNS.md](DI_PATTERNS.md)                       | "How do I register/resolve a service?"          |
+| [ERROR_HANDLING_GUIDE.md](ERROR_HANDLING_GUIDE.md)     | "What error type / classifier should I use?"    |
+| [CODE_QUALITY_STANDARDS.md](CODE_QUALITY_STANDARDS.md) | "What does this project consider 'clean code'?" |
+| [TESTING.md](TESTING.md)                               | "How do I write/run tests for this change?"     |
+| [CONFIG.md](CONFIG.md)                                 | "Which `STRATOSORT_*` env var controls X?"      |
 
 ## Licensing
 
-| Doc                                                  | What it is                                                             |
-| ---------------------------------------------------- | ---------------------------------------------------------------------- |
-| [`LICENSE`](../LICENSE) (repo root)                  | Live grant: PolyForm Noncommercial 1.0.0 (personal/noncommercial free) |
-| [COMMERCIAL.md](COMMERCIAL.md)                       | How to buy a commercial license                                        |
-| [COMMERCIAL_COMPLIANCE.md](COMMERCIAL_COMPLIANCE.md) | Pre-release third-party license audit + appendices                     |
+| Doc                                                                                     | What it is                                                             |
+| --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| [`LICENSE`](https://github.com/iLevyTate/StratoSortStack/blob/main/LICENSE) (repo root) | Live grant: PolyForm Noncommercial 1.0.0 (personal/noncommercial free) |
+| [COMMERCIAL.md](COMMERCIAL.md)                                                          | How to buy a commercial license                                        |
+| [COMMERCIAL_COMPLIANCE.md](COMMERCIAL_COMPLIANCE.md)                                    | Pre-release third-party license audit + appendices                     |
 
 ## Privacy and network
 
@@ -50,15 +50,13 @@ Then keep these tabs open:
 
 ## I am running a release
 
-| Doc                                                                      | What it covers                                            |
-| ------------------------------------------------------------------------ | --------------------------------------------------------- |
-| [RELEASING.md](RELEASING.md)                                             | Tagging, pre-flight, post-install smoke, signing/notarize |
-| [MAC_SIGNING.md](MAC_SIGNING.md)                                         | macOS Developer ID signing + notarization runbook         |
-| [AZURE_CODE_SIGNING_WINDOWS_PLAN.md](AZURE_CODE_SIGNING_WINDOWS_PLAN.md) | Windows Trusted Signing plan                              |
-| [LAUNCH_RUNBOOK.md](LAUNCH_RUNBOOK.md)                                   | Remaining launch work (legal, fulfillment, license smoke) |
-| [COMMERCIAL_COMPLIANCE.md](COMMERCIAL_COMPLIANCE.md)                     | Pre-release license audit + appendices                    |
-| [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)                         | Attribution shipped in the installer (load-bearing)       |
-| [UPDATE_HOST.md](UPDATE_HOST.md)                                         | `electron-updater` feed configuration                     |
+| Doc                                                  | What it covers                                            |
+| ---------------------------------------------------- | --------------------------------------------------------- |
+| [RELEASING.md](RELEASING.md)                         | Tagging, pre-flight, post-install smoke, signing/notarize |
+| [MAC_SIGNING.md](MAC_SIGNING.md)                     | macOS Developer ID signing + notarization runbook         |
+| [COMMERCIAL_COMPLIANCE.md](COMMERCIAL_COMPLIANCE.md) | Pre-release license audit + appendices                    |
+| [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)     | Attribution shipped in the installer (load-bearing)       |
+| [UPDATE_HOST.md](UPDATE_HOST.md)                     | `electron-updater` feed configuration                     |
 
 ## I am working on a specific subsystem
 
@@ -70,7 +68,7 @@ Then keep these tabs open:
 | MCP server                      | [MCP_SERVER.md](MCP_SERVER.md)                                                                                                           |
 | Cross-package import discipline | [DEPENDENCY_BOUNDARIES.md](DEPENDENCY_BOUNDARIES.md)                                                                                     |
 
-## I am a beta tester or end user
+## I am a tester or end user
 
 These docs are for non-developer audiences. Skip them if you're working on the code.
 
@@ -79,30 +77,13 @@ These docs are for non-developer audiences. Skip them if you're working on the c
 | [USER_GUIDE.md](USER_GUIDE.md)                                                 | End user — how the app behaves                              |
 | [E2E_WALKTHROUGH.md](E2E_WALKTHROUGH.md)                                       | Visual tour (stills + how-to clip)                          |
 | [INSTALL_GUIDE.md](INSTALL_GUIDE.md)                                           | Installer for any user                                      |
-| [BETA_TESTER_GUIDE.md](BETA_TESTER_GUIDE.md)                                   | Beta tester — install, checklist, bug reports               |
+| [BETA_TESTER_GUIDE.md](BETA_TESTER_GUIDE.md)                                   | Tester — install, checklist, bug reports                    |
 | [walkthrough-assets/HOW_TO_USE_TOUR.md](walkthrough-assets/HOW_TO_USE_TOUR.md) | How to regenerate the recorded clip (`npm run tour:record`) |
 
-## Reference (read on demand)
-
-| Doc                                                          | Purpose                                 |
-| ------------------------------------------------------------ | --------------------------------------- |
-| [BACKLOG_CHECKLIST.md](BACKLOG_CHECKLIST.md)                 | Open work and audit punch list          |
-| [P2_UX_DEFERRED.md](P2_UX_DEFERRED.md)                       | Product items deferred by scope         |
-| [STABILITY_BASELINE_LEDGER.md](STABILITY_BASELINE_LEDGER.md) | Performance/stability metrics over time |
-
-## Historical (not the live product spec)
-
-Dated snapshots. Use them for archaeology, not as a description of today's app. GitHub Pages
-excludes this directory (see `_config.yml`); it stays in git.
-
-| Location                 | What it is                 |
-| ------------------------ | -------------------------- |
-| [baselines/](baselines/) | LOC / phase-gate snapshots |
-
-Everything above **I am new here** through **Reference** is live. Tour media:
+Everything above is live. Tour media:
 [walkthrough-assets/HOW_TO_USE_TOUR.md](walkthrough-assets/HOW_TO_USE_TOUR.md), `how-to-use.mp4`,
 `shorts/stratosort-short.mp4`, and `demo-files/`. Public stills for Pages live in
-[assets/e2e-screenshots/](assets/e2e-screenshots/).
+[assets/e2e-screenshots/](https://github.com/iLevyTate/StratoSortStack/tree/main/docs/assets/e2e-screenshots).
 
 Load-bearing files that must stay: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md),
 `commercial-use-inventory.json`, `commercial-model-licenses.json`,

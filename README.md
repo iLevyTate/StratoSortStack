@@ -22,7 +22,7 @@
 </p>
 
 <p align="center">
-  <strong><a href="https://iLevyTate.github.io/StratoSortStack/">Visit the Official Website & Documentation</a></strong>
+  <strong><a href="https://stratosort.com/">Official Website</a> • <a href="https://iLevyTate.github.io/StratoSortStack/">Documentation</a></strong>
 </p>
 
 <p align="center">
@@ -37,8 +37,8 @@
 
 ---
 
-StratoSort Stack is a privacy-first, AI-powered file organizer. Drop a folder full of messy files and
-StratoSort understands what's actually inside each one — not just the filename — and proposes a
+StratoSort Stack is a privacy-first, AI-powered file organizer. Drop a folder full of messy files
+and StratoSort understands what's actually inside each one — not just the filename — and proposes a
 clean structure you can accept or edit. Everything runs locally on your machine by default; your
 files never leave the device unless you explicitly opt in to cloud AI.
 
@@ -64,7 +64,8 @@ files never leave the device unless you explicitly opt in to cloud AI.
   the Trash stay in the system Trash for you to restore. Atomic file operations with transaction
   journals mean a crash mid-organize never leaves your files in a half-moved state.
 - **No setup tax.** Normal installer, no CLI required, no API keys required, no Python or Docker.
-  First launch downloads a 7 to 11 GB model bundle once; after that you're offline-capable.
+  First launch downloads about 7 GB (Base) or about 10 GB (Better Quality) of models once; after
+  that you're offline-capable.
 
 ## Security Warning Notes
 
@@ -95,7 +96,7 @@ If macOS says the app is "damaged and should be moved to the Trash", you need to
 quarantine flag. Open Terminal and run:
 
 ```bash
-xattr -cr /Applications/StratoSort\ Core.app
+xattr -cr /Applications/StratoSort\ Stack.app
 ```
 
 ---
@@ -108,11 +109,11 @@ xattr -cr /Applications/StratoSort\ Core.app
   <a href="https://github.com/iLevyTate/StratoSortStack/releases"><img src="https://img.shields.io/badge/Download-Latest%20Release-2ea44f?style=for-the-badge" alt="Download Latest Release" /></a>
 </p>
 
-- **Windows/macOS installers:**
+- **Windows/macOS/Linux installers:**
   [GitHub Releases](https://github.com/iLevyTate/StratoSortStack/releases)
 - **Step-by-step install help:** [Install Guide](docs/INSTALL_GUIDE.md)
 - **How to use the app:** [User Guide](docs/USER_GUIDE.md)
-- **Want to help test?** [Beta Tester Guide](docs/BETA_TESTER_GUIDE.md)
+- **Want to help test?** [Tester Guide](docs/BETA_TESTER_GUIDE.md)
 
 ## Support and Feedback
 
@@ -137,9 +138,9 @@ https://github.com/user-attachments/assets/7cd1f974-33cb-4d2d-ac8d-ea30c015389b
 
 ## What you get today
 
-The latest **tagged** release is **v4.0.6**. `main` also includes work not in that tag yet (Atlas
-map, Downloads triage, personal/commercial licensing). Use GitHub Releases for a stable installer;
-see **[CHANGELOG.md](CHANGELOG.md)** for the versioned history.
+The current release is **v5.0.0**, the first public release of StratoSort Stack. `main` may include
+unreleased work; use GitHub Releases for a stable installer and see **[CHANGELOG.md](CHANGELOG.md)**
+for the versioned history.
 
 Shipped in the app you build from this tree:
 
@@ -169,7 +170,7 @@ original repository.
 | Feature                   | What you get                                                                                                                                                         |
 | :------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Local AI Intelligence** | In-process LLM via [node-llama-cpp](https://github.com/withcatai/node-llama-cpp) reads file content (not just filenames) to suggest categories, names, and routing.  |
-| **Privacy-First Design**  | Default-local. Zero telemetry. Zero outbound traffic after model download (unless you opt in to cloud AI).                                                           |
+| **Privacy-First Design**  | Default-local. Zero telemetry. After the model download, the only default network call is the app update check ([details](docs/NETWORK_TRANSPARENCY.md)).            |
 | **Smart Folder Watchers** | Define folders with natural-language descriptions; new files get analyzed and routed in real time as they arrive.                                                    |
 | **Image Understanding**   | A multimodal vision model (LLaVA v1.6 Mistral 7B) plus Tesseract OCR categorize screenshots, photos, and scanned PDFs.                                               |
 | **Semantic Search**       | Hybrid retrieval: Orama vector search + BM25 full-text + passage vectors. Find files by meaning, not just exact keywords.                                            |
@@ -215,7 +216,7 @@ StratoSort Stack currently processes the following file types in the Discover/an
   `.aiff`, `.aif` (transcribed locally via Whisper)
 - **Video:** `.mp4`, `.mov`, `.mkv`, `.webm`, `.avi`, `.flv`, `.m4v`, `.wmv`, `.3gp`, `.mts`,
   `.m2ts` (audio transcription; keyframe descriptions when "Describe video keyframes" is on in
-  Settings → Processing limits)
+  Settings → Performance → Processing limits, Advanced mode)
 - **Archives:** `.zip`, `.tar`, `.tgz`, `.gz` are listed by content (entry names become keywords);
   `.rar`, `.7z` and `.bz2` are recognized and organized by name only, because no permissively
   licensed reader exists for them
@@ -237,10 +238,11 @@ contents analyzed.
    macOS, or Linux.
 2. **Run it** — allow the app if your OS shows a security prompt (see
    [Install Guide](docs/INSTALL_GUIDE.md)).
-3. **First launch** — choose a model profile and approve the download (7 to 11 GB, one-time).
+3. **First launch** — choose a model profile and approve the download (about 7 GB for Base or about
+   10 GB for Better Quality, one-time).
 
 No terminal, Python, Docker, or API keys. See the full **[Install Guide](docs/INSTALL_GUIDE.md)**
-for step-by-step instructions on both platforms and how to handle unsigned-app prompts.
+for step-by-step instructions on each platform and how to handle unsigned-app prompts.
 
 ### Supported Platforms
 
@@ -252,11 +254,11 @@ for step-by-step instructions on both platforms and how to handle unsigned-app p
 
 ### Hardware
 
-| Requirement        | Specification                                                                           |
-| :----------------- | :-------------------------------------------------------------------------------------- |
-| **Memory**         | 8 GB RAM minimum; 16 GB and a GPU with 8 GB for the Better Quality profile.             |
-| **Storage**        | 7.4 GB (Base) or 10.4 GB (Better Quality) for the AI models, plus your analysis cache.  |
-| **GPU (optional)** | NVIDIA CUDA, Apple Metal, or Vulkan-compatible GPU for acceleration. Falls back to CPU. |
+| Requirement        | Specification                                                                                  |
+| :----------------- | :--------------------------------------------------------------------------------------------- |
+| **Memory**         | 8 GB RAM minimum; 16 GB and a GPU with 8 GB for the Better Quality profile.                    |
+| **Storage**        | About 7 GB (Base) or about 10 GB (Better Quality) for the AI models, plus your analysis cache. |
+| **GPU (optional)** | NVIDIA CUDA, Apple Metal, or Vulkan-compatible GPU for acceleration. Falls back to CPU.        |
 
 ### Developers — Build from Source
 
@@ -270,8 +272,8 @@ npm ci
 npm run dev
 ```
 
-**First Launch:** The app automatically downloads required AI models (GGUF format) on first run. GPU
-acceleration is auto-detected.
+**First Launch:** A setup wizard offers to download the required AI models (GGUF format) on first
+run. GPU acceleration is auto-detected.
 
 **Default Models (Base Small):** Llama 3.2 3B (text), LLaVA v1.6 Mistral 7B (vision),
 all-MiniLM-L6-v2 (embeddings). A "Better Quality" profile (Qwen2.5 7B text + nomic-embed-text
@@ -361,8 +363,8 @@ similarity above a threshold, clusters are connected components. Useful for find
 "neighborhood" of a document — what else in your library is related to this contract, this research
 paper, this screenshot.
 
-The graph rebuilds incrementally as you add files. Force a fresh rebuild from Settings → Rebuild
-Relationships if you want to capture changes immediately.
+The graph rebuilds incrementally as you add files. To capture changes immediately, switch Settings
+to Advanced and click **Rebuild** under Settings → Performance → Search enrichment.
 
 ### Safe Operations
 
@@ -380,13 +382,13 @@ Every move, rename, copy, and trash goes through StratoSort's atomic file operat
 
 ## Privacy and Security
 
-| Principle                 | Implementation                                                                                                                                                                                              |
-| :------------------------ | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **100% Local Processing** | No internet required after model download                                                                                                                                                                   |
-| **Zero Telemetry**        | No data collection or tracking of any kind                                                                                                                                                                  |
-| **Source Available**      | [PolyForm Noncommercial 1.0.0](LICENSE); commercial use requires a [paid license](docs/COMMERCIAL.md)                                                                                                       |
-| **Secure by Default**     | Context isolation, input validation, path sanitization                                                                                                                                                      |
-| **Transparent Storage**   | The local search index stores extracted document text (for semantic search and chat citations) under your app data folder — on your machine only, removable by rebuilding the index or deleting that folder |
+| Principle               | Implementation                                                                                                                                                                                              |
+| :---------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Local Processing**    | No internet required after model download; installed builds check GitHub Releases for app updates unless you turn **Background update checks** off ([Network Transparency](docs/NETWORK_TRANSPARENCY.md))   |
+| **Zero Telemetry**      | No data collection or tracking of any kind                                                                                                                                                                  |
+| **Source Available**    | [PolyForm Noncommercial 1.0.0](LICENSE); commercial use requires a [paid license](docs/COMMERCIAL.md)                                                                                                       |
+| **Secure by Default**   | Context isolation, input validation, path sanitization                                                                                                                                                      |
+| **Transparent Storage** | The local search index stores extracted document text (for semantic search and chat citations) under your app data folder — on your machine only, removable by rebuilding the index or deleting that folder |
 
 See **[SECURITY.md](SECURITY.md)** for the complete security policy.
 
@@ -396,7 +398,7 @@ See **[SECURITY.md](SECURITY.md)** for the complete security policy.
 
 | Document                                                 | Description                                                   |
 | :------------------------------------------------------- | :------------------------------------------------------------ |
-| **[Install Guide](docs/INSTALL_GUIDE.md)**               | End-user install (Windows & Mac, no CLI)                      |
+| **[Install Guide](docs/INSTALL_GUIDE.md)**               | End-user install (Windows, macOS, Linux; no CLI)              |
 | **[User Guide](docs/USER_GUIDE.md)**                     | Feature walkthrough for everyday use                          |
 | **[License](LICENSE)**                                   | Personal/noncommercial grant (PolyForm Noncommercial 1.0.0)   |
 | **[Commercial licensing](docs/COMMERCIAL.md)**           | How to buy a commercial license                               |
@@ -404,7 +406,7 @@ See **[SECURITY.md](SECURITY.md)** for the complete security policy.
 | **[MCP Server](docs/MCP_SERVER.md)**                     | Use StratoSort from Claude Desktop / Cursor / Zed             |
 | **[AI Providers](docs/AI_PROVIDERS.md)**                 | Multi-provider routing: local + Anthropic + OpenAI-compatible |
 | **[Network Transparency](docs/NETWORK_TRANSPARENCY.md)** | Every network call the shipped app can make                   |
-| **[Beta Tester Guide](docs/BETA_TESTER_GUIDE.md)**       | Testing + bug reporting for contributors                      |
+| **[Tester Guide](docs/BETA_TESTER_GUIDE.md)**            | Testing + bug reporting for contributors                      |
 
 ### For developers
 

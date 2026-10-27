@@ -32,8 +32,9 @@
 
 The local LLM is great for the privacy-first default and works on a $0 inference budget. But:
 
-- A 7B local model has a quality ceiling. For complex documents, Claude 3.5 Sonnet or GPT-4 will
-  produce better summaries, classifications, and chat answers.
+- A 7B local model has a quality ceiling. For complex documents, a frontier cloud model (the
+  defaults are Claude Opus 4.7 and GPT-4o) will produce better summaries, classifications, and chat
+  answers.
 - Some users have a paid API tier idle and want to use it without giving up the local-first
   workflow.
 - Some users self-host (Ollama, LM Studio, vLLM, llama.cpp server) and want StratoSort to talk to
@@ -208,11 +209,11 @@ Generic OpenAI Chat Completions API. Works with **any** server that speaks the
 - Cloud-hosted gateways like Together, Groq, Fireworks (anything OpenAI-compatible)
 
 **Required:** Base URL + API key (use any non-empty string for self-hosted endpoints that don't
-authenticate). **Streaming:** Yes. **Pricing model:** Configured per model. Loopback endpoints
-(`localhost`, `127.0.0.1`, `[::1]`) are pinned to $0 — you can configure spend caps without worrying
-that your local Ollama traffic will eat them. The monthly cap (`spendCapMonthlyUsd`) is set per
-provider under Configure → Monthly spend cap, next to this month's estimated spend; leave it empty
-for no cap.
+authenticate). **Streaming:** Yes. **Pricing model:** Configured per model. Self-hosted endpoints
+(`localhost`, `127.0.0.1`, `[::1]`, `0.0.0.0` and `*.local`) are pinned to $0 — you can configure
+spend caps without worrying that your local Ollama traffic will eat them. The monthly cap
+(`spendCapMonthlyUsd`) is set per provider under Configure → Monthly spend cap, next to this month's
+estimated spend; leave it empty for no cap.
 
 ---
 
@@ -272,12 +273,15 @@ cloud" that we'd want to default-on.
 
 ## Troubleshooting
 
-**Header badge says "Cloud AI off" but I configured a key:** The provider is configured but not
-enabled. Open Settings → AI Provider → click the provider row → toggle **Enabled**.
+**No Cloud AI badge although I configured a key:** The header badge (a small cloud icon) appears
+only while an operation resolves to a cloud provider that is enabled and has its key loaded. If it
+is missing, the provider is probably configured but not enabled. Open Settings → AI Provider → click
+the provider row → toggle **Enabled**.
 
-**Header badge flickers between providers:** The router fell back from your preferred cloud provider
-to local — usually because of `BUDGET_EXCEEDED`, `RATE_LIMITED`, or `AUTH_FAILED`. Open Settings to
-see the actual reason in the provider row.
+**Badge is showing but results came from the local model:** A cloud request that fails with
+`BUDGET_EXCEEDED`, `RATE_LIMITED`, `NETWORK_ERROR` or `PROVIDER_FAILED` is re-run on local Llama for
+analysis and chat, and the analysis is stamped `provider: 'local'`. Open Settings to see the actual
+reason in the provider row.
 
 **`BUDGET_EXCEEDED` immediately on a self-hosted endpoint:** You're on an older build. Update —
 local-endpoint detection (`localhost`, `127.0.0.1`, `.local`) is now correctly treated as $0 spend.
@@ -300,4 +304,5 @@ the key/config first.
 - [USER_GUIDE.md](USER_GUIDE.md) — the desktop app walkthrough.
 - [MCP_SERVER.md](MCP_SERVER.md) — exposing your StratoSort corpus to MCP-aware AI clients.
 - [CONFIG.md](CONFIG.md) — environment variables for the local LLM stack.
-- [SECURITY.md](../SECURITY.md) — full security policy.
+- [SECURITY.md](https://github.com/iLevyTate/StratoSortStack/blob/main/SECURITY.md) — full security
+  policy.

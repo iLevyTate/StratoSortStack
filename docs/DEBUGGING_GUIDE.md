@@ -1,7 +1,7 @@
 # Debugging Guide — Local Dev Failure Modes
 
-A symptom → cause → fix index for things that go wrong while running StratoSort Stack locally. If you
-hit something that isn't listed here, add it after you've solved it.
+A symptom → cause → fix index for things that go wrong while running StratoSort Stack locally. If
+you hit something that isn't listed here, add it after you've solved it.
 
 ## Build / install
 
@@ -52,7 +52,9 @@ loaded conditionally, move the conditional inside the bundled code, not at the `
 
 **Fix.** Run `npm run start:debug` and attach Chrome DevTools to the main process
 (`chrome://inspect`). Or add `--enable-logging` (already in the `dev` script) and check
-`%APPDATA%\StratoSort Stack\logs\` on Windows or `~/Library/Logs/StratoSort Stack/` on macOS.
+`%APPDATA%\StratoSort Stack\logs\` on Windows,
+`~/Library/Application Support/StratoSort Stack/logs/` on macOS, or
+`~/.config/StratoSort Stack/logs/` on Linux.
 
 ### "Cannot detect Electron fuses" verifier failure
 
@@ -70,7 +72,7 @@ macOS startup workaround". Tradeoff: duplicate launches allowed instead of focus
 
 ## IPC / preload
 
-### "Channel X is not in the allowlist" in renderer
+### "Unauthorized IPC channel: X" in renderer
 
 **Cause.** You added a channel to `src/shared/constants.js` but didn't regenerate the preload's
 allowlist.
@@ -126,8 +128,10 @@ helper avoids Buffer-pool aliasing by slicing into a fresh ArrayBuffer.
 **Cause.** Embedding model changed but the persisted vector DB is from a previous model with a
 different embedding dimension.
 
-**Fix.** Reset the vector DB. Settings → Advanced → Reset vector store. Or delete the Orama sidecar
-file under `userData/orama/`.
+**Fix.** Rebuild the vectors with the current model: Settings → AI Configuration (Advanced mode) →
+Embeddings maintenance → **Rebuild all embeddings** (keeps analysis; re-embeds everything). As a
+last resort, quit the app and delete the vector DB directory (`userData/vector-db/` by default,
+including its `*.sidecar.json` files), then rebuild.
 
 ### Embedding queue stalls
 
@@ -215,5 +219,6 @@ the noise.
 2. Check `CLAUDE.md` "Resolved Gaps" — if your symptom matches a fixed gap, you might be on an old
    branch.
 3. `git log --oneline -20` to see what landed recently.
-4. Open an issue with logs from `%APPDATA%\StratoSort Stack\logs\` (Windows) or
-   `~/Library/Logs/StratoSort Stack/` (macOS).
+4. Open an issue with logs from `%APPDATA%\StratoSort Stack\logs\` (Windows),
+   `~/Library/Application Support/StratoSort Stack/logs/` (macOS) or
+   `~/.config/StratoSort Stack/logs/` (Linux).

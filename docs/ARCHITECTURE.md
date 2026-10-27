@@ -316,30 +316,30 @@ We maintain separate queues to manage different types of bottlenecks:
 - **LLM Queue**: Limits concurrent heavy AI tasks (via `ModelAccessCoordinator`).
 - **DB Queue**: Manages read/write locks for Orama.
 
-## Service Depth Audit (2026-05-16)
+## Service Depth Review (2026-05-16)
 
-A Phase 3 audit (see
-[`baselines/phase-3-shallow-service-audit.md`](baselines/phase-3-shallow-service-audit.md)) reviewed
-three services flagged as candidates for merging or collapsing:
+A review of shallow-looking services examined three candidates for merging or collapsing (LOC
+figures below are approximate as of 2026-10 and drift with the code):
 
-- **`SettingsService` (1,205 LOC, 13 callers) — KEPT.** Custom mutex error, TTL cache, file watcher,
+- **`SettingsService` (~1,450 LOC) — KEPT.** Custom mutex error, TTL cache, file watcher,
   atomic-write protocol, backup rotation, schema validation, corruption recovery. Genuine deep
   module.
-- **`BatchAnalysisService` (1,071 LOC, 1 caller) — KEPT.** Single caller is the IPC entry point, not
-  over-specialization. Internal semaphores, lazy Whisper load, per-modality routing, and progress
-  orchestration earn the module boundary; inlining into `analysis.js` would replay Phase 2's bloat.
-- **`AnalysisHistoryServiceCore` (1,380 LOC, 7 references) — KEPT.** Already decomposed into 8
-  cohesive sibling modules in `analysisHistory/`. The Core is the deliberate coordinator (circuit
-  breaker, schema validation, immutable-cache cloning, debounced flush). Further splitting would
-  re-create pass-through layers.
+- **`BatchAnalysisService` (~1,200 LOC, 1 caller) — KEPT.** Single caller is the IPC entry point,
+  not over-specialization. Internal semaphores, lazy Whisper load, per-modality routing, and
+  progress orchestration earn the module boundary; inlining it into `analysis.js` would re-bloat the
+  IPC handler file.
+- **`AnalysisHistoryServiceCore` (~1,550 LOC) — KEPT.** Already decomposed into 8 cohesive sibling
+  modules in `analysisHistory/`. The Core is the deliberate coordinator (circuit breaker, schema
+  validation, immutable-cache cloning, debounced flush). Further splitting would re-create
+  pass-through layers.
 
-No code changes from the audit. Outcome recorded for future contributors.
+No code changes came out of the review. The outcome is recorded here for future contributors.
 
 ## Code Standards
 
 For information on coding patterns, error handling, and dependency injection, refer to the other
 documentation files:
 
-- [Code Quality Standards](/CODE_QUALITY_STANDARDS.html)
-- [Dependency Injection Patterns](/DI_PATTERNS.html)
-- [Error Handling Guide](/ERROR_HANDLING_GUIDE.html)
+- [Code Quality Standards](CODE_QUALITY_STANDARDS.md)
+- [Dependency Injection Patterns](DI_PATTERNS.md)
+- [Error Handling Guide](ERROR_HANDLING_GUIDE.md)
