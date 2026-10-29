@@ -60,8 +60,11 @@ const fsp = require('fs').promises;
 const path = require('path');
 const https = require('https');
 
-const PINNED_BTBN_TAG = 'autobuild-2026-08-20-13-45';
-const PINNED_BTBN_BUILD_ID = 'N-126229-gf101fce22d';
+// Windows/Linux default to BtbN's floating `latest` release. Dated
+// `autobuild-*` tags are deleted after a few weeks, so a hard-coded one turns
+// every later release build into a 404; pin one per build through
+// STRATOSORT_FFMPEG_TAG (with STRATOSORT_FFMPEG_URL for its asset name) when a
+// reproducible binary matters more than a build that keeps working.
 const FFMPEG_RELEASE_TAG = process.env.STRATOSORT_FFMPEG_TAG || 'latest';
 
 // SECURITY: hostname allowlist. The override env var (STRATOSORT_FFMPEG_URL)
@@ -158,11 +161,8 @@ function getAssetConfig() {
     if (arch !== 'x64') {
       throw new Error(`Unsupported Windows architecture for ffmpeg runtime: ${arch}`);
     }
-    const tag = FFMPEG_RELEASE_TAG === 'latest' ? PINNED_BTBN_TAG : FFMPEG_RELEASE_TAG;
-    const assetName =
-      tag === PINNED_BTBN_TAG
-        ? `ffmpeg-${PINNED_BTBN_BUILD_ID}-win64-lgpl.zip`
-        : 'ffmpeg-master-latest-win64-lgpl.zip';
+    const tag = FFMPEG_RELEASE_TAG;
+    const assetName = 'ffmpeg-master-latest-win64-lgpl.zip';
     return {
       tag,
       assetName,
@@ -201,11 +201,8 @@ function getAssetConfig() {
       throw new Error(`Unsupported Linux architecture for ffmpeg runtime: ${arch}`);
     }
     const archToken = arch === 'arm64' ? 'linuxarm64' : 'linux64';
-    const tag = FFMPEG_RELEASE_TAG === 'latest' ? PINNED_BTBN_TAG : FFMPEG_RELEASE_TAG;
-    const assetName =
-      tag === PINNED_BTBN_TAG
-        ? `ffmpeg-${PINNED_BTBN_BUILD_ID}-${archToken}-lgpl.tar.xz`
-        : `ffmpeg-master-latest-${archToken}-lgpl.tar.xz`;
+    const tag = FFMPEG_RELEASE_TAG;
+    const assetName = `ffmpeg-master-latest-${archToken}-lgpl.tar.xz`;
     return {
       tag,
       assetName,
