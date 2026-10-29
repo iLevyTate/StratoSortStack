@@ -75,6 +75,13 @@ jobs:
     timeout-minutes: 60
 
     steps:
+      # Only the pinned FFmpeg release-signing key is needed from the repo.
+      - name: Checkout signing key
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/keys
+          persist-credentials: false
+
       - name: Free disk space
         # macos-14 runners ship with ~30 GB free, shared with Xcode caches and
         # any pre-pulled Homebrew bottles. The FFmpeg source tarball (~13 MB)
@@ -117,16 +124,15 @@ jobs:
       - name: Verify FFmpeg source signature
         # This source becomes a binary shipped to every user — verify the
         # tarball against FFmpeg's release signing key before building.
-        # Fingerprint published at https://ffmpeg.org/download.html.
+        # Fingerprint published at https://ffmpeg.org/download.html. The key
+        # is committed (from https://ffmpeg.org/ffmpeg-devel.asc) rather than
+        # fetched from keyservers: keys.openpgp.org serves it without a user
+        # ID, which gpg refuses to import, and keyserver.ubuntu.com is not
+        # reliably reachable from the runners.
         run: |
           set -euo pipefail
           FFMPEG_SIGNING_KEY="FCF986EA15E6E293A5644F10B4322F04D67658D8"
-          for keyserver in hkps://keys.openpgp.org hkps://keyserver.ubuntu.com; do
-            if gpg --keyserver "$keyserver" --recv-keys "$FFMPEG_SIGNING_KEY"; then
-              break
-            fi
-            echo "Keyserver $keyserver failed; trying next..."
-          done
+          gpg --import .github/keys/ffmpeg-release-signing-key.asc
           gpg --status-fd 1 --verify ffmpeg.tar.xz.asc ffmpeg.tar.xz | tee verify.out
           # VALIDSIG's last field is the primary-key fingerprint (signatures
           # may be made by a subkey), so match the pin anywhere on that line.
