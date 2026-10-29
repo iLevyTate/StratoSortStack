@@ -119,20 +119,18 @@ describe('BatchAnalysisService', () => {
   let analyzeImageFile;
   let freememSpy;
 
-  beforeAll(() => {
-    // analyzeFiles pauses (real 1 s polls, up to 8 s) whenever os.freemem()
-    // drops under its 300 MB floor. A full-suite run on a busy host can dip
-    // below that, turning these behaviour tests into timeouts. Pin it healthy.
-    freememSpy = jest.spyOn(require('os'), 'freemem').mockReturnValue(8 * 1024 * 1024 * 1024);
-  });
-
-  afterAll(() => {
-    freememSpy.mockRestore();
+  afterEach(() => {
+    freememSpy?.mockRestore();
   });
 
   beforeEach(() => {
     jest.clearAllMocks();
     jest.resetModules();
+    // analyzeFiles pauses (real 1 s polls, up to 8 s) whenever os.freemem()
+    // drops under its 300 MB floor, and macOS CI runners sit below it. Pin it
+    // healthy. Spy after resetModules: test-setup.js mocks 'os', so each reset
+    // hands the service a fresh os object and an earlier spy would miss it.
+    freememSpy = jest.spyOn(require('os'), 'freemem').mockReturnValue(8 * 1024 * 1024 * 1024);
 
     analyzeDocumentFile = require('../src/main/analysis/documentAnalysis').analyzeDocumentFile;
     analyzeImageFile = require('../src/main/analysis/imageAnalysis').analyzeImageFile;
