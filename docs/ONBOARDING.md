@@ -10,7 +10,7 @@ If you are looking for **product** docs (what the app does for end users), start
 
 ## 1. The 30-second mental model
 
-StratoSort Stack is an Electron 41 desktop app that organizes your local files using **in-process
+StratoSort Stack is an Electron 45 desktop app that organizes your local files using **in-process
 AI**. Privacy is the product: by default, nothing leaves the machine.
 
 - **No default external API.** The LLM (`node-llama-cpp`), the vector DB (`@orama/orama`), and OCR

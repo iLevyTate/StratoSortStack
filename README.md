@@ -16,7 +16,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square" alt="Platform" />
-  <img src="https://img.shields.io/badge/electron-41.x-47848F?style=flat-square&logo=electron&logoColor=white" alt="Electron" />
+  <img src="https://img.shields.io/badge/electron-45.x-47848F?style=flat-square&logo=electron&logoColor=white" alt="Electron" />
   <img src="https://img.shields.io/badge/node-20.19.0-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js" />
   <img src="https://img.shields.io/badge/issues-welcome-brightgreen?style=flat-square" alt="Issues Welcome" />
 </p>
@@ -263,7 +263,7 @@ for step-by-step instructions on each platform and how to handle unsigned-app pr
 | Platform    | Architectures | Notes                                                                                                 |
 | :---------- | :------------ | :---------------------------------------------------------------------------------------------------- |
 | **Windows** | x64, arm64    | Windows 10 22H2 and Windows 11. NSIS installer + portable EXE. (arm64 ships without bundled FFmpeg.)  |
-| **macOS**   | arm64, x64    | macOS 12 (Monterey) or later. Apple Silicon and Intel both shipped. DMG + ZIP.                        |
+| **macOS**   | arm64, x64    | macOS 13 (Ventura) or later. Apple Silicon and Intel both shipped. DMG + ZIP.                         |
 | **Linux**   | x64, arm64    | Ubuntu 22.04+ and derivatives. AppImage + deb. Lower priority — some media features may be unbundled. |
 
 ### Hardware

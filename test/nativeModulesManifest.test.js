@@ -30,11 +30,11 @@ describe('scripts/native-modules manifest', () => {
     const rebuildTargets = getRebuildTargets();
     const expected = MODULES.filter((m) => m.requiresElectronRebuild).map((m) => m.name);
     expect(rebuildTargets).toEqual(expected);
-    // Current inventory: node-llama-cpp + better-sqlite3 are C++ addons that
-    // must be rebuilt against Electron's ABI. N-API modules (sharp,
-    // @napi-rs/canvas, lz4-napi) are ABI-stable and must NOT be in this list.
+    // Current inventory: node-llama-cpp is the C++ addon that must be rebuilt
+    // against Electron's ABI. N-API modules (sharp, @napi-rs/canvas, lz4-napi,
+    // better-sqlite3 >= 13) are ABI-stable and must NOT be in this list.
     expect(rebuildTargets).toContain('node-llama-cpp');
-    expect(rebuildTargets).toContain('better-sqlite3');
+    expect(rebuildTargets).not.toContain('better-sqlite3');
     expect(rebuildTargets).not.toContain('sharp');
     expect(rebuildTargets).not.toContain('@napi-rs/canvas');
     expect(rebuildTargets).not.toContain('lz4-napi');

@@ -1,12 +1,12 @@
 {
-  "generatedAt": "2026-10-29T03:04:27.278Z",
+  "generatedAt": "2026-10-29T17:16:04.113Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
     "detectedLicense": "PolyForm Noncommercial 1.0.0 (commercial license sold separately)"
   },
   "dependencySummary": {
-    "allowed": 2330,
+    "allowed": 2310,
     "review_required": 31,
     "high_risk": 0,
     "unknown": 0
@@ -5771,7 +5771,7 @@
     },
     {
       "packageName": "@electron/rebuild/node_modules/node-abi",
-      "version": "4.26.0",
+      "version": "4.40.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -11823,50 +11823,10 @@
     },
     {
       "packageName": "better-sqlite3",
-      "version": "12.11.1",
+      "version": "13.0.3",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": true,
-      "directDev": false,
-      "lockfileDev": false,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "bindings",
-      "version": "1.5.0",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": false,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "bl",
-      "version": "4.1.0",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": false,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "bl/node_modules/buffer",
-      "version": "5.7.1",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": false,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "bl/node_modules/readable-stream",
-      "version": "3.6.2",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
       "directDev": false,
       "lockfileDev": false,
       "lockfileOptional": false
@@ -13141,7 +13101,7 @@
       "riskLevel": "allowed",
       "directRuntime": false,
       "directDev": false,
-      "lockfileDev": false,
+      "lockfileDev": true,
       "lockfileOptional": false
     },
     {
@@ -13151,7 +13111,7 @@
       "riskLevel": "allowed",
       "directRuntime": false,
       "directDev": false,
-      "lockfileDev": false,
+      "lockfileDev": true,
       "lockfileOptional": false
     },
     {
@@ -13517,7 +13477,7 @@
     },
     {
       "packageName": "electron",
-      "version": "41.10.7",
+      "version": "45.1.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -13734,7 +13694,7 @@
       "riskLevel": "allowed",
       "directRuntime": false,
       "directDev": false,
-      "lockfileDev": false,
+      "lockfileDev": true,
       "lockfileOptional": false
     },
     {
@@ -14422,16 +14382,6 @@
       "lockfileOptional": false
     },
     {
-      "packageName": "expand-template",
-      "version": "2.0.3",
-      "license": "(MIT OR WTFPL)",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": false,
-      "lockfileOptional": false
-    },
-    {
       "packageName": "expect",
       "version": "30.5.2",
       "license": "MIT",
@@ -14654,16 +14604,6 @@
     {
       "packageName": "file-type",
       "version": "21.3.3",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": false,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "file-uri-to-path",
-      "version": "1.0.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -14895,16 +14835,6 @@
       "lockfileOptional": false
     },
     {
-      "packageName": "fs-constants",
-      "version": "1.0.0",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": false,
-      "lockfileOptional": false
-    },
-    {
       "packageName": "fs-extra",
       "version": "10.1.0",
       "license": "MIT",
@@ -15065,16 +14995,6 @@
       "directRuntime": false,
       "directDev": false,
       "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "github-from-package",
-      "version": "0.0.0",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": false,
       "lockfileOptional": false
     },
     {
@@ -18330,16 +18250,6 @@
       "lockfileOptional": false
     },
     {
-      "packageName": "mkdirp-classic",
-      "version": "0.5.3",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": false,
-      "lockfileOptional": false
-    },
-    {
       "packageName": "ml-array-max",
       "version": "2.0.0",
       "license": "MIT",
@@ -18482,16 +18392,6 @@
       "lockfileOptional": false
     },
     {
-      "packageName": "napi-build-utils",
-      "version": "2.0.0",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": false,
-      "lockfileOptional": false
-    },
-    {
       "packageName": "napi-postinstall",
       "version": "0.3.4",
       "license": "MIT",
@@ -18529,26 +18429,6 @@
       "directRuntime": false,
       "directDev": false,
       "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "node-abi",
-      "version": "3.87.0",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": false,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "node-abi/node_modules/semver",
-      "version": "7.7.3",
-      "license": "ISC",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": false,
       "lockfileOptional": false
     },
     {
@@ -20154,16 +20034,6 @@
       "lockfileOptional": false
     },
     {
-      "packageName": "prebuild-install",
-      "version": "7.1.3",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": false,
-      "lockfileOptional": false
-    },
-    {
       "packageName": "prelude-ls",
       "version": "1.2.1",
       "license": "MIT",
@@ -20331,7 +20201,7 @@
       "riskLevel": "allowed",
       "directRuntime": false,
       "directDev": false,
-      "lockfileDev": false,
+      "lockfileDev": true,
       "lockfileOptional": false
     },
     {
@@ -21368,26 +21238,6 @@
       "lockfileOptional": false
     },
     {
-      "packageName": "simple-concat",
-      "version": "1.0.1",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": false,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "simple-get",
-      "version": "4.0.1",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": false,
-      "lockfileOptional": false
-    },
-    {
       "packageName": "simple-git",
       "version": "4.0.2",
       "license": "MIT",
@@ -22130,46 +21980,6 @@
       "lockfileOptional": false
     },
     {
-      "packageName": "tar-fs",
-      "version": "2.1.4",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": false,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "tar-fs/node_modules/chownr",
-      "version": "1.1.4",
-      "license": "ISC",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": false,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "tar-stream",
-      "version": "2.2.0",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": false,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "tar-stream/node_modules/readable-stream",
-      "version": "3.6.2",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": false,
-      "lockfileOptional": false
-    },
-    {
       "packageName": "tar/node_modules/minizlib",
       "version": "3.1.0",
       "license": "MIT",
@@ -22649,16 +22459,6 @@
       "lockfileDev": false,
       "lockfileOptional": false,
       "bundledRenderer": true
-    },
-    {
-      "packageName": "tunnel-agent",
-      "version": "0.6.0",
-      "license": "Apache-2.0",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": false,
-      "lockfileOptional": false
     },
     {
       "packageName": "type-check",

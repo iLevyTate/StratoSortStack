@@ -7,10 +7,10 @@
  * Each entry declares:
  *   - name: package name
  *   - requiresElectronRebuild: whether `@electron/rebuild` must rebuild this
- *     module against Electron's ABI. C++ addons (e.g. node-llama-cpp,
- *     better-sqlite3) require this. N-API modules (sharp, @napi-rs/canvas,
- *     lz4-napi) are ABI-stable and ship prebuilt binaries that load under
- *     Electron's Node runtime without a rebuild.
+ *     module against Electron's ABI. C++ addons (e.g. node-llama-cpp)
+ *     require this. N-API modules (sharp, @napi-rs/canvas, lz4-napi,
+ *     better-sqlite3 >= 13) are ABI-stable and ship prebuilt binaries that
+ *     load under Electron's Node runtime without a rebuild.
  *   - verify: async function that exercises the module to catch load
  *     failures / broken prebuilds in CI before they reach users.
  *
@@ -31,7 +31,9 @@ const MODULES = [
   },
   {
     name: 'better-sqlite3',
-    requiresElectronRebuild: true,
+    // 13.x moved to node-addon-api and bundles per-platform prebuilds that it
+    // loads before any node-gyp build output, so a rebuild is never used.
+    requiresElectronRebuild: false,
     verify: async () => {
       const BetterSqlite3 = require('better-sqlite3');
       const db = new BetterSqlite3(':memory:');

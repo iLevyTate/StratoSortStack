@@ -28,7 +28,7 @@ grab its AI models on first launch, and you are ready to go.
 | Requirement    | Details                                                                                                         |
 | :------------- | :-------------------------------------------------------------------------------------------------------------- |
 | **Windows**    | Windows 10 (22H2) or 11, x64 or arm64                                                                           |
-| **macOS**      | macOS 12 (Monterey) or later, Apple Silicon (arm64) or Intel (x64)                                              |
+| **macOS**      | macOS 13 (Ventura) or later, Apple Silicon (arm64) or Intel (x64)                                               |
 | **Linux**      | x64 or arm64; AppImage or .deb (when attached to a release)                                                     |
 | **RAM**        | 8 GB minimum; 16 GB and a GPU with 8 GB for the Better Quality profile                                          |
 | **Disk space** | ~500 MB for the app, plus about 7 to 10 GB for AI models (downloaded inside the app)                            |

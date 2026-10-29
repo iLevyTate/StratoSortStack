@@ -121,14 +121,14 @@ describe('verify-packaged-artifacts', () => {
     );
   });
 
-  test('accepts macOS x64 builds with the Electron 41 snapshot filename', () => {
+  test('accepts macOS x64 builds with the per-arch V8 context snapshot filename', () => {
     const buildRoot = createMacBuildRoot({ arch: 'x64' });
     tempDirs.push(buildRoot);
 
     expect(() => verifyMacArtifacts(buildRoot, 'x64')).not.toThrow();
   });
 
-  test('accepts macOS arm64 builds with the Electron 41 snapshot filename', () => {
+  test('accepts macOS arm64 builds with the per-arch V8 context snapshot filename', () => {
     const buildRoot = createMacBuildRoot({ arch: 'arm64' });
     tempDirs.push(buildRoot);
 

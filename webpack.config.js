@@ -45,11 +45,11 @@ module.exports = (env, argv) => {
                   '@babel/preset-env',
                   {
                     // Keep this in lock-step with the `electron` devDep in
-                    // `package.json`. Electron 41 ships Chromium 138 /
-                    // Node 22, so lowering the target to 40 (Chromium 134)
-                    // forces needless polyfills and transforms for syntax
-                    // that the real runtime already supports natively.
-                    targets: { electron: '41.1' }
+                    // `package.json`. Electron 45 ships Chromium 156 /
+                    // Node 24, so a lower target forces needless polyfills
+                    // and transforms for syntax that the real runtime
+                    // already supports natively.
+                    targets: { electron: '45.0' }
                   }
                 ],
                 '@babel/preset-react'
