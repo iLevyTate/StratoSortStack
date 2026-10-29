@@ -132,9 +132,23 @@ If you run into an issue or have an idea, these links are the fastest way to hel
   <strong>See StratoSort in action</strong>
 </p>
 
-> **Desktop:** Video plays directly below | **Mobile:** Click the filename to watch
+<p align="center">
+  <a href="https://ilevytate.github.io/StratoSortStack/E2E_WALKTHROUGH.html#9-videos">
+    <img src="docs/assets/stratosort-tour.gif" alt="StratoSort Stack guided tour: add files, analyze them locally, review suggestions and organize" width="800">
+  </a>
+</p>
 
-https://github.com/user-attachments/assets/7cd1f974-33cb-4d2d-ac8d-ea30c015389b
+The preview above runs at 2× speed. Full-quality videos:
+
+- **Guided tour (~43 s, 1080p):** [how-to-use.mp4](docs/walkthrough-assets/how-to-use.mp4) — also
+  playable on the
+  [docs site](https://ilevytate.github.io/StratoSortStack/E2E_WALKTHROUGH.html#9-videos)
+- **Short (~43 s, vertical):**
+  [stratosort-short.mp4](docs/walkthrough-assets/shorts/stratosort-short.mp4)
+- **Feature lessons:** [search](docs/walkthrough-assets/lessons/search.mp4) ·
+  [graph](docs/walkthrough-assets/lessons/graph.mp4) ·
+  [connect (MCP)](docs/walkthrough-assets/lessons/connect.mp4) ·
+  [models and names](docs/walkthrough-assets/lessons/models-and-names.mp4)
 
 ## What you get today
 
