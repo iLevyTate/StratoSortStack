@@ -12,6 +12,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- Electron 41 → 45 (45.1.0). Electron 41 was outside upstream security support and affected by eight
+  advisories, including GHSA-jr5w-w6x2-84p9 (HID/USB permission checks attributed to the wrong
+  origin; SameSite cookies not applied to windows opened from links).
+
+### Changed
+
+- `better-sqlite3` 12 → 13. 12.x no longer compiles against Electron 45; 13.x ships N-API prebuilds,
+  so it is no longer rebuilt per Electron version.
+- macOS 13 (Ventura) is now the minimum supported macOS version (Electron 44 dropped macOS 12).
+
 ## [5.0.0] - 2026-10-26
 
 First public release of StratoSort Stack: source published on GitHub under the PolyForm

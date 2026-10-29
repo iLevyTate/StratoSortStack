@@ -18,7 +18,7 @@ const commonConfig = (isProduction) => ({
             // Node happened to run webpack - on newer engines that can
             // emit syntax Electron's bundled V8 may not support in older
             // minor versions. Pin to the Electron major we ship.
-            presets: [['@babel/preset-env', { targets: { electron: '41.1' } }]]
+            presets: [['@babel/preset-env', { targets: { electron: '45.0' } }]]
           }
         }
       }

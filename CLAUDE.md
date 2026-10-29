@@ -2,13 +2,13 @@
 
 ## What This Is
 
-StratoSort Stack is a privacy-first, local AI-powered document organizer built on Electron 41. It
+StratoSort Stack is a privacy-first, local AI-powered document organizer built on Electron 45. It
 uses **node-llama-cpp** for in-process LLM inference and **Orama** for vector search. All processing
 happens on-device with no required external services - no data leaves the machine.
 
 ## Tech Stack
 
-- **Runtime:** Electron 41 (main + renderer + preload processes), Node.js 20.19+
+- **Runtime:** Electron 45 (main + renderer + preload processes), Node.js 20.19+
 - **Frontend:** React 19 + Redux Toolkit + Tailwind CSS 4 + Framer Motion
 - **AI Backend:** node-llama-cpp (in-process LLM) + Orama (in-process vectors) + Tesseract.js (OCR)
 - **Build:** Webpack 5 (3 configs: main, preload, renderer) + Babel 8
@@ -71,12 +71,12 @@ operational notes below it).
 `@electron/rebuild --arch=<other>`) from your x64 dev checkout overwrites
 `node_modules/<pkg>/build/Release/*.node` in-place — there is no per-arch shadow tree. The modules
 listed in `scripts/native-modules.js` with `requiresElectronRebuild: true` (currently
-`node-llama-cpp`, `better-sqlite3`) will then fail to load in `npm run dev` with Windows error 193
-("not a valid Win32 application") and the `EmbeddingQueue` will spin in 5 s retry. Recovery:
-`npm run rebuild` (defaults to host arch) followed by `npm run verify:native-modules`. To check the
-binary's arch without running it, read the PE Machine field at offset `*(uint32*)[0x3C] + 4` —
-`0x8664` = x64, `0xAA64` = arm64. Prefer running arm64 packaging on CI or in a separate worktree so
-it doesn't clobber the dev tree.
+`node-llama-cpp`) will then fail to load in `npm run dev` with Windows error 193 ("not a valid Win32
+application") and the `EmbeddingQueue` will spin in 5 s retry. Recovery: `npm run rebuild` (defaults
+to host arch) followed by `npm run verify:native-modules`. To check the binary's arch without
+running it, read the PE Machine field at offset `*(uint32*)[0x3C] + 4` — `0x8664` = x64, `0xAA64` =
+arm64. Prefer running arm64 packaging on CI or in a separate worktree so it doesn't clobber the dev
+tree.
 
 ## Conventions
 
@@ -115,17 +115,7 @@ These are tracked gaps that the project slash commands help address:
    dark/light themes with `critical+serious` hard-fail. The graph-canvas keyboard path closed
    2026-07-03 (U-T14: React Flow node focus + selection toolbars, pinned by oracles). Remaining for
    a formal AA claim: a manual screen-reader pass (NVDA) only.
-2. **Electron pinned to 41.x — a STALE pin, not a blocked one** (re-verified 2026-10-03). The
-   original blocker is gone: `node-abi@4.35.0` carries ABI entries through electron 45, and the
-   better-sqlite3 "prebuilts unavailable" condition is obsolete (upstream stopped publishing release
-   prebuilts entirely, and we rebuild it from source anyway). Meanwhile latest electron is
-   **44.5.1** — three majors ahead — which puts 41.x outside upstream security support, so the bump
-   is a security item, not a dependency chore. `.github/dependabot.yml` holds the canonical
-   rationale with the corrected ABI table, the revised unblock signal and the verification recipe;
-   the earlier "ABI 136/137" figures there were wrong. **Still do not bump electron's major
-   casually** — run the recipe in a separate worktree first (a rebuild overwrites `*.node` in
-   place).
-3. **SW-40 packaged verification outstanding** — `asarUnpack` was narrowed from `dist/**/*` to the
+2. **SW-40 packaged verification outstanding** — `asarUnpack` was narrowed from `dist/**/*` to the
    seven worker entry bundles so main/preload/renderer stay inside the integrity-validated asar
    (`verify:electron-fuses-config` now fails if a pattern unpacks `dist/main.js` again), and
    `workerPools.resolveWorkerPath` prefers `app.asar.unpacked/dist/` when packaged, and
@@ -139,6 +129,10 @@ These are tracked gaps that the project slash commands help address:
 
 ### Resolved Gaps
 
+- ~~Electron pinned to 41.x (outside upstream security support)~~ - Bumped to **45.x** on
+  2026-10-29, with `better-sqlite3` 13 (N-API prebuilds, no longer rebuilt) and a refreshed
+  `node-abi`. Majors stay manual: `.github/dependabot.yml` holds the policy and the verification
+  recipe for the next one.
 - ~~No Windows code signing~~ - `release.yml` signs via **Azure Trusted Signing** (account
   `stratosort-signing`, certificate profile `stratosortcore-public-trust-cert`, endpoint
   `https://eus.codesigning.azure.net/`, publisher `Kennedy Applied Sciences, Inc.` — these four

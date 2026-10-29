@@ -255,10 +255,10 @@ These belong to other docs; this one points at them rather than duplicating:
 The principles above are guidance. The following are non-negotiable: any change that violates one is
 reverted regardless of how well it scores on the principles.
 
-- **Electron is pinned at 41.x — and the pin is stale.** The original ABI/prebuild blockers are
-  resolved upstream, and 41.x is now behind upstream security support, so a major bump is a pending
-  security item. Do not bump it casually: follow the verification recipe in `.github/dependabot.yml`
-  (the canonical rationale) in a separate worktree first.
+- **Electron stays within upstream security support, and majors are bumped by hand.** Upstream
+  supports the latest three stable majors. Do not let Dependabot bump a major unattended: follow the
+  verification recipe in `.github/dependabot.yml` (the canonical rationale) in a separate worktree
+  first.
 - **Sandbox stays on; CSP has no `unsafe-eval`.** Sandbox is set in `src/main/core/createWindow.js`;
   the CSP is built in `src/main/core/securityHeaders.js`.
 - **Every IPC handler goes through `ipcRegistry`.** No direct `ipcMain.handle`. The registry wraps

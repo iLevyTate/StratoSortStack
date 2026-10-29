@@ -127,8 +127,8 @@ Release guidance:
 
 - When smoke-testing macOS releases, confirm the packaged app launches on the oldest macOS version
   you still support.
-- Revisit this workaround after any Electron runtime upgrade, especially when moving beyond Electron
-  41.x (currently `^41.10.1` in `package.json`; see `.github/dependabot.yml` for the pin rationale).
+- Revisit this workaround after any Electron runtime upgrade (currently `^45.1.0` in `package.json`;
+  see `.github/dependabot.yml` for the upgrade policy).
 
 ## Disposable profile (Windows demo)
 
