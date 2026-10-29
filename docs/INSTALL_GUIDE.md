@@ -256,6 +256,46 @@ above; your files and their contents stay on your computer unless you turn on op
 
 ---
 
+## Offline and Air-Gapped Install
+
+StratoSort runs without a network connection once its models are on disk. On a machine that can
+never go online, copy the model files in by hand instead of letting the app download them.
+
+**1. On a connected machine, download the installer and these files.** Save each one under the name
+in the first column: the app finds models by exact filename, and some names differ from the file
+name in the download URL.
+
+| Save as                             | Needed for                               | Download from                                                                                                   | Size    |
+| :---------------------------------- | :--------------------------------------- | :-------------------------------------------------------------------------------------------------------------- | :------ |
+| `Llama-3.2-3B-Instruct-Q4_K_M.gguf` | Text analysis and chat (required)        | `https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf`    | ~2.0 GB |
+| `all-MiniLM-L6-v2-Q4_K_M.gguf`      | Search embeddings (required)             | `https://huggingface.co/second-state/All-MiniLM-L6-v2-Embedding-GGUF/resolve/main/all-MiniLM-L6-v2-Q4_K_M.gguf` | ~21 MB  |
+| `llava-v1.6-mistral-7b-Q4_K_M.gguf` | Image understanding (optional)           | `https://huggingface.co/cjpais/llava-1.6-mistral-7b-gguf/resolve/main/llava-v1.6-mistral-7b.Q4_K_M.gguf`        | ~4.4 GB |
+| `mmproj-model-f16.gguf`             | Image understanding (with the above)     | `https://huggingface.co/cjpais/llava-1.6-mistral-7b-gguf/resolve/main/mmproj-model-f16.gguf`                    | ~624 MB |
+| `whisper/ggml-base.en.bin`          | Audio and video transcription (optional) | `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin`                                    | ~148 MB |
+
+These are the default **Base (Small & Fast)** models. The authoritative list, with every other
+supported model, is `MODEL_CATALOG` in
+[`src/shared/modelRegistry.js`](https://github.com/iLevyTate/StratoSortStack/blob/main/src/shared/modelRegistry.js).
+
+**2. Check the files.** Compare each SHA-256 (see
+[Verify Your Download](#optional----verify-your-download) for the commands) with the `checksum` for
+that file in `modelRegistry.js`. The app verifies the files it downloads itself; it does not
+re-check files you copy in.
+
+**3. Install the app on the offline machine and copy the files in.** Put them in the `models/`
+folder listed in [Where Does StratoSort Store Data?](#where-does-stratosort-store-data) (create it
+if it does not exist yet), with the Whisper model in a `whisper/` folder inside it. Then launch the
+app: it finds the files and skips the download.
+
+**4. Turn off update checks.** In **Settings** > **Application**, turn off **Background update
+checks**, or start the app with `STRATOSORT_ENABLE_AUTO_UPDATES=false` to disable the updater
+entirely. To update, copy the next installer over from a connected machine.
+
+The installers already include the image-analysis runtime and the OCR language data, so nothing else
+needs a connection. Leave optional cloud AI off.
+
+---
+
 ## Troubleshooting
 
 ### Windows: "This app has been blocked for your protection"
