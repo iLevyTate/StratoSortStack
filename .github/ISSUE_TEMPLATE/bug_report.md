@@ -4,6 +4,7 @@ about: Report a reproducible issue in StratoSort Stack
 title: ''
 labels: ''
 assignees: ''
+
 ---
 
 **Describe the bug** Provide a clear and concise summary of the issue.
