@@ -239,7 +239,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          apps=(release/build/mac*/StratoSort\ Core.app)
+          apps=(release/build/mac*/StratoSort\ Stack.app)
           if [ ${#apps[@]} -eq 0 ]; then
             echo "::error::No .app bundle found for signature verification."
             ls -R release/build || true
