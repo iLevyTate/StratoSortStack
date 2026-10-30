@@ -17,13 +17,13 @@
 
 <p align="center">
   <a href="https://github.com/iLevyTate/StratoSortStack/releases"><strong>Download</strong></a> ·
-  <a href="https://ilevytate.github.io/StratoSortStack/"><strong>Documentation</strong></a> ·
+  <a href="https://stratosort.com/docs/"><strong>Documentation</strong></a> ·
   <a href="https://stratosort.com/"><strong>Website</strong></a> ·
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
 <p align="center">
-  <a href="https://ilevytate.github.io/StratoSortStack/E2E_WALKTHROUGH.html#9-videos">
+  <a href="https://stratosort.com/docs/E2E_WALKTHROUGH.html#9-videos">
     <img src="docs/assets/stratosort-tour.gif" alt="StratoSort Stack tour: add files, review the suggested names and folders, organize, then search and chat" width="800">
   </a>
   <br />
@@ -134,8 +134,7 @@ Legacy `.xls` and `.ppt` files are organized by filename and date only; save the
 | [MCP Server](docs/MCP_SERVER.md)                        | [Release Guide](docs/RELEASING.md)                  |
 | [Commercial Licensing](docs/COMMERCIAL.md)              | [All developer docs](docs/README.md)                |
 
-The same docs are published at
-[ilevytate.github.io/StratoSortStack](https://ilevytate.github.io/StratoSortStack/).
+The same docs are published at [stratosort.com/docs](https://stratosort.com/docs/).
 
 ## Build from source
 

@@ -323,7 +323,7 @@ jobs:
             "- Use **Download Base Models** after install to enable AI features.",
             $releaseIntegrityNote,
             $macIntegrityNote,
-            "- See the [Install Guide](https://github.com/iLevyTate/StratoSortStack/blob/main/docs/INSTALL_GUIDE.md) for Windows & Mac — one download, no CLI.",
+            "- See the [Install Guide](https://stratosort.com/docs/INSTALL_GUIDE.html) for Windows, Mac & Linux — one download, no CLI.",
             ""
           ) + $section
           $notes | Out-File release/build/release-notes.md -Encoding UTF8
