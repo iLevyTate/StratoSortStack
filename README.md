@@ -63,10 +63,10 @@ no telemetry.
    Base, or about 10 GB for Better Quality.
 3. **Add a folder** and review the suggestions.
 
-No terminal, Python, Docker or API keys. Current installers are **not code-signed yet**, so Windows
-SmartScreen and macOS Gatekeeper will warn the first time you open the app; the
-[Install Guide](docs/INSTALL_GUIDE.md) shows how to get past each prompt and how to check the
-download's checksum.
+No terminal, Python, Docker or API keys. Windows installers are Authenticode-signed and macOS builds
+are signed and notarized by Kennedy Applied Sciences, Inc. The
+[Install Guide](docs/INSTALL_GUIDE.md) covers first-launch prompts and how to check the download's
+checksum.
 
 | System      | Supported                                                       | Installers            |
 | :---------- | :-------------------------------------------------------------- | :-------------------- |

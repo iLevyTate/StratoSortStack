@@ -79,7 +79,7 @@ optional and may not be attached to every release. The AppImage updates itself i
 4. When the installer finishes, leave **"Run StratoSort Stack"** checked and click **Finish**.
 
 <!-- prettier-ignore -->
-**Why SmartScreen?** Beta and unsigned builds trigger SmartScreen because they are not yet code-signed. This is normal for pre-release software. If the checksum matches (see optional step below), the file is safe.
+**Why SmartScreen?** Release installers are signed by Kennedy Applied Sciences, Inc., but SmartScreen can still warn about a newly signed file until it builds download reputation; unsigned CI builds always warn. If the checksum matches (see optional step below), the file is safe.
 {: .notice--warning}
 
 ### macOS
