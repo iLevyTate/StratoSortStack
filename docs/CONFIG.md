@@ -6,14 +6,7 @@ sidebar:
 toc: true
 toc_label: 'Contents'
 toc_icon: 'sliders-h'
-header:
-  overlay_color: '#000'
-  overlay_filter: '0.5'
-  overlay_image: /assets/e2e-screenshots/19_settings_ai_config_engine.webp
-  caption: 'Configuration Reference'
 ---
-
-# Configuration Reference
 
 This document lists all environment variables and configuration options available in StratoSort
 Stack.

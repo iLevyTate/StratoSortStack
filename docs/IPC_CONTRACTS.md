@@ -3,14 +3,7 @@ layout: single
 title: 'IPC Contracts'
 sidebar:
   nav: 'docs'
-header:
-  overlay_color: '#000'
-  overlay_filter: '0.5'
-  overlay_image: /assets/e2e-screenshots/14_settings_panel_top.webp
-  caption: 'IPC Channel Contracts Reference'
 ---
-
-# IPC Contracts Reference
 
 This document describes the IPC payload contracts used between the renderer and main processes.
 Schemas are defined in code and should be treated as the source of truth.

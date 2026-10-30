@@ -3,14 +3,7 @@ layout: single
 title: 'User Guide'
 sidebar:
   nav: 'docs'
-header:
-  overlay_color: '#000'
-  overlay_filter: '0.5'
-  overlay_image: /assets/e2e-screenshots/05_discover_phase.webp
-  caption: 'Mastering StratoSort Stack'
 ---
-
-# StratoSort Stack User Guide
 
 This guide explains how to use StratoSort Stack day-to-day, including Smart Folders, Knowledge OS
 (search, chat, Relate, Atlas, timeline), Downloads triage, and key settings.

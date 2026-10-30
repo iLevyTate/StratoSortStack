@@ -2,86 +2,129 @@
 layout: splash
 title: 'StratoSort Stack'
 permalink: /
+excerpt:
+  'Organize, search and chat with your files using AI that runs on your own computer. Free for
+  personal use.'
 header:
-  overlay_color: '#000'
-  overlay_filter: '0.6'
-  overlay_image: /assets/e2e-screenshots/01_welcome_screen.webp
-  caption: 'Privacy-first local AI document organizer.'
+  overlay_color: '#0b1220'
   actions:
-    - label: 'Download Latest Release'
+    - label: 'Download'
       url: 'https://github.com/iLevyTate/StratoSortStack/releases'
-      btn_class: 'btn--primary'
-    - label: 'Read the Docs'
+      btn_class: 'btn--primary btn--large'
+    - label: 'Install Guide'
       url: '/INSTALL_GUIDE.html'
-      btn_class: 'btn--outline'
+      btn_class: 'btn--inverse btn--large'
 
-# Define your feature sections here
-feature_row:
-  - image_path: /assets/e2e-screenshots/05_discover_phase.webp
-    alt: 'Discover Phase'
-    title: 'Local AI Intelligence'
+features:
+  - image_path: /assets/showcase/review.webp
+    alt: 'Review & Organize screen with suggested names and folders for each file'
+    title: 'Organize by content'
     excerpt:
-      'Built-in AI (node-llama-cpp) to understand file content, not just filenames. Zero data
-      exfiltration.'
+      'StratoSort reads what is inside each file, then suggests a clear name and the right folder.
+      You review every suggestion before anything moves, and every move can be undone.'
     url: '/USER_GUIDE.html'
-    btn_label: 'Learn More'
-    btn_class: 'btn--primary'
-
-  - image_path: /assets/e2e-screenshots/34_organize_phase_ai_suggestions.webp
-    alt: 'Organize Phase'
-    title: 'Smart Organization'
+    btn_label: 'User Guide'
+    btn_class: 'btn--inverse'
+  - image_path: /assets/showcase/search.webp
+    alt: 'Search results for a plain-language query'
+    title: 'Search by meaning'
     excerpt:
-      'Review and approve AI-generated suggestions for where each file should be moved and what it
-      should be renamed to.'
-    url: '/E2E_WALKTHROUGH.html'
-    btn_label: 'See It in Action'
+      'Ask for "how warming affects wildlife" and find the report even if those words are not in its
+      name. Exact matches like an invoice number still work.'
+    url: '/USER_GUIDE.html'
+    btn_label: 'How search works'
+    btn_class: 'btn--inverse'
+  - image_path: /assets/showcase/chat.webp
+    alt: 'Chat answering a question with sources from your files'
+    title: 'Chat with your documents'
+    excerpt:
+      'Ask questions in plain language and get answers built from your own files, with the sources
+      they came from.'
+    url: '/USER_GUIDE.html'
+    btn_label: 'Learn more'
     btn_class: 'btn--inverse'
 
-  - image_path: /assets/e2e-screenshots/03_setup_smart_folders.webp
-    alt: 'Smart Folders'
-    title: 'Smart Folder Watchers'
+more_features:
+  - image_path: /assets/showcase/graph.webp
+    alt: 'Relate graph showing how files connect'
+    title: 'See how files connect'
     excerpt:
-      'Automatically monitor downloads or specific directories and route files based on AI content
-      understanding.'
-    url: '/USER_GUIDE.html'
-    btn_label: 'Configure Folders'
+      'Relate draws your files as a graph so you can follow links between related documents, spot
+      near-duplicates and find clusters.'
+    url: '/FEATURES_GRAPH.html'
+    btn_label: 'Graph features'
     btn_class: 'btn--inverse'
-
-feature_row2:
-  - image_path: /assets/e2e-screenshots/36_knowledge_os_indexed.webp
-    alt: 'Semantic Search'
-    title: 'Semantic Search'
+  - image_path: /assets/showcase/smart-folders.webp
+    alt: 'Adding a Smart Folder with a plain-language description'
+    title: 'Smart Folders'
     excerpt:
-      'Find files by their meaning and concepts using Orama vector search and BM25 hybrid retrieval,
-      even if you forgot the exact keywords.'
+      'Describe a folder in plain words, such as "invoices and receipts", and new files that match
+      are routed into it.'
     url: '/USER_GUIDE.html'
-    btn_label: 'Explore Search'
-    btn_class: 'btn--primary'
-
-  - image_path: /assets/e2e-screenshots/46_understand_tab_chat.webp
-    alt: 'Chat with Documents'
-    title: 'Chat with your files'
+    btn_label: 'Set up folders'
+    btn_class: 'btn--inverse'
+  - image_path: /assets/showcase/mcp.webp
+    alt: 'MCP Server settings'
+    title: 'Use it from other AI tools'
     excerpt:
-      'Ask questions about your documents in natural language, and let the AI find the sources and
-      summarize the answers for you.'
-    url: '/E2E_WALKTHROUGH.html'
-    btn_label: 'Chat with Docs'
-    btn_class: 'btn--primary'
+      'Turn on the local MCP server to let Claude Desktop, Cursor or Zed search your files, without
+      those tools uploading them.'
+    url: '/MCP_SERVER.html'
+    btn_label: 'MCP Server'
+    btn_class: 'btn--inverse'
 ---
 
-## See StratoSort in Action
+## Watch the 45-second tour
 
-{% include feature_row %}
+<figure class="video-figure">
+  <video controls width="100%" preload="metadata" poster="{{ '/assets/showcase/review.webp' | relative_url }}">
+    <source src="{{ '/walkthrough-assets/how-to-use.mp4' | relative_url }}" type="video/mp4">
+    Your browser cannot play this video. <a href="{{ '/walkthrough-assets/how-to-use.mp4' | relative_url }}">Download it instead.</a>
+  </video>
+  <figcaption>From first launch to an organized folder: add files, review the suggestions, move them, then search and chat.</figcaption>
+</figure>
 
-## Semantic Search & Chat
+## Get started in three steps
 
-Unlock the knowledge hidden in your messy folders. Search implies meaning.
+1. **Download** the installer for Windows, macOS or Linux from
+   [GitHub Releases](https://github.com/iLevyTate/StratoSortStack/releases).
+2. **Launch it** and pick a model profile. StratoSort downloads its AI models once (about 7 GB, or
+   about 10 GB for the higher-quality profile).
+3. **Add a folder** and review what StratoSort suggests.
 
-{% include feature_row id="feature_row2" %}
+No terminal, Python, Docker or API keys. The [Install Guide](INSTALL_GUIDE.html) covers each
+platform, security prompts and troubleshooting.
 
-## Knowledge Graph Visualization
+## What it does
 
-Visualize file relationships in **Relate** (graph) and **Atlas** (map). Nearby files in Atlas are
-similar; Relate shows those links as edges you can follow.
+{% include feature_row id="features" %}
 
-{% include figure image_path="/assets/e2e-screenshots/54_relate_full_graph_legend.webp" alt="Knowledge Graph" caption="Knowledge Graph — cluster relationships and semantic connections" %}
+{% include feature_row id="more_features" %}
+
+## Private by design
+
+- **Runs on your computer.** Analysis, search and chat use AI models stored on your machine. There
+  is no StratoSort account or cloud service.
+- **No telemetry.** The app sends no analytics or crash reports.
+- **Network use is limited and listed.** After the one-time model download, the only automatic
+  connection is the update check, which you can turn off. Every connection is documented in
+  [Network Transparency](NETWORK_TRANSPARENCY.html).
+- **Cloud AI is optional.** You can add your own Anthropic or OpenAI-compatible key for some tasks;
+  search and embeddings always stay local. See [Cloud AI Providers](AI_PROVIDERS.html).
+- **Works offline.** Once the models are installed, StratoSort runs without internet, including on
+  [machines that never go online](INSTALL_GUIDE.html#offline-and-air-gapped-install).
+
+## Documentation
+
+| If you want to…                         | Read                                                 |
+| :-------------------------------------- | :--------------------------------------------------- |
+| Install StratoSort                      | [Install Guide](INSTALL_GUIDE.html)                  |
+| Learn the app                           | [User Guide](USER_GUIDE.html)                        |
+| See every screen                        | [Screen-by-Screen Walkthrough](E2E_WALKTHROUGH.html) |
+| Know exactly what goes over the network | [Network Transparency](NETWORK_TRANSPARENCY.html)    |
+| Use it for work                         | [Commercial Licensing](COMMERCIAL.html)              |
+| Build or contribute to it               | [Getting Started (developers)](GETTING_STARTED.html) |
+
+StratoSort Stack is free for personal and other noncommercial use under the
+[PolyForm Noncommercial License 1.0.0](https://github.com/iLevyTate/StratoSortStack/blob/main/LICENSE).
+Commercial use needs a [paid license](COMMERCIAL.html).

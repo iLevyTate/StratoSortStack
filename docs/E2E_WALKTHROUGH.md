@@ -4,14 +4,7 @@ title: 'E2E Walkthrough'
 toc: false
 sidebar:
   nav: 'docs'
-header:
-  overlay_color: '#000'
-  overlay_filter: '0.5'
-  overlay_image: /assets/e2e-screenshots/17_knowledge_os_full.webp
-  caption: 'Complete Walkthrough'
 ---
-
-# StratoSort Stack — End-to-End Walkthrough
 
 > **Current product is v5.0.0.** Screenshots below are current stills from `npm run tour:record`
 > (Windows, dark theme). Knowledge OS tabs are **Search**, **Chat**, **Timeline**, **Relate**, and
@@ -373,7 +366,7 @@ When you ask a question, the AI:
 
 #### Relate Tab — Knowledge Graph Visualization
 
-{% include figure image_path="/assets/e2e-screenshots/50_relate_tab_cluster.webp" alt="Relate Tab" caption="Relate tab — Knowledge Graph with color-coded topic clusters and similarity edges" %}
+{% include figure image_path="/assets/showcase/graph.webp" alt="Relate tab showing a search, the graph and node details" caption="Relate tab — graph controls and insights (left), the graph (center) and node details (right)" %}
 
 The Relate tab provides an interactive Knowledge Graph for exploring relationships between your
 documents. The interface has three panels:
@@ -405,15 +398,12 @@ Clicking a cluster shows file count, why files were grouped, and per-file connec
 Double-clicking expands individual file nodes. Insights cover topic clusters, bridge documents,
 near-duplicates, and scattered files.
 
-{% include figure image_path="/assets/e2e-screenshots/51_relate_cluster_details.webp" alt="Cluster details" caption="Relate — cluster details with why files were grouped" %}
-
-{% include figure image_path="/assets/e2e-screenshots/53_relate_insights.webp" alt="Relate insights" caption="Relate — insights for topic clusters, bridges, and near-duplicates" %}
-
-{% include figure image_path="/assets/e2e-screenshots/54_relate_full_graph_legend.webp" alt="Relate" caption="Relate — graph canvas, controls, and legend. Clustering needs at least 3 indexed files." %}
+Clustering needs at least 3 indexed files.
 
 #### Atlas
 
-{% include figure image_path="/assets/e2e-screenshots/55_atlas.webp" alt="Atlas" caption="Atlas — map of the library; nearby files are similar. First projection can take a moment." %}
+Atlas draws your whole library as a map: files that sit near each other are similar. The first
+projection can take a moment on a large library.
 
 ### Building the Search Index
 

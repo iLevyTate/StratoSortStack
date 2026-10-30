@@ -6,14 +6,7 @@ sidebar:
 toc: true
 toc_label: 'Contents'
 toc_icon: 'sitemap'
-header:
-  overlay_color: '#000'
-  overlay_filter: '0.5'
-  overlay_image: /assets/e2e-screenshots/47_understand_ai_searching.webp
-  caption: 'System Architecture and Data Flow'
 ---
-
-# StratoSort Stack Architecture
 
 > For the strategic principles behind these architectural choices (deep modules, anti-pass-through,
 > generality, hard constraints), see [`PHILOSOPHY.md`](PHILOSOPHY.md).
@@ -114,7 +107,7 @@ This service acts as the bridge between raw AI analysis and your filesystem. It:
 
 ### 4. Knowledge Graph Visualization
 
-{% include figure image_path="/assets/e2e-screenshots/52_relate_cluster_expanded.webp" alt="Knowledge Graph Expanded" caption="The visual representation of your Vector DB." %}
+{% include figure image_path="/assets/showcase/graph.webp" alt="Relate graph" caption="The Relate graph, drawn from the vector index." %}
 
 The Knowledge Graph is a visual representation of your vector database.
 

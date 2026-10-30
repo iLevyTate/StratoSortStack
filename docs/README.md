@@ -1,11 +1,9 @@
 ---
 layout: single
-title: 'Documentation Index'
+title: 'Developer Docs Index'
 sidebar:
   nav: 'docs'
 ---
-
-# StratoSort Stack Documentation Index
 
 Pick the doc that matches what you need to do.
 

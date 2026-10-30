@@ -1,6 +1,6 @@
 # docs/_config.yml
 title: 'StratoSort Stack'
-description: 'Intelligent File Organization with Privacy-First Local AI'
+description: 'Documentation for StratoSort Stack, a desktop app that organizes and searches your files with AI that runs on your own computer.'
 url: 'https://iLevyTate.github.io'
 baseurl: '/StratoSortStack'
 repository: 'iLevyTate/StratoSortStack'
@@ -15,17 +15,20 @@ plugins:
 
 # Minimal Mistakes Specific Configuration
 minimal_mistakes_skin: 'dark' # We use dark mode to match the app's aesthetic
-search: false
+search: true
+copyright: 'Kennedy Applied Sciences, Inc.'
 
-# Sidebar and main navigation configuration
-navigation:
-  main:
-    - title: 'Home'
-      url: /
-    - title: 'Docs'
-      url: /INSTALL_GUIDE.html
-    - title: 'GitHub'
-      url: 'https://github.com/iLevyTate/StratoSortStack'
+# The site has no blog, so no Atom feed link in the footer.
+atom_feed:
+  hide: true
+
+# Pages without front matter take their title from the first heading; strip that
+# heading from the body so the title is not shown twice.
+titles_from_headings:
+  enabled: true
+  strip_title: true
+
+# Top bar and sidebar menus live in _data/navigation.yml.
 
 # Keep these in git, but do not emit them as GitHub Pages. Baseline snapshots,
 # demo fixtures, and CI inventories are not the public site. Live guides, e2e

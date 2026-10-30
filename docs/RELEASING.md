@@ -3,14 +3,7 @@ layout: single
 title: 'Release Guide'
 sidebar:
   nav: 'docs'
-header:
-  overlay_color: '#000'
-  overlay_filter: '0.5'
-  overlay_image: /assets/e2e-screenshots/35_organize_phase_stable.webp
-  caption: 'Release Process'
 ---
-
-# Releasing StratoSort Stack
 
 This guide covers release packaging for Windows, macOS, and Linux, plus how GitHub Actions publishes
 artifacts.
