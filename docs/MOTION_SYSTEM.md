@@ -3,14 +3,7 @@ layout: single
 title: 'Motion System'
 sidebar:
   nav: 'docs'
-header:
-  overlay_color: '#000'
-  overlay_filter: '0.5'
-  overlay_image: /assets/e2e-screenshots/34_organize_phase_ai_suggestions.webp
-  caption: 'UI Motion & Animation Standards'
 ---
-
-# Motion System
 
 This project uses a restrained motion language designed to feel premium, clear, and calm.
 

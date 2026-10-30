@@ -3,17 +3,7 @@ layout: single
 title: 'Install Guide'
 sidebar:
   nav: 'docs'
-header:
-  overlay_color: '#000'
-  overlay_filter: '0.5'
-  overlay_image: /assets/e2e-screenshots/11_welcome_with_background_download.webp
-  caption: 'Get StratoSort up and running'
 ---
-
-> Last verified for v4.0.3 on 2026-06-11. Current release is **v5.0.0**; installer filenames and OS
-> prompts may differ slightly on newer builds.
-
-# StratoSort Stack -- Install Guide
 
 **One download. No command line. No extra software. No API keys.**
 

@@ -1,52 +1,60 @@
 # docs/_data/navigation.yml
+main:
+  - title: 'Install'
+    url: /INSTALL_GUIDE.html
+  - title: 'User Guide'
+    url: /USER_GUIDE.html
+  - title: 'Download'
+    url: 'https://github.com/iLevyTate/StratoSortStack/releases'
+  - title: 'GitHub'
+    url: 'https://github.com/iLevyTate/StratoSortStack'
+  - title: 'stratosort.com'
+    url: 'https://stratosort.com/'
+
 docs:
-  - title: Getting Started
+  - title: Using StratoSort
     children:
-      - title: 'Home / Overview'
+      - title: 'Overview'
         url: /
-      - title: 'Installation Guide'
+      - title: 'Install Guide'
         url: /INSTALL_GUIDE.html
       - title: 'User Guide'
         url: /USER_GUIDE.html
-      - title: 'E2E Walkthrough'
+      - title: 'Screen-by-Screen Walkthrough'
         url: /E2E_WALKTHROUGH.html
-  - title: Privacy, AI & Licensing
+  - title: Privacy, AI and Integrations
     children:
       - title: 'Network Transparency'
         url: /NETWORK_TRANSPARENCY.html
-      - title: 'AI Providers'
+      - title: 'Cloud AI Providers'
         url: /AI_PROVIDERS.html
       - title: 'MCP Server'
         url: /MCP_SERVER.html
-      - title: 'Licensing & Commercial Use'
-        url: /COMMERCIAL.html
-  - title: Architecture & Features
+  - title: Licensing
     children:
+      - title: 'Commercial Licensing'
+        url: /COMMERCIAL.html
+      - title: 'Third-Party Notices'
+        url: /THIRD_PARTY_NOTICES.html
+  - title: For Developers
+    children:
+      - title: 'Getting Started'
+        url: /GETTING_STARTED.html
+      - title: 'Onboarding'
+        url: /ONBOARDING.html
       - title: 'Architecture'
         url: /ARCHITECTURE.html
-      - title: 'Graph Features'
-        url: /FEATURES_GRAPH.html
-      - title: 'IPC Contracts'
-        url: /IPC_CONTRACTS.html
-  - title: Configuration
-    children:
-      - title: 'Config Guide'
+      - title: 'Configuration Reference'
         url: /CONFIG.html
-      - title: 'DI Patterns'
-        url: /DI_PATTERNS.html
-      - title: 'Motion System'
-        url: /MOTION_SYSTEM.html
-  - title: Contributing
-    children:
-      - title: 'Getting Started Dev'
-        url: /GETTING_STARTED.html
+      - title: 'Testing'
+        url: /TESTING.html
       - title: 'Tester Guide'
         url: /BETA_TESTER_GUIDE.html
-      - title: 'Code Quality Standards'
-        url: /CODE_QUALITY_STANDARDS.html
-      - title: 'Error Handling Guide'
-        url: /ERROR_HANDLING_GUIDE.html
-  - title: Releasing
+      - title: 'Glossary'
+        url: /GLOSSARY.html
+      - title: 'All Developer Docs'
+        url: /README.html
+  - title: Maintainers
     children:
       - title: 'Release Guide'
         url: /RELEASING.html

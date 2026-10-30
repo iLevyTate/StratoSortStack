@@ -3,14 +3,7 @@ layout: single
 title: 'Tester Guide'
 sidebar:
   nav: 'docs'
-header:
-  overlay_color: '#000'
-  overlay_filter: '0.5'
-  overlay_image: /assets/e2e-screenshots/09_analysis_in_progress.webp
-  caption: 'Testing Guide'
 ---
-
-# StratoSort Stack — Tester Guide
 
 **Goal:** Install the app, use it like you would for real work, then tell us what breaks or feels
 confusing. No coding and no command line required (optional Linux tip below).

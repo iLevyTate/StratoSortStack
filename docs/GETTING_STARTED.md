@@ -6,19 +6,11 @@ sidebar:
 toc: true
 toc_label: 'On This Page'
 toc_icon: 'cog'
-header:
-  overlay_color: '#000'
-  overlay_filter: '0.5'
-  overlay_image: /assets/e2e-screenshots/02_how_stratosort_works_modal.webp
-  caption: 'Developer Setup & System Requirements'
 ---
 
 > **Note:** For a guided clone-to-first-PR walkthrough including architecture context, IPC tracing,
 > and common gotchas, see [`ONBOARDING.md`](ONBOARDING.md). This doc focuses on the mechanical setup
-> steps. Current product version is **5.0.0**. Last mechanical setup pass was v4.0.3 on 2026-06-11;
-> Node/npm steps are unchanged.
-
-# Getting Started with StratoSort Stack
+> steps.
 
 ![Setup Time](https://img.shields.io/badge/setup%20time-~10%20minutes-blue?style=flat-square)
 ![Difficulty](https://img.shields.io/badge/difficulty-beginner-green?style=flat-square) {:

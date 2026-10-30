@@ -8,8 +8,6 @@ toc_label: 'Principles'
 toc_icon: 'compass'
 ---
 
-# StratoSort Stack Design Philosophy
-
 ## Why this document exists
 
 The tactical docs in this folder (`DI_PATTERNS.md`, `ERROR_HANDLING_GUIDE.md`, `IPC_CONTRACTS.md`,
