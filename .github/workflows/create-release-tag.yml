@@ -1,0 +1,75 @@
+# Creates a v<major>.<minor>.<patch> tag on main from the Actions UI, for
+# environments that cannot push tags directly. A tag created with
+# GITHUB_TOKEN does not fire the tag-push trigger of release.yml /
+# mac-release.yml, so dispatch both afterwards with the same tag_name.
+name: Create Release Tag
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: Tag to create on main (must match package.json version)
+        required: true
+        type: string
+      delete_drafts:
+        description: Delete draft releases already claiming this tag name
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  create-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          sparse-checkout: package.json
+          sparse-checkout-cone-mode: false
+
+      - name: Create tag
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          TAG_NAME: ${{ github.event.inputs.tag_name }}
+          DELETE_DRAFTS: ${{ github.event.inputs.delete_drafts }}
+        with:
+          script: |
+            const fs = require('fs');
+            const tag = String(process.env.TAG_NAME || '').trim();
+            if (!/^v\d+\.\d+\.\d+$/.test(tag)) {
+              core.setFailed(`tag_name must match v<major>.<minor>.<patch>; received '${tag}'.`);
+              return;
+            }
+            const { version } = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            if (`v${version}` !== tag) {
+              core.setFailed(`tag_name ${tag} does not match package.json version ${version}.`);
+              return;
+            }
+
+            const { owner, repo } = context.repo;
+            if (process.env.DELETE_DRAFTS === 'true') {
+              const releases = await github.paginate(github.rest.repos.listReleases, { owner, repo });
+              for (const r of releases.filter((r) => r.draft && r.tag_name === tag)) {
+                await github.rest.repos.deleteRelease({ owner, repo, release_id: r.id });
+                core.info(`Deleted draft release '${r.name}' (${r.id}).`);
+              }
+            }
+
+            const { data: main } = await github.rest.git.getRef({ owner, repo, ref: 'heads/main' });
+            const sha = main.object.sha;
+            try {
+              const { data: existing } = await github.rest.git.getRef({ owner, repo, ref: `tags/${tag}` });
+              if (existing.object.sha !== sha) {
+                core.setFailed(`Tag ${tag} already exists at ${existing.object.sha}.`);
+              } else {
+                core.info(`Tag ${tag} already exists at main (${sha}).`);
+              }
+              return;
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            await github.rest.git.createRef({ owner, repo, ref: `refs/tags/${tag}`, sha });
+            core.info(`Created ${tag} at ${sha}.`);
