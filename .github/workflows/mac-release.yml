@@ -268,8 +268,24 @@ jobs:
             exit 1
           fi
 
+          # Apple's notary and ticket-delivery endpoints drop connections
+          # often enough on hosted runners (NSURLError -1001/-1005) to fail a
+          # release, so retry each network call. A resubmitted artifact is
+          # re-notarized against the same signature; nothing else changes.
+          retry() {
+            local attempt
+            for attempt in 1 2 3; do
+              "$@" && return 0
+              if [ "$attempt" -lt 3 ]; then
+                echo "::warning::Attempt ${attempt} failed: $*; retrying in $((attempt * 30))s"
+                sleep $((attempt * 30))
+              fi
+            done
+            return 1
+          }
+
           for artifact in "${artifacts[@]}"; do
-            xcrun notarytool submit "$artifact" \
+            retry xcrun notarytool submit "$artifact" \
               --apple-id "$APPLE_ID" \
               --password "$APPLE_APP_SPECIFIC_PASSWORD" \
               --team-id "$APPLE_TEAM_ID" \
@@ -278,8 +294,8 @@ jobs:
 
           for dmg_path in release/build/StratoSortStack-*-mac-${arch}.dmg; do
             [ -f "$dmg_path" ] || continue
-            xcrun stapler staple "$dmg_path"
-            xcrun stapler validate "$dmg_path"
+            retry xcrun stapler staple "$dmg_path"
+            retry xcrun stapler validate "$dmg_path"
           done
 
       - name: Patch updater metadata sha512 after stapling (${{ matrix.arch }})
