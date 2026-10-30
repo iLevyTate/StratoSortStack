@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-29T20:54:00.698Z",
+  "generatedAt": "2026-10-30T02:01:23.477Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
@@ -11603,7 +11603,7 @@
     },
     {
       "packageName": "autoprefixer",
-      "version": "10.6.1",
+      "version": "10.6.2",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -18885,7 +18885,7 @@
     },
     {
       "packageName": "officeparser",
-      "version": "8.2.0",
+      "version": "8.3.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -19575,7 +19575,7 @@
     },
     {
       "packageName": "postcss",
-      "version": "8.5.31",
+      "version": "8.5.32",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
