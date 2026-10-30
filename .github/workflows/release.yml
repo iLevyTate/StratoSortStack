@@ -273,6 +273,11 @@ jobs:
         # the x64 artifact.
         if: matrix.arch == 'x64'
         shell: pwsh
+        env:
+          # Mirrors mac-release.yml "Detect mac release mode": with all five
+          # secrets set (and no force-unsigned override) the mac legs either
+          # ship signed + notarized builds or fail, so the note holds.
+          MAC_SIGNED: ${{ secrets.MACOS_CSC_LINK != '' && secrets.MACOS_CSC_KEY_PASSWORD != '' && secrets.APPLE_ID != '' && secrets.APPLE_APP_SPECIFIC_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' && vars.STRATOSORT_FORCE_UNSIGNED_MAC != 'true' }}
         run: |
           $tag = "${{ needs.resolve-release-target.outputs.tag }}"
           $version = $tag -replace '^v', ''
@@ -304,6 +309,11 @@ jobs:
           } else {
             "- Windows artifacts are unsigned ad-hoc builds and may trigger SmartScreen warnings."
           }
+          $macIntegrityNote = if ($env:MAC_SIGNED -eq "true") {
+            "- macOS builds are Developer ID-signed, notarized by Apple, and stapled."
+          } else {
+            "- macOS builds are unsigned ad-hoc builds; right-click → Open on first launch."
+          }
 
           $notes = @(
             "## Release Notes",
@@ -312,6 +322,7 @@ jobs:
             "- Tesseract OCR is auto-installed or uses bundled tesseract.js fallback.",
             "- Use **Download Base Models** after install to enable AI features.",
             $releaseIntegrityNote,
+            $macIntegrityNote,
             "- See the [Install Guide](https://github.com/iLevyTate/StratoSortStack/blob/main/docs/INSTALL_GUIDE.md) for Windows & Mac — one download, no CLI.",
             ""
           ) + $section
