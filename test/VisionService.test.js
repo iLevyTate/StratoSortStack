@@ -89,8 +89,16 @@ describe('VisionService', () => {
     _resetRuntimeCache();
     // VisionService shares the process-wide GPUMonitor singleton, which caches
     // its first detection; clear it so each test's child_process mock is
-    // probed afresh.
-    getGPUMonitor()._gpuInfo = null;
+    // probed afresh. The singleton also records process.platform when it is
+    // constructed, i.e. the real platform of the machine running the suite;
+    // tests here redefine process.platform per case, so make the shared
+    // instance follow it like the per-call monitor it replaced.
+    const sharedGpuMonitor = getGPUMonitor();
+    sharedGpuMonitor._gpuInfo = null;
+    Object.defineProperty(sharedGpuMonitor, '_platform', {
+      configurable: true,
+      get: () => process.platform
+    });
     service = new VisionService();
   });
 
