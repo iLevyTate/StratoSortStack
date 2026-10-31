@@ -60,7 +60,14 @@
     "!**/node_modules/**/benchmark/**",
     "!**/node_modules/**/benchmarks/**",
     "!**/node_modules/**/demo/**",
-    "!**/node_modules/**/demos/**"
+    "!**/node_modules/**/demos/**",
+    "!**/node_modules/node-llama-cpp/llama/gitRelease.bundle",
+    "!**/node_modules/node-llama-cpp/llama/CMakeLists.txt",
+    "!**/node_modules/node-llama-cpp/llama/{addon,cmake,patches,profiles,toolchains,xpack}/**",
+    "!**/node_modules/node-llama-cpp/templates/**",
+    "!**/node_modules/@fugood/whisper.node/CMakeLists.txt",
+    "!**/node_modules/@fugood/whisper.node/{src,whisper.cpp}/**",
+    "!**/node_modules/better-sqlite3/{deps,src}/**"
   ],
   "extraMetadata": {
     "main": "dist/main.js"
@@ -80,7 +87,10 @@
   ],
   "win": {
     "icon": "assets/icons/win/icon.ico",
-    "target": ["nsis", "portable"]
+    "target": ["nsis", "zip"],
+    "files": [
+      "!**/node_modules/better-sqlite3/prebuilds/{darwin,linux,linuxmusl}-*.node"
+    ]
   },
   "nsis": {
     "oneClick": false,
@@ -97,11 +107,6 @@
     "include": "build/installer-themed.nsh",
     "license": "build/license_en.txt",
     "artifactName": "StratoSortStack-Setup-${version}.exe"
-  },
-  "portable": {
-    "useZip": true,
-    "splashImage": "assets/portable-splash.bmp",
-    "unpackDirName": "StratoSortStack-portable"
   },
   "mac": {
     "icon": "assets/icons/mac/icon.icns",

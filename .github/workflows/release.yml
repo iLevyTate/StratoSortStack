@@ -236,11 +236,15 @@ jobs:
         if: steps.windows-release-mode.outputs.signed == 'true'
         shell: pwsh
         run: |
-          $executables = Get-ChildItem release/build -File -ErrorAction Stop |
-            Where-Object { $_.Name -match '^StratoSortStack-Setup-.*\.exe$|^StratoSortStack-.*-win-.*\.exe$' }
-          if (-not $executables -or $executables.Count -eq 0) {
+          $executables = @(Get-ChildItem release/build -File -ErrorAction Stop |
+            Where-Object { $_.Name -match '^StratoSortStack-Setup-.*\.exe$' })
+          if ($executables.Count -eq 0) {
             throw "No Windows executables found to verify signature."
           }
+          # A zip cannot carry an Authenticode signature, so check the app exe
+          # it is packed from instead (the zip target archives this folder).
+          $unpacked = if ('${{ matrix.arch }}' -eq 'arm64') { 'win-arm64-unpacked' } else { 'win-unpacked' }
+          $executables += Get-Item -LiteralPath (Join-Path release/build "$unpacked/StratoSort Stack.exe") -ErrorAction Stop
 
           foreach ($file in $executables) {
             $signature = Get-AuthenticodeSignature $file.FullName
@@ -250,13 +254,13 @@ jobs:
           }
 
       - name: Generate SHA256 checksums
-        # Installers and blockmaps only: the published latest.yml is merged in
-        # publish-release from both legs, so a per-leg channel-file hash would
-        # not match the uploaded file.
+        # Installers, the x64 zip and blockmaps only: the published latest.yml
+        # is merged in publish-release from both legs, so a per-leg
+        # channel-file hash would not match the uploaded file.
         shell: pwsh
         run: |
           $files = Get-ChildItem release/build -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match '^StratoSortStack-.*\.(exe|blockmap)$' }
+            Where-Object { $_.Name -match '^StratoSortStack-.*\.(exe|zip|blockmap)$' }
           if (-not $files -or $files.Count -eq 0) {
             throw "No build artifacts found to checksum."
           }
@@ -321,6 +325,7 @@ jobs:
             "- **Vision runtime is included** — no separate download needed.",
             "- Tesseract OCR is auto-installed or uses bundled tesseract.js fallback.",
             "- Use **Download Base Models** after install to enable AI features.",
+            '- **Windows:** the Setup installer is the recommended download and updates itself. The `-win-x64.zip` runs without installing: extract it once to a short folder such as `C:\StratoSort` and start `StratoSort Stack.exe`; it does not auto-update.',
             $releaseIntegrityNote,
             $macIntegrityNote,
             "- See the [Install Guide](https://stratosort.com/docs/INSTALL_GUIDE.html) for Windows, Mac & Linux — one download, no CLI.",
@@ -338,7 +343,7 @@ jobs:
           $stage = "release/upload/$arch"
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Get-ChildItem release/build -File |
-            Where-Object { $_.Name -match '^StratoSortStack-Setup-.*\.exe$|^StratoSortStack-.*-win-.*\.exe$|\.blockmap$|^checksums-windows-.*\.sha256$|^release-notes\.md$' } |
+            Where-Object { $_.Name -match '^StratoSortStack-Setup-.*\.exe$|^StratoSortStack-.*-win-.*\.zip$|\.blockmap$|^checksums-windows-.*\.sha256$|^release-notes\.md$' } |
             Copy-Item -Destination $stage
           Copy-Item release/build/latest.yml (Join-Path $stage "latest-$arch.yml")
           Get-ChildItem $stage | Select-Object Name, Length
@@ -415,7 +420,7 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             release/build/StratoSortStack-Setup-*.exe
-            release/build/StratoSortStack-*-win-*.exe
+            release/build/StratoSortStack-*-win-*.zip
             release/build/*.blockmap
             release/build/latest.yml
             release/build/checksums-windows-*.sha256

@@ -205,7 +205,8 @@ tagging, then use the release workflows to build and upload artifacts.
 Windows workflow publishes:
 
 - `StratoSortStack-Setup-*.exe`
-- `StratoSortStack-*-win-*.exe` (portable)
+- `StratoSortStack-*-win-x64.zip` (x64 only: the no-install copy, see
+  [§ Windows zip](#windows-zip-no-install-build); never listed in `latest.yml`)
 - `latest.yml` — one channel file listing both the x64 and `-arm64` installers. electron-updater
   requests exactly `latest.yml` on Windows for every arch, so the x64 and arm64 matrix legs stage
   `latest-x64.yml` / `latest-arm64.yml` as artifacts and the `publish-release` job merges them with
@@ -213,8 +214,8 @@ Windows workflow publishes:
   whose arch appears in no filename) before `verify-updater-metadata` and upload. The staging names
   are never published.
 - `*.blockmap`
-- `checksums-windows-x64.sha256` / `checksums-windows-arm64.sha256` (per matrix arch; installers and
-  blockmaps only)
+- `checksums-windows-x64.sha256` / `checksums-windows-arm64.sha256` (per matrix arch; installers,
+  the x64 zip and blockmaps)
 
 macOS workflow publishes:
 
@@ -257,9 +258,9 @@ update-enabled release:
    `STRATOSORT_UPDATE_FEED_ALLOWED_HOSTS=<staging host>`.
 4. Verify the full chain: update event → background download → "Update Ready" indicator → Apply →
    in-flight-op drain → relaunch **as v(N+1)**.
-5. Negative checks: the **portable** build refuses with the portable reason; a **Microsoft Store**
-   build (`process.windowsStore`) refuses with the Store reason; a wrong `ALLOWED_HOSTS` value
-   blocks the feed.
+5. Negative checks: a copy extracted from the **zip** (no `Uninstall StratoSort Stack.exe` beside
+   the exe) refuses with the zip reason; a **Microsoft Store** build (`process.windowsStore`)
+   refuses with the Store reason; a wrong `ALLOWED_HOSTS` value blocks the feed.
 6. Uninstall/reinstall v(N) to confirm the rollback story.
 
 ## Post-Install Smoke (Windows NSIS)
@@ -321,38 +322,111 @@ exactly how the settings-import worker broke in #441 — so development runs pro
       checks the _config_ in CI, including that no `asarUnpack` pattern unpacks `dist/main.js`; it
       cannot check the shipped bits.)
 - [ ] **First-launch timing of both downloaded artifacts.** On a clean Windows VM with Microsoft
-      Defender real-time protection left on, download the installer and the portable exe from the
-      release page (not from the build machine, so SmartScreen and the mark-of-the-web apply) and
-      time each one from double-click to first window. Expect the installer's first launch to take
-      up to a minute or two while Defender scans the new files, with later launches fast, and expect
-      the portable exe to take roughly 30 seconds to several minutes on every launch; confirm the
-      portable splash bitmap is visible while it unpacks. Record both numbers in the release notes.
+      Defender real-time protection left on, download the installer and the `-win-x64.zip` from the
+      release page (not from the build machine, so SmartScreen and the mark-of-the-web apply).
+      Install and time the installer's first launch from double-click to first window. Extract the
+      zip once to `C:\StratoSort` with Explorer's **Extract All** (confirm it finishes without "path
+      too long" errors), then time its first and second start. Expect each first start to take up to
+      a minute or two while Defender scans the new files and later starts to be fast; a second zip
+      start as slow as the first is a regression. Also confirm the extracted copy's log shows the
+      updater skipping with the zip reason. Record the numbers in the release notes.
 
 Two more release-time runtime items pair with this pass, both verifiable only on a packaged build:
 
 - the **updater live smoke** —
   [§ Updater live smoke](#updater-live-smoke-run-before-every-update-enabled-release), including the
-  portable/Store negative checks, and
+  zip/Store negative checks, and
 - the **license smoke** on a fresh `--user-data-dir`: with no key, Settings → License reports `free`
   and every feature works; after pasting a valid key it reports `licensed` with the licensee and
   update window; a key whose update window ended before this build reports `version_not_covered`.
 
-### Portable build
+### Windows zip (no-install build)
 
-`StratoSortStack-*-win-x64.exe` does **not** use the same auto-update path as the NSIS installer;
-see [INSTALL_GUIDE.md](INSTALL_GUIDE.md) for portable vs full-installer behavior.
+`StratoSortStack-<version>-win-x64.zip` is electron-builder's `zip` target (`win.target` in
+`electron-builder.json`, named by the top-level `artifactName`). It archives the same `win-unpacked`
+folder the installer is built from, with no wrapper folder, so the user extracts it once (to a short
+path such as `C:\StratoSort`) and runs `StratoSort Stack.exe` from there; later starts reuse the
+extracted files. It replaced the NSIS `portable` target after v5.0.0: that stub unpacked about 1.8
+GB into `%TEMP%` on every launch and Defender rescanned it each time, which is why users saw a busy
+cursor for a minute or more on every start.
 
-The portable stub unpacks the whole app (about 1.8 GB) into `%TEMP%\StratoSortStack-portable` on
-every launch and deletes that folder again when the app exits; there is no persistent install, so
-every start pays the unpack cost. The `portable` block in `electron-builder.json` sets `useZip`,
-`splashImage` and `unpackDirName`: with `useZip` electron-builder embeds the unpacked app directory
-directly in the stub and NSIS writes it to the unpack folder in one pass with its zlib compressor,
-instead of embedding a solid LZMA2 `.7z` that is extracted to a staging folder and copied over.
-Because zlib compresses less than solid LZMA2, expect the portable exe to be noticeably larger than
-before (roughly 750 to 850 MB rather than about 590 MB) in exchange for a faster launch. The splash
-bitmap is generated by `scripts/generate-nsis-assets.js` (`npm run generate:nsis`, which `dist:win`
-runs) and must stay a 24-bit uncompressed BMP. First-launch timing for both artifacts is part of the
-[Packaged-integrity checks](#packaged-integrity-checks) above.
+- **x64 only.** The arm64 leg runs `electron-builder --win nsis --arm64`, which overrides
+  `win.target`, so it ships the installer alone.
+- **Never an update.** app-builder-lib writes Windows update info only for `nsis` (and opted-in
+  `appx`) targets (`isSuitableWindowsTarget` in `out/publish/PublishManager.js`), and the zip target
+  writes no blockmap. `scripts/verify-updater-metadata.js` fails if `latest.yml` lists anything but
+  `.exe` installers.
+- **Runtime guard.** `resources/app-update.yml` is still inside the zip, because electron-builder
+  writes it once into the shared `win-unpacked` folder whenever an `nsis` target is in the build.
+  `getUpdateTargetCapability()` in `src/main/core/autoUpdater.js` therefore treats a packaged
+  Windows run without `Uninstall StratoSort Stack.exe` beside the exe (the NSIS installer writes it
+  into the install folder) as unable to update in place, instead of letting electron-updater run the
+  installer against a different folder.
+- **Signing.** A zip carries no Authenticode signature. The release workflow verifies
+  `win-unpacked\StratoSort Stack.exe`, the exe the zip is packed from, alongside the installer.
+- **Path length.** The deepest file in the app (under
+  `resources\app.asar.unpacked\node_modules\node-llama-cpp\dist\`) is about 175 characters below the
+  app folder, an estimate from the current dependency tree. Explorer's built-in extractor stops at
+  260 characters, which is why the install guide asks for a short folder.
+
+`scripts/verify-packaged-artifacts.js --platform=win --arch=x64` fails when the zip is missing.
+
+### Windows x64 payload size
+
+The x64 app is about 1.8 GB on disk; arm64 is much smaller. Most of the difference is GPU prebuilts
+that only exist for x64 (npm `unpackedSize`, version 3.22.2 of the node-llama-cpp packages and 1.1.3
+of the whisper ones):
+
+| Package                                                  | Size            | Role                                                                  |
+| :------------------------------------------------------- | :-------------- | :-------------------------------------------------------------------- |
+| `@node-llama-cpp/win-x64-cuda-ext`                       | 388 MB          | CUDA 12 build of `ggml-cuda.dll`, loaded from `fallback/` (see below) |
+| `@node-llama-cpp/win-x64-cuda`                           | 183 MB          | Primary CUDA build, linked against the CUDA 13 runtime                |
+| `@node-llama-cpp/win-x64-vulkan`                         | 74 MB           | Vulkan build (AMD, Intel, NVIDIA without CUDA)                        |
+| `@node-llama-cpp/win-x64`                                | 33 MB           | CPU build                                                             |
+| `@fugood/node-whisper-win32-x64-cuda` / `-vulkan` / base | 125 / 42 / 3 MB | Whisper transcription variants                                        |
+
+arm64 ships `@node-llama-cpp/win-arm64` (11 MB) and the arm64 whisper base and Vulkan variants, no
+CUDA, and no bundled FFmpeg.
+
+**Why `win-x64-cuda-ext` stays.** node-llama-cpp 3.22.2 (`dist/bindings/Llama.js`) first loads the
+primary `ggml-cuda.dll` and tries the `fallback/` folder of the ext package only when no GPU backend
+loaded. The two DLLs need different CUDA libraries (from their PE import tables): the primary
+imports `cublas64_13.dll` (CUDA 13 cuBLAS, runtime linked in), the fallback imports
+`cudart64_12.dll` and `cublas64_12.dll`. So on an NVIDIA PC with a CUDA 12 toolkit the fallback is
+the only way the text and embedding models run on CUDA; dropping the package would move those users
+to Vulkan. The cudart DLLs the vision runtime stages (`cudart-llama-bin-win-cuda-12.4-x64.zip` by
+default, or the 13.1 build when `STRATOSORT_CUDA_VERSION=13.1`, both from `VisionService`) do not
+change this: `WhisperService` puts that folder on `PATH` only when it first loads for a
+transcription, after the text and embedding engine has already chosen its backend, and
+node-llama-cpp's startup CUDA check looks only on `PATH` and in the CUDA toolkit folders. CUDA 13
+also needs a newer driver and no longer targets some older NVIDIA GPU generations that CUDA 12
+supports (check NVIDIA's CUDA 13 release notes for the exact list before revisiting). Revisit only
+if the app starts staging CUDA 13 libraries by default, before backend selection, and the
+supported-GPU floor moves with it. `verify-packaged-artifacts.js` requires all four
+`@node-llama-cpp/win-x64*` packages on x64.
+
+**Build-only files excluded** (`files` in `electron-builder.json`). Each was checked against the
+package code: nothing reads it unless it builds from source, and nothing builds from source inside
+Electron.
+
+| Pattern                                                                                        | Why it is unused at runtime                                                                                                                                                                                                                                           | Estimated saving        |
+| :--------------------------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :---------------------- |
+| `node-llama-cpp/llama/gitRelease.bundle`                                                       | Read only by `utils/gitReleaseBundles.js`, which only the source download/clone path uses. `getLlama` defaults `build` to `"never"` when `process.versions.electron` is set and the app never overrides it, so `canBuild` is false and the clone path is unreachable. | 36 MB, 1 file           |
+| `node-llama-cpp/llama/{addon,cmake,patches,profiles,toolchains,xpack}`, `llama/CMakeLists.txt` | Inputs to `compileLlamaCpp` (cmake-js), behind the same `canBuild` gate.                                                                                                                                                                                              | 0.3 MB, 57 files        |
+| `node-llama-cpp/templates`                                                                     | Used only by the `init` CLI command.                                                                                                                                                                                                                                  | 0.2 MB, 3 files         |
+| `@fugood/whisper.node/{src,whisper.cpp}`, `CMakeLists.txt`                                     | C/C++ sources for building the addon. `lib/` only `require`s the prebuilt variant packages (or `build/Release`).                                                                                                                                                      | 5.4 MB, about 117 files |
+| `better-sqlite3/{deps,src}`                                                                    | SQLite amalgamation and addon sources for node-gyp. `lib/binding.js` loads `prebuilds/<platform>-<arch>.node` or `build/Release`.                                                                                                                                     | 10.4 MB, 33 files       |
+| `better-sqlite3/prebuilds/{darwin,linux,linuxmusl}-*.node` (in `win.files`)                    | `getPrebuildPath()` only loads the `win32-<arch>` prebuild on Windows.                                                                                                                                                                                                | 13 MB, 6 files          |
+
+Together that is roughly 65 MB and 220 files less to write and scan on first launch (estimates from
+the on-disk sizes in `node_modules`; the download shrinks less, by an estimated 40 to 50 MB, because
+the installer compresses the source files well). Update the download size in
+[INSTALL_GUIDE.md](INSTALL_GUIDE.md) after the next packaged build. `verify-packaged-artifacts.js`
+checks that `llama/binariesGithubRelease.json` (read by node-llama-cpp on import) still ships and
+that `llama/gitRelease.bundle` does not. `@node-llama-cpp/win-arm64` (11 MB) also lands in the x64
+build, because its package declares `cpu: ["arm64", "x64"]` and npm installs it on x64 runners; it
+cannot be excluded from the shared `files` list without also removing it from the arm64 build, which
+inherits that list through `extends`.
 
 ## Signing And Notarization Requirements
 

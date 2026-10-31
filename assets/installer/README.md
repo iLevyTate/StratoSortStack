@@ -51,7 +51,7 @@ The installer includes:
 ## Building
 
 ```bash
-npm run dist:win    # Windows NSIS + Portable
+npm run dist:win    # Windows NSIS installer + zip (x64)
 # Run on macOS only (or use a macOS GitHub Actions runner)
 npm run dist:mac:arm64    # macOS arm64 DMG + ZIP
 ```
