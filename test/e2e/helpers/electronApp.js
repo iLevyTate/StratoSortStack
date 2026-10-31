@@ -425,14 +425,22 @@ async function getMainWindow(app) {
  * Wait for the app to be ready for interaction
  *
  * @param {Page} window - The Playwright page object
- * @param {{ timeout?: number, dismissModals?: boolean }} [options]
+ * @param {{ timeout?: number, dismissModals?: boolean, dismissModelWizard?: boolean }} [options]
  *   timeout - maximum wait time in milliseconds (default 30000).
  *   dismissModals - close any open modal before returning (default true).
  *   Pass false when the modal is what the test is about: the first-run model
  *   wizard opens with no delay when the background setup has already fetched
  *   the embedding model (under 2 s on a fast runner), so it can be open by now.
+ *   dismissModelWizard - also wait for the first-run model wizard, which opens
+ *   ~2 s AFTER ready in a model-less profile, and skip it (default: the value
+ *   of dismissModals). Without this the single dismissModals() pass above can
+ *   run before the wizard mounts, and its aria-modal overlay then swallows the
+ *   test's later clicks. Costs up to 7 s when no wizard appears.
  */
-async function waitForAppReady(window, { timeout = 30000, dismissModals: dismiss = true } = {}) {
+async function waitForAppReady(
+  window,
+  { timeout = 30000, dismissModals: dismiss = true, dismissModelWizard = dismiss } = {}
+) {
   console.log('[E2E] Waiting for app to be ready...');
 
   // Wait for the navigation bar to be visible (indicates app is loaded)
@@ -465,6 +473,7 @@ async function waitForAppReady(window, { timeout = 30000, dismissModals: dismiss
 
   // Dismiss any modal dialogs that might be blocking (e.g., first-launch setup dialogs)
   if (dismiss) await dismissModals(window);
+  if (dismissModelWizard) await dismissModelSetupWizard(window);
 
   console.log('[E2E] App is ready');
 }
@@ -530,6 +539,9 @@ async function dismissModals(window) {
   }
 }
 
+/** Windows whose first-run model wizard was skipped (see dismissModelSetupWizard). */
+const modelWizardSkippedWindows = new WeakSet();
+
 /**
  * Dismiss the first-run "Set up on-device AI" model wizard if/when it appears.
  *
@@ -557,6 +569,10 @@ async function dismissModals(window) {
  */
 async function dismissModelSetupWizard(window, { timeout = 7000 } = {}) {
   if (!window || (typeof window.isClosed === 'function' && window.isClosed())) return false;
+  // Skipping latches the wizard closed for this renderer session, so a later
+  // call on the same window (waitForAppReady already ran this) returns at once
+  // instead of waiting `timeout` for a wizard that cannot reopen.
+  if (modelWizardSkippedWindows.has(window)) return false;
 
   // Identify the wizard by the hosting Modal's title (a stable, human-readable
   // string) rather than the Modal's generated aria id.
@@ -590,12 +606,15 @@ async function dismissModelSetupWizard(window, { timeout = 7000 } = {}) {
     await window.keyboard.press('Escape').catch(() => {});
   }
 
-  await wizardDialog
+  const closed = await wizardDialog
     .first()
     .waitFor({ state: 'hidden', timeout: 5000 })
+    .then(() => true)
     .catch(() => {
       console.log('[E2E] Model setup wizard may still be visible after dismiss attempt');
+      return false;
     });
+  if (closed) modelWizardSkippedWindows.add(window);
 
   return true;
 }

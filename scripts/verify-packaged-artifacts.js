@@ -118,6 +118,35 @@ function getForeignArchLlamaPrebuiltPackages(platform, arch) {
     : getRequiredLlamaPrebuiltPackages(platform, 'arm64');
 }
 
+const BETTER_SQLITE3_NODE_PLATFORM = {
+  win: 'win32',
+  win32: 'win32',
+  mac: 'darwin',
+  darwin: 'darwin',
+  linux: 'linux'
+};
+
+/**
+ * better-sqlite3 prebuilds one build may carry. lib/binding.js
+ * getPrebuildPath() loads `<platform>-<arch>.node`, or on Linux
+ * `linuxmusl-<arch>.node` when glibc is absent, so that one may ship too.
+ * electron-builder.json excludes every other prebuild per platform. Without
+ * the matching file binding.js falls back to build/Release, which is not
+ * packaged, and SQLite fails to load. An empty arch is x64, electron-builder's
+ * default.
+ *
+ * @returns {{ required: string[], allowed: string[] }}
+ */
+function getBetterSqlitePrebuilds(platform, arch) {
+  const nodePlatform = BETTER_SQLITE3_NODE_PLATFORM[String(platform || '').toLowerCase()];
+  if (!nodePlatform) return { required: [], allowed: [] };
+  const normalizedArch = String(arch || '').toLowerCase() || 'x64';
+  const required = [`${nodePlatform}-${normalizedArch}.node`];
+  const allowed =
+    nodePlatform === 'linux' ? [...required, `linuxmusl-${normalizedArch}.node`] : required;
+  return { required, allowed };
+}
+
 /** True when `dir` holds at least one file at any depth. */
 function containsAnyFile(dir) {
   if (!fs.existsSync(dir)) return false;
@@ -288,6 +317,27 @@ function verifyLlamaPrebuiltPackages(unpackedNodeModulesRoot, platform, arch) {
   });
 }
 
+function verifyBetterSqlitePrebuilds(unpackedNodeModulesRoot, platform, arch) {
+  const prebuildsDir = path.join(unpackedNodeModulesRoot, 'better-sqlite3', 'prebuilds');
+  const { required, allowed } = getBetterSqlitePrebuilds(platform, arch);
+  required.forEach((fileName) => {
+    ensureExists(
+      path.join(prebuildsDir, fileName),
+      `better-sqlite3 prebuild ${fileName} (lib/binding.js loads it; build/Release is not packaged)`
+    );
+  });
+  if (!fs.existsSync(prebuildsDir)) return;
+  const foreign = fs
+    .readdirSync(prebuildsDir)
+    .filter((name) => name.endsWith('.node') && !allowed.includes(name));
+  if (foreign.length > 0) {
+    throw new Error(
+      `better-sqlite3 prebuilds for another platform or arch were packaged: ${foreign.join(', ')} ` +
+        `in ${prebuildsDir}. Check the better-sqlite3 exclusions in electron-builder.json "files".`
+    );
+  }
+}
+
 function verifyWhisperVariantFolders(unpackedNodeModulesRoot, platform, arch) {
   const requiredPackages = getRequiredWhisperVariantPackages(platform, arch);
   requiredPackages.forEach((packageName) => {
@@ -331,6 +381,7 @@ function verifyWindowsArtifacts(buildRoot, arch, version = readPackageVersion())
   verifyNativeModuleFolders(unpackedModules);
   verifyNodeLlamaCppPayload(unpackedModules);
   verifyLlamaPrebuiltPackages(unpackedModules, 'win32', isArm64 ? 'arm64' : 'x64');
+  verifyBetterSqlitePrebuilds(unpackedModules, 'win32', isArm64 ? 'arm64' : 'x64');
   verifyWhisperVariantFolders(unpackedModules, 'win32', isArm64 ? 'arm64' : 'x64');
 }
 
@@ -363,6 +414,7 @@ function verifyMacArtifacts(buildRoot, arch) {
     );
     verifyNativeModuleFolders(unpackedModules);
     verifyNodeLlamaCppPayload(unpackedModules);
+    verifyBetterSqlitePrebuilds(unpackedModules, 'darwin', arch);
     verifyWhisperVariantFolders(unpackedModules, 'darwin', arch);
   });
 }
@@ -386,6 +438,7 @@ function verifyLinuxArtifacts(buildRoot, arch) {
   );
   verifyNativeModuleFolders(unpackedModules);
   verifyNodeLlamaCppPayload(unpackedModules);
+  verifyBetterSqlitePrebuilds(unpackedModules, 'linux', isArm64 ? 'arm64' : 'x64');
   verifyWhisperVariantFolders(unpackedModules, 'linux', isArm64 ? 'arm64' : 'x64');
 }
 
@@ -428,6 +481,8 @@ if (require.main === module) {
 module.exports = {
   getRequiredLlamaPrebuiltPackages,
   getForeignArchLlamaPrebuiltPackages,
+  getBetterSqlitePrebuilds,
+  verifyBetterSqlitePrebuilds,
   getRequiredMacElectronRuntimeFiles,
   getRequiredWhisperVariantPackages,
   getWindowsZipArtifactName,
