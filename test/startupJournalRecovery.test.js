@@ -46,4 +46,31 @@ describe('startup journal recovery wiring', () => {
     expect(recoveryIndex).toBeLessThan(migrationIndex);
     expect(recoveryIndex).toBeLessThan(serviceIndex);
   });
+
+  test('window is created before the first-paint gate, which precedes coordinated startup', () => {
+    // Pins the window-first ordering: heavyweight AI bring-up must not be
+    // queued in the same tick as createWindow(); it waits on the first-paint
+    // gate (core/firstPaintGate.js) so its synchronous stretches cannot delay
+    // the first visible frame.
+    const windowIndex = source.indexOf('createWindow();');
+    const gateIndex = source.indexOf('waitForFirstPaint(');
+    const coordinatedIndex = source.indexOf('await runCoordinatedStartupInBackground(');
+
+    expect(windowIndex).toBeGreaterThan(-1);
+    expect(gateIndex).toBeGreaterThan(-1);
+    expect(coordinatedIndex).toBeGreaterThan(-1);
+    expect(windowIndex).toBeLessThan(gateIndex);
+    expect(gateIndex).toBeLessThan(coordinatedIndex);
+  });
+
+  test('background setup is chained onto the first-paint gate', () => {
+    const gateIndex = source.indexOf('waitForFirstPaint(');
+    const backgroundSetupIndex = source.indexOf('runBackgroundSetup();');
+    const coordinatedIndex = source.indexOf('await runCoordinatedStartupInBackground(');
+
+    expect(backgroundSetupIndex).toBeGreaterThan(gateIndex);
+    expect(backgroundSetupIndex).toBeLessThan(coordinatedIndex);
+    // Exactly one call site: the pre-gate call was removed, not duplicated.
+    expect(source.match(/runBackgroundSetup\(\);/g)).toHaveLength(1);
+  });
 });

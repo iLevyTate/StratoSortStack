@@ -21,6 +21,12 @@ jest.mock('electron', () => ({
   app: { isPackaged: false, getAppPath: () => process.cwd() }
 }));
 
+// Structured logger spy so the first-paint serve-latency lines can be asserted.
+const mockLogger = { info: jest.fn(), debug: jest.fn(), warn: jest.fn(), error: jest.fn() };
+jest.mock('../../../src/shared/logger', () => ({
+  createLogger: () => mockLogger
+}));
+
 // Pin the renderer root to a temp dir we control so the request handler reads
 // real (memfs) files through fs.promises.{stat,realpath,readFile}. Keep the rest
 // of rendererAssets (isSubPath, resolveRendererAssetPath, content types) real.
@@ -56,6 +62,7 @@ describe('appProtocol', () => {
     mockRendererRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'appproto-')));
     fs.mkdirSync(path.join(mockRendererRoot, 'assets'), { recursive: true });
     fs.writeFileSync(path.join(mockRendererRoot, 'index.html'), '<html>shell</html>');
+    fs.writeFileSync(path.join(mockRendererRoot, 'styles.css'), 'body{margin:0}');
     fs.writeFileSync(path.join(mockRendererRoot, 'assets', 'app.js'), 'console.log(1)');
 
     // Symlink that escapes the bundle root — exercises the realpath containment
@@ -183,6 +190,54 @@ describe('appProtocol', () => {
     test('returns 403 when a symlink under the root resolves outside it', async () => {
       const res = await call('app://bundle/leak.txt');
       expect(res.status).toBe(403);
+    });
+  });
+
+  describe('registerAppProtocolHandler — first-paint serve latency', () => {
+    let handler;
+
+    beforeEach(() => {
+      mockLogger.info.mockClear();
+      const { session, getHandler } = makeSession();
+      registerAppProtocolHandler(session);
+      handler = getHandler();
+    });
+
+    const servedLines = () =>
+      mockLogger.info.mock.calls.filter(([message]) => message === '[AppProtocol] served');
+
+    test('logs one info line with a numeric ms for index.html', async () => {
+      const res = await handler({ url: 'app://bundle/index.html' });
+      expect(res.status).toBe(200);
+
+      const lines = servedLines();
+      expect(lines).toHaveLength(1);
+      expect(lines[0][1]).toEqual({ asset: 'index.html', ms: expect.any(Number) });
+      expect(lines[0][1].ms).toBeGreaterThanOrEqual(0);
+      expect(Number.isFinite(lines[0][1].ms)).toBe(true);
+    });
+
+    test('logs one info line with a numeric ms for styles.css', async () => {
+      const res = await handler({ url: 'app://bundle/styles.css' });
+      expect(res.status).toBe(200);
+
+      const lines = servedLines();
+      expect(lines).toHaveLength(1);
+      expect(lines[0][1]).toEqual({ asset: 'styles.css', ms: expect.any(Number) });
+    });
+
+    test('reports the served shell for SPA deep links that fall back to index.html', async () => {
+      await handler({ url: 'app://bundle/discover/deep/route' });
+      const lines = servedLines();
+      expect(lines).toHaveLength(1);
+      expect(lines[0][1].asset).toBe('index.html');
+    });
+
+    test('stays silent for every other asset and for error responses', async () => {
+      await handler({ url: 'app://bundle/assets/app.js' });
+      await handler({ url: 'app://bundle/assets/missing.js' });
+      await handler({ url: 'app://bundle/leak.txt' });
+      expect(servedLines()).toHaveLength(0);
     });
   });
 });

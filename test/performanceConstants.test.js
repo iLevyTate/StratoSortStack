@@ -40,6 +40,13 @@ describe('performanceConstants', () => {
       expect(constants.TIMEOUTS.DATABASE_INIT).toBe(15000);
       expect(constants.TIMEOUTS.MODEL_LOAD).toBe(60000);
       expect(constants.TIMEOUTS.WINDOW_CREATION_READY).toBe(60000);
+      // Hidden-window bound: createWindow.js force-shows after this.
+      expect(constants.TIMEOUTS.WINDOW_SHOW_FALLBACK).toBe(4000);
+      // Heavyweight startup waits at most this long for the first paint.
+      expect(constants.TIMEOUTS.FIRST_PAINT_GATE).toBe(3000);
+      expect(constants.TIMEOUTS.FIRST_PAINT_GATE).toBeLessThan(
+        constants.TIMEOUTS.WINDOW_SHOW_FALLBACK
+      );
     });
   });
 

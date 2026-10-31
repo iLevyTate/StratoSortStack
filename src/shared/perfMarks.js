@@ -116,8 +116,8 @@ function clearMeasures(name) {
 }
 
 /**
- * Measure between two marks AND emit a structured JSONL log line at debug
- * level via the caller's logger. This is the opt-in bridge that makes
+ * Measure between two marks AND emit a structured JSONL log line (debug level
+ * by default) via the caller's logger. This is the opt-in bridge that makes
  * User-Timing data visible in support bundles (which collect the rolling
  * JSONL log but not the Chromium tracing capture).
  *
@@ -126,21 +126,25 @@ function clearMeasures(name) {
  * steady state and (b) duplicate what the Tracing category already captures
  * for an in-process session. Callers that care about long-term forensic
  * visibility (startup phases, migration, first-search latency) opt in at
- * the measurement site.
+ * the measurement site, and pass `{ level: 'info' }` when the line must land
+ * in the file at the default production log level (startup measures).
  *
  * @param {string} name
  * @param {string} startMark
  * @param {string} endMark
  * @param {{ debug?: Function, info?: Function }} [logger] any logger with
- *   a `.debug` method. Silently no-ops when the logger doesn't support it.
+ *   a method named after `level`. Silently no-ops when the logger doesn't
+ *   support it.
+ * @param {{ level?: 'debug' | 'info' }} [options]
  * @returns {number|null} The measured duration in milliseconds, or null.
  */
-function measureAndLog(name, startMark, endMark, logger) {
+function measureAndLog(name, startMark, endMark, logger, { level = 'debug' } = {}) {
   const duration = measure(name, startMark, endMark);
   if (duration == null) return duration;
-  if (logger && typeof logger.debug === 'function') {
+  const emit = logger && typeof logger[level] === 'function' ? logger[level] : null;
+  if (emit) {
     try {
-      logger.debug('[perf]', { name, durationMs: Math.round(duration * 100) / 100 });
+      emit.call(logger, '[perf]', { name, durationMs: Math.round(duration * 100) / 100 });
     } catch {
       // Logger failures must never propagate into instrumentation callsites.
     }

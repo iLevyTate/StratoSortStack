@@ -132,6 +132,17 @@ The DI container that owns the lifecycle of every backend service:
 
 Orchestrates the boot sequence with progress reporting to the splash screen:
 
+- **Window first**: `simple-main.js` creates the `BrowserWindow` before any heavyweight service
+  startup. `createWindow.js` shows it on `ready-to-show` (focus follows 150 ms later) or, if that
+  event has not arrived, after `TIMEOUTS.WINDOW_SHOW_FALLBACK` (4 s), so a GPU-process hang or a
+  stalled bundle load can never leave the app invisible behind a busy cursor; a failed `app://` load
+  shows the missing-bundle page instead. The `WINDOW_CREATION_READY` mutex timeout (60 s)
+  force-shows a still-hidden window as a last resort.
+- **First-paint gate** (`core/firstPaintGate.js`): coordinated startup and `runBackgroundSetup()`
+  wait until the window has been shown or its document has finished loading, capped at
+  `TIMEOUTS.FIRST_PAINT_GATE` (3 s), so the synchronous stretches of AI bring-up (node-llama-cpp
+  import, GPU probing) are deferred past document load and, in the normal case, past the first
+  visible frame instead of competing with it on the main-process thread.
 - **Phases** (progress reported to splash): Starting (0%) -> Preflight checks (10%) -> Migration
   (12%) -> Services -> Models -> App Services -> Ready (100%). See `reportProgress(...)` calls in
   `StartupManagerCore.js` for the authoritative sequence.
