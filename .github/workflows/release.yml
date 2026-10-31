@@ -175,6 +175,29 @@ jobs:
         if: steps.windows-release-mode.outputs.signed == 'true'
         run: node scripts/configure-win-signing.js electron-builder.json
 
+      - name: Keep the Windows zip off maximum compression
+        # At the top-level `compression: maximum`, electron-builder builds the zip
+        # with 15-pass Deflate, which outlasts this job's timeout on the x64 CUDA
+        # libraries. electron-builder.json now sets win.compression to normal;
+        # this applies the same setting to tags cut before it did (v5.1.0) and is
+        # a no-op afterwards. The NSIS app archive uses the same 7z settings
+        # either way, and only the x64 leg builds the zip.
+        if: matrix.arch == 'x64'
+        shell: bash
+        run: |
+          node -e '
+            const fs = require("fs");
+            const file = "electron-builder.json";
+            const config = JSON.parse(fs.readFileSync(file, "utf8"));
+            if (config.win.compression === undefined) {
+              config.win.compression = "normal";
+              fs.writeFileSync(file, JSON.stringify(config, null, 2) + "\n");
+              console.log("Set win.compression to normal for this build.");
+            } else {
+              console.log("win.compression is already " + config.win.compression + ".");
+            }
+          '
+
       - name: Clean release output directory
         shell: pwsh
         run: |

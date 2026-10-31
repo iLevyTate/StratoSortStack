@@ -88,6 +88,7 @@
   "win": {
     "icon": "assets/icons/win/icon.ico",
     "target": ["nsis", "zip"],
+    "compression": "normal",
     "files": [
       "!**/node_modules/better-sqlite3/prebuilds/!(win32-${arch}).node",
       "!**/node_modules/@node-llama-cpp/win-!(${arch}|${arch}-*)/**"
