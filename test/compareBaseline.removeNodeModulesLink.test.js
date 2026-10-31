@@ -4,7 +4,14 @@
  * compare-baseline links the main repo's node_modules into each stability
  * worktree and must detach that link before removing the worktree, without
  * ever deleting the main repo's real dependencies through it.
+ *
+ * Runs on the real filesystem: the global memfs mock has no Windows junctions,
+ * so it would reject the rmdir that a real junction accepts.
  */
+
+jest.unmock('fs');
+jest.unmock('fs/promises');
+jest.unmock('os');
 
 const fs = require('fs');
 const os = require('os');
