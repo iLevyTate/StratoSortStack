@@ -13,13 +13,19 @@ const {
   closeApp,
   waitForAppReady,
   safeWaitForTimeout,
-  dismissGraphTour
+  dismissGraphTour,
+  dismissModelSetupWizard
 } = require('./helpers/electronApp');
 const { ensureAdvancedExperienceMode } = require('./helpers/e2eSettings');
 const { pressOpenSearchShortcut } = require('./helpers/e2eShortcuts');
 
 const SEARCH_INPUT_SELECTOR =
   'input[type="search"], input[placeholder*="Search"], input[placeholder*="Describe"], [role="combobox"][aria-label*="Search"]';
+
+// Every beforeEach calls dismissModelSetupWizard after waitForAppReady: the
+// first-run model setup wizard opens ~2 s after ready in a model-less E2E
+// profile, after waitForAppReady's single dismissModals() pass, and its
+// aria-modal overlay then swallows clicks (it intercepted the Relate tab in CI).
 
 async function openSearchModalAndWait(window) {
   await pressOpenSearchShortcut(window);
@@ -37,6 +43,7 @@ test.describe('Search Modal - Opening and Closing', () => {
     app = result.app;
     window = result.window;
     await waitForAppReady(window);
+    await dismissModelSetupWizard(window);
   });
 
   test.afterEach(async () => {
@@ -114,6 +121,7 @@ test.describe('Search Modal - Search Functionality', () => {
     app = result.app;
     window = result.window;
     await waitForAppReady(window);
+    await dismissModelSetupWizard(window);
   });
 
   test.afterEach(async () => {
@@ -182,6 +190,7 @@ test.describe('Search Modal - Search Modes', () => {
     app = result.app;
     window = result.window;
     await waitForAppReady(window);
+    await dismissModelSetupWizard(window);
   });
 
   test.afterEach(async () => {
@@ -235,6 +244,7 @@ test.describe('Search Modal - Results Display', () => {
     app = result.app;
     window = result.window;
     await waitForAppReady(window);
+    await dismissModelSetupWizard(window);
   });
 
   test.afterEach(async () => {
@@ -310,6 +320,7 @@ test.describe('Search Modal - Visualization Options', () => {
     app = result.app;
     window = result.window;
     await waitForAppReady(window);
+    await dismissModelSetupWizard(window);
   });
 
   test.afterEach(async () => {
@@ -374,6 +385,7 @@ test.describe('Search Modal - Embeddings Integration', () => {
     app = result.app;
     window = result.window;
     await waitForAppReady(window);
+    await dismissModelSetupWizard(window);
   });
 
   test.afterEach(async () => {
@@ -429,6 +441,7 @@ test.describe('Search Modal - Keyboard Navigation', () => {
     app = result.app;
     window = result.window;
     await waitForAppReady(window);
+    await dismissModelSetupWizard(window);
   });
 
   test.afterEach(async () => {
@@ -506,6 +519,7 @@ test.describe('Search Modal - Graph Visualization', () => {
     app = result.app;
     window = result.window;
     await waitForAppReady(window);
+    await dismissModelSetupWizard(window);
     await ensureAdvancedExperienceMode(window);
   });
 
@@ -734,6 +748,7 @@ test.describe('Search Modal - Search Execution', () => {
     app = result.app;
     window = result.window;
     await waitForAppReady(window);
+    await dismissModelSetupWizard(window);
     await ensureAdvancedExperienceMode(window);
   });
 
@@ -865,6 +880,7 @@ test.describe('Search Modal - Bulk Selection', () => {
     app = result.app;
     window = result.window;
     await waitForAppReady(window);
+    await dismissModelSetupWizard(window);
   });
 
   test.afterEach(async () => {
@@ -990,6 +1006,7 @@ test.describe('Search Modal - Match Details Display', () => {
     app = result.app;
     window = result.window;
     await waitForAppReady(window);
+    await dismissModelSetupWizard(window);
   });
 
   test.afterEach(async () => {
@@ -1084,6 +1101,7 @@ test.describe('Search Modal - Cluster Context Menu', () => {
     app = result.app;
     window = result.window;
     await waitForAppReady(window);
+    await dismissModelSetupWizard(window);
   });
 
   test.afterEach(async () => {
@@ -1154,6 +1172,7 @@ test.describe('Search Modal - Find Duplicates', () => {
     app = result.app;
     window = result.window;
     await waitForAppReady(window);
+    await dismissModelSetupWizard(window);
   });
 
   test.afterEach(async () => {
@@ -1203,6 +1222,7 @@ test.describe('Search Modal - Quick Actions on Hover', () => {
     app = result.app;
     window = result.window;
     await waitForAppReady(window);
+    await dismissModelSetupWizard(window);
   });
 
   test.afterEach(async () => {
@@ -1260,6 +1280,7 @@ test.describe('Search Modal - File Operation Events', () => {
     app = result.app;
     window = result.window;
     await waitForAppReady(window);
+    await dismissModelSetupWizard(window);
   });
 
   test.afterEach(async () => {
