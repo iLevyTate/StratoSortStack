@@ -8,10 +8,12 @@ const {
   NODE_LLAMA_CPP_RUNTIME_FILES,
   REQUIRED_ELECTRON_RUNTIME_FILES,
   REQUIRED_NATIVE_MODULE_PATHS,
+  getBetterSqlitePrebuilds,
   getForeignArchLlamaPrebuiltPackages,
   getRequiredLlamaPrebuiltPackages,
   getRequiredWhisperVariantPackages,
   getWindowsZipArtifactName,
+  verifyBetterSqlitePrebuilds,
   verifyMacArtifacts,
   verifyWindowsArtifacts
 } = require('../scripts/verify-packaged-artifacts');
@@ -42,6 +44,12 @@ function seedNativeModules(unpackedModules) {
 function seedLlamaPrebuilts(unpackedModules, platform, arch) {
   getRequiredLlamaPrebuiltPackages(platform, arch).forEach((packageName) => {
     fs.mkdirSync(path.join(unpackedModules, ...packageName.split('/')), { recursive: true });
+  });
+}
+
+function seedSqlitePrebuilds(unpackedModules, platform, arch) {
+  getBetterSqlitePrebuilds(platform, arch).required.forEach((fileName) => {
+    writeFile(path.join(unpackedModules, 'better-sqlite3', 'prebuilds', fileName));
   });
 }
 
@@ -76,6 +84,7 @@ function createWindowsBuildRoot({ arch = 'x64', skipWhisperVariants = false } = 
 
   seedNativeModules(unpackedModules);
   seedLlamaPrebuilts(unpackedModules, 'win32', arch);
+  seedSqlitePrebuilds(unpackedModules, 'win32', arch);
   if (!skipWhisperVariants) {
     seedWhisperVariants(unpackedModules, 'win32', arch);
   }
@@ -113,6 +122,7 @@ function createMacBuildRoot({
   writeExecutable(path.join(resources, 'assets', 'runtime', 'ffmpeg', 'ffmpeg'));
 
   seedNativeModules(unpackedModules);
+  seedSqlitePrebuilds(unpackedModules, 'darwin', arch);
   if (!skipWhisperVariants) {
     seedWhisperVariants(unpackedModules, 'darwin', arch);
   }
@@ -315,6 +325,69 @@ describe('verify-packaged-artifacts', () => {
     });
 
     expect(() => verifyWindowsArtifacts(buildRoot, 'x64', VERSION)).not.toThrow();
+  });
+
+  test('rejects Windows x64 builds missing their better-sqlite3 prebuild', () => {
+    const buildRoot = createWindowsBuildRoot();
+    tempDirs.push(buildRoot);
+    fs.rmSync(
+      path.join(windowsUnpackedModules(buildRoot), 'better-sqlite3', 'prebuilds', 'win32-x64.node')
+    );
+
+    expect(() => verifyWindowsArtifacts(buildRoot, 'x64', VERSION)).toThrow(
+      /better-sqlite3 prebuild win32-x64\.node .* missing/
+    );
+  });
+
+  test('rejects macOS arm64 builds that also packaged the x64 better-sqlite3 prebuild', () => {
+    const buildRoot = createMacBuildRoot({ arch: 'arm64' });
+    tempDirs.push(buildRoot);
+    writeFile(
+      path.join(
+        buildRoot,
+        'mac-arm64',
+        'StratoSort Stack.app',
+        'Contents',
+        'Resources',
+        'app.asar.unpacked',
+        'node_modules',
+        'better-sqlite3',
+        'prebuilds',
+        'darwin-x64.node'
+      )
+    );
+
+    expect(() => verifyMacArtifacts(buildRoot, 'arm64')).toThrow(
+      /better-sqlite3 prebuilds for another platform or arch were packaged: darwin-x64\.node/
+    );
+  });
+
+  test('Linux builds may carry the musl prebuild for the same arch only', () => {
+    const modules = fs.mkdtempSync(path.join(os.tmpdir(), 'stratosort-sqlite-prebuilds-'));
+    tempDirs.push(modules);
+    const prebuilds = path.join(modules, 'better-sqlite3', 'prebuilds');
+    writeFile(path.join(prebuilds, 'linux-x64.node'));
+    writeFile(path.join(prebuilds, 'linuxmusl-x64.node'));
+
+    expect(() => verifyBetterSqlitePrebuilds(modules, 'linux', 'x64')).not.toThrow();
+
+    writeFile(path.join(prebuilds, 'linux-arm64.node'));
+    expect(() => verifyBetterSqlitePrebuilds(modules, 'linux', 'x64')).toThrow(
+      /another platform or arch were packaged: linux-arm64\.node/
+    );
+  });
+
+  describe('getBetterSqlitePrebuilds policy', () => {
+    test.each([
+      ['win', 'x64', ['win32-x64.node'], ['win32-x64.node']],
+      ['win32', 'arm64', ['win32-arm64.node'], ['win32-arm64.node']],
+      ['mac', 'arm64', ['darwin-arm64.node'], ['darwin-arm64.node']],
+      ['linux', '', ['linux-x64.node'], ['linux-x64.node', 'linuxmusl-x64.node']],
+      ['linux', 'arm64', ['linux-arm64.node'], ['linux-arm64.node', 'linuxmusl-arm64.node']],
+      ['freebsd', 'x64', [], []]
+    ])('%s %s', (platform, arch, required, allowed) => {
+      expect(getBetterSqlitePrebuilds(platform, arch)).toEqual({ required, allowed });
+    });
   });
 
   test('rejects builds that packaged the node-llama-cpp git bundle', () => {

@@ -102,8 +102,7 @@ describe('electron-builder.json node_modules exclusions', () => {
     'node_modules/@node-llama-cpp/win-x64-cuda/bins/win-x64-cuda/ggml-cuda.dll',
     'node_modules/@fugood/whisper.node/lib/binding.js',
     'node_modules/better-sqlite3/lib/binding.js',
-    'node_modules/better-sqlite3/prebuilds/win32-x64.node',
-    'node_modules/better-sqlite3/prebuilds/win32-arm64.node'
+    'node_modules/better-sqlite3/prebuilds/win32-x64.node'
   ])('Windows build keeps runtime file %s', (moduleRelativePath) => {
     expect(isPackaged('win', moduleRelativePath)).toBe(true);
   });
@@ -124,8 +123,31 @@ describe('electron-builder.json node_modules exclusions', () => {
     expect(isPackaged('win', moduleRelativePath, arch)).toBe(expected);
   });
 
-  test('the Windows-only prebuild exclusion does not leak into macOS or Linux builds', () => {
-    expect(isPackaged('mac', 'node_modules/better-sqlite3/prebuilds/darwin-arm64.node')).toBe(true);
-    expect(isPackaged('linux', 'node_modules/better-sqlite3/prebuilds/linux-x64.node')).toBe(true);
+  // lib/binding.js loads prebuilds/<platform>-<arch>.node (linuxmusl-<arch> on
+  // musl Linux) and otherwise falls back to build/Release, which is not
+  // packaged, so each build must keep exactly its own prebuild.
+  const SQLITE_PREBUILDS = [
+    'darwin-arm64',
+    'darwin-x64',
+    'linux-arm64',
+    'linux-x64',
+    'linuxmusl-arm64',
+    'linuxmusl-x64',
+    'win32-arm64',
+    'win32-x64'
+  ];
+  test.each([
+    ['win', 'x64', ['win32-x64']],
+    ['win', 'arm64', ['win32-arm64']],
+    ['mac', 'x64', ['darwin-x64']],
+    ['mac', 'arm64', ['darwin-arm64']],
+    ['linux', 'x64', ['linux-x64', 'linuxmusl-x64']],
+    ['linux', 'arm64', ['linux-arm64', 'linuxmusl-arm64']]
+  ])('%s %s build keeps only its own better-sqlite3 prebuilds', (platformKey, arch, expected) => {
+    const kept = SQLITE_PREBUILDS.filter((name) =>
+      isPackaged(platformKey, `node_modules/better-sqlite3/prebuilds/${name}.node`, arch)
+    );
+    expect(kept).toEqual(expected);
+    expect(isPackaged(platformKey, 'node_modules/better-sqlite3/lib/binding.js', arch)).toBe(true);
   });
 });

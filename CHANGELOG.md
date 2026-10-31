@@ -34,6 +34,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   14 days make it run the full backend search again. The optional embedding worker
   (`STRATOSORT_ENABLE_EMBEDDING_WORKER`) uses the same record and supported-backend filter.
 - The Windows x64 build no longer ships node-llama-cpp's arm64 prebuilt (about 11 MB).
+- Each build ships only its own SQLite (`better-sqlite3`) native binary instead of the ones for
+  every platform: about 15 MB smaller on macOS, about 12 MB on Linux, and one 2 MB file less on
+  Windows.
 - On Windows and macOS the app no longer forces Chromium's `enable-gpu-rasterization` and
   `enable-zero-copy` switches, so Chromium's per-driver GPU blocklist applies. Linux keeps forcing
   them, as before.
