@@ -171,8 +171,9 @@ Orchestrates the boot sequence with progress reporting to the splash screen:
   on read. `simple-main.js` calls `clearGpuFallbackAfterStableRun()`
   `TIMEOUTS.GPU_FALLBACK_STABLE_RUN` (30 s) after creating the window, next to the
   `.crash-timestamps` reset; it deletes the flag only for a hardware-accelerated session with no GPU
-  process exit and a visible window, so a software-rendered session cannot clear it. Chromium's GPU
-  rasterization and zero-copy switches are left at their per-driver defaults.
+  process exit and a visible window, so a software-rendered session cannot clear it. On Windows and
+  macOS Chromium's GPU rasterization and zero-copy switches are left at their per-driver defaults;
+  Linux keeps forcing both, as earlier releases did (`getForcedRasterSwitches()`).
 - **First-paint gate** (`core/firstPaintGate.js`): coordinated startup and `runBackgroundSetup()`
   wait until the window has been shown or its document has finished loading, capped at
   `TIMEOUTS.FIRST_PAINT_GATE` (3 s), so the synchronous stretches of AI bring-up (node-llama-cpp
@@ -181,15 +182,15 @@ Orchestrates the boot sequence with progress reporting to the splash screen:
 - **Last-known-good AI backend**: `LlamaService` hands `initLlamaWithBackend()`
   (`utils/llamaBackendSelector.js`) a record from `utils/llamaBackendCache.js`, stored as
   `userData/gpu-backend-cache.json`. When the record's fingerprint (platform, arch, app version,
-  node-llama-cpp version, GPU type and name; `driverVersion` stays null until `GPUMonitor` reports
-  one) and the GPU backends `getLlamaGpuTypes('supported')` reports both match what was saved, and
-  it is under 14 days old, the remembered GPU backend moves to the front of the candidate list
-  before the node-llama-cpp support filter runs. The supported set is probed before the record is
-  read, so a Vulkan record saved while the CUDA runtime was missing is not used once CUDA becomes
-  available. It only reorders: on Windows node-llama-cpp still test-loads the binary, a failed
-  attempt of the remembered backend deletes the record, and a GPU backend that differs from the
-  record is saved (CPU never is). `STRATOSORT_LLM_GPU_BACKEND` and software or safe mode bypass the
-  record entirely.
+  node-llama-cpp version, GPU type, name and driver version, which `GPUMonitor` reads from
+  `nvidia-smi` or the Windows video controller) and the GPU backends `getLlamaGpuTypes('supported')`
+  reports both match what was saved, and it is under 14 days old, the remembered GPU backend moves
+  to the front of the candidate list before the node-llama-cpp support filter runs. The supported
+  set is probed before the record is read, so a Vulkan record saved while the CUDA runtime was
+  missing is not used once CUDA becomes available. It only reorders: on Windows node-llama-cpp still
+  test-loads the binary, a failed attempt of the remembered backend deletes the record, and a GPU
+  backend that differs from the record is saved (CPU never is). `STRATOSORT_LLM_GPU_BACKEND` and
+  software or safe mode bypass the record entirely.
 - **Phases** (progress reported to splash): Starting (0%) -> Preflight checks (10%) -> Migration
   (12%) -> Services -> Models -> App Services -> Ready (100%). See `reportProgress(...)` calls in
   `StartupManagerCore.js` for the authoritative sequence.
