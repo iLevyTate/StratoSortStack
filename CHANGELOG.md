@@ -12,8 +12,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [5.1.0] - 2026-10-31
+
+Faster, more predictable Windows startup, a zip instead of the self-extracting portable exe, and
+smaller downloads on every platform.
+
 ### Security
 
+- `minimatch` 10 → 11.0.3 for GHSA-g3hv-75wg-m249 (denial of service via globparts amplification).
 - Electron 41 → 45 (45.1.0). Electron 41 was outside upstream security support and affected by eight
   advisories, including GHSA-jr5w-w6x2-84p9 (HID/USB permission checks attributed to the wrong
   origin; SameSite cookies not applied to windows opened from links).
@@ -25,7 +31,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - macOS 13 (Ventura) is now the minimum supported macOS version (Electron 44 dropped macOS 12).
 - **Windows:** the self-extracting portable exe (`StratoSortStack-5.0.0-win-x64.exe`), which
   unpacked the whole app into `%TEMP%` on every start, is replaced by
-  `StratoSortStack-X.X.X-win-x64.zip`. Extract it once and run `StratoSort Stack.exe` from the
+  `StratoSortStack-5.1.0-win-x64.zip`. Extract it once and run `StratoSort Stack.exe` from the
   extracted folder; like the portable exe, it does not update itself. The Setup installer is still
   the recommended download.
 - The AI engine remembers the GPU backend that worked (`gpu-backend-cache.json` in the app's data
@@ -768,5 +774,6 @@ notes.
 Note: versions before 5.0.0 were released from predecessor repositories whose tags are not part of
 this repository's history, so they are listed without links.
 
-[Unreleased]: https://github.com/iLevyTate/StratoSortStack/compare/v5.0.0...HEAD
+[Unreleased]: https://github.com/iLevyTate/StratoSortStack/compare/v5.1.0...HEAD
+[5.1.0]: https://github.com/iLevyTate/StratoSortStack/compare/v5.0.0...v5.1.0
 [5.0.0]: https://github.com/iLevyTate/StratoSortStack/releases/tag/v5.0.0
