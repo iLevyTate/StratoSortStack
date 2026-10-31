@@ -449,14 +449,46 @@ describe('GPU Configuration', () => {
       mockApp.commandLine.appendSwitch.mockImplementation(() => {});
     });
 
-    test('never appends enable-gpu-rasterization or enable-zero-copy (Chromium decides per driver)', () => {
+    const realPlatform = process.platform;
+    afterEach(() => {
+      Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true });
+    });
+
+    test.each(['win32', 'darwin'])(
+      'never appends enable-gpu-rasterization or enable-zero-copy on %s (Chromium decides per driver)',
+      (platform) => {
+        Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+        gpuConfig = require('../src/main/core/gpuConfig');
+
+        gpuConfig.initializeGpuConfig();
+
+        expect(mockApp.commandLine.appendSwitch).not.toHaveBeenCalledWith(
+          'enable-gpu-rasterization'
+        );
+        expect(mockApp.commandLine.appendSwitch).not.toHaveBeenCalledWith('enable-zero-copy');
+        expect(gpuConfig.applyProductionOptimizations).toBeUndefined();
+      }
+    );
+
+    test('keeps enable-gpu-rasterization and enable-zero-copy on Linux, as earlier releases did', () => {
+      Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+      gpuConfig = require('../src/main/core/gpuConfig');
+
+      gpuConfig.initializeGpuConfig();
+
+      expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith('enable-gpu-rasterization');
+      expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith('enable-zero-copy');
+    });
+
+    test('appends no raster switch in software mode, Linux included', () => {
+      Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+      process.env.STRATOSORT_FORCE_SOFTWARE_GPU = '1';
       gpuConfig = require('../src/main/core/gpuConfig');
 
       gpuConfig.initializeGpuConfig();
 
       expect(mockApp.commandLine.appendSwitch).not.toHaveBeenCalledWith('enable-gpu-rasterization');
       expect(mockApp.commandLine.appendSwitch).not.toHaveBeenCalledWith('enable-zero-copy');
-      expect(gpuConfig.applyProductionOptimizations).toBeUndefined();
     });
   });
 

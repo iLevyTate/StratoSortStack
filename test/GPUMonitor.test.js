@@ -41,6 +41,58 @@ describe('GPUMonitor', () => {
     expect(result.vramMB).toBe(24576);
   });
 
+  test('nvidia-smi detection records the driver version and asks for it', async () => {
+    const monitor = new GPUMonitor();
+    monitor._platform = 'win32';
+    mockExecFileAsync.mockResolvedValueOnce({ stdout: 'RTX 4090, 24576, 581.57\n', stderr: '' });
+
+    const result = await monitor.detectGPU();
+
+    expect(result).toEqual(
+      expect.objectContaining({ type: 'cuda', name: 'RTX 4090', driverVersion: '581.57' })
+    );
+    // The mocked command name follows the real platform running the suite.
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      expect.stringMatching(/^nvidia-smi(\.exe)?$/),
+      expect.arrayContaining(['--query-gpu=name,memory.total,driver_version']),
+      expect.anything()
+    );
+  });
+
+  test('nvidia-smi detection leaves the driver version out when it is missing or [N/A]', async () => {
+    for (const stdout of ['RTX 4090, 24576', 'RTX 4090, 24576, [N/A]']) {
+      const monitor = new GPUMonitor();
+      monitor._platform = 'linux';
+      mockExecFileAsync.mockReset();
+      mockExecFileAsync.mockResolvedValueOnce({ stdout, stderr: '' });
+
+      const result = await monitor.detectGPU();
+
+      expect(result.type).toBe('cuda');
+      expect(result).not.toHaveProperty('driverVersion');
+    }
+  });
+
+  test('windows WMI detection records the adapter driver version', async () => {
+    const monitor = new GPUMonitor();
+    monitor._platform = 'win32';
+    mockExecFileAsync
+      .mockRejectedValueOnce(new Error('no nvidia')) // nvidia-smi
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          Name: 'AMD Radeon RX 7800 XT',
+          AdapterRAM: 2147483648,
+          DriverVersion: '32.0.12011.1036'
+        }),
+        stderr: ''
+      });
+
+    const result = await monitor.detectGPU();
+
+    expect(result.name).toBe('AMD Radeon RX 7800 XT');
+    expect(result.driverVersion).toBe('32.0.12011.1036');
+  });
+
   test('windows detection falls back to wmic', async () => {
     const monitor = new GPUMonitor();
     monitor._platform = 'win32';

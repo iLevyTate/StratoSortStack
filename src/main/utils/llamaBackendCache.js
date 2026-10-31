@@ -291,8 +291,43 @@ function createLlamaBackendCache({
   return { filePath, fingerprint, read, write, clear };
 }
 
+/**
+ * Read-only view of the record for a second node-llama-cpp stack (the
+ * embedding worker thread). It tries the remembered backend first, but saving
+ * and clearing stay with the main process's LlamaService, so the two stacks
+ * never race on the file. Resolves undefined when no userData directory is
+ * given; never throws.
+ *
+ * @param {{
+ *   userDataPath?: string|null,
+ *   appVersion?: string|null,
+ *   nodeLlama?: any,
+ *   gpuInfo?: any
+ * }} options
+ * @returns {Promise<{ read: LlamaBackendCache['read'] } | undefined>}
+ */
+async function createReadOnlyLlamaBackendCache({
+  userDataPath,
+  appVersion = null,
+  nodeLlama,
+  gpuInfo = null
+}) {
+  if (!asText(userDataPath)) return undefined;
+  let nodeLlamaVersion = null;
+  if (typeof nodeLlama?.getModuleVersion === 'function') {
+    try {
+      nodeLlamaVersion = await nodeLlama.getModuleVersion();
+    } catch {
+      // The fingerprint carries null; the record just misses.
+    }
+  }
+  const cache = createLlamaBackendCache({ userDataPath, appVersion, nodeLlamaVersion, gpuInfo });
+  return cache ? { read: cache.read } : undefined;
+}
+
 module.exports = {
   BACKEND_CACHE_FILENAME,
   BACKEND_CACHE_MAX_AGE_MS,
-  createLlamaBackendCache
+  createLlamaBackendCache,
+  createReadOnlyLlamaBackendCache
 };

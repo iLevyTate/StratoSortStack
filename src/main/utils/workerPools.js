@@ -41,6 +41,25 @@ let _warnedEmbeddingWorkerVramBudget = false;
 function isEmbeddingWorkerEnabled() {
   return String(process.env.STRATOSORT_ENABLE_EMBEDDING_WORKER || 'false').toLowerCase() === 'true';
 }
+
+/**
+ * What the embedding worker needs from electron's app, which a worker thread
+ * cannot reach: the userData folder (for the GPU backend record) and the app
+ * version (part of that record's key). Empty outside Electron.
+ *
+ * @returns {{ userDataPath?: string, appVersion?: string }}
+ */
+function getEmbeddingWorkerData() {
+  /** @type {{ userDataPath?: string, appVersion?: string }} */
+  const data = {};
+  try {
+    if (typeof app?.getPath === 'function') data.userDataPath = app.getPath('userData');
+    if (typeof app?.getVersion === 'function') data.appVersion = app.getVersion();
+  } catch {
+    // Not ready or not Electron: the worker runs its plain backend ladder.
+  }
+  return data;
+}
 const DEFAULT_CPU_POOL_MAX_THREADS = 4;
 const ABSOLUTE_CPU_POOL_MAX_THREADS = 8;
 
@@ -295,6 +314,9 @@ function getEmbeddingPool() {
   }
   embeddingPool = new Piscina({
     filename,
+    // The worker cannot reach electron's app; it reads the GPU backend record
+    // LlamaService keeps under userData (see utils/llamaBackendCache).
+    workerData: getEmbeddingWorkerData(),
     maxThreads: 1,
     minThreads: 1,
     // 10-minute idle timeout: keeps the GPU-resident embedding model warm
@@ -557,5 +579,6 @@ module.exports = {
   destroyImagePreprocessPool,
   getWorkerPoolHealth,
   shouldUsePiscina,
-  resolveWorkerPath // Export for testing
+  resolveWorkerPath, // Export for testing
+  getEmbeddingWorkerData // Export for testing
 };

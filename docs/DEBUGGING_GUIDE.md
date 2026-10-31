@@ -261,16 +261,16 @@ result and the GPU fallback decision at module load) are not in the file.
      `[LlamaService] Llama backend init failed` lines once the record exists. On Windows
      node-llama-cpp still test-loads the chosen binary in a child process, so the record saves the
      cost of candidates that fail, not of the one that works. The record is not used on the very
-     first launch (there is none yet), after an app update, when the detected GPU name or type
-     changes, when the GPU backends node-llama-cpp finds runtimes for change (for example after a
-     CUDA toolkit is installed), or once it is 14 days old; the full ladder then runs and a GPU
-     result is saved again. While `STRATOSORT_LLM_GPU_BACKEND`, `STRATOSORT_FORCE_SOFTWARE_GPU`,
-     `ELECTRON_FORCE_SOFTWARE` or `--safe-mode` chooses the backend, the record is neither read nor
-     changed. A CPU result is never saved. Deleting the file while the app is closed makes the next
-     launch run the full ladder. Why a record was not used is logged as
-     `[LlamaBackendCache] Ignoring cached backend record` with `reason` (`missing`, `unreadable`,
-     `corrupt`, `invalid`, `fingerprint-mismatch`, `supported-backends-changed` or `expired`) at
-     debug level, which packaged builds do not write by default.
+     first launch (there is none yet), after an app update, when the detected GPU name, type or
+     driver version changes, when the GPU backends node-llama-cpp finds runtimes for change (for
+     example after a CUDA toolkit is installed), or once it is 14 days old; the full ladder then
+     runs and a GPU result is saved again. While `STRATOSORT_LLM_GPU_BACKEND`,
+     `STRATOSORT_FORCE_SOFTWARE_GPU`, `ELECTRON_FORCE_SOFTWARE` or `--safe-mode` chooses the
+     backend, the record is neither read nor changed. A CPU result is never saved. Deleting the file
+     while the app is closed makes the next launch run the full ladder. Why a record was not used is
+     logged as `[LlamaBackendCache] Ignoring cached backend record` with `reason` (`missing`,
+     `unreadable`, `corrupt`, `invalid`, `fingerprint-mismatch`, `supported-backends-changed` or
+     `expired`) at debug level, which packaged builds do not write by default.
 4. **Several `StratoSort Stack.exe` processes are normal.** In Task Manager, Details tab, add the
    Command line column (right-click a column header, Select columns). During a launch expect: one
    `StratoSort Stack.exe` without `--type`, one with `--type=gpu-process`, one `--type=renderer`,

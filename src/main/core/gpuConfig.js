@@ -117,6 +117,16 @@ function shouldForceInferenceCpuMode() {
 }
 
 /**
+ * Raster switches forced on this platform: none on Windows and macOS, the
+ * historical pair on Linux (see initializeGpuConfig).
+ *
+ * @returns {string[]}
+ */
+function getForcedRasterSwitches() {
+  return process.platform === 'linux' ? ['enable-gpu-rasterization', 'enable-zero-copy'] : [];
+}
+
+/**
  * Initialize GPU configuration
  * Must be called before app.ready
  * @param {{ getMainWindow?: () => any, isFirstShowPending?: () => boolean }} [options]
@@ -163,13 +173,20 @@ function initializeGpuConfig({ getMainWindow, isFirstShowPending } = {}) {
         logger.warn('[GPU] GPU blocklist ignored via STRATOSORT_IGNORE_GPU_BLOCKLIST');
       }
 
-      // No enable-gpu-rasterization / enable-zero-copy: both override
-      // Chromium's per-driver decisions. The first bypasses the GPU
-      // rasterization blocklist (GPU raster is already on by default where
-      // the driver is not blocklisted); the second forces native-buffer tile
-      // uploads that Chromium leaves off outside macOS. Either only changes
-      // behaviour on the drivers Chromium already distrusts.
-      logger.info(`[GPU] Flags set: ANGLE=${angleBackend}`);
+      // Windows and macOS: no enable-gpu-rasterization / enable-zero-copy.
+      // Both override Chromium's per-driver decisions; the first bypasses the
+      // GPU rasterization blocklist (GPU raster is already on by default
+      // there where the driver is not blocklisted), the second forces
+      // native-buffer tile uploads. Either only changes behaviour on drivers
+      // Chromium already distrusts.
+      // Linux keeps both, as every earlier release set them on all platforms:
+      // Chromium's Linux raster default varies with version and driver, and
+      // the AppImage has not been measured without them.
+      const rasterSwitches = getForcedRasterSwitches();
+      for (const rasterSwitch of rasterSwitches) {
+        app.commandLine.appendSwitch(rasterSwitch);
+      }
+      logger.info(`[GPU] Flags set: ANGLE=${angleBackend}`, { rasterSwitches });
     }
   } catch (e) {
     logger.warn('[GPU] Failed to apply GPU flags:', e?.message || 'Unknown error');

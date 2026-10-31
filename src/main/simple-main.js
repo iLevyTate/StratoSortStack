@@ -1089,8 +1089,8 @@ if (gotTheLock || process.env.STRATOSORT_FORCE_LAUNCH === '1') {
   // the rest of the shutdown. It lives until the process exits.
   app.on('second-instance', secondInstanceHandler);
 
-  // enable-gpu-rasterization and enable-zero-copy are no longer appended:
-  // both override Chromium's per-driver GPU decisions (see initializeGpuConfig).
+  // enable-gpu-rasterization and enable-zero-copy are appended on Linux only
+  // (see initializeGpuConfig); elsewhere Chromium decides per driver.
   logger.info(
     `[${isDev ? 'DEVELOPMENT' : 'PRODUCTION'}] GPU acceleration ${forceSoftwareRenderer ? 'disabled (software renderer)' : 'enabled'}`
   );

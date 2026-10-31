@@ -41,26 +41,34 @@ describe('healthCheckUtils', () => {
       checker.stop();
     });
 
+    // Exact failure counts depend on how many interval ticks have run, so
+    // these tests drive the clock with fake timers: on a loaded CI runner a
+    // real 20 ms sleep can outlast a 30 ms interval.
     test('calls onUnhealthy when check fails', async () => {
-      const checkFn = jest.fn().mockRejectedValue(new Error('Service down'));
-      const onUnhealthy = jest.fn();
+      jest.useFakeTimers();
+      try {
+        const checkFn = jest.fn().mockRejectedValue(new Error('Service down'));
+        const onUnhealthy = jest.fn();
 
-      const checker = createHealthCheckInterval({
-        checkFn,
-        intervalMs: 100,
-        timeoutMs: 50,
-        name: 'Test',
-        onUnhealthy
-      });
+        const checker = createHealthCheckInterval({
+          checkFn,
+          intervalMs: 100,
+          timeoutMs: 50,
+          name: 'Test',
+          onUnhealthy
+        });
 
-      // Wait for initial check
-      await new Promise((r) => setTimeout(r, 30));
+        // Settle the initial check without reaching the first interval tick.
+        await jest.advanceTimersByTimeAsync(0);
 
-      expect(onUnhealthy).toHaveBeenCalled();
-      expect(checker.state.isHealthy).toBe(false);
-      expect(checker.state.consecutiveFailures).toBe(1);
+        expect(onUnhealthy).toHaveBeenCalledTimes(1);
+        expect(checker.state.isHealthy).toBe(false);
+        expect(checker.state.consecutiveFailures).toBe(1);
 
-      checker.stop();
+        checker.stop();
+      } finally {
+        jest.useRealTimers();
+      }
     });
 
     test('tracks consecutive failures', async () => {
@@ -92,25 +100,31 @@ describe('healthCheckUtils', () => {
         return Promise.resolve(true);
       });
 
-      const checker = createHealthCheckInterval({
-        checkFn,
-        intervalMs: 30,
-        timeoutMs: 100,
-        name: 'Test'
-      });
+      jest.useFakeTimers();
+      try {
+        const checker = createHealthCheckInterval({
+          checkFn,
+          intervalMs: 30,
+          timeoutMs: 100,
+          name: 'Test'
+        });
 
-      // Wait for initial failure
-      await new Promise((r) => setTimeout(r, 20));
-      expect(checker.state.consecutiveFailures).toBe(1);
+        // Initial check only: the first interval tick is 30 ms away.
+        await jest.advanceTimersByTimeAsync(0);
+        expect(checker.state.consecutiveFailures).toBe(1);
 
-      // Make next check succeed
-      shouldFail = false;
-      await new Promise((r) => setTimeout(r, 50));
+        // Make the next check (the first interval tick) succeed
+        shouldFail = false;
+        await jest.advanceTimersByTimeAsync(30);
 
-      expect(checker.state.consecutiveFailures).toBe(0);
-      expect(checker.state.isHealthy).toBe(true);
+        expect(checkFn).toHaveBeenCalledTimes(2);
+        expect(checker.state.consecutiveFailures).toBe(0);
+        expect(checker.state.isHealthy).toBe(true);
 
-      checker.stop();
+        checker.stop();
+      } finally {
+        jest.useRealTimers();
+      }
     });
 
     test('stop() clears interval', async () => {

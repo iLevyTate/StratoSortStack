@@ -29,9 +29,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   extracted folder; like the portable exe, it does not update itself. The Setup installer is still
   the recommended download.
 - The AI engine remembers the GPU backend that worked (`gpu-backend-cache.json` in the app's data
-  folder) and tries it first on the next launch. An app update, a different GPU, a change in the GPU
-  runtimes node-llama-cpp finds (such as installing a CUDA toolkit), or 14 days make it run the full
-  backend search again.
+  folder) and tries it first on the next launch. An app update, a different GPU or graphics driver
+  version, a change in the GPU runtimes node-llama-cpp finds (such as installing a CUDA toolkit), or
+  14 days make it run the full backend search again. The optional embedding worker
+  (`STRATOSORT_ENABLE_EMBEDDING_WORKER`) uses the same record and supported-backend filter.
+- The Windows x64 build no longer ships node-llama-cpp's arm64 prebuilt (about 11 MB).
+- On Windows and macOS the app no longer forces Chromium's `enable-gpu-rasterization` and
+  `enable-zero-copy` switches, so Chromium's per-driver GPU blocklist applies. Linux keeps forcing
+  them, as before.
 - After three GPU process exits in one session, software rendering now stays on for up to 3 days
   (`.gpu-fallback` in the app's data folder) instead of switching back on the next launch, which
   made launches alternate between slow and fast on a failing driver. Delete the file while the app

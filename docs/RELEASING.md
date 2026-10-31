@@ -423,10 +423,12 @@ the on-disk sizes in `node_modules`; the download shrinks less, by an estimated 
 the installer compresses the source files well). Update the download size in
 [INSTALL_GUIDE.md](INSTALL_GUIDE.md) after the next packaged build. `verify-packaged-artifacts.js`
 checks that `llama/binariesGithubRelease.json` (read by node-llama-cpp on import) still ships and
-that `llama/gitRelease.bundle` does not. `@node-llama-cpp/win-arm64` (11 MB) also lands in the x64
-build, because its package declares `cpu: ["arm64", "x64"]` and npm installs it on x64 runners; it
-cannot be excluded from the shared `files` list without also removing it from the arm64 build, which
-inherits that list through `extends`.
+that `llama/gitRelease.bundle` does not. `@node-llama-cpp/win-arm64` (11 MB) declares
+`cpu: ["arm64", "x64"]`, so npm installs it on x64 runners too. `win.files` excludes the other
+arch's llama prebuilts with `!**/node_modules/@node-llama-cpp/win-!(${arch}|${arch}-*)/**`:
+electron-builder expands `${arch}` per packed arch, so the x64 build drops `win-arm64` and the arm64
+build (which inherits `win.files` through `extends`) drops any `win-x64*` package.
+`verify-packaged-artifacts.js` fails if a package for the other arch still holds files.
 
 ## Signing And Notarization Requirements
 

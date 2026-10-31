@@ -120,7 +120,10 @@ concurrency and VRAM is accounted for by the model memory manager.
 Setting `STRATOSORT_ENABLE_EMBEDDING_WORKER=true` starts a separate `embeddingWorker` thread that
 loads its own `node-llama-cpp` stack. That pool runs with `maxThreads: 1`, which caps parallel
 embedding throughput, and it can hold a second copy of the embedding model in VRAM that the
-main-process memory manager does not see. Enable it only for isolation experiments or debugging.
+main-process memory manager does not see. Enable it only for isolation experiments or debugging. The
+worker selects its GPU backend the same way as the main process (supported-backend filter and the
+remembered backend from `gpu-backend-cache.json`, read-only), so it does not re-test GPU binaries
+the main process has already ruled out.
 
 The two queue waits are off by default for the same throughput reason.
 `STRATOSORT_ANALYSIS_EMBEDDING_QUEUE_WAIT=true` restores the per-file `waitForAnalysisQueueCapacity`
@@ -160,8 +163,11 @@ These settings are configurable via **Settings > Performance > Processing limits
 | `STRATOSORT_DISABLE_BACKGROUND_THROTTLING` | `0`     | Set `1` to disable Chromium background-page throttling so analysis keeps running at full speed when the window is hidden. Increases idle CPU. |
 
 `STRATOSORT_FORCE_SOFTWARE_GPU`, `ELECTRON_FORCE_SOFTWARE` and `--safe-mode` also run the AI engine
-on the CPU. The app no longer appends Chromium's `enable-gpu-rasterization` or `enable-zero-copy`
-switches, so GPU rasterization follows Chromium's own per-driver decision.
+on the CPU. On Windows and macOS the app no longer appends Chromium's `enable-gpu-rasterization` or
+`enable-zero-copy` switches, so GPU rasterization follows Chromium's own per-driver decision. Linux
+still appends both, as every earlier release did on all platforms, because Chromium's Linux default
+varies with version and driver and the AppImage has not been measured without them. Software mode
+appends neither.
 
 **Automatic software fallback (`.gpu-fallback`).** After three GPU process exits in one session,
 each within an hour of the one before (the count restarts after an hour with no exit), the app
@@ -441,21 +447,25 @@ They are listed here for support engineers and contributors who need to debug ed
 **Last-known-good GPU backend (`gpu-backend-cache.json`).** After the text and embedding engine
 settles on a GPU backend (`cuda`, `vulkan` or `metal`), the app saves it to `gpu-backend-cache.json`
 in its data directory together with a fingerprint: platform, architecture, app version,
-node-llama-cpp version, and the detected GPU type and name. (It has a driver version field, but the
-GPU probe does not report a driver version yet, so a driver update alone does not reset the record.)
-The record also keeps the GPU backends node-llama-cpp reported as supported at the time, so
-installing a CUDA toolkit (or anything else that changes that set) makes the next launch run the
-full ladder again instead of keeping an earlier Vulkan result first. On later launches a record
-whose fingerprint and supported set match and that is less than 14 days old puts that backend first
-in the candidate list (`[LlamaService] Llama backend candidates ordered by cached selection`), so
-candidates that failed before are not tested again. It only changes the order: on Windows
-node-llama-cpp still test-loads the binary, and if the remembered backend fails, the record is
-deleted (`[LlamaService] Cleared cached Llama backend after it failed`) and the normal ladder
-continues. A CPU result is never saved, and an unchanged record is not rewritten; a new or changed
-GPU result logs `[LlamaService] Saved Llama backend selection for the next launch`.
+node-llama-cpp version, and the detected GPU type, name and driver version (from `nvidia-smi` on
+NVIDIA GPUs, from Windows' video controller entry otherwise; Linux without `nvidia-smi` and macOS
+report none). A driver update therefore makes the next launch run the full ladder. The record also
+keeps the GPU backends node-llama-cpp reported as supported at the time, so installing a CUDA
+toolkit (or anything else that changes that set) makes the next launch run the full ladder again
+instead of keeping an earlier Vulkan result first. On later launches a record whose fingerprint and
+supported set match and that is less than 14 days old puts that backend first in the candidate list
+(`[LlamaService] Llama backend candidates ordered by cached selection`), so candidates that failed
+before are not tested again. It only changes the order: on Windows node-llama-cpp still test-loads
+the binary, and if the remembered backend fails, the record is deleted
+(`[LlamaService] Cleared cached Llama backend after it failed`) and the normal ladder continues. A
+CPU result is never saved, and an unchanged record is not rewritten; a new or changed GPU result
+logs `[LlamaService] Saved Llama backend selection for the next launch`.
 `STRATOSORT_LLM_GPU_BACKEND`, `STRATOSORT_FORCE_SOFTWARE_GPU`, `ELECTRON_FORCE_SOFTWARE` and
 `--safe-mode` bypass the record: it is neither read nor changed while they are set. Deleting the
-file while the app is closed makes the next launch run the full ladder.
+file while the app is closed makes the next launch run the full ladder. With
+`STRATOSORT_ENABLE_EMBEDDING_WORKER=true` the worker thread reads the same record and applies the
+same supported-backend filter, but only the main process saves or deletes the record; a failed
+attempt there logs `[EmbeddingWorker] Cached Llama backend failed; record left to its owner`.
 
 ### Storage and persistence
 

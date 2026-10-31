@@ -106,6 +106,27 @@ function getRequiredLlamaPrebuiltPackages(platform, arch) {
 }
 
 /**
+ * node-llama-cpp prebuilt packages for the OTHER Windows arch, which `win.files`
+ * excludes through `win-!(${arch}|${arch}-*)`. @node-llama-cpp/win-arm64
+ * declares `cpu: ["arm64", "x64"]`, so npm installs it on x64 runners too.
+ */
+function getForeignArchLlamaPrebuiltPackages(platform, arch) {
+  const platformKey = String(platform || '').toLowerCase();
+  if (platformKey !== 'win' && platformKey !== 'win32') return [];
+  return String(arch || '').toLowerCase() === 'arm64'
+    ? getRequiredLlamaPrebuiltPackages(platform, 'x64')
+    : getRequiredLlamaPrebuiltPackages(platform, 'arm64');
+}
+
+/** True when `dir` holds at least one file at any depth. */
+function containsAnyFile(dir) {
+  if (!fs.existsSync(dir)) return false;
+  return fs
+    .readdirSync(dir, { withFileTypes: true })
+    .some((entry) => (entry.isDirectory() ? containsAnyFile(path.join(dir, entry.name)) : true));
+}
+
+/**
  * The Windows x64 no-install artifact (electron-builder `zip` target, named by
  * the top-level artifactName). arm64 ships the installer only.
  */
@@ -256,6 +277,15 @@ function verifyLlamaPrebuiltPackages(unpackedNodeModulesRoot, platform, arch) {
       `node-llama-cpp prebuilt package ${packageName}`
     );
   });
+  getForeignArchLlamaPrebuiltPackages(platform, arch).forEach((packageName) => {
+    const packageDir = path.join(unpackedNodeModulesRoot, ...packageName.split('/'));
+    if (containsAnyFile(packageDir)) {
+      throw new Error(
+        `node-llama-cpp prebuilt package ${packageName} for another arch was packaged: ` +
+          `${packageDir}. Check the @node-llama-cpp exclusion in electron-builder.json "win.files".`
+      );
+    }
+  });
 }
 
 function verifyWhisperVariantFolders(unpackedNodeModulesRoot, platform, arch) {
@@ -397,6 +427,7 @@ if (require.main === module) {
 
 module.exports = {
   getRequiredLlamaPrebuiltPackages,
+  getForeignArchLlamaPrebuiltPackages,
   getRequiredMacElectronRuntimeFiles,
   getRequiredWhisperVariantPackages,
   getWindowsZipArtifactName,
