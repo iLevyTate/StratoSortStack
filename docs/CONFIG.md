@@ -159,6 +159,23 @@ These settings are configurable via **Settings > Performance > Processing limits
 | `STRATOSORT_IGNORE_GPU_BLOCKLIST`          | `0`     | Ignore Electron GPU blocklist (advanced)                                                                                                      |
 | `STRATOSORT_DISABLE_BACKGROUND_THROTTLING` | `0`     | Set `1` to disable Chromium background-page throttling so analysis keeps running at full speed when the window is hidden. Increases idle CPU. |
 
+`STRATOSORT_FORCE_SOFTWARE_GPU`, `ELECTRON_FORCE_SOFTWARE` and `--safe-mode` also run the AI engine
+on the CPU. The app no longer appends Chromium's `enable-gpu-rasterization` or `enable-zero-copy`
+switches, so GPU rasterization follows Chromium's own per-driver decision.
+
+**Automatic software fallback (`.gpu-fallback`).** After three GPU process exits in one session,
+each within an hour of the one before (the count restarts after an hour with no exit), the app
+writes `.gpu-fallback` to its data directory (`%APPDATA%\StratoSort Stack` on Windows). While the
+file is less than 3 days old, counted from when it was last written, every launch renders in
+software; this does not move the AI engine to the CPU. The file is not deleted when it is read, and
+a software-rendered session never deletes it. Once it is older than 3 days, launches use hardware
+acceleration again, and the first one whose window is visible 30 seconds
+(`TIMEOUTS.GPU_FALLBACK_STABLE_RUN`) after it was created, with no GPU process exit in that time,
+deletes the file and logs `[GPU] Hardware acceleration ran stably; GPU fallback flag cleared`. Three
+more such exits write it again. To retry hardware acceleration sooner, quit the app and delete the
+file. The log lines for each case are listed in
+[DEBUGGING_GUIDE.md](DEBUGGING_GUIDE.md#first-window-takes-a-long-time-on-windows).
+
 ### Feature Flags
 
 | Variable                   | Default  | Description                                                                                                                                                                   |
@@ -180,9 +197,13 @@ when updating this document or `.env.example`; it does not prove a variable is u
 ### Application auto-updates (electron-updater)
 
 Packaged builds check the public GitHub Releases feed for updates **by default**; development and
-unpackaged runs never do. Users can turn background checks off in Settings → Application, and
-`STRATOSORT_ENABLE_AUTO_UPDATES=false` disables the updater entirely. See
-[UPDATE_HOST.md](UPDATE_HOST.md) for hosting a custom feed.
+unpackaged runs never do. Packaged copies that cannot replace themselves never check either: on
+Windows, a copy the NSIS installer did not install (the x64 `-win-x64.zip` extracted by hand; the
+app looks for `Uninstall StratoSort Stack.exe` next to its exe), a Microsoft Store install, and on
+Linux anything but the AppImage. Their log shows
+`[UPDATER] Auto-updates skipped for this build target` with a `reason`. Users can turn background
+checks off in Settings → Application, and `STRATOSORT_ENABLE_AUTO_UPDATES=false` disables the
+updater entirely. See [UPDATE_HOST.md](UPDATE_HOST.md) for hosting a custom feed.
 
 | Variable                               | Default       | Description                                                                                                                                                                                                                                                                                                                      |
 | :------------------------------------- | :------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -238,15 +259,19 @@ organized into categories:
 
 ### TIMEOUTS (milliseconds)
 
-| Constant             | Value     | Description                                  |
-| :------------------- | :-------- | :------------------------------------------- |
-| `DEBOUNCE_INPUT`     | 300       | Input debounce delay                         |
-| `AI_ANALYSIS_SHORT`  | 30,000    | Short AI analysis timeout                    |
-| `AI_ANALYSIS_MEDIUM` | 60,000    | Medium AI analysis timeout                   |
-| `AI_ANALYSIS_LONG`   | 300,000   | Long AI analysis timeout (5 min; CPU vision) |
-| `AI_ANALYSIS_BATCH`  | 1,800,000 | Batch analysis timeout (30 min)              |
-| `ANALYSIS_LOCK`      | 300,000   | Max lock duration before force release       |
-| `GLOBAL_ANALYSIS`    | 600,000   | Max total analysis time (10 min)             |
+| Constant                  | Value     | Description                                                                                                    |
+| :------------------------ | :-------- | :------------------------------------------------------------------------------------------------------------- |
+| `DEBOUNCE_INPUT`          | 300       | Input debounce delay                                                                                           |
+| `AI_ANALYSIS_SHORT`       | 30,000    | Short AI analysis timeout                                                                                      |
+| `AI_ANALYSIS_MEDIUM`      | 60,000    | Medium AI analysis timeout                                                                                     |
+| `AI_ANALYSIS_LONG`        | 300,000   | Long AI analysis timeout (5 min; CPU vision)                                                                   |
+| `AI_ANALYSIS_BATCH`       | 1,800,000 | Batch analysis timeout (30 min)                                                                                |
+| `ANALYSIS_LOCK`           | 300,000   | Max lock duration before force release                                                                         |
+| `GLOBAL_ANALYSIS`         | 600,000   | Max total analysis time (10 min)                                                                               |
+| `WINDOW_SHOW_FALLBACK`    | 4,000     | Show the main window if `ready-to-show` has not fired                                                          |
+| `FIRST_PAINT_GATE`        | 3,000     | Longest wait for the first paint before AI bring-up starts                                                     |
+| `DEFAULT_FOLDER_PROBE`    | 3,000     | Cap on each stat or mkdir of the `Uncategorized` folder before the window exists; startup continues without it |
+| `GPU_FALLBACK_STABLE_RUN` | 30,000    | Time after window creation at which a stable hardware-accelerated run clears `.gpu-fallback`                   |
 
 ### RETRY Configuration
 
@@ -323,6 +348,24 @@ current default, or to a default an earlier build shipped (`SUPERSEDED_DEFAULTS`
 in a later release reaches every install that never touched that setting. A hand-edited value that
 happens to equal the current default is treated as "not set" and will follow future defaults.
 
+### Startup state files
+
+The app also keeps these files in the same data directory. Both are safe to delete while the app is
+closed.
+
+- `.gpu-fallback`: present while software rendering is forced after repeated GPU process exits; see
+  [GPU Configuration](#gpu-configuration).
+- `gpu-backend-cache.json`: the last GPU backend the AI engine used successfully; see
+  [llama.cpp binary management](#llamacpp-binary-management-security-sensitive).
+
+The default `Uncategorized` smart folder is created in the user's Documents folder. Startup does not
+wait more than 3 seconds (`TIMEOUTS.DEFAULT_FOLDER_PROBE`) on any check or creation of it: a slow
+Documents folder is logged and skipped for that launch, and the folder is then created in the
+background or by the first organize into it. When Documents refuses the folder (for example under
+Controlled folder access), the folder keeps its Documents path and the app shows a warning; it is
+tried again on every launch. It is never moved under the data directory, because organize moves user
+files into it and the uninstaller's "remove settings and data" option deletes that directory.
+
 ### Configuration Schema
 
 Configuration validation is defined in `src/shared/config/configSchema.js`. The schema ensures type
@@ -358,6 +401,11 @@ If experiencing rendering problems:
 export STRATOSORT_FORCE_SOFTWARE_GPU=1
 ```
 
+If the app switched itself to software rendering after repeated GPU crashes, it stays there for up
+to 3 days; delete `.gpu-fallback` from the data directory while the app is closed to retry hardware
+acceleration sooner. For a slow first window on Windows, follow
+[First window takes a long time on Windows](DEBUGGING_GUIDE.md#first-window-takes-a-long-time-on-windows).
+
 ### Model Download Issues
 
 If AI analysis fails due to missing models:
@@ -388,6 +436,25 @@ They are listed here for support engineers and contributors who need to debug ed
 | `STRATOSORT_CUDA_VERSION`            | `12.4`          | CUDA release variant of the Windows GPU vision runtime to download (`12.4` or `13.1`)                                                                                 |
 | `STRATOSORT_LLM_GPU_BACKEND`         | (auto-detected) | `cuda`, `metal`, `vulkan`, or `cpu` — overrides backend autoselection; an explicit value also bypasses node-llama-cpp's supported-backend filter                      |
 | `STRATOSORT_LLAMA_SERVER_PATH`       | (bundled)       | Absolute path to the llama-server binary; bypasses the bundled download                                                                                               |
+
+**Last-known-good GPU backend (`gpu-backend-cache.json`).** After the text and embedding engine
+settles on a GPU backend (`cuda`, `vulkan` or `metal`), the app saves it to `gpu-backend-cache.json`
+in its data directory together with a fingerprint: platform, architecture, app version,
+node-llama-cpp version, and the detected GPU type and name. (It has a driver version field, but the
+GPU probe does not report a driver version yet, so a driver update alone does not reset the record.)
+The record also keeps the GPU backends node-llama-cpp reported as supported at the time, so
+installing a CUDA toolkit (or anything else that changes that set) makes the next launch run the
+full ladder again instead of keeping an earlier Vulkan result first. On later launches a record
+whose fingerprint and supported set match and that is less than 14 days old puts that backend first
+in the candidate list (`[LlamaService] Llama backend candidates ordered by cached selection`), so
+candidates that failed before are not tested again. It only changes the order: on Windows
+node-llama-cpp still test-loads the binary, and if the remembered backend fails, the record is
+deleted (`[LlamaService] Cleared cached Llama backend after it failed`) and the normal ladder
+continues. A CPU result is never saved, and an unchanged record is not rewritten; a new or changed
+GPU result logs `[LlamaService] Saved Llama backend selection for the next launch`.
+`STRATOSORT_LLM_GPU_BACKEND`, `STRATOSORT_FORCE_SOFTWARE_GPU`, `ELECTRON_FORCE_SOFTWARE` and
+`--safe-mode` bypass the record: it is neither read nor changed while they are set. Deleting the
+file while the app is closed makes the next launch run the full ladder.
 
 ### Storage and persistence
 

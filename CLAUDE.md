@@ -12,7 +12,8 @@ happens on-device with no required external services - no data leaves the machin
 - **Frontend:** React 19 + Redux Toolkit + Tailwind CSS 4 + Framer Motion
 - **AI Backend:** node-llama-cpp (in-process LLM) + Orama (in-process vectors) + Tesseract.js (OCR)
 - **Build:** Webpack 5 (3 configs: main, preload, renderer) + Babel 8
-- **Package:** electron-builder 26 (NSIS/Portable on Windows, DMG on macOS, AppImage on Linux)
+- **Package:** electron-builder 26 (NSIS installer + zip on Windows, DMG on macOS, AppImage on
+  Linux)
 - **Test:** Jest 30 + Playwright 1.61
 - **Lint:** ESLint 10 (FlatConfig) + Prettier 3
 
@@ -100,7 +101,7 @@ tree.
   `ci`) enforces a monotonic floor and blocks new .js under `COVERED_DIRS` (`src/shared`,
   `src/preload`, `src/main/{ipc,services,analysis,errors,utils,workers,transports,core}`,
   `src/renderer/{services,hooks,phases,store,utils,components}` today (every `.js` under `src/` is
-  now opted in — 464/464 as of 2026-10-03, and `GLOBAL_DIRECTIVE_FLOOR` matches at 464) — see
+  now opted in — 466/466 as of 2026-10-31, and `GLOBAL_DIRECTIVE_FLOOR` matches at 466) — see
   `scripts/verify-checkjs-ratchet.js` for the authoritative list) from landing without the
   directive. When adding a file to a covered dir: put `// @ts-check` on line 1 and fix the errors
   before commit. When opting in a new file elsewhere: bump `GLOBAL_DIRECTIVE_FLOOR` in
