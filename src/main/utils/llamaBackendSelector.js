@@ -1,4 +1,6 @@
 // @ts-check
+const { format: formatConsoleArgs } = require('util');
+
 const normalizeGpuType = (/** @type {any} */ gpuInfo) => {
   if (!gpuInfo || typeof gpuInfo.type !== 'string') return null;
   return gpuInfo.type.toLowerCase();
@@ -6,6 +8,22 @@ const normalizeGpuType = (/** @type {any} */ gpuInfo) => {
 
 const CPU_ONLY_OVERRIDE_VALUES = new Set(['cpu', 'false', '0', 'off']);
 const SUPPORTED_BACKENDS = new Set(['auto', 'cuda', 'vulkan', 'metal']);
+// Explicit GPU candidates whose prebuilt binary node-llama-cpp tests in a
+// child process before accepting it. Anything slower than this per attempt is
+// worth a warning in the log because it is where a startup stall hides.
+const SLOW_BACKEND_ATTEMPT_WARN_MS = 10000;
+const EXPLICIT_GPU_BACKENDS = new Set(['cuda', 'vulkan', 'metal']);
+// Backends node-llama-cpp's `getLlamaGpuTypes('supported')` can rule out by
+// checking for driver/runtime libraries. Metal is left alone: on macOS the
+// library always reports it and the platform default already prefers it.
+const SUPPORT_FILTERED_BACKENDS = new Set(['cuda', 'vulkan']);
+// Leading "[node-llama-cpp] " as the library prints it, optionally wrapped in
+// ANSI SGR colour codes (ESC [ ... m). Built from a template so the escape
+// byte never appears in source.
+const ANSI_SGR_RUN = `(?:${String.fromCharCode(27)}\\[[0-9;]*m)*`;
+const NODE_LLAMA_CONSOLE_PREFIX = new RegExp(
+  `^${ANSI_SGR_RUN}\\[node-llama-cpp\\]${ANSI_SGR_RUN}\\s*`
+);
 
 function getGpuBackendOverride() {
   const forced = String(process.env.STRATOSORT_LLM_GPU_BACKEND || '')
@@ -112,7 +130,10 @@ function resolveVisionRuntimeBackend({
  * or fallback-only detections, avoid speculative CUDA and stay on the safer
  * platform default before letting node-llama-cpp auto-negotiate CPU.
  */
-/** @param {any} [gpuInfo] */
+/**
+ * @param {any} [gpuInfo]
+ * @returns {Array<string|false>}
+ */
 function buildBackendCandidates(gpuInfo) {
   if (isExplicitSoftwareMode()) {
     return [false];
@@ -139,36 +160,236 @@ function buildBackendCandidates(gpuInfo) {
 }
 
 /**
- * @param {{ getLlama: Function, gpuInfo?: any, logger?: any, context?: any, llamaLogger?: any }} args
+ * Drop GPU candidates that node-llama-cpp itself reports as unsupported on
+ * this machine, so we never ask it to load (and child-process test) a prebuilt
+ * binary whose runtime libraries are missing; the CUDA prebuilt on a box
+ * without the CUDA runtime DLLs costs several seconds per attempt and always
+ * fails. `supported` is the result of `getLlamaGpuTypes('supported')`, e.g.
+ * `['vulkan', false]`.
+ *
+ * - `cuda` / `vulkan` are removed when `supported` does not list them.
+ * - `metal` is never touched.
+ * - A trailing `auto` is replaced by `false` (CPU) when the explicit GPU
+ *   candidates that remain already cover every GPU type in `supported`:
+ *   `auto` would only re-test those same binaries before landing on CPU.
+ * - When no explicit GPU candidate remains, the non-GPU remainder (normally
+ *   `['auto']`) is returned so node-llama-cpp still negotiates for itself.
+ *
+ * Pure; `buildBackendCandidates()` stays untouched so its chains stay pinned.
+ *
+ * @param {Array<string|false>} candidates
+ * @param {Array<string|false>|null|undefined} supported
+ * @returns {Array<string|false>}
  */
-async function initLlamaWithBackend({ getLlama, gpuInfo, logger, context, llamaLogger }) {
+function filterCandidatesBySupport(candidates, supported) {
+  if (!Array.isArray(candidates) || !Array.isArray(supported)) return candidates;
+
+  const supportedGpuTypes = new Set(
+    supported
+      .filter((entry) => typeof entry === 'string')
+      .map((entry) => /** @type {string} */ (entry).toLowerCase())
+  );
+
+  const filtered = candidates.filter((candidate) => {
+    if (typeof candidate === 'string' && SUPPORT_FILTERED_BACKENDS.has(candidate)) {
+      return supportedGpuTypes.has(candidate);
+    }
+    return true;
+  });
+
+  const remainingGpu = new Set(
+    filtered.filter(
+      (candidate) => typeof candidate === 'string' && EXPLICIT_GPU_BACKENDS.has(candidate)
+    )
+  );
+  if (remainingGpu.size === 0) {
+    return filtered.length > 0 ? filtered : ['auto'];
+  }
+
+  const autoAddsNothing = [...supportedGpuTypes].every((gpuType) => remainingGpu.has(gpuType));
+  if (!autoAddsNothing) return filtered;
+  return filtered.map((candidate) => (candidate === 'auto' ? false : candidate));
+}
+
+/**
+ * node-llama-cpp reports prebuilt-binary problems ("The prebuilt ... is not
+ * compatible with the current system", "Failed to load a prebuilt ...")
+ * through console.warn/console.error rather than the `logger` option it
+ * accepts, so they never reach the JSONL log. Route both console methods into
+ * the structured logger for the duration of one getLlama() attempt. Returns
+ * the restore function; the caller runs it in `finally`.
+ *
+ * @param {any} log
+ * @param {string} context
+ * @param {any} backend
+ * @returns {() => void}
+ */
+/* eslint-disable no-console -- this helper exists to wrap the console */
+function captureNodeLlamaConsole(log, context, backend) {
+  if (!log || log === console) return () => {};
+
+  const originalWarn = console.warn;
+  const originalError = console.error;
+  let forwarding = false;
+  const forward = (/** @type {Function} */ original, /** @type {string} */ consoleLevel) =>
+    function forwardedConsole(/** @type {any[]} */ ...args) {
+      // Re-entrancy guard: a logger that itself mirrors to the console must
+      // not loop back into this wrapper.
+      if (forwarding) {
+        original.apply(console, args);
+        return;
+      }
+      forwarding = true;
+      try {
+        // The library prefixes its own lines with "[node-llama-cpp] " (gray via
+        // chalk when colour is on). Only those lines are forwarded; Orama and
+        // the other services initialise concurrently and anything they print
+        // keeps its own channel and attribution.
+        const text = formatConsoleArgs(...args);
+        if (!NODE_LLAMA_CONSOLE_PREFIX.test(text)) {
+          original.apply(console, args);
+          return;
+        }
+        // Drop the library prefix so it is not doubled.
+        const message = text.replace(NODE_LLAMA_CONSOLE_PREFIX, '');
+        log.warn(`[${context}] [node-llama-cpp] ${message}`, {
+          consoleLevel,
+          backend
+        });
+      } catch {
+        original.apply(console, args);
+      } finally {
+        forwarding = false;
+      }
+    };
+
+  const wrappedWarn = forward(originalWarn, 'warn');
+  const wrappedError = forward(originalError, 'error');
+  console.warn = wrappedWarn;
+  console.error = wrappedError;
+
+  return () => {
+    // Only undo our own wrapper; never clobber one installed after ours.
+    if (console.warn === wrappedWarn) console.warn = originalWarn;
+    if (console.error === wrappedError) console.error = originalError;
+  };
+}
+/* eslint-enable no-console */
+
+/**
+ * @param {{
+ *   getLlama: Function,
+ *   gpuInfo?: any,
+ *   logger?: any,
+ *   context?: any,
+ *   llamaLogger?: any,
+ *   getLlamaGpuTypes?: Function
+ * }} args
+ */
+async function initLlamaWithBackend({
+  getLlama,
+  gpuInfo,
+  logger,
+  context,
+  llamaLogger,
+  getLlamaGpuTypes
+}) {
   const log = logger || console;
-  const candidates = buildBackendCandidates(gpuInfo);
+  let candidates = buildBackendCandidates(gpuInfo);
   /** @type {any[]} */
   const attempted = [];
+
+  // Ask node-llama-cpp which GPU backends have their driver/runtime libraries
+  // present (a cheap file-existence probe, cached by the library) and drop the
+  // explicit candidates it rules out. An explicit STRATOSORT_LLM_GPU_BACKEND
+  // override bypasses this for users who know their setup better; candidate
+  // lists with no explicit GPU entry have nothing to filter.
+  const hasExplicitGpuCandidate = candidates.some(
+    (candidate) => typeof candidate === 'string' && EXPLICIT_GPU_BACKENDS.has(candidate)
+  );
+  if (
+    typeof getLlamaGpuTypes === 'function' &&
+    hasExplicitGpuCandidate &&
+    !getGpuBackendOverride()
+  ) {
+    /** @type {Array<string|false>|null} */
+    let supported = null;
+    try {
+      supported = await getLlamaGpuTypes('supported');
+    } catch (error) {
+      log.debug?.(`[${context}] node-llama-cpp supported-backend probe failed`, {
+        error: error?.message || String(error || 'Unknown error')
+      });
+    }
+    if (Array.isArray(supported)) {
+      const filtered = filterCandidatesBySupport(candidates, supported);
+      log.info(`[${context}] Llama backend candidates filtered by node-llama-cpp support`, {
+        supported,
+        candidates,
+        filtered,
+        changed:
+          filtered.length !== candidates.length || filtered.some((c, i) => c !== candidates[i])
+      });
+      candidates = filtered;
+    }
+  }
 
   // Only attach `logger` when a filter is supplied so callers that don't pass
   // one keep the exact { gpu } option shape (and node-llama-cpp's defaults).
   const llamaOptions = (/** @type {any} */ gpu) =>
     llamaLogger ? { gpu, logger: llamaLogger } : { gpu };
 
+  // One getLlama() attempt, timed, with node-llama-cpp's console output
+  // forwarded into the structured log for its duration.
+  const attemptGetLlama = async (/** @type {any} */ gpu) => {
+    const startedAt = Date.now();
+    const restoreConsole = captureNodeLlamaConsole(logger, context, gpu);
+    try {
+      const llama = await getLlama(llamaOptions(gpu));
+      return { llama, durationMs: Date.now() - startedAt };
+    } catch (error) {
+      throw Object.assign(
+        error instanceof Error ? error : new Error(String(error || 'Unknown error')),
+        { durationMs: Date.now() - startedAt }
+      );
+    } finally {
+      restoreConsole();
+    }
+  };
+
+  const warnIfSlow = (/** @type {any} */ backend, /** @type {number} */ durationMs) => {
+    if (durationMs > SLOW_BACKEND_ATTEMPT_WARN_MS) {
+      log.warn(`[${context}] Llama backend attempt exceeded slow threshold`, {
+        backend,
+        durationMs,
+        thresholdMs: SLOW_BACKEND_ATTEMPT_WARN_MS
+      });
+    }
+  };
+
+  const summarizeAttempts = () =>
+    attempted.map((entry) => ({
+      backend: entry.backend,
+      success: entry.success,
+      actualBackend: entry.actualBackend,
+      durationMs: entry.durationMs,
+      error: entry.error
+    }));
+
   for (const backend of candidates) {
     try {
-      const llama = await getLlama(llamaOptions(backend));
+      const { llama, durationMs } = await attemptGetLlama(backend);
       const actualBackend =
         llama?.gpu === false ? 'cpu' : llama?.gpu || (backend === 'auto' ? 'cpu' : backend);
-      attempted.push({ backend, success: true, actualBackend });
+      attempted.push({ backend, success: true, actualBackend, durationMs });
+      warnIfSlow(backend, durationMs);
 
       log.info(`[${context}] Llama backend selected`, {
         requested: backend,
         actual: actualBackend,
+        durationMs,
         detectedGpu: gpuInfo?.name || gpuInfo?.type || 'unknown',
-        attempted: attempted.map((entry) => ({
-          backend: entry.backend,
-          success: entry.success,
-          actualBackend: entry.actualBackend,
-          error: entry.error
-        }))
+        attempted: summarizeAttempts()
       });
 
       return {
@@ -182,13 +403,17 @@ async function initLlamaWithBackend({ getLlama, gpuInfo, logger, context, llamaL
         }
       };
     } catch (error) {
+      const durationMs = typeof error?.durationMs === 'number' ? error.durationMs : 0;
       attempted.push({
         backend,
         success: false,
+        durationMs,
         error: error?.message || String(error || 'Unknown error')
       });
+      warnIfSlow(backend, durationMs);
       log.warn(`[${context}] Llama backend init failed`, {
         backend,
+        durationMs,
         error: error?.message || String(error || 'Unknown error')
       });
     }
@@ -196,16 +421,13 @@ async function initLlamaWithBackend({ getLlama, gpuInfo, logger, context, llamaL
 
   // GPU init failed for all candidates, fall back to CPU explicitly
   try {
-    const llama = await getLlama(llamaOptions(false));
-    attempted.push({ backend: 'cpu', success: true, actualBackend: 'cpu' });
+    const { llama, durationMs } = await attemptGetLlama(false);
+    attempted.push({ backend: 'cpu', success: true, actualBackend: 'cpu', durationMs });
+    warnIfSlow('cpu', durationMs);
     log.warn(`[${context}] Falling back to CPU backend`, {
+      durationMs,
       detectedGpu: gpuInfo?.name || gpuInfo?.type || 'unknown',
-      attempted: attempted.map((entry) => ({
-        backend: entry.backend,
-        success: entry.success,
-        actualBackend: entry.actualBackend,
-        error: entry.error
-      }))
+      attempted: summarizeAttempts()
     });
     return {
       llama,
@@ -233,10 +455,12 @@ async function initLlamaWithBackend({ getLlama, gpuInfo, logger, context, llamaL
 }
 
 module.exports = {
+  SLOW_BACKEND_ATTEMPT_WARN_MS,
   getGpuBackendOverride,
   isExplicitSoftwareMode,
   normalizeRequestedBackend,
   resolveVisionRuntimeBackend,
   buildBackendCandidates,
+  filterCandidatesBySupport,
   initLlamaWithBackend
 };

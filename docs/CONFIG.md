@@ -386,7 +386,7 @@ They are listed here for support engineers and contributors who need to debug ed
 | `STRATOSORT_LLAMA_CPP_SHA256`        | (auto)          | Expected SHA-256 of the downloaded binary; mismatches abort with a clear error                                                                                        |
 | `STRATOSORT_LLAMA_CPP_ALLOWED_HOSTS` | github releases | Comma-separated allowlist of hosts that may serve the binary download                                                                                                 |
 | `STRATOSORT_CUDA_VERSION`            | `12.4`          | CUDA release variant of the Windows GPU vision runtime to download (`12.4` or `13.1`)                                                                                 |
-| `STRATOSORT_LLM_GPU_BACKEND`         | (auto-detected) | `cuda`, `metal`, `vulkan`, or `cpu` — overrides backend autoselection                                                                                                 |
+| `STRATOSORT_LLM_GPU_BACKEND`         | (auto-detected) | `cuda`, `metal`, `vulkan`, or `cpu` — overrides backend autoselection; an explicit value also bypasses node-llama-cpp's supported-backend filter                      |
 | `STRATOSORT_LLAMA_SERVER_PATH`       | (bundled)       | Absolute path to the llama-server binary; bypasses the bundled download                                                                                               |
 
 ### Storage and persistence

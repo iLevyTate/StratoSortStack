@@ -73,6 +73,55 @@ describe('shared/perfMarks', () => {
     expect(Math.round(payload.durationMs * 100) / 100).toBe(payload.durationMs);
   });
 
+  test('measureAndLog emits at info when asked, leaving debug untouched', () => {
+    perfMarks.mark('stratotest:ml-info-a');
+    perfMarks.mark('stratotest:ml-info-b');
+
+    const logger = { debug: jest.fn(), info: jest.fn() };
+    const duration = perfMarks.measureAndLog(
+      'stratotest:ml-info-span',
+      'stratotest:ml-info-a',
+      'stratotest:ml-info-b',
+      logger,
+      { level: 'info' }
+    );
+
+    expect(typeof duration).toBe('number');
+    expect(logger.debug).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledTimes(1);
+    expect(logger.info).toHaveBeenCalledWith('[perf]', {
+      name: 'stratotest:ml-info-span',
+      durationMs: expect.any(Number)
+    });
+  });
+
+  test('measureAndLog defaults to debug and ignores an unsupported level method', () => {
+    perfMarks.mark('stratotest:ml-default-a');
+    perfMarks.mark('stratotest:ml-default-b');
+
+    const logger = { debug: jest.fn(), info: jest.fn() };
+    perfMarks.measureAndLog(
+      'stratotest:ml-default-span',
+      'stratotest:ml-default-a',
+      'stratotest:ml-default-b',
+      logger
+    );
+    expect(logger.debug).toHaveBeenCalledTimes(1);
+    expect(logger.info).not.toHaveBeenCalled();
+
+    // A logger without the requested method still measures, just quietly.
+    const debugOnly = { debug: jest.fn() };
+    const duration = perfMarks.measureAndLog(
+      'stratotest:ml-default-span-2',
+      'stratotest:ml-default-a',
+      'stratotest:ml-default-b',
+      debugOnly,
+      { level: 'info' }
+    );
+    expect(typeof duration).toBe('number');
+    expect(debugOnly.debug).not.toHaveBeenCalled();
+  });
+
   test('measureAndLog swallows logger failures', () => {
     perfMarks.mark('stratotest:ml-safe-a');
     perfMarks.mark('stratotest:ml-safe-b');

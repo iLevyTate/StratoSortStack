@@ -175,6 +175,45 @@ function sanitizeRestoredWindowBounds(
   return roundBounds(safeBounds);
 }
 
+/**
+ * Compositor diagnostics for the first-show log line: whether Chromium fell
+ * back to software compositing and which GPU/driver it is talking to. Every
+ * call is guarded because the jest electron mock lacks these APIs and
+ * getGPUInfo rejects on some drivers.
+ * @returns {Promise<{ featureStatus: any, devices: any[] | null, error?: string }>}
+ */
+async function collectGpuStatus() {
+  /** @type {any} */
+  let featureStatus = null;
+  /** @type {any[] | null} */
+  let devices = null;
+  /** @type {string | undefined} */
+  let error;
+  try {
+    if (typeof app.getGPUFeatureStatus === 'function') {
+      featureStatus = app.getGPUFeatureStatus();
+    }
+  } catch (err) {
+    error = err?.message || String(err);
+  }
+  try {
+    if (typeof app.getGPUInfo === 'function') {
+      const info = /** @type {any} */ (await app.getGPUInfo('basic'));
+      const list = Array.isArray(info?.gpuDevice) ? info.gpuDevice : [];
+      devices = list.map((/** @type {any} */ device) => ({
+        vendorId: device?.vendorId,
+        deviceId: device?.deviceId,
+        driverVendor: device?.driverVendor,
+        driverVersion: device?.driverVersion,
+        active: device?.active
+      }));
+    }
+  } catch (err) {
+    error = error || err?.message || String(err);
+  }
+  return error ? { featureStatus, devices, error } : { featureStatus, devices };
+}
+
 const getAssetPath = (/** @type {string[]} */ ...paths) => {
   const base = app.isPackaged
     ? path.join(process.resourcesPath, 'assets')
@@ -665,7 +704,12 @@ function createMainWindow() {
   win.once('closed', clearHealthCheckTimer);
   win.once(/** @type {any} */ ('destroy'), clearHealthCheckTimer);
 
+  // did-fail-load and the loadURL(app://) rejection both report the same
+  // failed load; render the error page once so the log carries one entry.
+  let missingBundleRendered = false;
   const renderMissingBundle = (/** @type {any} */ reason, /** @type {any} */ attemptedPath) => {
+    if (missingBundleRendered) return;
+    missingBundleRendered = true;
     logger.error('[WINDOW] Renderer bundle missing', { reason, attemptedPath });
     const helpText = isDev
       ? 'Run `npm run build:dev` or `npm run dev` to generate renderer assets.'
@@ -777,10 +821,54 @@ function createMainWindow() {
     // Add a small delay to ensure window is fully initialized
     scheduleLoad();
   }
+
+  // Logged once, after the first show (either path below), so a support log
+  // shows whether the compositor fell back to software and on which driver.
+  let _gpuStatusLogged = false;
+  const logGpuStatusOnce = (/** @type {string} */ shownVia) => {
+    if (_gpuStatusLogged) return;
+    _gpuStatusLogged = true;
+    collectGpuStatus()
+      .then(
+        /** @returns {any} */ (gpu) => {
+          logger.info('[WINDOW] GPU status after first show', { shownVia, ...gpu });
+          return undefined;
+        }
+      )
+      .catch((error) => {
+        logger.debug('[WINDOW] GPU status unavailable', { error: error?.message });
+      });
+  };
+
+  // ready-to-show is otherwise the only thing that shows the window; if the
+  // renderer never reaches first layout (GPU process hang, stalled bundle load)
+  // the user sees a busy cursor and nothing else. Bound that: show the themed
+  // native frame anyway once WINDOW_SHOW_FALLBACK elapses. A main-process timer
+  // cannot fire during a synchronous native block, so simple-main.js also keeps
+  // heavyweight startup off the main thread until first paint (firstPaintGate).
+  /** @type {any} */
+  let _showFallbackId = setTimeout(() => {
+    _showFallbackId = null;
+    if (isWindowClosed || win.isDestroyed() || win.isVisible()) return;
+    logger.warn('[WINDOW] ready-to-show not received within budget; showing window anyway', {
+      budgetMs: TIMEOUTS.WINDOW_SHOW_FALLBACK,
+      uptimeS: Math.round(process.uptime())
+    });
+    win.show();
+    logGpuStatusOnce('fallback');
+  }, TIMEOUTS.WINDOW_SHOW_FALLBACK);
+  const clearShowFallback = () => {
+    if (_showFallbackId) {
+      clearTimeout(_showFallbackId);
+      _showFallbackId = null;
+    }
+  };
+
   win.once('closed', () => {
     isWindowClosed = true;
     closeRendererStaticServer();
     if (_loadTimerId) clearTimeout(_loadTimerId);
+    clearShowFallback();
   });
 
   // Security headers for dev loads (http://127.0.0.1 / http://localhost / file://).
@@ -798,6 +886,7 @@ function createMainWindow() {
   });
 
   win.once('ready-to-show', () => {
+    clearShowFallback();
     /** @type {any[]} */
     const pendingTimers = [];
     const track = (/** @type {any} */ id) => {
@@ -812,13 +901,16 @@ function createMainWindow() {
       setTimeout(() => {
         if (!win.isDestroyed()) {
           win.show();
+          logGpuStatusOnce('ready-to-show');
 
           // Additional delay before focus to ensure window is fully rendered
           track(
             setTimeout(() => {
               if (!win.isDestroyed()) {
                 win.focus();
-                logger.info('StratoSort window ready and focused');
+                logger.info('StratoSort window ready and focused', {
+                  uptimeS: Math.round(process.uptime())
+                });
                 logger.debug('Window state', {
                   isVisible: win.isVisible(),
                   isFocused: win.isFocused(),
@@ -871,6 +963,16 @@ function createMainWindow() {
       errorDescription,
       validatedURL
     });
+
+    // A failed production app:// load never reaches ready-to-show, so without
+    // this the window stays hidden forever behind a busy cursor. -3
+    // (ERR_ABORTED) is a superseded navigation, not a failure.
+    const isAppBundleFailure =
+      errorCode !== -3 && typeof validatedURL === 'string' && validatedURL.startsWith('app://');
+    if (isAppBundleFailure && !isWindowClosed && !win.isDestroyed() && !win.isVisible()) {
+      renderMissingBundle('Failed to load renderer bundle.', rendererDistPath);
+      win.show();
+    }
 
     const isLocalRendererRefusal =
       errorCode === -102 &&

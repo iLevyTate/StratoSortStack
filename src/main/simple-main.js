@@ -187,6 +187,7 @@ const {
 const { initializeAutoUpdater, setAutoUpdateCheckEnabled } = require('./core/autoUpdater');
 const { initializeJumpList, handleCommandLineTasks } = require('./core/jumpList');
 const { runBackgroundSetup } = require('./core/backgroundSetup');
+const { waitForFirstPaint } = require('./core/firstPaintGate');
 const { migrateUserDataState } = require('./core/userDataMigration');
 
 // Windows integrations (Jump List, notifications, taskbar grouping) require AppUserModelId.
@@ -395,6 +396,12 @@ function createWindow() {
             // Remove the listener to avoid memory leak or late execution
             if (mainWindow && !mainWindow.isDestroyed()) {
               mainWindow.removeListener('ready-to-show', onReadyToShow);
+              // Last line of defence after createWindow.js's own show fallback:
+              // a window that is still hidden after a minute must not stay so.
+              if (!mainWindow.isVisible()) {
+                logger.warn('[WINDOW] Force-showing window after creation timeout');
+                mainWindow.show();
+              }
             }
             _windowCreationPromise = null;
             resolve();
@@ -1017,11 +1024,6 @@ app
     /** @returns {Promise<void>} */ async () => {
       logger.info('[STARTUP] app.whenReady resolved');
       perfMarks.mark('startup:main:app-ready');
-      perfMarks.measure(
-        'startup:main:time-to-app-ready',
-        'startup:main:module-eval',
-        'startup:main:app-ready'
-      );
 
       // macOS: Set the dock icon to the StratoSort logo so it replaces the default
       // Electron atom icon during development.  In production (packaged) builds
@@ -1102,7 +1104,26 @@ app
           onFileError: raiseLogDiskFlag
         });
         configureConsoleLogging(enableConsole);
-        logger.info('[LOGGING] File logging enabled', { logFilePath });
+        // The log filename was stamped moments ago in this same process, so the
+        // filename time already sits uptimeS seconds after process start.
+        // uptimeS is the in-process share of the pre-log gap (module load,
+        // single-instance lock, app ready); the rest of the gap between the
+        // double-click and the filename time happened before this process ran.
+        logger.info('[LOGGING] File logging enabled', {
+          logFilePath,
+          uptimeS: Math.round(process.uptime())
+        });
+        // Startup measures land in the JSONL file at info so a support log can
+        // place a stall without a developer attaching DevTools tracing. The
+        // measure is emitted here rather than where the mark was taken because
+        // the file destination only exists from this point on (marks persist).
+        perfMarks.measureAndLog(
+          'startup:main:time-to-app-ready',
+          'startup:main:module-eval',
+          'startup:main:app-ready',
+          logger,
+          { level: 'info' }
+        );
         logger.info('[DIAGNOSTICS] Runtime info', {
           appVersion: app.getVersion?.(),
           platform: process.platform,
@@ -1490,14 +1511,18 @@ app
         };
         registerListener(ipcMain, IPC_CHANNELS.SYSTEM.ABORT_INVOKE, abortInvokeHandler);
 
-        logger.info('[STARTUP] Creating window before heavyweight service startup');
+        logger.info('[STARTUP] Creating window before heavyweight service startup', {
+          uptimeS: Math.round(process.uptime())
+        });
         perfMarks.mark('startup:main:before-window');
         createWindow();
         perfMarks.mark('startup:main:after-window');
-        perfMarks.measure(
+        perfMarks.measureAndLog(
           'startup:main:time-to-first-window',
           'startup:main:module-eval',
-          'startup:main:after-window'
+          'startup:main:after-window',
+          logger,
+          { level: 'info' }
         );
         clearTrackedTimer(startupKeepalive);
 
@@ -1548,9 +1573,24 @@ app
             logger.debug('[STARTUP] Background IPC verification failed', { error: err?.message });
           });
 
-        Promise.resolve()
+        // Heavyweight startup (node-llama-cpp import, GPU probing, Orama load)
+        // waits for the window's first paint. Its synchronous stretches run on
+        // this thread, which also serves app:// and dispatches ready-to-show,
+        // so queuing it in the same tick as createWindow() delayed the first
+        // visible frame 1:1. The gate is capped (FIRST_PAINT_GATE) so headless
+        // and stuck-renderer runs still initialise services.
+        waitForFirstPaint(mainWindow, { timeoutMs: TIMEOUTS.FIRST_PAINT_GATE })
           .then(
-            /** @returns {Promise<void>} */ async () => {
+            /** @returns {Promise<void>} */ async (reason) => {
+              logger.info('[STARTUP] First-paint gate released', {
+                reason,
+                uptimeS: Math.round(process.uptime())
+              });
+
+              // Run first-time setup in background (non-blocking)
+              // Handled by ./core/backgroundSetup module
+              runBackgroundSetup();
+
               const startupResult = await runCoordinatedStartupInBackground(
                 startupManager,
                 serviceIntegration
@@ -1639,10 +1679,6 @@ app
               // tracker unavailable — already logged above
             }
           });
-
-        // Run first-time setup in background (non-blocking)
-        // Handled by ./core/backgroundSetup module
-        runBackgroundSetup();
 
         // Start periodic system metrics broadcast to renderer
         try {

@@ -98,6 +98,11 @@
     "license": "build/license_en.txt",
     "artifactName": "StratoSortStack-Setup-${version}.exe"
   },
+  "portable": {
+    "useZip": true,
+    "splashImage": "assets/portable-splash.bmp",
+    "unpackDirName": "StratoSortStack-portable"
+  },
   "mac": {
     "icon": "assets/icons/mac/icon.icns",
     "category": "public.app-category.productivity",

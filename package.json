@@ -219,7 +219,7 @@
     "fastest-levenshtein": "^1.0.16",
     "lz4-napi": "^2.10.0",
     "mammoth": "^1.13.0",
-    "minimatch": "^10.2.6",
+    "minimatch": "^11.0.3",
     "node-llama-cpp": "^3.22.2",
     "officeparser": "^8.3.0",
     "p-queue": "^10.0.0",

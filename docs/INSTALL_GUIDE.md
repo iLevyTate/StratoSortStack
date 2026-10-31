@@ -15,14 +15,14 @@ grab its AI models on first launch, and you are ready to go.
 
 ## What You Need
 
-| Requirement    | Details                                                                                                         |
-| :------------- | :-------------------------------------------------------------------------------------------------------------- |
-| **Windows**    | Windows 10 (22H2) or 11, x64 or arm64                                                                           |
-| **macOS**      | macOS 13 (Ventura) or later, Apple Silicon (arm64) or Intel (x64)                                               |
-| **Linux**      | x64 or arm64; AppImage or .deb (when attached to a release)                                                     |
-| **RAM**        | 8 GB minimum; 16 GB and a GPU with 8 GB for the Better Quality profile                                          |
-| **Disk space** | ~500 MB for the app, plus about 7 to 10 GB for AI models (downloaded inside the app)                            |
-| **Internet**   | Needed once to download AI models; after that the app works offline (it still checks for app updates if online) |
+| Requirement    | Details                                                                                                                                                                       |
+| :------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Windows**    | Windows 10 (22H2) or 11, x64 or arm64                                                                                                                                         |
+| **macOS**      | macOS 13 (Ventura) or later, Apple Silicon (arm64) or Intel (x64)                                                                                                             |
+| **Linux**      | x64 or arm64; AppImage or .deb (when attached to a release)                                                                                                                   |
+| **RAM**        | 8 GB minimum; 16 GB and a GPU with 8 GB for the Better Quality profile                                                                                                        |
+| **Disk space** | About 671 MB to download for the installer (the portable exe is larger) and about 1.8 GB on disk for the app, plus about 7 to 10 GB for AI models (downloaded inside the app) |
+| **Internet**   | Needed once to download AI models; after that the app works offline (it still checks for app updates if online)                                                               |
 
 ---
 
@@ -47,10 +47,16 @@ arm64 build ships without bundled FFmpeg, so audio/video analysis there needs FF
 
 ### Windows -- installer vs portable
 
-| File                                  | What it does                                                                             | Recommended?                                        |
-| :------------------------------------ | :--------------------------------------------------------------------------------------- | :-------------------------------------------------- |
-| **`StratoSortStack-Setup-X.X.X.exe`** | Full installer -- creates Start Menu and desktop shortcuts, supports future auto-updates | Yes                                                 |
-| `StratoSortStack-X.X.X-win-x64.exe`   | Portable -- runs without installing, no shortcuts, no auto-update                        | Only if you cannot install software on your machine |
+| File                                  | What it does                                                                                                        | Recommended?                                        |
+| :------------------------------------ | :------------------------------------------------------------------------------------------------------------------ | :-------------------------------------------------- |
+| **`StratoSortStack-Setup-X.X.X.exe`** | Full installer -- creates Start Menu and desktop shortcuts, supports future auto-updates                            | Yes                                                 |
+| `StratoSortStack-X.X.X-win-x64.exe`   | Portable -- runs without installing, no shortcuts, no auto-update; unpacks the whole app on every start (see below) | Only if you cannot install software on your machine |
+
+The portable build rewrites about 1.8 GB into `%TEMP%\StratoSortStack-portable` on every start and
+removes it again when you close the app. Expect roughly 30 seconds on a fast SSD and up to several
+minutes on an HDD or on a heavily protected PC where Windows Security scans every unpacked file.
+Builds made after v5.0.0 show a splash image while it unpacks. The installer is the fast path: it
+writes the files once, and later launches start straight away.
 
 ### Linux -- AppImage vs .deb
 
@@ -77,6 +83,8 @@ optional and may not be attached to every release. The AppImage updates itself i
    - The app installs to your user profile (no admin required).
    - A **Start Menu** shortcut and a **Desktop** shortcut are created automatically.
 4. When the installer finishes, leave **"Run StratoSort Stack"** checked and click **Finish**.
+5. The first launch after installing can take 1 to 2 minutes while Windows Security scans the new
+   files; later launches are faster.
 
 <!-- prettier-ignore -->
 **Why SmartScreen?** Release installers are signed by Kennedy Applied Sciences, Inc., but SmartScreen can still warn about a newly signed file until it builds download reputation; unsigned CI builds always warn. If the checksum matches (see optional step below), the file is safe.
@@ -328,6 +336,23 @@ is missing, download it with **Download recommended models**, or switch to Advan
 - Switch to the **Base (Small & Fast)** profile for lower memory usage.
 - Close other memory-heavy applications.
 - If you have a dedicated GPU (NVIDIA, AMD, or Apple Silicon), StratoSort uses it automatically.
+- Task Manager showing 5 to 8 `StratoSort Stack.exe` entries is normal: Chromium runs the app as
+  several processes (browser, renderer, GPU, utility), and short-lived GPU probe children start and
+  exit during startup.
+- To rule the GPU in or out, do two control runs from a terminal and compare how long the window
+  takes to appear. `STRATOSORT_LLM_GPU_BACKEND=cpu` keeps AI inference on the CPU, and
+  `STRATOSORT_FORCE_SOFTWARE_GPU=1` turns off hardware rendering for the window. In PowerShell on
+  Windows:
+
+  ```powershell
+  $env:STRATOSORT_LLM_GPU_BACKEND = 'cpu'
+  & "$env:LOCALAPPDATA\Programs\StratoSort Stack\StratoSort Stack.exe"
+  ```
+
+  then, in a fresh terminal, the same with `$env:STRATOSORT_FORCE_SOFTWARE_GPU = '1'`. If either run
+  is clearly faster, see [GPU Configuration](CONFIG.md#gpu-configuration) and the
+  `STRATOSORT_LLM_GPU_BACKEND` row in
+  [CONFIG.md](CONFIG.md#llamacpp-binary-management-security-sensitive) for how to keep that setting.
 
 ---
 

@@ -41,7 +41,20 @@ jest.mock('electron', () => ({
     setAppUserModelId: jest.fn(),
     isPackaged: false,
     getAppPath: jest.fn(() => process.cwd()),
-    getPath: jest.fn(() => require('path').join(process.cwd(), 'mock-user-data'))
+    getPath: jest.fn(() => require('path').join(process.cwd(), 'mock-user-data')),
+    // Compositor diagnostics logged once after the first show.
+    getGPUFeatureStatus: jest.fn(() => ({ gpu_compositing: 'enabled', webgl: 'enabled' })),
+    getGPUInfo: jest.fn().mockResolvedValue({
+      gpuDevice: [
+        {
+          active: true,
+          vendorId: 4318,
+          deviceId: 7956,
+          driverVendor: 'NVIDIA',
+          driverVersion: '560.94'
+        }
+      ]
+    })
   },
   screen: {
     getPrimaryDisplay: jest.fn(() => ({
@@ -442,6 +455,228 @@ describe('createWindow', () => {
       expect(win.focus).toHaveBeenCalled();
 
       jest.useRealTimers();
+    });
+  });
+
+  describe('show fallback when ready-to-show is late', () => {
+    const flushMicrotasks = async () => {
+      for (let i = 0; i < 10; i += 1) {
+        await Promise.resolve();
+      }
+    };
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    test('force-shows the window when ready-to-show never fires', () => {
+      jest.useFakeTimers();
+      const { logger } = require('../src/shared/logger');
+
+      const win = createMainWindow();
+      win.isVisible.mockReturnValue(false);
+
+      jest.advanceTimersByTime(3999);
+      expect(win.show).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(1);
+      expect(win.show).toHaveBeenCalledTimes(1);
+      expect(logger.warn).toHaveBeenCalledWith(
+        '[WINDOW] ready-to-show not received within budget; showing window anyway',
+        expect.objectContaining({ budgetMs: 4000, uptimeS: expect.any(Number) })
+      );
+    });
+
+    test('fallback leaves an already visible window alone', () => {
+      jest.useFakeTimers();
+      const { logger } = require('../src/shared/logger');
+
+      const win = createMainWindow();
+      // Default mock: isVisible() === true.
+      jest.advanceTimersByTime(4000);
+
+      expect(win.show).not.toHaveBeenCalled();
+      expect(logger.warn).not.toHaveBeenCalledWith(
+        expect.stringContaining('ready-to-show not received'),
+        expect.anything()
+      );
+    });
+
+    test('ready-to-show clears the fallback so show() runs exactly once', () => {
+      jest.useFakeTimers();
+      const { logger } = require('../src/shared/logger');
+
+      const win = createMainWindow();
+      win.isVisible.mockReturnValue(false);
+
+      const readyToShowHandler = win.once.mock.calls.find((call) => call[0] === 'ready-to-show')[1];
+      readyToShowHandler();
+
+      jest.advanceTimersByTime(200);
+      expect(win.show).toHaveBeenCalledTimes(1);
+      expect(win.focus).toHaveBeenCalledTimes(1);
+
+      jest.advanceTimersByTime(4000);
+      expect(win.show).toHaveBeenCalledTimes(1);
+      expect(logger.warn).not.toHaveBeenCalledWith(
+        expect.stringContaining('ready-to-show not received'),
+        expect.anything()
+      );
+    });
+
+    test('closed clears the fallback timer', () => {
+      jest.useFakeTimers();
+
+      const win = createMainWindow();
+      win.isVisible.mockReturnValue(false);
+      // Load timer (100 ms) + show fallback (4 s) are the only pending timers.
+      expect(jest.getTimerCount()).toBe(2);
+
+      win.once.mock.calls
+        .filter((call) => call[0] === 'closed')
+        .forEach(([, handler]) => handler());
+      expect(jest.getTimerCount()).toBe(0);
+
+      jest.advanceTimersByTime(4000);
+      expect(win.show).not.toHaveBeenCalled();
+    });
+
+    test('ready and focused log line carries process uptime', () => {
+      jest.useFakeTimers();
+      const { logger } = require('../src/shared/logger');
+
+      const win = createMainWindow();
+      const readyToShowHandler = win.once.mock.calls.find((call) => call[0] === 'ready-to-show')[1];
+      readyToShowHandler();
+      jest.advanceTimersByTime(200);
+
+      expect(logger.info).toHaveBeenCalledWith('StratoSort window ready and focused', {
+        uptimeS: expect.any(Number)
+      });
+    });
+
+    test('logs GPU feature status and driver once after the first show', async () => {
+      jest.useFakeTimers();
+      const { app } = require('electron');
+      const { logger } = require('../src/shared/logger');
+
+      const win = createMainWindow();
+      expect(app.getGPUFeatureStatus).not.toHaveBeenCalled();
+
+      const readyToShowHandler = win.once.mock.calls.find((call) => call[0] === 'ready-to-show')[1];
+      readyToShowHandler();
+      jest.advanceTimersByTime(200);
+
+      expect(app.getGPUFeatureStatus).toHaveBeenCalledTimes(1);
+      expect(app.getGPUInfo).toHaveBeenCalledTimes(1);
+      expect(app.getGPUInfo).toHaveBeenCalledWith('basic');
+
+      await flushMicrotasks();
+      expect(logger.info).toHaveBeenCalledWith('[WINDOW] GPU status after first show', {
+        shownVia: 'ready-to-show',
+        featureStatus: { gpu_compositing: 'enabled', webgl: 'enabled' },
+        devices: [
+          {
+            vendorId: 4318,
+            deviceId: 7956,
+            driverVendor: 'NVIDIA',
+            driverVersion: '560.94',
+            active: true
+          }
+        ]
+      });
+
+      // The fallback path must not log a second time.
+      jest.advanceTimersByTime(4000);
+      expect(app.getGPUFeatureStatus).toHaveBeenCalledTimes(1);
+    });
+
+    test('GPU status is logged via the fallback path too and survives a missing API', async () => {
+      jest.useFakeTimers();
+      const { app } = require('electron');
+      const { logger } = require('../src/shared/logger');
+      app.getGPUInfo.mockRejectedValueOnce(new Error('gpu info unavailable'));
+
+      const win = createMainWindow();
+      win.isVisible.mockReturnValue(false);
+      jest.advanceTimersByTime(4000);
+      expect(win.show).toHaveBeenCalledTimes(1);
+
+      await flushMicrotasks();
+      expect(logger.info).toHaveBeenCalledWith(
+        '[WINDOW] GPU status after first show',
+        expect.objectContaining({
+          shownVia: 'fallback',
+          devices: null,
+          error: 'gpu info unavailable'
+        })
+      );
+    });
+  });
+
+  describe('did-fail-load on the production app:// load', () => {
+    const fireFailLoad = (win, errorCode, url) => {
+      const handler = win.webContents.on.mock.calls.find(([evt]) => evt === 'did-fail-load')?.[1];
+      expect(handler).toBeDefined();
+      handler({}, errorCode, 'ERR_FAILED', url);
+    };
+
+    test('renders the missing-bundle page and shows a hidden window', () => {
+      const win = createMainWindow();
+      win.isVisible.mockReturnValue(false);
+      win.loadURL.mockClear();
+
+      fireFailLoad(win, -2, 'app://bundle/index.html');
+
+      expect(win.loadURL).toHaveBeenCalledWith(
+        expect.stringMatching(/^data:text\/html;charset=utf-8,.*Failed%20to%20load%20renderer/)
+      );
+      expect(win.show).toHaveBeenCalledTimes(1);
+    });
+
+    test('renders the missing-bundle page once when the same failed load is reported twice', () => {
+      const win = createMainWindow();
+      win.isVisible.mockReturnValue(false);
+      win.loadURL.mockClear();
+
+      // did-fail-load and the loadURL(app://) rejection both end up here.
+      fireFailLoad(win, -2, 'app://bundle/index.html');
+      fireFailLoad(win, -2, 'app://bundle/index.html');
+
+      const dataLoads = win.loadURL.mock.calls.filter(([url]) => String(url).startsWith('data:'));
+      expect(dataLoads).toHaveLength(1);
+    });
+
+    test('ignores ERR_ABORTED (-3), which is a superseded navigation', () => {
+      const win = createMainWindow();
+      win.isVisible.mockReturnValue(false);
+      win.loadURL.mockClear();
+
+      fireFailLoad(win, -3, 'app://bundle/index.html');
+
+      expect(win.loadURL).not.toHaveBeenCalled();
+      expect(win.show).not.toHaveBeenCalled();
+    });
+
+    test('does not re-show a window that is already visible', () => {
+      const win = createMainWindow();
+      win.loadURL.mockClear();
+
+      fireFailLoad(win, -2, 'app://bundle/index.html');
+
+      expect(win.loadURL).not.toHaveBeenCalled();
+      expect(win.show).not.toHaveBeenCalled();
+    });
+
+    test('leaves non-app:// failures to the existing dev recovery path', () => {
+      const win = createMainWindow();
+      win.isVisible.mockReturnValue(false);
+      win.loadURL.mockClear();
+
+      fireFailLoad(win, -2, 'http://localhost:3000/');
+
+      expect(win.loadURL).not.toHaveBeenCalled();
+      expect(win.show).not.toHaveBeenCalled();
     });
   });
 

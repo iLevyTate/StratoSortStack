@@ -71,7 +71,10 @@ This repository is configured with automated dependency updates and release buil
 - **NSIS Installer (arm64)**: `StratoSortStack-Setup-<version>-arm64.exe` (built on the
   `windows-11-arm` runner; better-sqlite3 is compiled from source there. Ships **without** bundled
   FFmpeg — no win-arm64 LGPL build exists — and falls back to a system `ffmpeg` on `PATH`.)
-- **Portable (x64)**: `StratoSortStack-<version>-win-x64.exe`
+- **Portable (x64)**: `StratoSortStack-<version>-win-x64.exe` (unpacks about 1.8 GB into
+  `%TEMP%\StratoSortStack-portable` on every launch and is expected to be larger than the installer
+  because it uses per-file zlib instead of a solid LZMA2 payload; see `docs/RELEASING.md` § Portable
+  build)
 - **Checksums**: `checksums-windows-{x64,arm64}.sha256`
 - **Updater metadata**: `latest.yml` (x64), `latest-arm64.yml` (arm64), `*.blockmap`
 

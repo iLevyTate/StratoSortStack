@@ -1,12 +1,12 @@
 {
-  "generatedAt": "2026-10-30T02:01:23.477Z",
+  "generatedAt": "2026-10-31T13:14:31.379Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
     "detectedLicense": "PolyForm Noncommercial 1.0.0 (commercial license sold separately)"
   },
   "dependencySummary": {
-    "allowed": 2310,
+    "allowed": 2319,
     "review_required": 31,
     "high_risk": 0,
     "unknown": 0
@@ -5900,6 +5900,16 @@
       "lockfileOptional": false
     },
     {
+      "packageName": "@eslint/config-array/node_modules/minimatch",
+      "version": "10.2.6",
+      "license": "BlueOak-1.0.0",
+      "riskLevel": "allowed",
+      "directRuntime": false,
+      "directDev": false,
+      "lockfileDev": true,
+      "lockfileOptional": false
+    },
+    {
       "packageName": "@eslint/config-helpers",
       "version": "0.7.0",
       "license": "Apache-2.0",
@@ -6500,6 +6510,16 @@
       "lockfileOptional": false
     },
     {
+      "packageName": "@isaacs/nonrecursive-glob-match",
+      "version": "1.0.3",
+      "license": "BlueOak-1.0.0",
+      "riskLevel": "allowed",
+      "directRuntime": false,
+      "directDev": false,
+      "lockfileDev": false,
+      "lockfileOptional": false
+    },
+    {
       "packageName": "@istanbuljs/load-nyc-config",
       "version": "1.1.0",
       "license": "ISC",
@@ -6812,6 +6832,16 @@
     {
       "packageName": "@jest/reporters/node_modules/glob",
       "version": "13.0.6",
+      "license": "BlueOak-1.0.0",
+      "riskLevel": "allowed",
+      "directRuntime": false,
+      "directDev": false,
+      "lockfileDev": true,
+      "lockfileOptional": false
+    },
+    {
+      "packageName": "@jest/reporters/node_modules/minimatch",
+      "version": "10.2.6",
       "license": "BlueOak-1.0.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -11361,6 +11391,16 @@
       "lockfileOptional": false
     },
     {
+      "packageName": "app-builder-lib/node_modules/minimatch",
+      "version": "10.2.6",
+      "license": "BlueOak-1.0.0",
+      "riskLevel": "allowed",
+      "directRuntime": false,
+      "directDev": false,
+      "lockfileDev": true,
+      "lockfileOptional": false
+    },
+    {
       "packageName": "app-builder-lib/node_modules/semver",
       "version": "7.7.4",
       "license": "ISC",
@@ -14232,6 +14272,16 @@
       "lockfileOptional": false
     },
     {
+      "packageName": "eslint/node_modules/minimatch",
+      "version": "10.2.6",
+      "license": "BlueOak-1.0.0",
+      "riskLevel": "allowed",
+      "directRuntime": false,
+      "directDev": false,
+      "lockfileDev": true,
+      "lockfileOptional": false
+    },
+    {
       "packageName": "espree",
       "version": "11.2.0",
       "license": "BSD-2-Clause",
@@ -16613,6 +16663,16 @@
       "lockfileOptional": false
     },
     {
+      "packageName": "jest-config/node_modules/minimatch",
+      "version": "10.2.6",
+      "license": "BlueOak-1.0.0",
+      "riskLevel": "allowed",
+      "directRuntime": false,
+      "directDev": false,
+      "lockfileDev": true,
+      "lockfileOptional": false
+    },
+    {
       "packageName": "jest-config/node_modules/pretty-format",
       "version": "30.5.1",
       "license": "MIT",
@@ -17085,6 +17145,16 @@
     {
       "packageName": "jest-runtime/node_modules/glob",
       "version": "13.0.6",
+      "license": "BlueOak-1.0.0",
+      "riskLevel": "allowed",
+      "directRuntime": false,
+      "directDev": false,
+      "lockfileDev": true,
+      "lockfileOptional": false
+    },
+    {
+      "packageName": "jest-runtime/node_modules/minimatch",
+      "version": "10.2.6",
       "license": "BlueOak-1.0.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -18191,7 +18261,7 @@
     },
     {
       "packageName": "minimatch",
-      "version": "10.2.6",
+      "version": "11.0.3",
       "license": "BlueOak-1.0.0",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -20793,6 +20863,16 @@
       "lockfileOptional": false
     },
     {
+      "packageName": "rimraf/node_modules/minimatch",
+      "version": "10.2.6",
+      "license": "BlueOak-1.0.0",
+      "riskLevel": "allowed",
+      "directRuntime": false,
+      "directDev": false,
+      "lockfileDev": true,
+      "lockfileOptional": false
+    },
+    {
       "packageName": "roarr",
       "version": "2.15.4",
       "license": "BSD-3-Clause",
@@ -22143,6 +22223,16 @@
       "packageName": "test-exclude/node_modules/lru-cache",
       "version": "10.4.3",
       "license": "ISC",
+      "riskLevel": "allowed",
+      "directRuntime": false,
+      "directDev": false,
+      "lockfileDev": true,
+      "lockfileOptional": false
+    },
+    {
+      "packageName": "test-exclude/node_modules/minimatch",
+      "version": "10.2.6",
+      "license": "BlueOak-1.0.0",
       "riskLevel": "allowed",
       "directRuntime": false,
       "directDev": false,
