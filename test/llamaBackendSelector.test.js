@@ -1243,6 +1243,37 @@ describe('llamaBackendSelector', () => {
       expect(backendCache.write).toHaveBeenCalledWith('cuda', { supportedGpuTypes: null });
     });
 
+    test('a read-only record (the embedding worker) is used but never cleared or written', async () => {
+      const read = jest.fn().mockResolvedValue('vulkan');
+      const getLlama = jest
+        .fn()
+        .mockRejectedValueOnce(new Error('Vulkan binary test failed'))
+        .mockResolvedValueOnce({ gpu: 'cuda' });
+
+      const result = await initLlamaWithBackend({
+        getLlama,
+        gpuInfo: { type: 'cuda' },
+        logger: mockLogger,
+        context: 'test',
+        backendCache: { read }
+      });
+
+      expect(result.backend).toBe('cuda');
+      expect(requestedGpus(getLlama)).toEqual(['vulkan', 'cuda']);
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        '[test] Cached Llama backend failed; record left to its owner',
+        { backend: 'vulkan', error: 'Vulkan binary test failed' }
+      );
+      expect(mockLogger.info).not.toHaveBeenCalledWith(
+        '[test] Cleared cached Llama backend after it failed',
+        expect.anything()
+      );
+      expect(mockLogger.info).not.toHaveBeenCalledWith(
+        '[test] Saved Llama backend selection for the next launch',
+        expect.anything()
+      );
+    });
+
     test('clears the record and saves nothing when the ladder ends on CPU', async () => {
       const backendCache = makeBackendCache('cuda');
       const getLlama = jest

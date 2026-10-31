@@ -45,6 +45,19 @@ describe('workerPools thread sizing', () => {
     jest.clearAllMocks();
   });
 
+  test('hands the embedding worker the userData folder and app version', () => {
+    process.env.STRATOSORT_ENABLE_EMBEDDING_WORKER = 'true';
+    const { app } = require('electron');
+    const workerPools = require('../src/main/utils/workerPools');
+
+    const pool = workerPools.getEmbeddingPool();
+
+    expect(pool.workerData).toEqual({
+      userDataPath: app.getPath('userData'),
+      appVersion: app.getVersion()
+    });
+  });
+
   test('scales OCR pool above two threads on capable CPUs', () => {
     const workerPools = require('../src/main/utils/workerPools');
 

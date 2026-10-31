@@ -408,8 +408,16 @@ async function initLlamaWithBackend({
   const forgetCachedBackend = async (/** @type {any} */ backend, /** @type {any} */ error) => {
     if (!cachedRecordValid || backend !== cachedBackend) return;
     cachedRecordValid = false;
+    // A read-only record (the embedding worker's) is left for its owner.
+    if (typeof backendCache?.clear !== 'function') {
+      log.info(`[${context}] Cached Llama backend failed; record left to its owner`, {
+        backend,
+        error: error?.message || String(error || 'Unknown error')
+      });
+      return;
+    }
     try {
-      await backendCache?.clear?.();
+      await backendCache.clear();
     } catch {
       // The record is a hint; a stale one costs one failed attempt next time.
     }

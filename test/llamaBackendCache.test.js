@@ -15,7 +15,8 @@ const { logger: mockLogger } = require('./mocks/logger');
 const {
   BACKEND_CACHE_FILENAME,
   BACKEND_CACHE_MAX_AGE_MS,
-  createLlamaBackendCache
+  createLlamaBackendCache,
+  createReadOnlyLlamaBackendCache
 } = require('../src/main/utils/llamaBackendCache');
 
 const NOW = Date.parse('2026-10-31T12:00:00.000Z');
@@ -319,5 +320,47 @@ describe('llamaBackendCache', () => {
       '[LlamaBackendCache] Failed to clear cached backend record',
       expect.objectContaining({ error: expect.any(String) })
     );
+  });
+
+  describe('createReadOnlyLlamaBackendCache', () => {
+    const nodeLlama = { getModuleVersion: jest.fn(async () => '3.22.2') };
+
+    test('resolves undefined without a userData directory', async () => {
+      await expect(
+        createReadOnlyLlamaBackendCache({ userDataPath: undefined, nodeLlama, gpuInfo: GPU })
+      ).resolves.toBeUndefined();
+    });
+
+    test('reads the record the main process saved, and exposes nothing that writes', async () => {
+      await makeCache({ platform: process.platform, arch: process.arch, now: Date.now }).write(
+        'vulkan'
+      );
+
+      const readOnly = await createReadOnlyLlamaBackendCache({
+        userDataPath,
+        appVersion: '4.1.0',
+        nodeLlama,
+        gpuInfo: GPU
+      });
+
+      expect(Object.keys(readOnly)).toEqual(['read']);
+      await expect(readOnly.read()).resolves.toBe('vulkan');
+    });
+
+    test('a failing module-version lookup only makes the record miss', async () => {
+      await makeCache({ platform: process.platform, arch: process.arch, now: Date.now }).write(
+        'vulkan'
+      );
+
+      const readOnly = await createReadOnlyLlamaBackendCache({
+        userDataPath,
+        appVersion: '4.1.0',
+        nodeLlama: { getModuleVersion: jest.fn().mockRejectedValue(new Error('no version')) },
+        gpuInfo: GPU
+      });
+
+      await expect(readOnly.read()).resolves.toBeNull();
+      expect(ignoredReasons()).toContain('fingerprint-mismatch');
+    });
   });
 });
