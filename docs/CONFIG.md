@@ -201,9 +201,10 @@ unpackaged runs never do. Packaged copies that cannot replace themselves never c
 Windows, a copy the NSIS installer did not install (the x64 `-win-x64.zip` extracted by hand; the
 app looks for `Uninstall StratoSort Stack.exe` next to its exe), a Microsoft Store install, and on
 Linux anything but the AppImage. Their log shows
-`[UPDATER] Auto-updates skipped for this build target` with a `reason`. Users can turn background
-checks off in Settings → Application, and `STRATOSORT_ENABLE_AUTO_UPDATES=false` disables the
-updater entirely. See [UPDATE_HOST.md](UPDATE_HOST.md) for hosting a custom feed.
+`[UPDATER] Auto-updates skipped for this build target` with a `reason`, and **Check for updates** in
+Settings → Application shows the same reason as a warning. Users can turn background checks off in
+Settings → Application, and `STRATOSORT_ENABLE_AUTO_UPDATES=false` disables the updater entirely.
+See [UPDATE_HOST.md](UPDATE_HOST.md) for hosting a custom feed.
 
 | Variable                               | Default       | Description                                                                                                                                                                                                                                                                                                                      |
 | :------------------------------------- | :------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
