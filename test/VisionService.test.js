@@ -76,6 +76,7 @@ const {
   _detectBase64Mime,
   _detectMimeFromPath
 } = require('../src/main/services/VisionService');
+const { getInstance: getGPUMonitor } = require('../src/main/services/GPUMonitor');
 const { execFile } = require('child_process');
 const { __mockLogger } = require('../src/shared/logger');
 
@@ -86,6 +87,10 @@ describe('VisionService', () => {
     jest.restoreAllMocks();
     jest.clearAllMocks();
     _resetRuntimeCache();
+    // VisionService shares the process-wide GPUMonitor singleton, which caches
+    // its first detection; clear it so each test's child_process mock is
+    // probed afresh.
+    getGPUMonitor()._gpuInfo = null;
     service = new VisionService();
   });
 

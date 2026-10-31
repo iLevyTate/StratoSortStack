@@ -54,12 +54,16 @@ jest.mock('../src/main/services/PerformanceMetrics', () => ({
   }))
 }));
 
-jest.mock('../src/main/services/GPUMonitor', () => ({
-  GPUMonitor: jest.fn().mockImplementation(() => ({
+jest.mock('../src/main/services/GPUMonitor', () => {
+  const makeMonitor = () => ({
     getInfo: jest.fn(() => ({ vendor: 'test', vram: 8192 })),
     destroy: jest.fn()
-  }))
-}));
+  });
+  return {
+    GPUMonitor: jest.fn().mockImplementation(makeMonitor),
+    getInstance: jest.fn(makeMonitor)
+  };
+});
 
 // Mirrors the real SettingsService instance contract LlamaService uses
 // (load() in _loadConfig, save() when persisting model fallbacks).

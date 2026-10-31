@@ -108,4 +108,78 @@ describe('GPUMonitor', () => {
     expect(result.totalMB).toBe(1000);
     expect(result.percentUsed).toBe(20);
   });
+
+  describe('child process options', () => {
+    const { TIMEOUTS } = require('../src/shared/performanceConstants');
+
+    test('probes run hidden with the HEALTH_CHECK timeout', async () => {
+      const monitor = new GPUMonitor();
+      monitor._platform = 'win32';
+      mockExecFileAsync.mockResolvedValueOnce({ stdout: 'RTX 4090, 24576', stderr: '' });
+
+      await monitor.detectGPU();
+
+      expect(mockExecFileAsync).toHaveBeenCalledTimes(1);
+      expect(mockExecFileAsync).toHaveBeenCalledWith(
+        expect.stringMatching(/^nvidia-smi/),
+        expect.any(Array),
+        expect.objectContaining({ windowsHide: true, timeout: TIMEOUTS.HEALTH_CHECK })
+      );
+    });
+
+    test('every step of the Windows fallback chain (nvidia-smi -> powershell -> wmic) is hidden', async () => {
+      const monitor = new GPUMonitor();
+      monitor._platform = 'win32';
+      mockExecFileAsync
+        .mockRejectedValueOnce(new Error('no nvidia')) // nvidia-smi
+        .mockResolvedValueOnce({ stdout: '', stderr: '' }) // powershell: empty
+        .mockResolvedValueOnce({ stdout: '', stderr: '' }); // wmic: empty
+
+      const result = await monitor.detectGPU();
+
+      expect(result.type).toBe('cpu');
+      expect(mockExecFileAsync.mock.calls.map(([cmd]) => cmd)).toEqual([
+        expect.stringMatching(/^nvidia-smi/),
+        'powershell',
+        'wmic'
+      ]);
+      for (const [, , options] of mockExecFileAsync.mock.calls) {
+        expect(options).toEqual(
+          expect.objectContaining({ windowsHide: true, timeout: TIMEOUTS.HEALTH_CHECK })
+        );
+      }
+    });
+
+    test('per-call options are merged on top of the hidden-window defaults', async () => {
+      const monitor = new GPUMonitor();
+      monitor._platform = 'linux';
+      mockExecFileAsync
+        .mockRejectedValueOnce(new Error('no nvidia')) // nvidia-smi
+        .mockResolvedValueOnce({
+          stdout: '00:02.0 VGA compatible controller: Intel HD',
+          stderr: ''
+        }); // lspci (shell: true)
+
+      await monitor.detectGPU();
+
+      const [, , lspciOptions] = mockExecFileAsync.mock.calls[1];
+      expect(lspciOptions).toEqual(
+        expect.objectContaining({ shell: true, windowsHide: true, timeout: TIMEOUTS.HEALTH_CHECK })
+      );
+    });
+
+    test('getGPUMemoryUsage probe is hidden too', async () => {
+      const monitor = new GPUMonitor();
+      monitor._platform = 'linux';
+      mockExecFileAsync.mockResolvedValueOnce({ stdout: '200, 1000', stderr: '' });
+
+      await monitor.getGPUMemoryUsage();
+
+      expect(mockExecFileAsync).toHaveBeenCalledWith(
+        expect.stringMatching(/^nvidia-smi/),
+        expect.any(Array),
+        expect.objectContaining({ windowsHide: true })
+      );
+    });
+  });
 });

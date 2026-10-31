@@ -32,7 +32,7 @@ const { getInstance: getVisionService } = require('./VisionService');
 const { ensureResolvedModelsPath } = require('./modelPathResolver');
 
 // New Managers
-const { GPUMonitor } = require('./GPUMonitor');
+const { getInstance: getGPUMonitor } = require('./GPUMonitor');
 const { ModelMemoryManager } = require('./ModelMemoryManager');
 const { DegradationManager } = require('./DegradationManager');
 const { ModelAccessCoordinator } = require('./ModelAccessCoordinator');
@@ -200,8 +200,10 @@ class LlamaService extends EventEmitter {
     this._detectedGpu = null;
     this._gpuSelection = null;
 
-    // Managers
-    this._gpuMonitor = new GPUMonitor();
+    // Managers. The GPU monitor is the process-wide singleton (shared with
+    // DegradationManager) so the nvidia-smi/powershell/wmic probes run once
+    // per launch and every consumer sees the same cached result.
+    this._gpuMonitor = getGPUMonitor();
     this._modelMemoryManager = null; // Initialized after llama
     this._degradationManager = null; // Initialized after llama
     this._coordinator = new ModelAccessCoordinator();
@@ -1130,7 +1132,9 @@ class LlamaService extends EventEmitter {
       logger.debug('[LlamaService] GPU detection skipped');
     }
 
-    // Initialize Llama backend deterministically (CUDA -> auto -> CPU)
+    // Initialize Llama backend deterministically (CUDA -> auto -> CPU).
+    // getLlamaGpuTypes lets the selector skip GPU backends whose runtime
+    // libraries node-llama-cpp cannot find, instead of test-loading them.
     try {
       const { initLlamaWithBackend } = require('../utils/llamaBackendSelector');
       const selection = await initLlamaWithBackend({
@@ -1138,7 +1142,9 @@ class LlamaService extends EventEmitter {
         gpuInfo: this._detectedGpu,
         logger,
         context: 'LlamaService',
-        llamaLogger
+        llamaLogger,
+        getLlamaGpuTypes:
+          typeof nodeLlama.getLlamaGpuTypes === 'function' ? nodeLlama.getLlamaGpuTypes : undefined
       });
       this._llama = selection.llama;
       this._gpuBackend = selection.backend;

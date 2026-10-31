@@ -58,7 +58,8 @@ jest.mock('../src/main/services/PerformanceMetrics', () => ({
 }));
 
 jest.mock('../src/main/services/GPUMonitor', () => ({
-  GPUMonitor: jest.fn().mockImplementation(() => ({}))
+  GPUMonitor: jest.fn().mockImplementation(() => ({})),
+  getInstance: jest.fn(() => ({}))
 }));
 
 // Mirrors the real SettingsService instance contract LlamaService uses

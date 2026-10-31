@@ -78,8 +78,10 @@ const { createSingletonHelpers } = require('../../shared/singletonFactory');
 const { ERROR_CODES } = require('../../shared/errorCodes');
 const { attachErrorCode } = require('../../shared/errorHandlingUtils');
 const { ensureResolvedModelsPath } = require('./modelPathResolver');
-const { GPUMonitor } = require('./GPUMonitor');
+const { getInstance: getGPUMonitor } = require('./GPUMonitor');
 const { transcodeToWhisperPcm, WHISPER_SAMPLE_RATE } = require('./MediaTranscoder');
+
+/** @typedef {import('./GPUMonitor').GPUMonitor} GPUMonitor */
 
 const logger = createLogger('WhisperService');
 
@@ -697,7 +699,8 @@ class WhisperService extends EventEmitter {
     super();
     this._modelFilename = options.modelFilename || DEFAULT_MODEL_FILENAME;
     this._modelsDirOverride = options.modelsDir || null;
-    this._gpuMonitor = options.gpuMonitor || new GPUMonitor();
+    // Default to the process-wide singleton so GPU detection runs once per launch.
+    this._gpuMonitor = options.gpuMonitor || getGPUMonitor();
     this._bindingOverride = options.bindingOverride || null;
     this._transcoderOverride = options.transcoderOverride || null;
     /** @type {WhisperFsPromises} */

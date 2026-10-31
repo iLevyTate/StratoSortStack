@@ -29,11 +29,15 @@ function getWindowsVendorScore(/** @type {any} */ name) {
 /**
  * Run a shell command asynchronously, returning stdout as string.
  * Swallows errors and returns null on failure.
+ *
+ * `windowsHide` keeps nvidia-smi / powershell / wmic from flashing a conhost
+ * window on Windows; the probes are console programs spawned from a GUI app.
  */
 async function runCommand(/** @type {any} */ cmd, /** @type {any} */ args = [], options = {}) {
   try {
     const { stdout } = await execFileAsync(cmd, args, {
       timeout: TIMEOUTS.HEALTH_CHECK,
+      windowsHide: true,
       ...options
     });
     return stdout;
