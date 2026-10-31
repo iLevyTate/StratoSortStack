@@ -52,9 +52,10 @@ describe('electron-builder.json Windows targets', () => {
 describe('electron-builder.json node_modules exclusions', () => {
   const { getNodeModuleFileMatcher, FileMatcher } = require('app-builder-lib/out/fileMatcher');
 
-  function isPackaged(platformKey, moduleRelativePath) {
+  function isPackaged(platformKey, moduleRelativePath, arch = 'x64') {
     const packager = { config: builderConfig, debugLogger: { isEnabled: false } };
-    const macroExpander = (pattern) => pattern;
+    // app-builder-lib expands ${arch} in `files` patterns per packed arch.
+    const macroExpander = (pattern) => pattern.replace(/\$\{arch\}/g, arch);
     const nodeModuleMatcher = getNodeModuleFileMatcher(
       '/project',
       '/out/app',
@@ -105,6 +106,22 @@ describe('electron-builder.json node_modules exclusions', () => {
     'node_modules/better-sqlite3/prebuilds/win32-arm64.node'
   ])('Windows build keeps runtime file %s', (moduleRelativePath) => {
     expect(isPackaged('win', moduleRelativePath)).toBe(true);
+  });
+
+  test.each([
+    ['x64', 'node_modules/@node-llama-cpp/win-arm64/bins/win-arm64/llama-addon.node', false],
+    ['x64', 'node_modules/@node-llama-cpp/win-arm64/package.json', false],
+    ['x64', 'node_modules/@node-llama-cpp/win-x64/bins/win-x64/llama-addon.node', true],
+    [
+      'x64',
+      'node_modules/@node-llama-cpp/win-x64-vulkan/bins/win-x64-vulkan/ggml-vulkan.dll',
+      true
+    ],
+    ['arm64', 'node_modules/@node-llama-cpp/win-arm64/bins/win-arm64/llama-addon.node', true],
+    ['arm64', 'node_modules/@node-llama-cpp/win-x64-cuda/bins/win-x64-cuda/ggml-cuda.dll', false],
+    ['arm64', 'node_modules/node-llama-cpp/dist/bindings/getLlama.js', true]
+  ])('Windows %s build packages %s: %s', (arch, moduleRelativePath, expected) => {
+    expect(isPackaged('win', moduleRelativePath, arch)).toBe(expected);
   });
 
   test('the Windows-only prebuild exclusion does not leak into macOS or Linux builds', () => {

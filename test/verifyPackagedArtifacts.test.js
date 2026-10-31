@@ -8,6 +8,7 @@ const {
   NODE_LLAMA_CPP_RUNTIME_FILES,
   REQUIRED_ELECTRON_RUNTIME_FILES,
   REQUIRED_NATIVE_MODULE_PATHS,
+  getForeignArchLlamaPrebuiltPackages,
   getRequiredLlamaPrebuiltPackages,
   getRequiredWhisperVariantPackages,
   getWindowsZipArtifactName,
@@ -287,6 +288,35 @@ describe('verify-packaged-artifacts', () => {
     );
   });
 
+  test('rejects Windows x64 builds that packaged the arm64 llama prebuilt', () => {
+    const buildRoot = createWindowsBuildRoot();
+    tempDirs.push(buildRoot);
+    writeFile(
+      path.join(
+        windowsUnpackedModules(buildRoot),
+        '@node-llama-cpp',
+        'win-arm64',
+        'bins',
+        'win-arm64',
+        'llama-addon.node'
+      )
+    );
+
+    expect(() => verifyWindowsArtifacts(buildRoot, 'x64', VERSION)).toThrow(
+      /prebuilt package @node-llama-cpp\/win-arm64 for another arch was packaged/
+    );
+  });
+
+  test('accepts an empty directory left by the excluded arm64 llama prebuilt', () => {
+    const buildRoot = createWindowsBuildRoot();
+    tempDirs.push(buildRoot);
+    fs.mkdirSync(path.join(windowsUnpackedModules(buildRoot), '@node-llama-cpp', 'win-arm64'), {
+      recursive: true
+    });
+
+    expect(() => verifyWindowsArtifacts(buildRoot, 'x64', VERSION)).not.toThrow();
+  });
+
   test('rejects builds that packaged the node-llama-cpp git bundle', () => {
     const buildRoot = createWindowsBuildRoot();
     tempDirs.push(buildRoot);
@@ -341,6 +371,17 @@ describe('verify-packaged-artifacts', () => {
     test('other platforms are not checked', () => {
       expect(getRequiredLlamaPrebuiltPackages('darwin', 'arm64')).toEqual([]);
       expect(getRequiredLlamaPrebuiltPackages('linux', 'x64')).toEqual([]);
+    });
+
+    test("each Windows arch must not ship the other arch's packages", () => {
+      expect(getForeignArchLlamaPrebuiltPackages('win32', 'x64')).toEqual([
+        '@node-llama-cpp/win-arm64'
+      ]);
+      expect(getForeignArchLlamaPrebuiltPackages('win', '')).toEqual(['@node-llama-cpp/win-arm64']);
+      expect(getForeignArchLlamaPrebuiltPackages('win', 'arm64')).toEqual(
+        getRequiredLlamaPrebuiltPackages('win', 'x64')
+      );
+      expect(getForeignArchLlamaPrebuiltPackages('darwin', 'arm64')).toEqual([]);
     });
   });
 
