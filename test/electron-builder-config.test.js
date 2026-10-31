@@ -47,6 +47,27 @@ describe('electron-builder.json Windows targets', () => {
   });
 });
 
+// The top-level `compression: maximum` turns a zip into 15-pass Deflate
+// (-mfb=258 -mpass=15), which ran the x64 release job past its 45-minute limit
+// on the CUDA libraries. win.compression overrides it for both Windows targets.
+describe('electron-builder.json Windows compression', () => {
+  const { compute7zCompressArgs } = require('app-builder-lib/out/targets/archive');
+  const winCompression = builderConfig.win.compression;
+
+  test('the Windows zip is not built with 15-pass Deflate', () => {
+    expect(winCompression).toBe('normal');
+    expect(compute7zCompressArgs('zip', { compression: winCompression })).not.toContain(
+      '-mpass=15'
+    );
+  });
+
+  test('the NSIS app archive keeps the 7z settings it had at maximum', () => {
+    expect(compute7zCompressArgs('7z', { compression: winCompression })).toEqual(
+      compute7zCompressArgs('7z', { compression: 'maximum' })
+    );
+  });
+});
+
 // Runs app-builder-lib's own node_modules filter (the one NodeModuleCopyHelper
 // applies while copying dependencies) against the committed `files` patterns.
 describe('electron-builder.json node_modules exclusions', () => {
