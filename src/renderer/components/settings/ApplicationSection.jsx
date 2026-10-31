@@ -26,7 +26,12 @@ function ApplicationSection({ settings, setSettings, addNotification }) {
     setIsCheckingUpdates(true);
     try {
       const result = await systemIpc.checkForUpdates();
-      if (result?.disabled) {
+      if (result?.unsupported) {
+        addNotification?.(
+          result.reason || 'This copy of StratoSort cannot update itself.',
+          'warning'
+        );
+      } else if (result?.disabled) {
         addNotification?.('Update checks are temporarily disabled in this build.', 'info');
       } else {
         addNotification?.('Checking for updates\u2026', 'info');

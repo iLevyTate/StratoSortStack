@@ -46,6 +46,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   after 3 s.
 - Starting the app while it is still shutting down (for example right after **Quit**) now opens it
   again once the shutdown has finished, instead of doing nothing.
+- **Settings → Application → Check for updates** on a copy that cannot update itself (the extracted
+  Windows zip, a Microsoft Store install, or a Linux build other than the AppImage) now explains why
+  instead of reporting "Failed to check for updates". With auto-updates disabled it now says so
+  instead of "Checking for updates…".
 
 ## [5.0.0] - 2026-10-26
 
