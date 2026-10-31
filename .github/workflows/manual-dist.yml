@@ -103,7 +103,7 @@ jobs:
       - name: Generate SHA256 checksums
         run: |
           $files = Get-ChildItem release/build -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match '^StratoSortStack-.*\.(exe|blockmap)$|^latest\.yml$' }
+            Where-Object { $_.Name -match '^StratoSortStack-.*\.(exe|zip|blockmap)$|^latest\.yml$' }
           if (-not $files -or $files.Count -eq 0) {
             throw "No Windows build artifacts found to checksum."
           }
@@ -120,7 +120,7 @@ jobs:
           name: stratosort-windows-dist-${{ github.run_number }}
           path: |
             release/build/StratoSortStack-Setup-*.exe
-            release/build/StratoSortStack-*-win-*.exe
+            release/build/StratoSortStack-*-win-*.zip
             release/build/*.blockmap
             release/build/latest.yml
             release/build/checksums-windows.sha256

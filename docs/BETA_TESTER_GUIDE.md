@@ -61,7 +61,7 @@ No sign-up is needed: download the public release and send feedback through
 | Your computer                              | Typical filename pattern                      |
 | :----------------------------------------- | :-------------------------------------------- |
 | **Windows** (x64, preferred)               | `StratoSortStack-Setup-5.0.0.exe`             |
-| **Windows** (portable / alt build)         | `StratoSortStack-5.0.0-win-x64.exe`           |
+| **Windows** (x64, no-install zip)          | `StratoSortStack-X.X.X-win-x64.zip`           |
 | **Windows on Arm** (arm64)                 | `StratoSortStack-Setup-5.0.0-arm64.exe`       |
 | **Mac** (Apple Silicon: M1 / M2 / M3 / M4) | `StratoSortStack-5.0.0-mac-arm64.dmg`         |
 | **Mac** (Intel)                            | `StratoSortStack-5.0.0-mac-x64.dmg`           |
@@ -72,7 +72,10 @@ Always take the **newest** installer for your OS, not one from an older release.
 
 **Notes**
 
-- **Windows:** Prefer `StratoSortStack-Setup-….exe` for normal installs.
+- **Windows:** Prefer `StratoSortStack-Setup-….exe` for normal installs. The zip is for machines
+  where you cannot install software: extract it once and run `StratoSort Stack.exe` from the
+  extracted folder; it does not update itself. Releases after v5.0.0 ship this zip instead of the
+  self-extracting portable `StratoSortStack-5.0.0-win-x64.exe`.
 - **Mac:** Apple Silicon and Intel builds both ship. Prefer the `arm64` DMG on M1–M4.
 - **Linux:** Use the `.AppImage` build (it updates itself; the `.deb` does not).
 - **Do not install:** `checksums-*.sha256`, `latest*.yml`, or `.blockmap` files (these are update
@@ -228,7 +231,7 @@ Do not attach documents or logs that contain private information; GitHub issues 
 5. **Your setup:**
    - OS (e.g. Windows 11, macOS 15, Ubuntu 24.04)
    - App version (**Settings → Application → About** or the app title area)
-   - Installer vs portable (if you know)
+   - Installer, zip, or old portable exe (if you know)
    - For AI/speed issues: rough RAM and GPU model
 
 ### Add if you can

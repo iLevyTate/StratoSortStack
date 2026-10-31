@@ -232,6 +232,18 @@ function verifyWin(buildRoot, arch = null) {
     .filter((name) => /\.exe$/i.test(name));
   const allNames = entries.map((entry) => entry.name);
 
+  // Only the NSIS installers may be offered as updates. The no-install
+  // -win-x64.zip is a manual download: app-builder-lib writes update info for
+  // Windows nsis/appx targets only (PublishManager isSuitableWindowsTarget), and
+  // its writeUpdateInfoFiles sorts .zip entries first, so a zip that ever
+  // slipped in would also take over the legacy path/sha512 fields.
+  const nonInstallers = allNames.filter((name) => !/\.exe$/i.test(name));
+  if (nonInstallers.length > 0) {
+    throw new Error(
+      `${WIN_CHANNEL_FILE} must list only the NSIS installers, found: ${nonInstallers.join(', ')}.`
+    );
+  }
+
   if (checkX64 && files.some(isX64Exe) && !allNames.some(isX64Exe)) {
     throw new Error(
       `${WIN_CHANNEL_FILE} does not reference the x64 installer although one is present — ${MERGE_HINT}.`

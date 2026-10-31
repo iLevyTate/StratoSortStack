@@ -14,6 +14,7 @@ const { createLogger, shutdownLogging } = require('../../shared/logger');
 const { hasPendingDownloadedUpdate } = require('./autoUpdater');
 const { attachUserDataLockPowerMonitor } = require('./userDataLock');
 const { destroyTray, getTray, unregisterGlobalShortcuts } = require('./systemTray');
+const { withoutJumpListTasks } = require('./jumpList');
 const { getStartupManager } = require('../services/startup');
 const systemAnalytics = require('./systemAnalytics');
 const { withTimeout } = require('../../shared/promiseUtils');
@@ -106,6 +107,42 @@ async function verifyShutdownCleanup() {
 }
 
 /**
+ * One-shot relaunch request recorded while a shutdown is already running.
+ * @type {{ reason: string, requestedAt: number } | null}
+ */
+let _relaunchRequest = null;
+let _relaunchIssued = false;
+
+/**
+ * Ask for the app to start again once the shutdown in progress has finished.
+ * A launch that arrives mid-shutdown (second-instance) cannot get a window:
+ * services are being torn down and createWindow() refuses. Without this the
+ * launching process exits on the lock and the click has no visible effect.
+ * Only the first request counts; app.relaunch() starts one instance per call.
+ * @param {string} reason
+ * @returns {boolean} true when this call recorded the request
+ */
+function requestRelaunchAfterShutdown(reason) {
+  if (_relaunchRequest) return false;
+  _relaunchRequest = { reason: String(reason || 'unspecified'), requestedAt: Date.now() };
+  logger.info('[SHUTDOWN] Relaunch requested; the app will start again after shutdown', {
+    reason: _relaunchRequest.reason,
+    shutdownStarted: _quitCleanupStarted
+  });
+  return true;
+}
+
+/**
+ * Whether the exit site should relaunch. electron-updater installs a
+ * downloaded update from its 'quit' handler; starting the old build while the
+ * installer replaces its files would fight the install, so a pending update
+ * wins and the next manual launch opens the updated app.
+ */
+function _shouldRelaunchAfterExit() {
+  return Boolean(_relaunchRequest) && !_relaunchIssued && !hasPendingDownloadedUpdate();
+}
+
+/**
  * Handle before-quit event - performs all cleanup operations
  * @returns {Promise<void>}
  */
@@ -154,6 +191,11 @@ async function handleBeforeQuit(/** @type {any} */ event) {
   // sum + a small slack; any single phase that blows its budget is logged but the next
   // phase still runs. Prior behaviour was a single 12 s cap that could truncate Orama
   // final persist or embedding queue drain when earlier phases ran long.
+  // Budgets are ceilings, not costs: an idle app clears each phase in milliseconds.
+  // They are not shortened to speed up a relaunch: ipcAndBatch and workerPools wrap
+  // their own 5 s drains (batch runs, MCP close, each worker pool), and
+  // serviceIntegration has no inner bound (ServiceContainer.shutdown awaits every
+  // service in turn) while it carries the Orama final persist.
   const PHASE_BUDGETS = {
     preCleanup: 2000, // shortcuts + timers + listener lists + IPC handlers
     ipcAndBatch: 10000, // batch analysis service drain + IPC takedown
@@ -457,6 +499,22 @@ async function handleBeforeQuit(/** @type {any} */ event) {
     logger.warn('[SHUTDOWN-VERIFY] Verification failed:', verifyError.message);
   }
 
+  // A launch that arrived during this shutdown is honoured once the process
+  // exits. The decision is logged here because the log streams close below;
+  // app.relaunch() itself is issued right before app.exit().
+  if (_relaunchRequest && !_relaunchIssued) {
+    if (_shouldRelaunchAfterExit()) {
+      logger.info('[SHUTDOWN] Relaunching after shutdown', {
+        reason: _relaunchRequest.reason,
+        waitedMs: Date.now() - _relaunchRequest.requestedAt
+      });
+    } else {
+      logger.warn('[SHUTDOWN] Not relaunching: a downloaded update installs on this quit', {
+        reason: _relaunchRequest.reason
+      });
+    }
+  }
+
   // Flush and end all pino/sonic-boom streams before exiting.
   // This prevents the "sonic boom is not ready yet" uncaught exception
   // that occurs when process.exit fires while sonic-boom is still initializing.
@@ -477,6 +535,22 @@ async function handleBeforeQuit(/** @type {any} */ event) {
       '[SHUTDOWN] Shutdown degraded with a pending update; exiting 0 so the installer can run'
     );
     shutdownExitCode = 0;
+  }
+
+  // Re-checked here so a request that arrived while the logs were flushing is
+  // still honoured (unlogged: the streams are closed). Electron starts the new
+  // instance only after this process exits, so it never races this one for
+  // the single-instance or user-data lock.
+  if (_shouldRelaunchAfterExit()) {
+    _relaunchIssued = true;
+    try {
+      // The new instance gets this instance's arguments minus Jump List tasks:
+      // the default replays them, so an instance started from "Open Documents
+      // Folder" would open Explorer again although the user only clicked the app.
+      app.relaunch({ args: withoutJumpListTasks(process.argv.slice(1)) });
+    } catch {
+      // Logging is closed; exiting without the relaunch is all that is left.
+    }
   }
 
   // Cleanup complete — now exit the app (bypasses before-quit to avoid re-entrance)
@@ -940,6 +1014,7 @@ module.exports = {
   initializeLifecycle,
   registerLifecycleHandlers,
   attachSessionEndFlush,
+  requestRelaunchAfterShutdown,
   handleBeforeQuit,
   handleWindowAllClosed,
   handleActivate,

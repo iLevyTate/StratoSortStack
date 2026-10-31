@@ -1134,7 +1134,9 @@ class LlamaService extends EventEmitter {
 
     // Initialize Llama backend deterministically (CUDA -> auto -> CPU).
     // getLlamaGpuTypes lets the selector skip GPU backends whose runtime
-    // libraries node-llama-cpp cannot find, instead of test-loading them.
+    // libraries node-llama-cpp cannot find, instead of test-loading them;
+    // backendCache lets it try last launch's working backend first.
+    const backendCache = await this._createLlamaBackendCache(nodeLlama);
     try {
       const { initLlamaWithBackend } = require('../utils/llamaBackendSelector');
       const selection = await initLlamaWithBackend({
@@ -1144,7 +1146,8 @@ class LlamaService extends EventEmitter {
         context: 'LlamaService',
         llamaLogger,
         getLlamaGpuTypes:
-          typeof nodeLlama.getLlamaGpuTypes === 'function' ? nodeLlama.getLlamaGpuTypes : undefined
+          typeof nodeLlama.getLlamaGpuTypes === 'function' ? nodeLlama.getLlamaGpuTypes : undefined,
+        backendCache
       });
       this._llama = selection.llama;
       this._gpuBackend = selection.backend;
@@ -1194,6 +1197,41 @@ class LlamaService extends EventEmitter {
         backend: this._gpuBackend,
         message: 'Text, embedding, and vision models will use GPU for faster inference.'
       });
+    }
+  }
+
+  /**
+   * Last-known-good GPU backend record under userData, fingerprinted by app
+   * version, node-llama-cpp version and the GPU detected this launch (see
+   * utils/llamaBackendCache). Undefined when userData cannot be resolved; the
+   * selector then runs its plain ladder. Never throws.
+   *
+   * @param {any} nodeLlama the loaded node-llama-cpp module
+   */
+  async _createLlamaBackendCache(nodeLlama) {
+    try {
+      const userDataPath = typeof app?.getPath === 'function' ? app.getPath('userData') : null;
+      if (!userDataPath) return undefined;
+      let nodeLlamaVersion = null;
+      if (typeof nodeLlama?.getModuleVersion === 'function') {
+        try {
+          nodeLlamaVersion = await nodeLlama.getModuleVersion();
+        } catch {
+          // The fingerprint carries null; the record just misses once.
+        }
+      }
+      const { createLlamaBackendCache } = require('../utils/llamaBackendCache');
+      return (
+        createLlamaBackendCache({
+          userDataPath,
+          appVersion: typeof app?.getVersion === 'function' ? app.getVersion() : null,
+          nodeLlamaVersion,
+          gpuInfo: this._detectedGpu
+        }) || undefined
+      );
+    } catch (error) {
+      logger.debug('[LlamaService] GPU backend cache unavailable', { error: error?.message });
+      return undefined;
     }
   }
 

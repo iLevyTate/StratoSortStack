@@ -48,6 +48,13 @@ describe('performanceConstants', () => {
         constants.TIMEOUTS.WINDOW_SHOW_FALLBACK
       );
     });
+
+    test('defines startup folder probe and GPU fallback timings', () => {
+      // Each Uncategorized stat/mkdir before the window gives up after this.
+      expect(constants.TIMEOUTS.DEFAULT_FOLDER_PROBE).toBe(3000);
+      // Stable hardware-accelerated run required before .gpu-fallback clears.
+      expect(constants.TIMEOUTS.GPU_FALLBACK_STABLE_RUN).toBe(30000);
+    });
   });
 
   describe('RETRY', () => {

@@ -7,6 +7,7 @@ const { channelFile, writeArtifacts } = require('./utils/updaterMetadataFixtures
 
 const X64_SETUP = 'StratoSortStack-Setup-4.0.2.exe';
 const ARM64_SETUP = 'StratoSortStack-Setup-4.0.2-arm64.exe';
+const X64_ZIP = 'StratoSortStack-4.0.2-win-x64.zip';
 
 describe('verify-updater-metadata (windows)', () => {
   let tempDir;
@@ -59,6 +60,22 @@ describe('verify-updater-metadata (windows)', () => {
     writeChannel('latest.yml', [arm64, x64]);
 
     expect(() => verifyWin(tempDir)).toThrow(/arm64 installer before the x64 one/);
+  });
+
+  test('ignores the no-install zip that ships next to the x64 installer', () => {
+    const [x64] = writeArtifacts(tempDir, { [X64_SETUP]: 32, [X64_ZIP]: 40 });
+    writeChannel('latest.yml', [x64]);
+
+    expect(() => verifyWin(tempDir, 'x64')).not.toThrow();
+  });
+
+  test('rejects a channel file that offers the zip as an update', () => {
+    const [x64, zip] = writeArtifacts(tempDir, { [X64_SETUP]: 32, [X64_ZIP]: 40 });
+    writeChannel('latest.yml', [zip, x64]);
+
+    expect(() => verifyWin(tempDir, 'x64')).toThrow(
+      /must list only the NSIS installers, found: StratoSortStack-4\.0\.2-win-x64\.zip/
+    );
   });
 
   test('fails on sha512 mismatch between metadata and installer bytes', () => {

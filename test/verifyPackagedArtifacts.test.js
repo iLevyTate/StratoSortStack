@@ -4,12 +4,18 @@ const path = require('path');
 
 const {
   MAC_V8_CONTEXT_SNAPSHOT_BY_ARCH,
+  NODE_LLAMA_CPP_BUILD_ONLY_FILES,
+  NODE_LLAMA_CPP_RUNTIME_FILES,
   REQUIRED_ELECTRON_RUNTIME_FILES,
   REQUIRED_NATIVE_MODULE_PATHS,
+  getRequiredLlamaPrebuiltPackages,
   getRequiredWhisperVariantPackages,
+  getWindowsZipArtifactName,
   verifyMacArtifacts,
   verifyWindowsArtifacts
 } = require('../scripts/verify-packaged-artifacts');
+
+const VERSION = '9.9.9';
 
 function writeFile(targetPath) {
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
@@ -27,6 +33,15 @@ function seedNativeModules(unpackedModules) {
   REQUIRED_NATIVE_MODULE_PATHS.forEach((segments) => {
     fs.mkdirSync(path.join(unpackedModules, ...segments), { recursive: true });
   });
+  NODE_LLAMA_CPP_RUNTIME_FILES.forEach((segments) => {
+    writeFile(path.join(unpackedModules, ...segments));
+  });
+}
+
+function seedLlamaPrebuilts(unpackedModules, platform, arch) {
+  getRequiredLlamaPrebuiltPackages(platform, arch).forEach((packageName) => {
+    fs.mkdirSync(path.join(unpackedModules, ...packageName.split('/')), { recursive: true });
+  });
 }
 
 function seedWhisperVariants(unpackedModules, platform, arch) {
@@ -36,11 +51,16 @@ function seedWhisperVariants(unpackedModules, platform, arch) {
   });
 }
 
-function createWindowsBuildRoot({ skipWhisperVariants = false } = {}) {
+function windowsUnpackedModules(buildRoot, arch = 'x64') {
+  const appDir = arch === 'arm64' ? 'win-arm64-unpacked' : 'win-unpacked';
+  return path.join(buildRoot, appDir, 'resources', 'app.asar.unpacked', 'node_modules');
+}
+
+function createWindowsBuildRoot({ arch = 'x64', skipWhisperVariants = false } = {}) {
   const buildRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'stratosort-packaged-artifacts-'));
-  const appRoot = path.join(buildRoot, 'win-unpacked');
+  const appRoot = path.join(buildRoot, arch === 'arm64' ? 'win-arm64-unpacked' : 'win-unpacked');
   const resources = path.join(appRoot, 'resources');
-  const unpackedModules = path.join(resources, 'app.asar.unpacked', 'node_modules');
+  const unpackedModules = windowsUnpackedModules(buildRoot, arch);
 
   writeFile(path.join(appRoot, 'StratoSort Stack.exe'));
   REQUIRED_ELECTRON_RUNTIME_FILES.forEach((fileName) => {
@@ -48,11 +68,15 @@ function createWindowsBuildRoot({ skipWhisperVariants = false } = {}) {
   });
   writeFile(path.join(resources, 'app.asar'));
   writeFile(path.join(resources, 'assets', 'runtime', 'llama-server.exe'));
-  writeExecutable(path.join(resources, 'assets', 'runtime', 'ffmpeg', 'ffmpeg.exe'));
+  if (arch !== 'arm64') {
+    writeExecutable(path.join(resources, 'assets', 'runtime', 'ffmpeg', 'ffmpeg.exe'));
+    writeFile(path.join(buildRoot, getWindowsZipArtifactName(VERSION)));
+  }
 
   seedNativeModules(unpackedModules);
+  seedLlamaPrebuilts(unpackedModules, 'win32', arch);
   if (!skipWhisperVariants) {
-    seedWhisperVariants(unpackedModules, 'win32', 'x64');
+    seedWhisperVariants(unpackedModules, 'win32', arch);
   }
 
   return buildRoot;
@@ -108,7 +132,7 @@ describe('verify-packaged-artifacts', () => {
     const buildRoot = createWindowsBuildRoot();
     tempDirs.push(buildRoot);
 
-    expect(() => verifyWindowsArtifacts(buildRoot)).not.toThrow();
+    expect(() => verifyWindowsArtifacts(buildRoot, 'x64', VERSION)).not.toThrow();
   });
 
   test('rejects Windows builds missing runtime snapshot files', () => {
@@ -116,7 +140,7 @@ describe('verify-packaged-artifacts', () => {
     tempDirs.push(buildRoot);
     fs.rmSync(path.join(buildRoot, 'win-unpacked', 'v8_context_snapshot.bin'));
 
-    expect(() => verifyWindowsArtifacts(buildRoot)).toThrow(
+    expect(() => verifyWindowsArtifacts(buildRoot, 'x64', VERSION)).toThrow(
       /Windows runtime file v8_context_snapshot\.bin missing/
     );
   });
@@ -172,7 +196,7 @@ describe('verify-packaged-artifacts', () => {
       recursive: true
     });
 
-    expect(() => verifyWindowsArtifacts(buildRoot)).toThrow(
+    expect(() => verifyWindowsArtifacts(buildRoot, 'x64', VERSION)).toThrow(
       /Whisper variant package @fugood\/node-whisper-win32-x64-vulkan/
     );
   });
@@ -191,7 +215,7 @@ describe('verify-packaged-artifacts', () => {
       recursive: true
     });
 
-    expect(() => verifyWindowsArtifacts(buildRoot)).toThrow(
+    expect(() => verifyWindowsArtifacts(buildRoot, 'x64', VERSION)).toThrow(
       /Whisper variant package @fugood\/node-whisper-win32-x64-cuda/
     );
   });
@@ -208,7 +232,7 @@ describe('verify-packaged-artifacts', () => {
     );
     fs.rmSync(path.join(unpackedModules, '@fugood', 'whisper.node'), { recursive: true });
 
-    expect(() => verifyWindowsArtifacts(buildRoot)).toThrow(
+    expect(() => verifyWindowsArtifacts(buildRoot, 'x64', VERSION)).toThrow(
       /Unpacked native module @fugood\/whisper\.node missing/
     );
   });
@@ -232,6 +256,92 @@ describe('verify-packaged-artifacts', () => {
     expect(() => verifyMacArtifacts(buildRoot, 'arm64')).toThrow(
       /Whisper variant package @fugood\/node-whisper-darwin-arm64/
     );
+  });
+
+  test('rejects Windows x64 builds without the no-install zip', () => {
+    const buildRoot = createWindowsBuildRoot();
+    tempDirs.push(buildRoot);
+    fs.rmSync(path.join(buildRoot, getWindowsZipArtifactName(VERSION)));
+
+    expect(() => verifyWindowsArtifacts(buildRoot, 'x64', VERSION)).toThrow(
+      /Windows x64 zip missing: .*StratoSortStack-9\.9\.9-win-x64\.zip/
+    );
+  });
+
+  test('accepts Windows arm64 builds, which ship the installer without a zip', () => {
+    const buildRoot = createWindowsBuildRoot({ arch: 'arm64' });
+    tempDirs.push(buildRoot);
+
+    expect(() => verifyWindowsArtifacts(buildRoot, 'arm64', VERSION)).not.toThrow();
+  });
+
+  test('rejects Windows x64 builds missing the CUDA 12 fallback package', () => {
+    const buildRoot = createWindowsBuildRoot();
+    tempDirs.push(buildRoot);
+    fs.rmSync(path.join(windowsUnpackedModules(buildRoot), '@node-llama-cpp', 'win-x64-cuda-ext'), {
+      recursive: true
+    });
+
+    expect(() => verifyWindowsArtifacts(buildRoot, 'x64', VERSION)).toThrow(
+      /node-llama-cpp prebuilt package @node-llama-cpp\/win-x64-cuda-ext missing/
+    );
+  });
+
+  test('rejects builds that packaged the node-llama-cpp git bundle', () => {
+    const buildRoot = createWindowsBuildRoot();
+    tempDirs.push(buildRoot);
+    NODE_LLAMA_CPP_BUILD_ONLY_FILES.forEach((segments) => {
+      writeFile(path.join(windowsUnpackedModules(buildRoot), ...segments));
+    });
+
+    expect(() => verifyWindowsArtifacts(buildRoot, 'x64', VERSION)).toThrow(
+      /node-llama-cpp build-only file node-llama-cpp\/llama\/gitRelease\.bundle was packaged/
+    );
+  });
+
+  test('rejects builds missing the release file node-llama-cpp reads on import', () => {
+    const buildRoot = createMacBuildRoot({ arch: 'arm64' });
+    tempDirs.push(buildRoot);
+    fs.rmSync(
+      path.join(
+        buildRoot,
+        'mac-arm64',
+        'StratoSort Stack.app',
+        'Contents',
+        'Resources',
+        'app.asar.unpacked',
+        'node_modules',
+        'node-llama-cpp',
+        'llama',
+        'binariesGithubRelease.json'
+      )
+    );
+
+    expect(() => verifyMacArtifacts(buildRoot, 'arm64')).toThrow(
+      /node-llama-cpp runtime file node-llama-cpp\/llama\/binariesGithubRelease\.json/
+    );
+  });
+
+  describe('getRequiredLlamaPrebuiltPackages policy', () => {
+    test('Windows x64 requires CPU, CUDA, the CUDA 12 fallback and Vulkan packages', () => {
+      expect(getRequiredLlamaPrebuiltPackages('win32', 'x64')).toEqual([
+        '@node-llama-cpp/win-x64',
+        '@node-llama-cpp/win-x64-cuda',
+        '@node-llama-cpp/win-x64-cuda-ext',
+        '@node-llama-cpp/win-x64-vulkan'
+      ]);
+    });
+
+    test('Windows arm64 requires only the arm64 package', () => {
+      expect(getRequiredLlamaPrebuiltPackages('win', 'arm64')).toEqual([
+        '@node-llama-cpp/win-arm64'
+      ]);
+    });
+
+    test('other platforms are not checked', () => {
+      expect(getRequiredLlamaPrebuiltPackages('darwin', 'arm64')).toEqual([]);
+      expect(getRequiredLlamaPrebuiltPackages('linux', 'x64')).toEqual([]);
+    });
   });
 
   describe('getRequiredWhisperVariantPackages policy', () => {

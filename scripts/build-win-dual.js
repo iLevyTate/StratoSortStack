@@ -39,6 +39,16 @@ function runNpmScript(scriptName) {
   }
 }
 
+// The x64 leg's no-install zip (electron-builder `zip` target). The arm64 leg
+// builds the installer only, so a copy of this name in its output is stale.
+// Compared as a plain lowercase string so the version never reaches a RegExp.
+const X64_ZIP_NAME = `StratoSortStack-${packageVersion}-win-x64.zip`.toLowerCase();
+
+/** @param {string} name */
+function isX64Zip(name) {
+  return name.toLowerCase() === X64_ZIP_NAME;
+}
+
 function listInstallerArtifacts(dir) {
   if (!fs.existsSync(dir)) {
     throw new Error(`Expected build output at ${dir}`);
@@ -46,7 +56,10 @@ function listInstallerArtifacts(dir) {
   return fs.readdirSync(dir).filter((name) => {
     const lower = name.toLowerCase();
     return (
-      lower.endsWith('.exe') || lower.endsWith('.blockmap') || /^latest(-arm64)?\.yml$/i.test(name)
+      lower.endsWith('.exe') ||
+      lower.endsWith('.zip') ||
+      lower.endsWith('.blockmap') ||
+      /^latest(-arm64)?\.yml$/i.test(name)
     );
   });
 }
@@ -60,13 +73,7 @@ function copyBuildOutput(targetDir, leg) {
   fs.mkdirSync(targetDir, { recursive: true });
 
   for (const name of names) {
-    if (
-      leg === 'arm64' &&
-      new RegExp(
-        `^StratoSortStack-${packageVersion.replace(/\./g, '\\.')}-win-x64\\.exe$`,
-        'i'
-      ).test(name)
-    ) {
+    if (leg === 'arm64' && isX64Zip(name)) {
       continue;
     }
     if (leg === 'x64' && /-arm64\.(exe|blockmap)$/i.test(name)) {
@@ -92,13 +99,7 @@ function mergeIntoCombined() {
     const legDir = path.join(dualRoot, leg);
     if (!fs.existsSync(legDir)) continue;
     for (const name of fs.readdirSync(legDir)) {
-      if (
-        leg === 'arm64' &&
-        new RegExp(
-          `^StratoSortStack-${packageVersion.replace(/\./g, '\\.')}-win-x64\\.exe$`,
-          'i'
-        ).test(name)
-      ) {
+      if (leg === 'arm64' && isX64Zip(name)) {
         continue;
       }
       const src = path.join(legDir, name);

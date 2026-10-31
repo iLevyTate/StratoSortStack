@@ -23,6 +23,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `better-sqlite3` 12 → 13. 12.x no longer compiles against Electron 45; 13.x ships N-API prebuilds,
   so it is no longer rebuilt per Electron version.
 - macOS 13 (Ventura) is now the minimum supported macOS version (Electron 44 dropped macOS 12).
+- **Windows:** the self-extracting portable exe (`StratoSortStack-5.0.0-win-x64.exe`), which
+  unpacked the whole app into `%TEMP%` on every start, is replaced by
+  `StratoSortStack-X.X.X-win-x64.zip`. Extract it once and run `StratoSort Stack.exe` from the
+  extracted folder; like the portable exe, it does not update itself. The Setup installer is still
+  the recommended download.
+- The AI engine remembers the GPU backend that worked (`gpu-backend-cache.json` in the app's data
+  folder) and tries it first on the next launch. An app update, a different GPU, a change in the GPU
+  runtimes node-llama-cpp finds (such as installing a CUDA toolkit), or 14 days make it run the full
+  backend search again.
+- After three GPU process exits in one session, software rendering now stays on for up to 3 days
+  (`.gpu-fallback` in the app's data folder) instead of switching back on the next launch, which
+  made launches alternate between slow and fast on a failing driver. Delete the file while the app
+  is closed to retry hardware acceleration sooner.
+
+### Fixed
+
+- Windows startup: the window is shown at most 4 s after it is created even when its first frame is
+  late, and at once when the GPU process exits before then; the AI engine waits for the first paint
+  (up to 3 s); GPU backends whose runtime libraries are missing are skipped instead of test-loaded;
+  the GPU is probed once per launch; and checks of the Documents `Uncategorized` folder give up
+  after 3 s.
+- Starting the app while it is still shutting down (for example right after **Quit**) now opens it
+  again once the shutdown has finished, instead of doing nothing.
 
 ## [5.0.0] - 2026-10-26
 

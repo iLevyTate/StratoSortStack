@@ -73,6 +73,50 @@ function getRequiredWhisperVariantPackages(platform, arch) {
   }
   return required;
 }
+/**
+ * node-llama-cpp ships its build-from-source inputs (a 36 MB llama.cpp git
+ * bundle, the addon C++ sources, cmake files, project templates), which
+ * electron-builder.json excludes because getLlama never builds inside Electron
+ * (its default `build` option is "never" when process.versions.electron is set).
+ * Check both directions: the file node-llama-cpp reads with a top-level await
+ * at import time must still ship, and the git bundle must stay out.
+ */
+const NODE_LLAMA_CPP_RUNTIME_FILES = [['node-llama-cpp', 'llama', 'binariesGithubRelease.json']];
+const NODE_LLAMA_CPP_BUILD_ONLY_FILES = [['node-llama-cpp', 'llama', 'gitRelease.bundle']];
+
+/**
+ * node-llama-cpp prebuilt packages that must ship per Windows arch, matching
+ * getPrebuiltBinariesPackageDirectoryForBuildOptions in
+ * node-llama-cpp/dist/bindings/utils/compileLLamaCpp.js. win-x64-cuda-ext holds
+ * the CUDA 12 build of ggml-cuda.dll that node-llama-cpp loads from its
+ * `fallback/` folder when the CUDA 13 primary cannot load, which is the only
+ * CUDA path for a machine whose CUDA runtime DLLs are version 12 (including the
+ * cudart 12.4 DLLs the vision runtime downloads). See docs/RELEASING.md.
+ */
+function getRequiredLlamaPrebuiltPackages(platform, arch) {
+  const platformKey = String(platform || '').toLowerCase();
+  if (platformKey !== 'win' && platformKey !== 'win32') return [];
+  if (String(arch || '').toLowerCase() === 'arm64') return ['@node-llama-cpp/win-arm64'];
+  return [
+    '@node-llama-cpp/win-x64',
+    '@node-llama-cpp/win-x64-cuda',
+    '@node-llama-cpp/win-x64-cuda-ext',
+    '@node-llama-cpp/win-x64-vulkan'
+  ];
+}
+
+/**
+ * The Windows x64 no-install artifact (electron-builder `zip` target, named by
+ * the top-level artifactName). arm64 ships the installer only.
+ */
+function getWindowsZipArtifactName(version) {
+  return `StratoSortStack-${version}-win-x64.zip`;
+}
+
+function readPackageVersion() {
+  return require(path.join(__dirname, '..', 'package.json')).version;
+}
+
 const REQUIRED_ELECTRON_RUNTIME_FILES = [
   'snapshot_blob.bin',
   'v8_context_snapshot.bin',
@@ -187,6 +231,33 @@ function verifyNativeModuleFolders(unpackedNodeModulesRoot) {
   });
 }
 
+function verifyNodeLlamaCppPayload(unpackedNodeModulesRoot) {
+  NODE_LLAMA_CPP_RUNTIME_FILES.forEach((segments) => {
+    ensureExists(
+      path.join(unpackedNodeModulesRoot, ...segments),
+      `node-llama-cpp runtime file ${segments.join('/')} (read when the module is imported)`
+    );
+  });
+  NODE_LLAMA_CPP_BUILD_ONLY_FILES.forEach((segments) => {
+    const targetPath = path.join(unpackedNodeModulesRoot, ...segments);
+    if (fs.existsSync(targetPath)) {
+      throw new Error(
+        `node-llama-cpp build-only file ${segments.join('/')} was packaged: ${targetPath}. ` +
+          'Check the node-llama-cpp exclusions in electron-builder.json "files".'
+      );
+    }
+  });
+}
+
+function verifyLlamaPrebuiltPackages(unpackedNodeModulesRoot, platform, arch) {
+  getRequiredLlamaPrebuiltPackages(platform, arch).forEach((packageName) => {
+    ensureExists(
+      path.join(unpackedNodeModulesRoot, ...packageName.split('/')),
+      `node-llama-cpp prebuilt package ${packageName}`
+    );
+  });
+}
+
 function verifyWhisperVariantFolders(unpackedNodeModulesRoot, platform, arch) {
   const requiredPackages = getRequiredWhisperVariantPackages(platform, arch);
   requiredPackages.forEach((packageName) => {
@@ -199,10 +270,13 @@ function verifyWhisperVariantFolders(unpackedNodeModulesRoot, platform, arch) {
   });
 }
 
-function verifyWindowsArtifacts(buildRoot, arch) {
+function verifyWindowsArtifacts(buildRoot, arch, version = readPackageVersion()) {
   // electron-builder emits 'win-unpacked' for the default (x64) arch and
   // 'win-arm64-unpacked' for arm64.
   const isArm64 = arch === 'arm64';
+  if (!isArm64) {
+    ensureExists(path.join(buildRoot, getWindowsZipArtifactName(version)), 'Windows x64 zip');
+  }
   const appRoot = path.join(buildRoot, isArm64 ? 'win-arm64-unpacked' : 'win-unpacked');
   const resources = path.join(appRoot, 'resources');
   const unpackedModules = path.join(resources, 'app.asar.unpacked', 'node_modules');
@@ -225,6 +299,8 @@ function verifyWindowsArtifacts(buildRoot, arch) {
     );
   }
   verifyNativeModuleFolders(unpackedModules);
+  verifyNodeLlamaCppPayload(unpackedModules);
+  verifyLlamaPrebuiltPackages(unpackedModules, 'win32', isArm64 ? 'arm64' : 'x64');
   verifyWhisperVariantFolders(unpackedModules, 'win32', isArm64 ? 'arm64' : 'x64');
 }
 
@@ -256,6 +332,7 @@ function verifyMacArtifacts(buildRoot, arch) {
       'macOS bundled FFmpeg binary'
     );
     verifyNativeModuleFolders(unpackedModules);
+    verifyNodeLlamaCppPayload(unpackedModules);
     verifyWhisperVariantFolders(unpackedModules, 'darwin', arch);
   });
 }
@@ -278,6 +355,7 @@ function verifyLinuxArtifacts(buildRoot, arch) {
     'Linux bundled FFmpeg binary'
   );
   verifyNativeModuleFolders(unpackedModules);
+  verifyNodeLlamaCppPayload(unpackedModules);
   verifyWhisperVariantFolders(unpackedModules, 'linux', isArm64 ? 'arm64' : 'x64');
 }
 
@@ -318,9 +396,13 @@ if (require.main === module) {
 }
 
 module.exports = {
+  getRequiredLlamaPrebuiltPackages,
   getRequiredMacElectronRuntimeFiles,
   getRequiredWhisperVariantPackages,
+  getWindowsZipArtifactName,
   MAC_V8_CONTEXT_SNAPSHOT_BY_ARCH,
+  NODE_LLAMA_CPP_BUILD_ONLY_FILES,
+  NODE_LLAMA_CPP_RUNTIME_FILES,
   REQUIRED_ELECTRON_RUNTIME_FILES,
   REQUIRED_NATIVE_MODULE_PATHS,
   findMacAppBundles,

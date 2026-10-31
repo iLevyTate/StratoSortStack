@@ -74,6 +74,18 @@ function handleCommandLineTasks(/** @type {any} */ args) {
 }
 
 /**
+ * The given command-line arguments without Jump List task flags. Used for the
+ * relaunch after shutdown: app.relaunch() replays this instance's own argv by
+ * default, so an instance started from a Jump List task would run the task
+ * again in the new instance.
+ * @param {string[]} args
+ * @returns {string[]}
+ */
+function withoutJumpListTasks(args) {
+  return (Array.isArray(args) ? args : []).filter((arg) => !ALLOWED_JUMP_LIST_FLAGS.includes(arg));
+}
+
+/**
  * Setup Windows Jump List tasks
  */
 function setupWindowsJumpList() {
@@ -131,5 +143,6 @@ function initializeJumpList() {
 module.exports = {
   initializeJumpList,
   handleCommandLineTasks,
-  setupWindowsJumpList
+  setupWindowsJumpList,
+  withoutJumpListTasks
 };
