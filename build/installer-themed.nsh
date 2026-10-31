@@ -15,14 +15,11 @@
 ; ============================================================================
 ; FINISH PAGE CUSTOMIZATION
 ; ============================================================================
-!ifdef MUI_FINISHPAGE_RUN
-  !undef MUI_FINISHPAGE_RUN
-!endif
-!ifdef MUI_FINISHPAGE_RUN_TEXT
-  !undef MUI_FINISHPAGE_RUN_TEXT
-!endif
+; electron-builder splices this include into the script header before assistedInstaller.nsh
+; defines MUI_FINISHPAGE_RUN, so the "Run StratoSort Stack" checkbox (nsis.runAfterFinish) cannot
+; be removed from here and stays checked by default. The text below is written for that state.
 !define MUI_FINISHPAGE_TITLE "StratoSort Installation Complete"
-!define MUI_FINISHPAGE_TEXT "StratoSort has been installed on your computer.$\r$\n$\r$\nWhen you first launch, you'll be guided through setting up AI components for intelligent file organization.$\r$\n$\r$\nClick Finish to exit Setup."
+!define MUI_FINISHPAGE_TEXT "Setup is complete. The first start can take a minute or two while Windows Security scans the new files; later starts are faster.$\r$\n$\r$\nWhen StratoSort opens, it will guide you through setting up the local AI components.$\r$\n$\r$\nLeave Run StratoSort Stack checked and click Finish to start the app."
 
 ; ============================================================================
 ; DIRECTORY PAGE CUSTOMIZATION

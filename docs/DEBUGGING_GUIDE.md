@@ -56,6 +56,174 @@ loaded conditionally, move the conditional inside the bundled code, not at the `
 `~/Library/Application Support/StratoSort Stack/logs/` on macOS, or
 `~/.config/StratoSort Stack/logs/` on Linux.
 
+### First window takes a long time on Windows
+
+**Symptom.** After double-clicking the exe or the Start Menu shortcut the busy cursor spins, Task
+Manager shows several `StratoSort Stack.exe` entries, and no window appears for a long time (reports
+range from tens of seconds to more than a minute).
+
+**Two different causes produce this.**
+
+1. **The portable exe (`StratoSortStack-X.X.X-win-x64.exe`).** The portable launcher is a
+   self-extracting stub. On every start it unpacks the whole app (about 1.8 GB, roughly 1,200 files)
+   into `%TEMP%\StratoSortStack-portable` (older builds used a long random folder name), starts the
+   app from there, and deletes the folder again when you quit. Windows Security scans every unpacked
+   file as it is written. Expect roughly 30 seconds on a fast SSD and up to several minutes on an
+   HDD or a heavily protected PC, on every launch. Nothing in the app's own log covers this phase
+   because the app process has not started yet. Builds made after v5.0.0 show a splash image while
+   the stub unpacks. The installer is the fast path; see [`INSTALL_GUIDE.md`](INSTALL_GUIDE.md).
+2. **In-app startup (installer and portable alike).** Once `StratoSort Stack.exe` is running, the
+   window is created hidden and shown on `ready-to-show`, or force-shown after
+   `TIMEOUTS.WINDOW_SHOW_FALLBACK` (4 s) when that event is late. Heavyweight AI bring-up
+   (node-llama-cpp import, GPU probing, backend selection) waits for the first paint
+   (`src/main/core/firstPaintGate.js`, capped at `TIMEOUTS.FIRST_PAINT_GATE`, 3 s) and then runs
+   behind the splash screen. A long hidden phase on the current build therefore points at the main
+   thread being blocked (slow disk, antivirus, a hung GPU process) rather than at the AI engine, and
+   the log tells the two apart. The first launch after installing or reinstalling is also slower
+   because Windows Security scans the freshly written files once; later launches reuse its cached
+   verdicts.
+
+**Triage from the log (no developer tools needed).** Each launch that gets as far as starting the
+app writes one JSON-lines file. Every line carries `time` (UTC), `level` and `msg`, plus the extra
+fields named below.
+
+1. Note the wall-clock time of the double-click. Press Windows key + R, type
+   `%APPDATA%\StratoSort Stack\logs`, press Enter, switch to Details view and sort by Date modified.
+   Open the newest `stratosort-YYYY-MM-DDTHH-MM-SS-mmmZ.log` in Notepad. The timestamp in the file
+   name is UTC and is taken when the app process opens its log, so the gap between the double-click
+   and that timestamp (gap A) is everything that happened before the app could log: the portable
+   unpack, Windows Security scanning the exe, SmartScreen. A launch that produced no new file at all
+   means the process quit before it could log (for example a second instance started while the
+   previous one was still shutting down, or the portable stub never reached the app).
+2. Search (Ctrl+F) for these messages in order and note the `time` of each, or "not found":
+   1. `[LOGGING] File logging enabled` with `logFilePath` and `uptimeS`. `uptimeS` is how many
+      seconds the process had already been alive when it opened the log (module load,
+      single-instance lock, app ready). The file name is stamped at that same moment, so this time
+      is already part of gap A; a value above a few seconds means most of gap A was spent inside the
+      app process rather than in the unpacker or antivirus.
+   2. `[perf]` with `name` `startup:main:time-to-app-ready` and `durationMs` (the same phase in
+      milliseconds, counted from the moment the main bundle was evaluated).
+   3. `[STARTUP] Loaded custom folders:` or
+      `[STARTUP] No saved custom folders found, creating Uncategorized fallback`.
+   4. `[STARTUP] Creating window before heavyweight service startup` with `uptimeS`, followed by
+      `[perf]` with `name` `startup:main:time-to-first-window`.
+   5. `[AppProtocol] served` with `asset` (`index.html`, then `styles.css`) and `ms`. Both files are
+      tiny and are served on the main-process thread.
+   6. `[WINDOW] did-finish-load fired`.
+   7. `StratoSort window ready and focused` with `uptimeS`. This is the moment the window is on
+      screen through the normal path.
+   8. `[WINDOW] GPU status after first show` with `shownVia` (`ready-to-show` or `fallback`),
+      `featureStatus` and `devices`.
+   9. `[STARTUP] First-paint gate released` with `reason` (`shown`, `did-finish-load`, `timeout` or
+      `no-window`) and `uptimeS`. Heavyweight startup begins right after this line.
+   10. `[STARTUP] Phase 1: Starting AI services...`, then `[LlamaService] Initializing...`, then
+       `[LlamaService] System GPU detected` with `type` and `name`.
+   11. `[LlamaService] Llama backend candidates filtered by node-llama-cpp support` with
+       `supported`, `candidates`, `filtered` and `changed`.
+   12. `[LlamaService] Llama backend init failed` with `backend`, `durationMs` and `error` (count
+       these; each one is a failed attempt), then `[LlamaService] Llama backend selected` or
+       `[LlamaService] Falling back to CPU backend`, both with `durationMs` and an `attempted` list
+       that carries `durationMs` for every candidate tried.
+   13. `[STARTUP] Coordinated startup completed successfully`, or
+       `[STARTUP] Coordinated startup failed:` followed by
+       `[STARTUP] Continuing startup in degraded mode`.
+
+   Also search for these warning and error lines, which are normally absent:
+
+   - `[WINDOW] ready-to-show not received within budget; showing window anyway` (warn, with
+     `budgetMs` and `uptimeS`): the renderer had not painted within about 4 s and the window was
+     force-shown as an empty themed frame. The time from here to `[WINDOW] did-finish-load fired` is
+     how long it stayed blank.
+   - `[WINDOW] Window creation timeout, releasing mutex` followed by
+     `[WINDOW] Force-showing window after creation timeout` (both warn): the window was still hidden
+     after 60 s.
+   - `[GPU] Process exited` (error; count them) and `[GPU] Repeated GPU failures detected` (two
+     variants, warn and error): the graphics driver or GPU process is failing. A file named
+     `.gpu-fallback` in `%APPDATA%\StratoSort Stack` right after a slow launch says the same.
+   - `[LlamaService] Llama backend attempt exceeded slow threshold` (warn, with `backend`,
+     `durationMs` and `thresholdMs`): one backend attempt took longer than 10 s.
+   - `[LlamaService] [node-llama-cpp]` (warn): node-llama-cpp's own console output, forwarded into
+     the log while a backend is being tried. A line containing
+     `is not compatible with the current system` and `falling back to using` means a prebuilt GPU
+     binary was rejected on this PC.
+
+   In PowerShell this does all of step 2 at once (one line; paste it as is):
+
+   ```powershell
+   $log = Get-ChildItem "$env:APPDATA\StratoSort Stack\logs\stratosort-*.log" | Sort-Object LastWriteTime -Descending | Select-Object -First 1; Select-String -Path $log.FullName -Pattern 'File logging enabled','\[perf\]','Loaded custom folders','Uncategorized','Creating window before heavyweight','AppProtocol\] served','did-finish-load fired','ready-to-show not received','Window creation timeout','Force-showing window','window ready and focused','GPU status after first show','First-paint gate released','Phase 1: Starting AI services','LlamaService\] Initializing','System GPU detected','Llama backend','node-llama-cpp','GPU\] Process exited','Repeated GPU failures','Coordinated startup','degraded mode' | ForEach-Object { try { $o = $_.Line | ConvertFrom-Json; $extra = foreach ($k in 'uptimeS','reason','asset','ms','name','durationMs','backend','shownVia','budgetMs') { if ($null -ne $o.$k) { '{0}={1}' -f $k, $o.$k } }; '{0}  {1,-5} {2}  {3}' -f $o.time, $o.level, $o.msg, ($extra -join ' ') } catch { $_.Line } }
+   ```
+
+3. What the gaps mean:
+   - **Gap A** (double-click to the file-name time): everything that happened before the app could
+     log. `uptimeS` on `[LOGGING] File logging enabled` is the in-process share of it, so gap A
+     minus `uptimeS` is what happened before the app process existed: the portable unpack, Windows
+     Security scanning the exe, SmartScreen. Large on the portable exe by design; large on the
+     installed build only on the first launch after installing, or while SmartScreen checks the
+     file. Expect a few seconds otherwise.
+   - **Gap B** (`[LOGGING] File logging enabled` to
+     `[STARTUP] Creating window before heavyweight service startup`): pre-window housekeeping (log
+     cleanup, crash-journal recovery, loading the folder list, creating `Documents\Uncategorized`,
+     settings). Expect well under 5 s. If it is longer, ask whether Documents lives in OneDrive or
+     on a network share. The difference between the two `[perf]` `durationMs` values
+     (`time-to-first-window` minus `time-to-app-ready`) is this phase in milliseconds, counted from
+     app ready instead of from the first log line.
+   - **Gap C** (`[STARTUP] Creating window before heavyweight service startup` to
+     `StratoSort window ready and focused`, or to the `ready-to-show not received within budget`
+     warning): the hidden-window phase, and the one that matters most. On the current build it is
+     expected to stay well under the 4 s fallback. `[AppProtocol] served` with `ms` in the thousands
+     for `index.html` or `styles.css` means the main thread was starved; something synchronous was
+     running and the renderer was not the problem. `featureStatus` values containing `software` on
+     `[WINDOW] GPU status after first show`, or any `[GPU] Process exited` line, point at the
+     graphics driver. Any `[LlamaService]` line whose time falls inside gap C means AI bring-up ran
+     before the first paint, which the first-paint gate is meant to prevent; report it together with
+     the `reason` on `[STARTUP] First-paint gate released`.
+   - **Gap D** (`[LlamaService] Initializing...` to `[LlamaService] Llama backend selected` or
+     `[LlamaService] Falling back to CPU backend`): AI bring-up, which is the GPU backend ladder.
+     Each `[LlamaService] Llama backend init failed` line is one candidate that was test-loaded and
+     rejected, and its `durationMs` is what it cost; the `attempted` list on the final line repeats
+     those numbers for every candidate. Expect a handful of seconds. A failure with `backend` `cuda`
+     and an `error` naming `NoBinaryFoundError`, or a forwarded `[node-llama-cpp]` line saying
+     `is not compatible with the current system`, means a CUDA binary was tried that this PC cannot
+     run. This phase happens behind the visible splash, so it lengthens the time until the app is
+     usable, not the time until the window appears.
+4. **Several `StratoSort Stack.exe` processes are normal.** In Task Manager, Details tab, add the
+   Command line column (right-click a column header, Select columns). During a launch expect: one
+   `StratoSort Stack.exe` without `--type`, one with `--type=gpu-process`, one `--type=renderer`,
+   one or two `--type=utility`, one `--type=crashpad-handler`, and for the first few seconds of AI
+   bring-up short-lived `StratoSort Stack.exe` rows with `--type=utility` (node-llama-cpp testing a
+   GPU binary in a child process) alongside `powershell.exe`, `wmic.exe` or `nvidia-smi.exe` (GPU
+   detection; their console windows are hidden). Five to eight entries is the expected picture.
+   Worth reporting: a `StratoSortStack-X.X.X-win-x64.exe` row (the portable unpacker still running),
+   a `StratoSort Stack.exe` without `--type` that was already there before the click (a previous
+   instance still shutting down), or `Antimalware Service Executable` holding most of the CPU or
+   disk.
+5. **Control runs.** If the installed app is slow every time, close it, wait a minute, and launch it
+   from PowerShell twice, once with each variable. Both settings last only for that PowerShell
+   window. Compare the time until the window appears and the time until the splash finishes.
+
+   ```powershell
+   $env:STRATOSORT_FORCE_SOFTWARE_GPU = '1'; & "$env:LOCALAPPDATA\Programs\StratoSort Stack\StratoSort Stack.exe"
+   ```
+
+   ```powershell
+   $env:STRATOSORT_LLM_GPU_BACKEND = 'cpu'; & "$env:LOCALAPPDATA\Programs\StratoSort Stack\StratoSort Stack.exe"
+   ```
+
+   If the first run is faster, it is the graphics driver; see
+   [GPU Configuration](CONFIG.md#gpu-configuration) in `CONFIG.md`. If the second run is faster, it
+   is the AI GPU backend ladder; the `STRATOSORT_LLM_GPU_BACKEND` row in
+   [CONFIG.md](CONFIG.md#llamacpp-binary-management-security-sensitive) lists the accepted values
+   (an explicit value also bypasses node-llama-cpp's supported-backend filter). The probe that
+   node-llama-cpp runs when its GPU addons load is described under
+   [Electron quits at startup in a headless VM or container](#electron-quits-at-startup-in-a-headless-vm-or-container-no-gpu-driver)
+   later in this guide.
+
+6. **What to send.** Zip the whole `logs` folder (right-click, Send to, Compressed folder) and
+   attach it with: which file you launched (installer shortcut or portable exe) and whether you
+   re-ran the installer before timing, the gap A to D numbers, the Task Manager observations, your
+   graphics card name (Task Manager, Performance, GPU) and whether the system drive is an HDD or an
+   SSD.
+
 ### "Cannot detect Electron fuses" verifier failure
 
 **Cause.** `electron-builder.json` is missing one of the required fuses, OR the packaged binary's
