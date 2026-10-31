@@ -212,6 +212,37 @@ function filterCandidatesBySupport(candidates, supported) {
 }
 
 /**
+ * Put the GPU backend that worked on the last launch (see
+ * `utils/llamaBackendCache`) at the front of the candidate list, so it is the
+ * one binary node-llama-cpp tests first.
+ *
+ * - A cached backend already in the list moves to the front; the rest keep
+ *   their order.
+ * - A cached backend missing from a list that contains `auto` is inserted at
+ *   the front: `auto` would test that same binary, possibly after others.
+ * - Anything else (no cached GPU backend, or a list without it or `auto`,
+ *   such as CPU-only `[false]`) is returned unchanged.
+ *
+ * Pure. Apply it before `filterCandidatesBySupport()` so a cached backend
+ * whose runtime libraries have since disappeared is still dropped.
+ *
+ * @param {Array<string|false>} candidates
+ * @param {any} cachedBackend
+ * @returns {Array<string|false>}
+ */
+function prioritizeCachedBackend(candidates, cachedBackend) {
+  if (!Array.isArray(candidates)) return candidates;
+  if (typeof cachedBackend !== 'string' || !EXPLICIT_GPU_BACKENDS.has(cachedBackend)) {
+    return candidates;
+  }
+  if (candidates.includes(cachedBackend)) {
+    return [cachedBackend, ...candidates.filter((candidate) => candidate !== cachedBackend)];
+  }
+  if (candidates.includes('auto')) return [cachedBackend, ...candidates];
+  return candidates;
+}
+
+/**
  * node-llama-cpp reports prebuilt-binary problems ("The prebuilt ... is not
  * compatible with the current system", "Failed to load a prebuilt ...")
  * through console.warn/console.error rather than the `logger` option it
@@ -277,13 +308,23 @@ function captureNodeLlamaConsole(log, context, backend) {
 /* eslint-enable no-console */
 
 /**
+ * `backendCache` is an optional last-known-good record (the object
+ * `createLlamaBackendCache()` returns, or any `{ read, write, clear }` with the
+ * same contract). When given, and neither STRATOSORT_LLM_GPU_BACKEND nor
+ * software/safe mode chooses the backend, the cached backend is tried first;
+ * a failed cached attempt clears the record, and a GPU backend that differs
+ * from the record is saved for the next launch. Both read and write receive
+ * this launch's supported-backend set, so a record saved before a runtime
+ * appeared (Vulkan saved while CUDA was missing) is not used once it has.
+ *
  * @param {{
  *   getLlama: Function,
  *   gpuInfo?: any,
  *   logger?: any,
  *   context?: any,
  *   llamaLogger?: any,
- *   getLlamaGpuTypes?: Function
+ *   getLlamaGpuTypes?: Function,
+ *   backendCache?: { read: Function, write: Function, clear: Function } | null
  * }} args
  */
 async function initLlamaWithBackend({
@@ -292,46 +333,125 @@ async function initLlamaWithBackend({
   logger,
   context,
   llamaLogger,
-  getLlamaGpuTypes
+  getLlamaGpuTypes,
+  backendCache
 }) {
   const log = logger || console;
   let candidates = buildBackendCandidates(gpuInfo);
   /** @type {any[]} */
   const attempted = [];
 
+  // Last launch's working GPU backend goes first so a matching machine tests
+  // one binary instead of re-testing the ones that failed before. An explicit
+  // override or software/safe mode picks the backend on purpose, so the record
+  // is neither read nor updated then.
+  const useBackendCache =
+    !!backendCache &&
+    typeof backendCache.read === 'function' &&
+    !getGpuBackendOverride() &&
+    !isExplicitSoftwareMode();
   // Ask node-llama-cpp which GPU backends have their driver/runtime libraries
-  // present (a cheap file-existence probe, cached by the library) and drop the
-  // explicit candidates it rules out. An explicit STRATOSORT_LLM_GPU_BACKEND
-  // override bypasses this for users who know their setup better; candidate
-  // lists with no explicit GPU entry have nothing to filter.
-  const hasExplicitGpuCandidate = candidates.some(
-    (candidate) => typeof candidate === 'string' && EXPLICIT_GPU_BACKENDS.has(candidate)
-  );
+  // present (a cheap file-existence probe, cached by the library). The answer
+  // filters the candidates below and is part of the cached record's key, so
+  // it is fetched before the record is read. An explicit
+  // STRATOSORT_LLM_GPU_BACKEND override bypasses it for users who know their
+  // setup better; a chain with no explicit GPU entry and no record to check
+  // has no use for it.
+  const hasExplicitGpuCandidate = (/** @type {Array<string|false>} */ list) =>
+    list.some((candidate) => typeof candidate === 'string' && EXPLICIT_GPU_BACKENDS.has(candidate));
+  /** @type {Array<string|false>|null} */
+  let supported = null;
   if (
     typeof getLlamaGpuTypes === 'function' &&
-    hasExplicitGpuCandidate &&
-    !getGpuBackendOverride()
+    !getGpuBackendOverride() &&
+    (useBackendCache || hasExplicitGpuCandidate(candidates))
   ) {
-    /** @type {Array<string|false>|null} */
-    let supported = null;
     try {
-      supported = await getLlamaGpuTypes('supported');
+      const probed = await getLlamaGpuTypes('supported');
+      supported = Array.isArray(probed) ? probed : null;
     } catch (error) {
       log.debug?.(`[${context}] node-llama-cpp supported-backend probe failed`, {
         error: error?.message || String(error || 'Unknown error')
       });
     }
-    if (Array.isArray(supported)) {
-      const filtered = filterCandidatesBySupport(candidates, supported);
-      log.info(`[${context}] Llama backend candidates filtered by node-llama-cpp support`, {
-        supported,
-        candidates,
-        filtered,
-        changed:
-          filtered.length !== candidates.length || filtered.some((c, i) => c !== candidates[i])
+  }
+
+  /** @type {string|null} */
+  let cachedBackend = null;
+  let cachedRecordValid = false;
+  if (useBackendCache) {
+    try {
+      const value = await backendCache.read({ supportedGpuTypes: supported });
+      cachedBackend = typeof value === 'string' && EXPLICIT_GPU_BACKENDS.has(value) ? value : null;
+    } catch (error) {
+      log.debug?.(`[${context}] Cached Llama backend read failed`, {
+        error: error?.message || String(error || 'Unknown error')
       });
-      candidates = filtered;
     }
+    if (cachedBackend) {
+      cachedRecordValid = true;
+      const prioritized = prioritizeCachedBackend(candidates, cachedBackend);
+      log.info(`[${context}] Llama backend candidates ordered by cached selection`, {
+        cachedBackend,
+        candidates,
+        prioritized,
+        changed:
+          prioritized.length !== candidates.length ||
+          prioritized.some((c, i) => c !== candidates[i])
+      });
+      candidates = prioritized;
+    }
+  }
+
+  // A cached backend that fails its attempt is wrong for this machine now;
+  // drop the record so the next launch runs the plain ladder.
+  const forgetCachedBackend = async (/** @type {any} */ backend, /** @type {any} */ error) => {
+    if (!cachedRecordValid || backend !== cachedBackend) return;
+    cachedRecordValid = false;
+    try {
+      await backendCache?.clear?.();
+    } catch {
+      // The record is a hint; a stale one costs one failed attempt next time.
+    }
+    log.info(`[${context}] Cleared cached Llama backend after it failed`, {
+      backend,
+      error: error?.message || String(error || 'Unknown error')
+    });
+  };
+
+  // Save a GPU backend the ladder settled on when it differs from the record.
+  // CPU is never saved, and an unchanged record is not rewritten, so a steady
+  // launch does no disk write here.
+  const rememberBackend = async (/** @type {any} */ backend) => {
+    if (!useBackendCache || typeof backendCache?.write !== 'function') return;
+    if (typeof backend !== 'string' || !EXPLICIT_GPU_BACKENDS.has(backend)) return;
+    if (cachedRecordValid && backend === cachedBackend) return;
+    let saved;
+    try {
+      saved = (await backendCache.write(backend, { supportedGpuTypes: supported })) === true;
+    } catch {
+      saved = false;
+    }
+    if (saved) {
+      log.info(`[${context}] Saved Llama backend selection for the next launch`, {
+        backend,
+        previous: cachedBackend
+      });
+    }
+  };
+
+  // Drop the explicit candidates node-llama-cpp ruled out. This runs after the
+  // cached reorder so a cached backend inserted ahead of `auto` is checked
+  // against the same probe.
+  if (Array.isArray(supported) && hasExplicitGpuCandidate(candidates)) {
+    const filtered = filterCandidatesBySupport(candidates, supported);
+    log.info(`[${context}] Llama backend candidates filtered by node-llama-cpp support`, {
+      supported,
+      candidates,
+      filtered,
+      changed: filtered.length !== candidates.length || filtered.some((c, i) => c !== candidates[i])
+    });
+    candidates = filtered;
   }
 
   // Only attach `logger` when a filter is supplied so callers that don't pass
@@ -391,6 +511,7 @@ async function initLlamaWithBackend({
         detectedGpu: gpuInfo?.name || gpuInfo?.type || 'unknown',
         attempted: summarizeAttempts()
       });
+      await rememberBackend(actualBackend);
 
       return {
         llama,
@@ -416,6 +537,7 @@ async function initLlamaWithBackend({
         durationMs,
         error: error?.message || String(error || 'Unknown error')
       });
+      await forgetCachedBackend(backend, error);
     }
   }
 
@@ -462,5 +584,6 @@ module.exports = {
   resolveVisionRuntimeBackend,
   buildBackendCandidates,
   filterCandidatesBySupport,
+  prioritizeCachedBackend,
   initLlamaWithBackend
 };
