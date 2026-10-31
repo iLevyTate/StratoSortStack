@@ -88,7 +88,14 @@ function removeNodeModulesLink(worktreePath) {
     return;
   }
   if (stats.isSymbolicLink()) {
-    fs.rmdirSync(linkPath);
+    // symlinkSync only honours the 'junction' type on Windows. Elsewhere the
+    // link is a plain symlink, which rmdirSync rejects with ENOTDIR; unlinkSync
+    // removes the link itself and likewise never touches the target.
+    if (process.platform === 'win32') {
+      fs.rmdirSync(linkPath);
+    } else {
+      fs.unlinkSync(linkPath);
+    }
   }
 }
 
@@ -222,4 +229,8 @@ function main() {
   console.log(`\nStability comparison complete: ${outputPath}`);
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = { removeNodeModulesLink };
