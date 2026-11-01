@@ -1,12 +1,12 @@
 {
-  "generatedAt": "2026-11-01T02:44:18.645Z",
+  "generatedAt": "2026-11-01T03:19:10.016Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
     "detectedLicense": "PolyForm Noncommercial 1.0.0 (commercial license sold separately)"
   },
   "dependencySummary": {
-    "allowed": 2297,
+    "allowed": 2291,
     "review_required": 31,
     "high_risk": 0,
     "unknown": 0
@@ -5820,16 +5820,6 @@
       "lockfileOptional": false
     },
     {
-      "packageName": "@electron/universal/node_modules/minimatch",
-      "version": "9.0.9",
-      "license": "ISC",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
       "packageName": "@emnapi/core",
       "version": "1.11.2",
       "license": "MIT",
@@ -5893,16 +5883,6 @@
       "packageName": "@eslint/config-array",
       "version": "0.23.5",
       "license": "Apache-2.0",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "@eslint/config-array/node_modules/minimatch",
-      "version": "10.2.6",
-      "license": "BlueOak-1.0.0",
       "riskLevel": "allowed",
       "directRuntime": false,
       "directDev": false,
@@ -10454,16 +10434,6 @@
       "lockfileOptional": false
     },
     {
-      "packageName": "@typescript-eslint/typescript-estree/node_modules/minimatch",
-      "version": "9.0.9",
-      "license": "ISC",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
       "packageName": "@typescript-eslint/typescript-estree/node_modules/semver",
       "version": "7.7.4",
       "license": "ISC",
@@ -11324,16 +11294,6 @@
       "packageName": "app-builder-lib/node_modules/json-schema-traverse",
       "version": "1.0.0",
       "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "app-builder-lib/node_modules/minimatch",
-      "version": "10.2.6",
-      "license": "BlueOak-1.0.0",
       "riskLevel": "allowed",
       "directRuntime": false,
       "directDev": false,
@@ -14195,16 +14155,6 @@
       "packageName": "eslint/node_modules/ignore",
       "version": "5.3.2",
       "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "eslint/node_modules/minimatch",
-      "version": "10.2.6",
-      "license": "BlueOak-1.0.0",
       "riskLevel": "allowed",
       "directRuntime": false,
       "directDev": false,
@@ -22042,16 +21992,6 @@
     {
       "packageName": "test-exclude/node_modules/glob/node_modules/minimatch",
       "version": "11.0.3",
-      "license": "BlueOak-1.0.0",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "test-exclude/node_modules/minimatch",
-      "version": "10.2.6",
       "license": "BlueOak-1.0.0",
       "riskLevel": "allowed",
       "directRuntime": false,
