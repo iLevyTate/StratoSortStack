@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-30T02:01:23.477Z",
+  "generatedAt": "2026-11-01T03:44:03.372Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
@@ -10796,7 +10796,7 @@
     },
     {
       "packageName": "@uwdata/mosaic-core",
-      "version": "0.34.1",
+      "version": "0.34.2",
       "license": "BSD-3-Clause",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -10807,7 +10807,7 @@
     },
     {
       "packageName": "@uwdata/mosaic-sql",
-      "version": "0.34.1",
+      "version": "0.34.2",
       "license": "BSD-3-Clause",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -14815,7 +14815,7 @@
     },
     {
       "packageName": "framer-motion",
-      "version": "14.6.0",
+      "version": "14.7.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -17949,7 +17949,7 @@
     },
     {
       "packageName": "lucide-react",
-      "version": "1.61.0",
+      "version": "1.62.0",
       "license": "ISC",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -18341,7 +18341,7 @@
     },
     {
       "packageName": "motion-dom",
-      "version": "14.6.0",
+      "version": "14.7.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -18352,7 +18352,7 @@
     },
     {
       "packageName": "motion-utils",
-      "version": "14.6.0",
+      "version": "14.7.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -20411,7 +20411,7 @@
     },
     {
       "packageName": "react-redux",
-      "version": "9.3.0",
+      "version": "9.3.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -20432,7 +20432,7 @@
     },
     {
       "packageName": "react-window",
-      "version": "2.5.0",
+      "version": "2.5.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
