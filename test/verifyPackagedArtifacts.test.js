@@ -13,6 +13,7 @@ const {
   getRequiredLlamaPrebuiltPackages,
   getRequiredWhisperVariantPackages,
   getWindowsZipArtifactName,
+  readAsarHeader,
   verifyBetterSqlitePrebuilds,
   verifyMacArtifacts,
   verifyWindowsArtifacts
@@ -23,6 +24,30 @@ const VERSION = '9.9.9';
 function writeFile(targetPath) {
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
   fs.writeFileSync(targetPath, 'test');
+}
+
+// The app.asar layout electron-builder produces from the top-level "files".
+const APP_ASAR_ENTRIES = {
+  dist: { files: { 'main.js': { size: 1, offset: '0' } } },
+  node_modules: { files: {} },
+  'package.json': { size: 2, offset: '1' },
+  src: { files: { shared: { files: {} } } }
+};
+
+// Writes an asar header (no file data): a uint32 size pickle followed by the
+// header pickle holding the JSON string, padded to 4 bytes.
+function writeAsar(targetPath, entries = APP_ASAR_ENTRIES) {
+  const json = Buffer.from(JSON.stringify({ files: entries }));
+  const padded = Math.ceil(json.length / 4) * 4;
+  const headerPickle = Buffer.alloc(8 + padded);
+  headerPickle.writeUInt32LE(4 + padded, 0);
+  headerPickle.writeUInt32LE(json.length, 4);
+  json.copy(headerPickle, 8);
+  const sizePickle = Buffer.alloc(8);
+  sizePickle.writeUInt32LE(4, 0);
+  sizePickle.writeUInt32LE(headerPickle.length, 4);
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  fs.writeFileSync(targetPath, Buffer.concat([sizePickle, headerPickle]));
 }
 
 function writeExecutable(targetPath) {
@@ -75,7 +100,7 @@ function createWindowsBuildRoot({ arch = 'x64', skipWhisperVariants = false } = 
   REQUIRED_ELECTRON_RUNTIME_FILES.forEach((fileName) => {
     writeFile(path.join(appRoot, fileName));
   });
-  writeFile(path.join(resources, 'app.asar'));
+  writeAsar(path.join(resources, 'app.asar'));
   writeFile(path.join(resources, 'assets', 'runtime', 'llama-server.exe'));
   if (arch !== 'arm64') {
     writeExecutable(path.join(resources, 'assets', 'runtime', 'ffmpeg', 'ffmpeg.exe'));
@@ -117,7 +142,7 @@ function createMacBuildRoot({
   if (includeSnapshotBlob) {
     writeFile(path.join(frameworkResources, 'snapshot_blob.bin'));
   }
-  writeFile(path.join(resources, 'app.asar'));
+  writeAsar(path.join(resources, 'app.asar'));
   writeFile(path.join(resources, 'assets', 'runtime', 'llama-server'));
   writeExecutable(path.join(resources, 'assets', 'runtime', 'ffmpeg', 'ffmpeg'));
 
@@ -154,6 +179,66 @@ describe('verify-packaged-artifacts', () => {
     expect(() => verifyWindowsArtifacts(buildRoot, 'x64', VERSION)).toThrow(
       /Windows runtime file v8_context_snapshot\.bin missing/
     );
+  });
+
+  test('rejects Windows builds whose app.asar packed the project folder', () => {
+    // 5.1.0's app.asar held the webpack cache, docs, src/main and test.
+    const buildRoot = createWindowsBuildRoot();
+    tempDirs.push(buildRoot);
+    writeAsar(path.join(buildRoot, 'win-unpacked', 'resources', 'app.asar'), {
+      ...APP_ASAR_ENTRIES,
+      '.webpack-cache': { files: {} },
+      docs: { files: {} },
+      src: { files: { main: { files: {} }, shared: { files: {} } } },
+      test: { files: {} }
+    });
+
+    expect(() => verifyWindowsArtifacts(buildRoot, 'x64', VERSION)).toThrow(
+      /Windows app\.asar contains files that are not part of the app: \.webpack-cache, docs, src\/main, test\./
+    );
+  });
+
+  test('rejects macOS builds whose app.asar packed the project folder', () => {
+    const buildRoot = createMacBuildRoot({ arch: 'arm64' });
+    tempDirs.push(buildRoot);
+    writeAsar(
+      path.join(
+        buildRoot,
+        'mac-arm64',
+        'StratoSort Stack.app',
+        'Contents',
+        'Resources',
+        'app.asar'
+      ),
+      { ...APP_ASAR_ENTRIES, 'CLAUDE.md': { size: 1, offset: '3' } }
+    );
+
+    expect(() => verifyMacArtifacts(buildRoot, 'arm64')).toThrow(
+      /macOS app\.asar contains files that are not part of the app: CLAUDE\.md\./
+    );
+  });
+
+  test('rejects an app.asar without a readable header', () => {
+    const buildRoot = createWindowsBuildRoot();
+    tempDirs.push(buildRoot);
+    writeFile(path.join(buildRoot, 'win-unpacked', 'resources', 'app.asar'));
+
+    expect(() => verifyWindowsArtifacts(buildRoot, 'x64', VERSION)).toThrow(
+      /Windows app\.asar has no readable asar header/
+    );
+  });
+
+  test('readAsarHeader returns the archive listing', () => {
+    const buildRoot = createWindowsBuildRoot();
+    tempDirs.push(buildRoot);
+
+    const header = readAsarHeader(path.join(buildRoot, 'win-unpacked', 'resources', 'app.asar'));
+    expect(Object.keys(header.files).sort()).toEqual([
+      'dist',
+      'node_modules',
+      'package.json',
+      'src'
+    ]);
   });
 
   test('accepts macOS x64 builds with the per-arch V8 context snapshot filename', () => {
