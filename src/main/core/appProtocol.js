@@ -84,6 +84,18 @@ function errorResponse(/** @type {any} */ status, /** @type {any} */ message) {
 
 const handledSessions = new WeakSet();
 
+// Only the two assets that gate first paint are timed. Their serve latency
+// is measured on the main-process JS thread, so a small file taking seconds
+// here means the main thread was busy (startup work), not that the renderer
+// was slow: exactly the distinction a support log needs to make.
+const TIMED_ASSETS = new Set(['index.html', 'styles.css']);
+
+function nowMs() {
+  return typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
+}
+
 /**
  * Register the `app://` request handler on a session. Idempotent per session.
  * Safe to call after `app` is ready. Serves files from the renderer bundle
@@ -107,6 +119,7 @@ function registerAppProtocolHandler(session) {
   }
 
   session.protocol.handle(APP_SCHEME, async (request) => {
+    const startedAt = nowMs();
     try {
       const requestUrl = new URL(request.url);
       if (requestUrl.host !== APP_HOST) {
@@ -169,6 +182,13 @@ function registerAppProtocolHandler(session) {
       // is independent of Electron's per-version file-scheme fetch support.
       // Renderer assets are small, locally trusted, and read once per request.
       const data = await fs.promises.readFile(realAssetPath);
+      const asset = path.basename(realAssetPath);
+      if (TIMED_ASSETS.has(asset)) {
+        logger.info('[AppProtocol] served', {
+          asset,
+          ms: Math.round((nowMs() - startedAt) * 100) / 100
+        });
+      }
       return new Response(data, {
         status: 200,
         headers: buildResponseHeaders(realAssetPath)

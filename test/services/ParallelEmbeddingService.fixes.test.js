@@ -14,6 +14,7 @@ jest.mock('../../src/main/services/LlamaService', () => ({
     generateEmbedding: jest.fn().mockResolvedValue({ embedding: [0.1, 0.2], model: 'test-model' }),
     getHealthStatus: jest.fn().mockReturnValue({ initialized: true }),
     on: jest.fn(),
+    once: jest.fn(),
     pinModel: jest.fn(),
     unpinModel: jest.fn()
   })
@@ -223,5 +224,77 @@ describe('ParallelEmbeddingService Fixes', () => {
     // The two synthetic "held" slots were never real requests; restore so
     // afterEach's shutdown doesn't wait out the bounded active-request drain.
     service.activeRequests = 0;
+  });
+
+  describe('construction-time concurrency sync', () => {
+    test('passes the GPU LlamaService already detected as a hint instead of re-probing', async () => {
+      const LlamaService = require('../../src/main/services/LlamaService');
+      const { getRecommendedConcurrency } = require('../../src/main/services/PerformanceService');
+      getRecommendedConcurrency.mockClear();
+      LlamaService.getInstance().getHealthStatus.mockReturnValueOnce({
+        initialized: true,
+        gpuDetected: { type: 'cuda', name: 'RTX 4090', vramMB: 24576 }
+      });
+
+      const hinted = new ParallelEmbeddingService({ concurrencyLimit: 2, maxRetries: 1 });
+      try {
+        expect(getRecommendedConcurrency).toHaveBeenCalledTimes(1);
+        expect(getRecommendedConcurrency).toHaveBeenCalledWith({
+          gpuHint: expect.objectContaining({ type: 'cuda', vramMB: 24576 })
+        });
+      } finally {
+        await hinted.shutdown();
+      }
+    });
+
+    test('does not query PerformanceService at construction before LlamaService is initialized', async () => {
+      const LlamaService = require('../../src/main/services/LlamaService');
+      const { getRecommendedConcurrency } = require('../../src/main/services/PerformanceService');
+      getRecommendedConcurrency.mockClear();
+      LlamaService.getInstance().getHealthStatus.mockReturnValueOnce({ initialized: false });
+
+      const early = new ParallelEmbeddingService({ concurrencyLimit: 2, maxRetries: 1 });
+      try {
+        await new Promise((r) => setTimeout(r, 0));
+        expect(getRecommendedConcurrency).not.toHaveBeenCalled();
+        // The deferred sync is wired to LlamaService's 'initialized' event.
+        expect(LlamaService.getInstance().once).toHaveBeenCalledWith(
+          'initialized',
+          expect.any(Function)
+        );
+      } finally {
+        await early.shutdown();
+      }
+    });
+
+    test('the deferred initialized handler syncs with the detected GPU as a hint', async () => {
+      const LlamaService = require('../../src/main/services/LlamaService');
+      const { getRecommendedConcurrency } = require('../../src/main/services/PerformanceService');
+      const llama = LlamaService.getInstance();
+      llama.getHealthStatus.mockReturnValueOnce({ initialized: false });
+      llama.once.mockClear();
+
+      const early = new ParallelEmbeddingService({ concurrencyLimit: 2, maxRetries: 1 });
+      try {
+        const [, handler] = llama.once.mock.calls.find(([event]) => event === 'initialized');
+        getRecommendedConcurrency.mockClear();
+        // Persistent: the handler reads health more than once (concurrency
+        // recalculation first, then the hint for the sync).
+        llama.getHealthStatus.mockReturnValue({
+          initialized: true,
+          gpuBackend: 'vulkan',
+          gpuDetected: { type: 'vulkan', name: 'Radeon', vramMB: 8192 }
+        });
+
+        handler();
+
+        expect(getRecommendedConcurrency).toHaveBeenCalledWith({
+          gpuHint: expect.objectContaining({ type: 'vulkan' })
+        });
+      } finally {
+        llama.getHealthStatus.mockReturnValue({ initialized: true });
+        await early.shutdown();
+      }
+    });
   });
 });

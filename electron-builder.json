@@ -60,7 +60,16 @@
     "!**/node_modules/**/benchmark/**",
     "!**/node_modules/**/benchmarks/**",
     "!**/node_modules/**/demo/**",
-    "!**/node_modules/**/demos/**"
+    "!**/node_modules/**/demos/**",
+    "!**/node_modules/node-llama-cpp/llama/gitRelease.bundle",
+    "!**/node_modules/node-llama-cpp/llama/CMakeLists.txt",
+    "!**/node_modules/node-llama-cpp/llama/{addon,cmake,patches,profiles,toolchains,xpack}/**",
+    "!**/node_modules/node-llama-cpp/templates/**",
+    "!**/node_modules/@fugood/whisper.node/CMakeLists.txt",
+    "!**/node_modules/@fugood/whisper.node/{src,whisper.cpp}/**",
+    "!**/node_modules/better-sqlite3/{deps,src}/**",
+    "!**/node_modules/better-sqlite3/prebuilds/!(${platform}-${arch}|${platform}musl-${arch}).node",
+    "!**/node_modules/@node-llama-cpp/win-!(${arch}|${arch}-*)/**"
   ],
   "extraMetadata": {
     "main": "dist/main.js"
@@ -80,7 +89,8 @@
   ],
   "win": {
     "icon": "assets/icons/win/icon.ico",
-    "target": ["nsis", "portable"]
+    "target": ["nsis", "zip"],
+    "compression": "normal"
   },
   "nsis": {
     "oneClick": false,
@@ -98,7 +108,9 @@
     "license": "build/license_en.txt",
     "artifactName": "StratoSortStack-Setup-${version}.exe"
   },
+  "afterSign": "./scripts/notarize-mac-app.js",
   "mac": {
+    "notarize": false,
     "icon": "assets/icons/mac/icon.icns",
     "category": "public.app-category.productivity",
     "hardenedRuntime": true,

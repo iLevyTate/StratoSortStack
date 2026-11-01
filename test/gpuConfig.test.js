@@ -39,11 +39,46 @@ const SHARED_MODULE_ORIGINALS = {
   path: { join: sharedPath.join },
   fs: {
     existsSync: sharedFs.existsSync,
+    statSync: sharedFs.statSync,
     unlinkSync: sharedFs.unlinkSync,
     writeFileSync: sharedFs.writeFileSync,
     promises: sharedFs.promises
   }
 };
+
+const HOUR_MS = 60 * 60 * 1000;
+
+/**
+ * Load a fresh gpuConfig with a .gpu-fallback flag of the given age on disk
+ * (or none). Returns the module and the patched fs so tests can assert on it.
+ */
+function loadGpuConfigWithFlag({ exists, ageMs = 0 }) {
+  let gpuMod;
+  let fsRef;
+  jest.isolateModules(() => {
+    fsRef = require('fs');
+    fsRef.existsSync = jest.fn().mockReturnValue(exists);
+    fsRef.statSync = jest.fn(() => ({ mtimeMs: Date.now() - ageMs }));
+    fsRef.unlinkSync = jest.fn();
+    fsRef.promises = { writeFile: jest.fn().mockResolvedValue(undefined) };
+
+    const mockPath = require('path');
+    mockPath.join = jest.fn((...args) => args.join('/'));
+
+    mockApp.getPath = jest.fn().mockReturnValue('/tmp/test-userData');
+    gpuMod = require('../src/main/core/gpuConfig');
+    delete mockApp.getPath;
+  });
+  return { gpuMod, fs: fsRef };
+}
+
+function makeWindow({ visible }) {
+  return {
+    isDestroyed: jest.fn(() => false),
+    isVisible: jest.fn(() => visible),
+    show: jest.fn()
+  };
+}
 
 afterEach(() => {
   Object.assign(sharedPath, SHARED_MODULE_ORIGINALS.path);
@@ -355,11 +390,30 @@ describe('GPU Configuration', () => {
         const gpuMod = require('../src/main/core/gpuConfig');
 
         expect(gpuMod.forceSoftwareRenderer).toBe(true);
-        // Flag should be cleaned up after reading
-        expect(mockFs.unlinkSync).toHaveBeenCalled();
+        // The flag is sticky: reading it must not delete it, or a broken
+        // driver alternates between a slow hardware and a fast software launch.
+        expect(mockFs.unlinkSync).not.toHaveBeenCalled();
 
         delete mockApp.getPath;
       });
+    });
+
+    test('a fresh flag keeps software rendering on every launch inside the retry period', () => {
+      const { gpuMod, fs } = loadGpuConfigWithFlag({ exists: true, ageMs: 2 * HOUR_MS });
+
+      expect(gpuMod.forceSoftwareRenderer).toBe(true);
+      expect(fs.unlinkSync).not.toHaveBeenCalled();
+    });
+
+    test('an expired flag retries hardware acceleration and keeps the flag until a stable run', () => {
+      const retryAfter = loadGpuConfigWithFlag({ exists: false }).gpuMod
+        .GPU_FALLBACK_RETRY_AFTER_MS;
+      expect(retryAfter).toBeGreaterThan(24 * HOUR_MS);
+
+      const { gpuMod, fs } = loadGpuConfigWithFlag({ exists: true, ageMs: retryAfter + HOUR_MS });
+
+      expect(gpuMod.forceSoftwareRenderer).toBe(false);
+      expect(fs.unlinkSync).not.toHaveBeenCalled();
     });
 
     test('--safe-mode in argv sets forceSoftwareRenderer', () => {
@@ -388,38 +442,176 @@ describe('GPU Configuration', () => {
     });
   });
 
-  describe('applyProductionOptimizations', () => {
+  describe('Chromium raster switches', () => {
     beforeEach(() => {
       // Reset mock to default implementation
       mockApp.commandLine.appendSwitch.mockReset();
       mockApp.commandLine.appendSwitch.mockImplementation(() => {});
     });
 
-    test('enables GPU rasterization in production', () => {
+    const realPlatform = process.platform;
+    afterEach(() => {
+      Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true });
+    });
+
+    test.each(['win32', 'darwin'])(
+      'never appends enable-gpu-rasterization or enable-zero-copy on %s (Chromium decides per driver)',
+      (platform) => {
+        Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+        gpuConfig = require('../src/main/core/gpuConfig');
+
+        gpuConfig.initializeGpuConfig();
+
+        expect(mockApp.commandLine.appendSwitch).not.toHaveBeenCalledWith(
+          'enable-gpu-rasterization'
+        );
+        expect(mockApp.commandLine.appendSwitch).not.toHaveBeenCalledWith('enable-zero-copy');
+        expect(gpuConfig.applyProductionOptimizations).toBeUndefined();
+      }
+    );
+
+    test('keeps enable-gpu-rasterization and enable-zero-copy on Linux, as earlier releases did', () => {
+      Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
       gpuConfig = require('../src/main/core/gpuConfig');
 
-      gpuConfig.applyProductionOptimizations(false);
+      gpuConfig.initializeGpuConfig();
 
       expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith('enable-gpu-rasterization');
       expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith('enable-zero-copy');
     });
 
-    test('enables GPU rasterization in development', () => {
-      gpuConfig = require('../src/main/core/gpuConfig');
-
-      gpuConfig.applyProductionOptimizations(true);
-
-      expect(mockApp.commandLine.appendSwitch).toHaveBeenCalledWith('enable-gpu-rasterization');
-    });
-
-    test('skips GPU optimizations when software rendering forced', () => {
+    test('appends no raster switch in software mode, Linux included', () => {
+      Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
       process.env.STRATOSORT_FORCE_SOFTWARE_GPU = '1';
       gpuConfig = require('../src/main/core/gpuConfig');
-      jest.clearAllMocks();
 
-      gpuConfig.applyProductionOptimizations(false);
+      gpuConfig.initializeGpuConfig();
 
       expect(mockApp.commandLine.appendSwitch).not.toHaveBeenCalledWith('enable-gpu-rasterization');
+      expect(mockApp.commandLine.appendSwitch).not.toHaveBeenCalledWith('enable-zero-copy');
+    });
+  });
+
+  describe('GPU process exit before the first show', () => {
+    beforeEach(() => {
+      gpuConfig = require('../src/main/core/gpuConfig');
+    });
+
+    test('shows the startup window at once when the GPU process dies before ready-to-show', () => {
+      const win = makeWindow({ visible: false });
+      gpuConfig.initializeGpuConfig({
+        getMainWindow: () => win,
+        isFirstShowPending: () => true
+      });
+
+      gpuConfig.handleGpuProcessGone({}, { type: 'GPU', reason: 'crashed', exitCode: 1 });
+
+      expect(win.show).toHaveBeenCalledTimes(1);
+      const { logger } = require('../src/shared/logger');
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('showing it now'),
+        expect.objectContaining({ reason: 'crashed' })
+      );
+    });
+
+    test('leaves a window the user hid (tray, background mode) hidden', () => {
+      const win = makeWindow({ visible: false });
+      gpuConfig.initializeGpuConfig({
+        getMainWindow: () => win,
+        isFirstShowPending: () => false
+      });
+
+      gpuConfig.handleGpuProcessGone({}, { type: 'GPU', reason: 'crashed', exitCode: 1 });
+
+      expect(win.show).not.toHaveBeenCalled();
+    });
+
+    test('does nothing for an already visible window or a non-GPU process', () => {
+      const win = makeWindow({ visible: true });
+      gpuConfig.initializeGpuConfig({
+        getMainWindow: () => win,
+        isFirstShowPending: () => true
+      });
+
+      gpuConfig.handleGpuProcessGone({}, { type: 'GPU', reason: 'crashed', exitCode: 1 });
+      win.isVisible.mockReturnValue(false);
+      gpuConfig.handleGpuProcessGone({}, { type: 'Utility', reason: 'crashed', exitCode: 1 });
+
+      expect(win.show).not.toHaveBeenCalled();
+    });
+
+    test('tolerates no injected accessors (module-level default)', () => {
+      expect(() =>
+        gpuConfig.handleGpuProcessGone({}, { type: 'GPU', reason: 'crashed', exitCode: 1 })
+      ).not.toThrow();
+    });
+  });
+
+  describe('clearGpuFallbackAfterStableRun', () => {
+    const retryAfter = () =>
+      loadGpuConfigWithFlag({ exists: false }).gpuMod.GPU_FALLBACK_RETRY_AFTER_MS;
+
+    test('returns no-flag and touches nothing when no flag exists', () => {
+      const { gpuMod, fs } = loadGpuConfigWithFlag({ exists: false });
+
+      expect(gpuMod.clearGpuFallbackAfterStableRun()).toBe('no-flag');
+      expect(fs.unlinkSync).not.toHaveBeenCalled();
+    });
+
+    test('clears the flag after a stable hardware-accelerated run with a visible window', () => {
+      const { gpuMod, fs } = loadGpuConfigWithFlag({
+        exists: true,
+        ageMs: retryAfter() + HOUR_MS
+      });
+      gpuMod.initializeGpuConfig({
+        getMainWindow: () => makeWindow({ visible: true }),
+        isFirstShowPending: () => false
+      });
+
+      expect(gpuMod.clearGpuFallbackAfterStableRun()).toBe('cleared');
+      expect(fs.unlinkSync).toHaveBeenCalledWith(expect.stringContaining('.gpu-fallback'));
+    });
+
+    test('keeps the flag while the session renders in software (nothing learned about the driver)', () => {
+      const { gpuMod, fs } = loadGpuConfigWithFlag({ exists: true, ageMs: HOUR_MS });
+      gpuMod.initializeGpuConfig({
+        getMainWindow: () => makeWindow({ visible: true }),
+        isFirstShowPending: () => false
+      });
+
+      expect(gpuMod.forceSoftwareRenderer).toBe(true);
+      expect(gpuMod.clearGpuFallbackAfterStableRun()).toBe('kept-software-mode');
+      expect(fs.unlinkSync).not.toHaveBeenCalled();
+    });
+
+    test('keeps the flag when the GPU process exited during the hardware retry', () => {
+      const { gpuMod, fs } = loadGpuConfigWithFlag({
+        exists: true,
+        ageMs: retryAfter() + HOUR_MS
+      });
+      gpuMod.initializeGpuConfig({
+        getMainWindow: () => makeWindow({ visible: true }),
+        isFirstShowPending: () => false
+      });
+
+      gpuMod.handleGpuProcessGone({}, { type: 'GPU', reason: 'crashed', exitCode: 1 });
+
+      expect(gpuMod.clearGpuFallbackAfterStableRun()).toBe('kept-gpu-exits');
+      expect(fs.unlinkSync).not.toHaveBeenCalled();
+    });
+
+    test('keeps the flag when the window is not visible', () => {
+      const { gpuMod, fs } = loadGpuConfigWithFlag({
+        exists: true,
+        ageMs: retryAfter() + HOUR_MS
+      });
+      gpuMod.initializeGpuConfig({
+        getMainWindow: () => makeWindow({ visible: false }),
+        isFirstShowPending: () => false
+      });
+
+      expect(gpuMod.clearGpuFallbackAfterStableRun()).toBe('kept-window-hidden');
+      expect(fs.unlinkSync).not.toHaveBeenCalled();
     });
   });
 });

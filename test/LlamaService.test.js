@@ -44,7 +44,8 @@ jest.mock('../src/main/services/PerformanceMetrics', () => ({
 }));
 
 jest.mock('../src/main/services/GPUMonitor', () => ({
-  GPUMonitor: jest.fn().mockImplementation(() => ({}))
+  GPUMonitor: jest.fn().mockImplementation(() => ({})),
+  getInstance: jest.fn(() => ({}))
 }));
 
 // Mirrors the real SettingsService instance contract LlamaService uses
@@ -104,6 +105,86 @@ describe('LlamaService', () => {
       expect(service._initializeLlama).toHaveBeenCalled();
       expect(onInit).toHaveBeenCalledWith(
         expect.objectContaining({ gpuBackend: service._gpuBackend })
+      );
+    });
+  });
+
+  describe('GPU backend cache wiring', () => {
+    const { app } = require('electron');
+    const selector = require('../src/main/utils/llamaBackendSelector');
+    const { BACKEND_CACHE_FILENAME } = require('../src/main/utils/llamaBackendCache');
+    const expectedRecordPath = path.join(app.getPath('userData'), BACKEND_CACHE_FILENAME);
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    test('builds the record under userData, fingerprinted by versions and the detected GPU', async () => {
+      const service = new LlamaService();
+      service._detectedGpu = { type: 'cuda', name: 'NVIDIA GeForce RTX 4070' };
+
+      const cache = await service._createLlamaBackendCache({
+        getModuleVersion: jest.fn().mockResolvedValue('3.22.2')
+      });
+
+      expect(cache.filePath).toBe(expectedRecordPath);
+      expect(cache.fingerprint).toEqual({
+        platform: process.platform,
+        arch: process.arch,
+        appVersion: app.getVersion(),
+        nodeLlamaVersion: '3.22.2',
+        gpuType: 'cuda',
+        gpuName: 'NVIDIA GeForce RTX 4070',
+        driverVersion: null
+      });
+    });
+
+    test('carries a null node-llama-cpp version when the module cannot report one', async () => {
+      const service = new LlamaService();
+
+      const withoutHelper = await service._createLlamaBackendCache({});
+      const withFailingHelper = await service._createLlamaBackendCache({
+        getModuleVersion: jest.fn().mockRejectedValue(new Error('package.json unreadable'))
+      });
+
+      expect(withoutHelper.fingerprint.nodeLlamaVersion).toBeNull();
+      expect(withFailingHelper.fingerprint.nodeLlamaVersion).toBeNull();
+    });
+
+    test('returns no cache when userData cannot be resolved', async () => {
+      const service = new LlamaService();
+      app.getPath.mockImplementationOnce(() => {
+        throw new Error('userData not ready');
+      });
+
+      await expect(service._createLlamaBackendCache({})).resolves.toBeUndefined();
+    });
+
+    test('_initializeLlama hands the cache to the backend selector', async () => {
+      const service = new LlamaService();
+      service._gpuMonitor = {
+        detectGPU: jest.fn().mockResolvedValue({ type: 'cuda', name: 'NVIDIA GeForce RTX 4070' })
+      };
+      const initSpy = jest.spyOn(selector, 'initLlamaWithBackend').mockResolvedValue({
+        llama: { gpu: false },
+        backend: 'cpu',
+        selection: { attempted: [], selected: 'cpu', requested: 'auto', detectedGpu: null }
+      });
+
+      await service._initializeLlama();
+
+      expect(initSpy).toHaveBeenCalledTimes(1);
+      const { backendCache } = initSpy.mock.calls[0][0];
+      expect(backendCache).toEqual(
+        expect.objectContaining({
+          filePath: expectedRecordPath,
+          read: expect.any(Function),
+          write: expect.any(Function),
+          clear: expect.any(Function)
+        })
+      );
+      expect(backendCache.fingerprint).toEqual(
+        expect.objectContaining({ gpuType: 'cuda', gpuName: 'NVIDIA GeForce RTX 4070' })
       );
     });
   });

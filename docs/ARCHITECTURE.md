@@ -132,6 +132,65 @@ The DI container that owns the lifecycle of every backend service:
 
 Orchestrates the boot sequence with progress reporting to the splash screen:
 
+- **Single-instance lock first**: `simple-main.js` calls `app.requestSingleInstanceLock()` right
+  after its logger is created, which is after dotenv, `app.name` and the `STRATOSORT_E2E_USER_DATA`
+  override (Electron keys the lock to the app name and the userData directory) and before the
+  service, analysis and IPC modules are required, so a duplicate launch exits before the main bundle
+  has loaded. A launch that arrives while this instance is shutting down cannot get a window; the
+  `second-instance` handler calls `requestRelaunchAfterShutdown()` in `core/lifecycle.js` instead,
+  and `handleBeforeQuit` logs the decision before the log streams close and calls `app.relaunch()`
+  just before `app.exit()`, with this instance's arguments minus Jump List task flags so a task such
+  as `--open-documents` does not run again. A downloaded update that installs on that quit takes
+  priority and suppresses the relaunch. The `second-instance` listener is not part of the
+  first-phase listener cleanup, so it keeps recording launches for the whole shutdown.
+- **Bounded pre-window housekeeping**: crash-journal recovery, user-data migration, custom-folder
+  loading and the default `Uncategorized` folder run before the window is created. Every stat and
+  mkdir of the `Uncategorized` folder goes through `probeFolder()` in `core/customFolders.js`,
+  capped at `TIMEOUTS.DEFAULT_FOLDER_PROBE` (3 s). A timeout keeps the Documents path (the fs call
+  keeps running, and organize creates a missing target directory on the first move); a real fs error
+  such as `EACCES` or `EPERM` from Controlled Folder Access also keeps the Documents path, raises
+  the `storage.uncategorized-unavailable` degraded-state warning and is retried on the next launch.
+  The folder is never relocated under userData, which the uninstaller's "remove settings and data"
+  option deletes. A failure to save the default folder is logged and startup continues. The old-log
+  and crash-dump sweeps (`sweepOldLogsAndCrashDumps()`) are started, not awaited, once the
+  first-paint gate releases; after a startup error they start `TIMEOUTS.FIRST_PAINT_GATE` after the
+  degraded-mode window is created, so a launch that keeps failing still bounds its logs and dumps.
+- **Window first**: `simple-main.js` creates the `BrowserWindow` before any heavyweight service
+  startup. `createWindow.js` shows it on `ready-to-show` (focus follows 150 ms later) or, if that
+  event has not arrived, after `TIMEOUTS.WINDOW_SHOW_FALLBACK` (4 s), so a GPU-process hang or a
+  stalled bundle load can never leave the app invisible behind a busy cursor; a failed `app://` load
+  shows the missing-bundle page instead. The `WINDOW_CREATION_READY` mutex timeout (60 s)
+  force-shows a still-hidden window as a last resort. A GPU process exit before the window's first
+  show also shows it at once (`handleGpuProcessGone` in `core/gpuConfig.js`); a window hidden to the
+  tray stays hidden.
+- **Sticky GPU fallback**: `core/gpuConfig.js` reads `userData/.gpu-fallback` at module load, before
+  `app.ready`, and disables hardware acceleration while the flag is younger than
+  `GPU_FALLBACK_RETRY_AFTER_MS` (3 days, measured from its mtime). The flag is written after three
+  GPU process exits in one session, each within an hour of the one before
+  (`GPU_FAILURE_RESET_WINDOW` restarts the count after an hour with no exit), and is never deleted
+  on read. `simple-main.js` calls `clearGpuFallbackAfterStableRun()`
+  `TIMEOUTS.GPU_FALLBACK_STABLE_RUN` (30 s) after creating the window, next to the
+  `.crash-timestamps` reset; it deletes the flag only for a hardware-accelerated session with no GPU
+  process exit and a visible window, so a software-rendered session cannot clear it. On Windows and
+  macOS Chromium's GPU rasterization and zero-copy switches are left at their per-driver defaults;
+  Linux keeps forcing both, as earlier releases did (`getForcedRasterSwitches()`).
+- **First-paint gate** (`core/firstPaintGate.js`): coordinated startup and `runBackgroundSetup()`
+  wait until the window has been shown or its document has finished loading, capped at
+  `TIMEOUTS.FIRST_PAINT_GATE` (3 s), so the synchronous stretches of AI bring-up (node-llama-cpp
+  import, GPU probing) are deferred past document load and, in the normal case, past the first
+  visible frame instead of competing with it on the main-process thread.
+- **Last-known-good AI backend**: `LlamaService` hands `initLlamaWithBackend()`
+  (`utils/llamaBackendSelector.js`) a record from `utils/llamaBackendCache.js`, stored as
+  `userData/gpu-backend-cache.json`. When the record's fingerprint (platform, arch, app version,
+  node-llama-cpp version, GPU type, name and driver version, which `GPUMonitor` reads from
+  `nvidia-smi` or the Windows video controller) and the GPU backends `getLlamaGpuTypes('supported')`
+  reports both match what was saved, and it is under 14 days old, the remembered GPU backend moves
+  to the front of the candidate list before the node-llama-cpp support filter runs. The supported
+  set is probed before the record is read, so a Vulkan record saved while the CUDA runtime was
+  missing is not used once CUDA becomes available. It only reorders: on Windows node-llama-cpp still
+  test-loads the binary, a failed attempt of the remembered backend deletes the record, and a GPU
+  backend that differs from the record is saved (CPU never is). `STRATOSORT_LLM_GPU_BACKEND` and
+  software or safe mode bypass the record entirely.
 - **Phases** (progress reported to splash): Starting (0%) -> Preflight checks (10%) -> Migration
   (12%) -> Services -> Models -> App Services -> Ready (100%). See `reportProgress(...)` calls in
   `StartupManagerCore.js` for the authoritative sequence.

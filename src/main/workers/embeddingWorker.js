@@ -1,5 +1,6 @@
 // @ts-check
 const path = require('path');
+const { workerData } = require('worker_threads');
 const { createLogger } = require('../../shared/logger');
 const { ERROR_CODES } = require('../../shared/errorCodes');
 
@@ -45,9 +46,10 @@ async function getLlamaInstance() {
   if (llamaInstance) return llamaInstance;
 
   const nodeLlama = await import(/* webpackIgnore: true */ 'node-llama-cpp');
-  const { getLlama } = nodeLlama;
+  const { getLlama, getLlamaGpuTypes } = nodeLlama;
   const { GPUMonitor } = require('../services/GPUMonitor');
   const { initLlamaWithBackend } = require('../utils/llamaBackendSelector');
+  const { createReadOnlyLlamaBackendCache } = require('../utils/llamaBackendCache');
   const { createFilteredLlamaLogger } = require('../utils/llamaLogFilter');
   // Embedding models are exactly the case that trips the benign tokenizer
   // round-trip warning; suppress it here too.
@@ -61,13 +63,32 @@ async function getLlamaInstance() {
     // Ignore detection error
   }
 
+  // Same supported-backend filter and remembered backend as LlamaService,
+  // so this second stack does not re-test GPU binaries the main process has
+  // already ruled out. userData and the app version come from the pool
+  // (workerPools passes them as workerData); the record is read-only here.
+  /** @type {any} */
+  let backendCache;
+  try {
+    backendCache = await createReadOnlyLlamaBackendCache({
+      userDataPath: workerData?.userDataPath,
+      appVersion: workerData?.appVersion,
+      nodeLlama,
+      gpuInfo
+    });
+  } catch {
+    backendCache = undefined;
+  }
+
   try {
     const selection = await initLlamaWithBackend({
       getLlama,
       gpuInfo,
       logger,
       context: 'EmbeddingWorker',
-      llamaLogger
+      llamaLogger,
+      getLlamaGpuTypes,
+      backendCache
     });
     llamaInstance = selection.llama;
   } catch (error) {

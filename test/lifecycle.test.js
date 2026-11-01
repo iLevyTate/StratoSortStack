@@ -8,6 +8,7 @@ jest.mock('electron', () => ({
   app: {
     quit: jest.fn(),
     exit: jest.fn(),
+    relaunch: jest.fn(),
     on: jest.fn(),
     removeListener: jest.fn()
   },
@@ -420,6 +421,156 @@ describe('lifecycle – handleBeforeQuit exit code vs pending update', () => {
     expect(mockLogger.warn).not.toHaveBeenCalledWith(
       expect.stringContaining('exiting 0 so the installer can run')
     );
+  });
+});
+
+describe('lifecycle – relaunch requested during shutdown', () => {
+  const quitConfig = () => ({
+    setIsQuitting: jest.fn(),
+    getMetricsInterval: () => null,
+    setMetricsInterval: jest.fn(),
+    getDownloadWatcher: () => null,
+    setDownloadWatcher: jest.fn(),
+    getServiceIntegration: () => null,
+    getSettingsService: () => null,
+    getChildProcessListeners: () => [],
+    setChildProcessListeners: jest.fn(),
+    getGlobalProcessListeners: () => [],
+    setGlobalProcessListeners: jest.fn(),
+    getEventListeners: () => [],
+    setEventListeners: jest.fn()
+  });
+
+  let electron;
+  let lifecycle;
+
+  beforeEach(() => {
+    jest.resetModules();
+    Object.values(mockLogger).forEach((fn) => fn.mockClear());
+    mockShutdownLogging.mockReset().mockResolvedValue(undefined);
+    mockHasPendingDownloadedUpdate.mockReset().mockReturnValue(false);
+    jest.doMock('../src/shared/promiseUtils', () => ({
+      withTimeout: jest.fn((promise) => promise),
+      createBackgroundWorkTracker: jest.fn(() => ({
+        track: jest.fn((p) => p),
+        drain: jest.fn(),
+        get size() {
+          return 0;
+        }
+      })),
+      createInitGuard: jest.fn(() => ({
+        isInitialized: () => false,
+        initialize: jest.fn(async (fn) => fn()),
+        reset: jest.fn(),
+        requireInitialized: jest.fn()
+      }))
+    }));
+    electron = require('electron');
+    electron.app.exit.mockClear();
+    electron.app.relaunch.mockClear();
+    lifecycle = require('../src/main/core/lifecycle');
+    lifecycle.initializeLifecycle(quitConfig());
+  });
+
+  test('without a request the app exits without relaunching', async () => {
+    await lifecycle.handleBeforeQuit();
+
+    expect(electron.app.relaunch).not.toHaveBeenCalled();
+    expect(electron.app.exit).toHaveBeenCalledTimes(1);
+  });
+
+  test('a request made during shutdown relaunches once, right before app.exit', async () => {
+    const quit = lifecycle.handleBeforeQuit();
+    expect(lifecycle.requestRelaunchAfterShutdown('second-instance')).toBe(true);
+    await quit;
+
+    expect(electron.app.relaunch).toHaveBeenCalledTimes(1);
+    expect(electron.app.exit).toHaveBeenCalledTimes(1);
+    expect(electron.app.relaunch.mock.invocationCallOrder[0]).toBeLessThan(
+      electron.app.exit.mock.invocationCallOrder[0]
+    );
+    // Logged while the log streams are still open.
+    const relaunchLog = mockLogger.info.mock.calls.findIndex(
+      ([msg]) => msg === '[SHUTDOWN] Relaunching after shutdown'
+    );
+    expect(relaunchLog).toBeGreaterThan(-1);
+    expect(mockLogger.info.mock.invocationCallOrder[relaunchLog]).toBeLessThan(
+      mockShutdownLogging.mock.invocationCallOrder[0]
+    );
+    expect(mockLogger.info.mock.calls[relaunchLog][1]).toEqual(
+      expect.objectContaining({ reason: 'second-instance' })
+    );
+  });
+
+  test('the relaunched instance does not replay Jump List tasks from this instance', async () => {
+    const originalArgv = process.argv;
+    process.argv = [
+      'C:\\Program Files\\StratoSort Stack\\StratoSort Stack.exe',
+      '--open-documents',
+      '--some-flag',
+      '--analyze-folder'
+    ];
+    try {
+      lifecycle.requestRelaunchAfterShutdown('second-instance');
+      await lifecycle.handleBeforeQuit();
+    } finally {
+      process.argv = originalArgv;
+    }
+
+    expect(electron.app.relaunch).toHaveBeenCalledTimes(1);
+    expect(electron.app.relaunch).toHaveBeenCalledWith({ args: ['--some-flag'] });
+  });
+
+  test('repeated requests are one-shot: app.relaunch starts one instance per call', async () => {
+    expect(lifecycle.requestRelaunchAfterShutdown('second-instance')).toBe(true);
+    expect(lifecycle.requestRelaunchAfterShutdown('second-instance')).toBe(false);
+    expect(lifecycle.requestRelaunchAfterShutdown('second-instance')).toBe(false);
+
+    await lifecycle.handleBeforeQuit();
+    await lifecycle.handleBeforeQuit(); // re-entrant quit is ignored
+
+    expect(electron.app.relaunch).toHaveBeenCalledTimes(1);
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      '[SHUTDOWN] Relaunch requested; the app will start again after shutdown',
+      expect.objectContaining({ reason: 'second-instance' })
+    );
+  });
+
+  test('a request that lands while the logs flush is still honoured', async () => {
+    mockShutdownLogging.mockImplementation(async () => {
+      lifecycle.requestRelaunchAfterShutdown('second-instance');
+    });
+
+    await lifecycle.handleBeforeQuit();
+
+    expect(electron.app.relaunch).toHaveBeenCalledTimes(1);
+    expect(electron.app.relaunch.mock.invocationCallOrder[0]).toBeLessThan(
+      electron.app.exit.mock.invocationCallOrder[0]
+    );
+  });
+
+  test('a downloaded update that installs on quit wins over the relaunch', async () => {
+    mockHasPendingDownloadedUpdate.mockReturnValue(true);
+    lifecycle.requestRelaunchAfterShutdown('second-instance');
+
+    await lifecycle.handleBeforeQuit();
+
+    expect(electron.app.relaunch).not.toHaveBeenCalled();
+    expect(electron.app.exit).toHaveBeenCalledWith(0);
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('Not relaunching'),
+      expect.objectContaining({ reason: 'second-instance' })
+    );
+  });
+
+  test('a throwing app.relaunch still exits', async () => {
+    electron.app.relaunch.mockImplementationOnce(() => {
+      throw new Error('relaunch unavailable');
+    });
+    lifecycle.requestRelaunchAfterShutdown('second-instance');
+
+    await expect(lifecycle.handleBeforeQuit()).resolves.toBeUndefined();
+    expect(electron.app.exit).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -9,6 +9,8 @@ const { safeWriteFile } = require('../../shared/atomicFileOperations');
 const { tryParse: safeJsonTryParse } = require('../../shared/safeJsonOps');
 const { findEquivalentFolderGroups } = require('../../shared/smartFolderNameValidation');
 const { scoreFolderNameForDedup } = require('../../shared/categoryFolderMatching');
+const { withTimeout } = require('../../shared/promiseUtils');
+const { TIMEOUTS } = require('../../shared/performanceConstants');
 
 const logger = createLogger('CustomFolders');
 const CUSTOM_FOLDERS_FILENAME = 'custom-folders.json';
@@ -48,8 +50,116 @@ const normalizeFolderPath = (/** @type {any} */ value) => {
 const buildFolderKey = (/** @type {any} */ folder) =>
   `${normalizeName(folder?.name)}|${normalizeFolderPath(folder?.path)}`;
 
+let _defaultFoldersBaseDirLogged = false;
+
+/**
+ * Base directory for the default folders: the user's Documents folder, or
+ * `<home>/Documents` when the OS cannot resolve Documents (app.getPath
+ * throws). Never userData: organize moves user files into these folders, and
+ * the uninstaller's "remove settings and data" option deletes userData
+ * recursively. Logged once per process so a support log shows where
+ * Uncategorized is expected.
+ * @returns {string}
+ */
 function getDefaultFoldersBaseDir() {
-  return app.getPath('documents');
+  /** @type {string} */
+  let documentsPath = '';
+  /** @type {string | undefined} */
+  let resolveError;
+  try {
+    documentsPath = app.getPath('documents');
+  } catch (error) {
+    resolveError = error?.message || String(error);
+  }
+  const baseDir = documentsPath || path.join(app.getPath('home'), 'Documents');
+  if (!_defaultFoldersBaseDirLogged) {
+    _defaultFoldersBaseDirLogged = true;
+    if (documentsPath) {
+      logger.info('[STORAGE] Documents folder resolved for Uncategorized', { documentsPath });
+    } else {
+      logger.warn('[STORAGE] Documents folder unavailable; using Documents under the home folder', {
+        baseDir,
+        error: resolveError
+      });
+    }
+  }
+  return baseDir;
+}
+
+/**
+ * Run one stat/mkdir on an Uncategorized folder with a time bound. These calls
+ * run before the main window exists, and Documents can sit on a slow or
+ * offline volume (folder redirection to a network share, a cloud placeholder).
+ * withTimeout cannot cancel the fs call: after a timeout it keeps running in
+ * the background and may still succeed.
+ * @param {() => Promise<any>} op
+ * @param {string} label
+ * @returns {Promise<{ ok: boolean, timedOut: boolean, value?: any, error?: any }>}
+ */
+async function probeFolder(op, label) {
+  try {
+    const value = await withTimeout(
+      Promise.resolve().then(op),
+      TIMEOUTS.DEFAULT_FOLDER_PROBE,
+      label
+    );
+    return { ok: true, timedOut: false, value };
+  } catch (error) {
+    // withTimeout's own rejection has no errno code; an fs ETIMEDOUT does.
+    const timedOut = !error?.code && /timed out after/.test(String(error?.message));
+    return { ok: false, timedOut, error };
+  }
+}
+
+/**
+ * Create the directory for a new or healed Uncategorized entry. Never throws,
+ * and the entry always keeps `preferredPath`.
+ * - Timed out: the mkdir keeps running and usually lands, and organize creates
+ *   a missing target directory on the first move.
+ * - Failed (Controlled Folder Access, read-only or missing volume): logged and
+ *   raised as a degraded-state warning. There is deliberately no fallback
+ *   location: a path saved under userData would make organize move user files
+ *   into the folder the uninstaller deletes. The saved Documents path is
+ *   retried, and the warning raised again, on every launch until it works.
+ * @param {string} preferredPath
+ * @returns {Promise<string>}
+ */
+async function createUncategorizedDirectory(preferredPath) {
+  const created = await probeFolder(
+    () => fs.mkdir(preferredPath, { recursive: true }),
+    'Uncategorized folder creation'
+  );
+  if (created.ok) {
+    logger.info('[STORAGE] Created Uncategorized directory at:', preferredPath);
+    return preferredPath;
+  }
+  if (created.timedOut) {
+    logger.warn('[STORAGE] Creating the Uncategorized folder is slow; continuing without it', {
+      path: preferredPath,
+      timeoutMs: TIMEOUTS.DEFAULT_FOLDER_PROBE
+    });
+    return preferredPath;
+  }
+
+  logger.warn('[STORAGE] Could not create the Uncategorized folder', {
+    path: preferredPath,
+    code: created.error?.code,
+    error: created.error?.message
+  });
+  try {
+    require('../services/DegradedStateTracker')
+      .getInstance()
+      .raise({
+        code: 'storage.uncategorized-unavailable',
+        subsystem: 'storage',
+        severity: 'warning',
+        message: `StratoSort could not create the Uncategorized folder at ${preferredPath}, so files that match no smart folder cannot be moved there. If Windows Security's Controlled folder access is on, allow StratoSort Stack through it.`,
+        detail: { path: preferredPath, code: created.error?.code }
+      });
+  } catch {
+    // Tracker is best-effort; the warning above is already logged.
+  }
+  return preferredPath;
 }
 
 function getCustomFoldersPath() {
@@ -113,50 +223,69 @@ async function ensureUncategorizedFolder(/** @type {any} */ folders) {
     const existingFolder = safeFolders[uncategorizedIndex] || {};
     const existingPath = String(existingFolder.path || '').trim();
     if (existingPath) {
-      try {
-        const stats = await fs.stat(existingPath);
-        if (stats.isDirectory()) {
-          return safeFolders;
-        }
+      // A probe that times out leaves the saved entry alone: rewriting the
+      // user's configuration because one launch found the volume slow would
+      // be worse than a folder that organize creates on its first move.
+      const statResult = await probeFolder(
+        () => fs.stat(existingPath),
+        'Uncategorized folder check'
+      );
+      if (statResult.ok && statResult.value?.isDirectory?.()) {
+        return safeFolders;
+      }
+      if (statResult.ok) {
         logger.warn(
           '[STORAGE] Uncategorized path exists but is not a directory; healing to canonical path',
           { path: existingPath }
         );
-      } catch (statErr) {
+      } else if (statResult.timedOut) {
+        logger.warn('[STORAGE] Uncategorized folder check is slow; keeping the saved path', {
+          path: existingPath,
+          timeoutMs: TIMEOUTS.DEFAULT_FOLDER_PROBE
+        });
+        return safeFolders;
+      } else {
         logger.debug('[STORAGE] stat failed for Uncategorized path', {
           path: existingPath,
-          error: statErr?.message || String(statErr)
+          error: statResult.error?.message || String(statResult.error)
         });
-        try {
-          await fs.mkdir(existingPath, { recursive: true });
+        const recreated = await probeFolder(
+          () => fs.mkdir(existingPath, { recursive: true }),
+          'Uncategorized folder re-creation'
+        );
+        if (recreated.ok) {
           logger.info('[STORAGE] Recreated missing Uncategorized directory at:', existingPath);
           return safeFolders;
-        } catch (error) {
-          logger.warn(
-            '[STORAGE] Failed to recreate existing Uncategorized path; healing to canonical path',
-            { path: existingPath, error: error.message }
-          );
         }
+        if (recreated.timedOut) {
+          logger.warn(
+            '[STORAGE] Recreating the Uncategorized folder is slow; keeping the saved path',
+            {
+              path: existingPath,
+              timeoutMs: TIMEOUTS.DEFAULT_FOLDER_PROBE
+            }
+          );
+          return safeFolders;
+        }
+        logger.warn(
+          '[STORAGE] Failed to recreate existing Uncategorized path; healing to canonical path',
+          { path: existingPath, error: recreated.error?.message }
+        );
       }
     }
 
     const canonical = createUncategorizedFolder(baseDir);
+    const healedPath = await createUncategorizedDirectory(canonical.path);
     const healedFolder = {
       ...canonical,
       ...existingFolder,
-      path: canonical.path,
+      path: healedPath,
       name: existingFolder.name || canonical.name,
       isDefault: true
     };
     const updatedFolders = [...safeFolders];
     updatedFolders[uncategorizedIndex] = healedFolder;
-
-    try {
-      await fs.mkdir(healedFolder.path, { recursive: true });
-      logger.info('[STORAGE] Healed Uncategorized directory at canonical path:', healedFolder.path);
-    } catch (error) {
-      logger.error('[STORAGE] Failed to create healed Uncategorized directory:', error);
-    }
+    logger.info('[STORAGE] Healed Uncategorized folder path:', healedFolder.path);
 
     try {
       await saveCustomFolders(updatedFolders);
@@ -171,13 +300,7 @@ async function ensureUncategorizedFolder(/** @type {any} */ folders) {
   const uncategorized = createUncategorizedFolder(baseDir);
 
   logger.info('[STORAGE] Adding missing Uncategorized fallback folder');
-
-  try {
-    await fs.mkdir(uncategorized.path, { recursive: true });
-    logger.info('[STORAGE] Created Uncategorized directory at:', uncategorized.path);
-  } catch (error) {
-    logger.error('[STORAGE] Failed to create Uncategorized directory:', error);
-  }
+  uncategorized.path = await createUncategorizedDirectory(uncategorized.path);
 
   const updatedFolders = [...safeFolders, uncategorized];
 
@@ -477,6 +600,17 @@ function createUncategorizedFolder(/** @type {any} */ baseDir) {
     isDefault: true,
     createdAt: new Date().toISOString()
   };
+}
+
+/**
+ * Build a new Uncategorized entry with its directory created (bounded, never
+ * throws; see createUncategorizedDirectory). Startup uses it when no default
+ * folder survived loading and validation.
+ */
+async function createDefaultUncategorizedFolder() {
+  const folder = createUncategorizedFolder(getDefaultFoldersBaseDir());
+  folder.path = await createUncategorizedDirectory(folder.path);
+  return folder;
 }
 
 /**
@@ -781,13 +915,7 @@ async function _loadCustomFoldersImpl() {
     // First launch: only create the essential Uncategorized folder.
     // Users build their own folder structure; full defaults are available via "Reset to Defaults".
     const uncategorized = createUncategorizedFolder(baseDir);
-
-    try {
-      await fs.mkdir(uncategorized.path, { recursive: true });
-      logger.info('[STARTUP] Created Uncategorized directory');
-    } catch (err) {
-      logger.error('[STARTUP] Failed to create Uncategorized directory:', err);
-    }
+    uncategorized.path = await createUncategorizedDirectory(uncategorized.path);
 
     try {
       await saveCustomFolders([uncategorized]);
@@ -923,6 +1051,7 @@ module.exports = {
   getCustomFoldersPath,
   loadCustomFolders,
   saveCustomFolders,
+  createDefaultUncategorizedFolder,
   getDefaultSmartFolders,
   resetToDefaultFolders,
   restoreFromBackup,

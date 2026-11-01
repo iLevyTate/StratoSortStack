@@ -37,5 +37,5 @@ You can also configure `electron-builder` `publish` with `provider: generic` and
 ## Not in scope here
 
 - **AI model** downloads (Hugging Face, etc.) are separate from app auto-update.
-- **Portable** `.exe` builds do not participate in the NSIS auto-update channel the same way as the
-  full installer.
+- The Windows **zip** (`StratoSortStack-X.X.X-win-x64.zip`) and the v5.0.0 **portable** `.exe` do
+  not update themselves; only the NSIS installer uses the auto-update channel.

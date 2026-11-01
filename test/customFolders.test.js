@@ -778,6 +778,191 @@ describe('Custom Folders', () => {
     });
   });
 
+  describe('bounded Uncategorized probes (slow or unwritable Documents)', () => {
+    const neverSettles = () => new Promise(() => {});
+    const lastSavedFolders = () => JSON.parse(mockSafeWriteFile.mock.calls.at(-1)[1]);
+
+    afterEach(() => {
+      jest.useRealTimers();
+      // mockImplementation survives clearAllMocks; restore the shared default.
+      mockFs.mkdir.mockReset().mockResolvedValue(undefined);
+      delete mockFs.stat;
+    });
+
+    test('logs the resolved Documents folder once at info', async () => {
+      const { logger } = require('../src/shared/logger');
+
+      await customFolders.loadCustomFolders();
+      await customFolders.loadCustomFolders();
+
+      const documentsLogs = logger.info.mock.calls.filter(
+        ([msg]) => msg === '[STORAGE] Documents folder resolved for Uncategorized'
+      );
+      expect(documentsLogs).toEqual([
+        [
+          '[STORAGE] Documents folder resolved for Uncategorized',
+          { documentsPath: '/mock/documents' }
+        ]
+      ]);
+    });
+
+    test('first launch: a hung mkdir is abandoned after the probe timeout and keeps the Documents path', async () => {
+      jest.useFakeTimers();
+      mockFs.mkdir.mockImplementation(neverSettles);
+      const { logger } = require('../src/shared/logger');
+
+      const pending = customFolders.loadCustomFolders();
+      await jest.advanceTimersByTimeAsync(3000);
+      const folders = await pending;
+
+      // Organize creates a missing target directory on the first move, so a
+      // slow volume must not relocate the catch-all folder into app data.
+      expect(folders).toHaveLength(1);
+      expect(folders[0].path).toBe('/mock/documents/Uncategorized');
+      expect(lastSavedFolders()[0].path).toBe('/mock/documents/Uncategorized');
+      expect(mockFs.mkdir).not.toHaveBeenCalledWith('/mock/userData/Uncategorized', {
+        recursive: true
+      });
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('Creating the Uncategorized folder is slow'),
+        expect.objectContaining({ path: '/mock/documents/Uncategorized', timeoutMs: 3000 })
+      );
+    });
+
+    test('first launch: an unwritable Documents keeps the Documents path and raises a warning flag', async () => {
+      const eacces = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+      mockFs.mkdir.mockImplementation(async (dir) => {
+        if (String(dir).startsWith('/mock/documents')) throw eacces;
+      });
+
+      const folders = await customFolders.loadCustomFolders();
+
+      // Never userData: organize moves user files into this folder, and the
+      // uninstaller's "remove settings and data" option deletes userData.
+      expect(folders[0].path).toBe('/mock/documents/Uncategorized');
+      expect(lastSavedFolders()[0].path).toBe('/mock/documents/Uncategorized');
+      expect(mockFs.mkdir).not.toHaveBeenCalledWith(
+        expect.stringContaining('/mock/userData'),
+        expect.anything()
+      );
+      const flags = require('../src/main/services/DegradedStateTracker').getInstance().list();
+      expect(flags).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: 'storage.uncategorized-unavailable',
+            severity: 'warning',
+            detail: expect.objectContaining({
+              path: '/mock/documents/Uncategorized',
+              code: 'EACCES'
+            })
+          })
+        ])
+      );
+    });
+
+    test('a saved Documents path that still cannot be created is retried and flagged on every launch', async () => {
+      const eperm = Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' });
+      const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      mockFs.stat = jest.fn().mockRejectedValue(enoent);
+      mockFs.mkdir.mockRejectedValue(eperm);
+      const saved = [
+        {
+          id: 'uncat',
+          name: 'Uncategorized',
+          path: '/mock/documents/Uncategorized',
+          isDefault: true
+        }
+      ];
+      mockFs.readFile.mockResolvedValueOnce(JSON.stringify(saved));
+
+      const folders = await customFolders.loadCustomFolders();
+
+      expect(mockFs.mkdir).toHaveBeenCalledWith('/mock/documents/Uncategorized', {
+        recursive: true
+      });
+      expect(folders.find((f) => f.name === 'Uncategorized').path).toBe(
+        '/mock/documents/Uncategorized'
+      );
+      const flags = require('../src/main/services/DegradedStateTracker').getInstance().list();
+      expect(flags.map((flag) => flag.code)).toContain('storage.uncategorized-unavailable');
+    });
+
+    test('an fs ETIMEDOUT is a failure (flagged), not a probe timeout', async () => {
+      const etimedout = Object.assign(new Error('ETIMEDOUT: connection timed out, mkdir'), {
+        code: 'ETIMEDOUT'
+      });
+      mockFs.mkdir.mockImplementation(async (dir) => {
+        if (String(dir).startsWith('/mock/documents')) throw etimedout;
+      });
+      const { logger } = require('../src/shared/logger');
+
+      const folders = await customFolders.loadCustomFolders();
+
+      expect(folders[0].path).toBe('/mock/documents/Uncategorized');
+      expect(logger.warn).toHaveBeenCalledWith(
+        '[STORAGE] Could not create the Uncategorized folder',
+        expect.objectContaining({ code: 'ETIMEDOUT' })
+      );
+      expect(logger.warn).not.toHaveBeenCalledWith(
+        expect.stringContaining('Creating the Uncategorized folder is slow'),
+        expect.anything()
+      );
+    });
+
+    test('a saved Uncategorized entry is left untouched when its check times out', async () => {
+      jest.useFakeTimers();
+      mockFs.stat = jest.fn(neverSettles);
+      const saved = [
+        { id: 'docs', name: 'Work', path: '/test/work' },
+        { id: 'uncat', name: 'Uncategorized', path: '/slow/share/Uncategorized', isDefault: true }
+      ];
+      mockFs.readFile.mockResolvedValueOnce(JSON.stringify(saved));
+
+      const pending = customFolders.loadCustomFolders();
+      await jest.advanceTimersByTimeAsync(3000);
+      const folders = await pending;
+
+      expect(folders.find((f) => f.name === 'Uncategorized').path).toBe(
+        '/slow/share/Uncategorized'
+      );
+      expect(mockFs.mkdir).not.toHaveBeenCalled();
+      expect(mockSafeWriteFile).not.toHaveBeenCalled();
+    });
+
+    test('createDefaultUncategorizedFolder never throws, even when every mkdir fails', async () => {
+      mockFs.mkdir.mockRejectedValue(Object.assign(new Error('EROFS'), { code: 'EROFS' }));
+
+      const folder = await customFolders.createDefaultUncategorizedFolder();
+
+      expect(folder).toEqual(
+        expect.objectContaining({
+          name: 'Uncategorized',
+          isDefault: true,
+          path: '/mock/documents/Uncategorized'
+        })
+      );
+    });
+
+    test('an unresolvable Documents folder puts the defaults under home/Documents, never userData', async () => {
+      const { app } = require('electron');
+      const defaultGetPath = app.getPath.getMockImplementation();
+      app.getPath.mockImplementation((type) => {
+        if (type === 'documents') throw new Error("Failed to get 'documents' path");
+        if (type === 'userData') return '/mock/userData';
+        if (type === 'home') return '/mock/home';
+        return '/mock/path';
+      });
+
+      try {
+        const folder = await customFolders.createDefaultUncategorizedFolder();
+
+        expect(folder.path).toBe('/mock/home/Documents/Uncategorized');
+      } finally {
+        app.getPath.mockImplementation(defaultGetPath);
+      }
+    });
+  });
+
   describe('resetToDefaultFolders', () => {
     test('creates default folders directly under Documents root', async () => {
       const folders = await customFolders.resetToDefaultFolders();

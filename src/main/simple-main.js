@@ -73,6 +73,55 @@ perfMarks.mark('startup:main:module-eval');
 
 const logger = createLogger('Main');
 
+// ===== SINGLE-INSTANCE LOCK =====
+// Taken before the service, analysis and IPC graph below is required, so a
+// duplicate launch exits after a few light modules instead of evaluating the
+// whole main bundle first. It cannot move above this point: Electron keys the
+// lock to the app name and the userData directory, which app.name and the
+// STRATOSORT_E2E_USER_DATA override above set (dotenv, also above, can supply
+// that override and STRATOSORT_FORCE_LAUNCH in development).
+const {
+  LEGACY_MACOS_SINGLE_INSTANCE_LOCK_DISABLED_BELOW_MAJOR,
+  shouldUseSingleInstanceLock
+} = require('./core/singleInstanceLockGate');
+
+// Prevent multiple instances. STRATOSORT_FORCE_LAUNCH=1 lets a launch
+// proceed anyway. This provides an escape hatch when a zombie process
+// holds the lock and the user cannot start the app.
+const macOSSystemVersion = process.platform === 'darwin' ? process.getSystemVersion() : null;
+const shouldRequestSingleInstanceLock = shouldUseSingleInstanceLock({
+  platform: process.platform,
+  isPackaged: app.isPackaged,
+  systemVersion: macOSSystemVersion,
+  logger
+});
+const gotTheLock = shouldRequestSingleInstanceLock ? app.requestSingleInstanceLock() : true;
+
+if (shouldRequestSingleInstanceLock) {
+  logger.info('[STARTUP] Single instance lock:', gotTheLock);
+} else {
+  logger.warn(
+    '[STARTUP] Skipping single-instance lock on older macOS to avoid Electron startup crash',
+    {
+      systemVersion: macOSSystemVersion,
+      disabledBelowMajor: LEGACY_MACOS_SINGLE_INSTANCE_LOCK_DISABLED_BELOW_MAJOR
+    }
+  );
+}
+
+if (!gotTheLock) {
+  if (process.env.STRATOSORT_FORCE_LAUNCH === '1') {
+    logger.warn('[STARTUP] Lock failed but STRATOSORT_FORCE_LAUNCH is set — continuing');
+  } else {
+    logger.info(
+      '[STARTUP] Failed to get lock, quitting (set STRATOSORT_FORCE_LAUNCH=1 to override)'
+    );
+    // app.quit() is async and allows further module-level execution.
+    // Use app.exit() to terminate immediately before startup proceeds.
+    app.exit(0);
+  }
+}
+
 // Local crash dumps only. Crash minidumps are written under userData with
 // `uploadToServer: false` — nothing is ever transmitted off the device. This
 // is privacy-preserving by construction (no third-party crash telemetry, no
@@ -164,12 +213,9 @@ const analyzeMediaFile = (
 const {
   initializeGpuConfig,
   handleGpuProcessGone,
+  clearGpuFallbackAfterStableRun,
   forceSoftwareRenderer
 } = require('./core/gpuConfig');
-const {
-  LEGACY_MACOS_SINGLE_INSTANCE_LOCK_DISABLED_BELOW_MAJOR,
-  shouldUseSingleInstanceLock
-} = require('./core/singleInstanceLockGate');
 const { acquireUserDataLock, releaseUserDataLock } = require('./core/userDataLock');
 const { createApplicationMenu } = require('./core/applicationMenu');
 const {
@@ -182,11 +228,13 @@ const { verifyIpcHandlersRegistered } = require('./core/ipcVerification');
 const {
   initializeLifecycle,
   registerLifecycleHandlers,
-  attachSessionEndFlush
+  attachSessionEndFlush,
+  requestRelaunchAfterShutdown
 } = require('./core/lifecycle');
 const { initializeAutoUpdater, setAutoUpdateCheckEnabled } = require('./core/autoUpdater');
 const { initializeJumpList, handleCommandLineTasks } = require('./core/jumpList');
 const { runBackgroundSetup } = require('./core/backgroundSetup');
+const { waitForFirstPaint } = require('./core/firstPaintGate');
 const { migrateUserDataState } = require('./core/userDataMigration');
 
 // Windows integrations (Jump List, notifications, taskbar grouping) require AppUserModelId.
@@ -207,6 +255,9 @@ if (process.platform === 'win32') {
 
 /** @type {any} */
 let mainWindow;
+// True from window creation until that window's first 'show'. gpuConfig only
+// force-shows a window still waiting for it, never one hidden to the tray.
+let mainWindowFirstShowPending = false;
 /** @type {any[]} */
 let customFolders = []; // Initialize customFolders at module level
 
@@ -314,12 +365,19 @@ const clearAllTrackedTimers = () => {
 
 // ===== GPU PREFERENCES (Windows rendering stability) =====
 // GPU configuration is now handled by ./core/gpuConfig
-initializeGpuConfig();
+initializeGpuConfig({
+  getMainWindow: () => mainWindow,
+  isFirstShowPending: () => mainWindowFirstShowPending
+});
 app.on('child-process-gone', handleGpuProcessGone);
 eventListeners.push(() => app.removeListener('child-process-gone', handleGpuProcessGone));
 
 // Custom folders helpers
-const { loadCustomFolders, saveCustomFolders } = require('./core/customFolders');
+const {
+  loadCustomFolders,
+  saveCustomFolders,
+  createDefaultUncategorizedFolder
+} = require('./core/customFolders');
 
 // System monitoring and analytics
 const systemAnalytics = require('./core/systemAnalytics');
@@ -395,6 +453,12 @@ function createWindow() {
             // Remove the listener to avoid memory leak or late execution
             if (mainWindow && !mainWindow.isDestroyed()) {
               mainWindow.removeListener('ready-to-show', onReadyToShow);
+              // Last line of defence after createWindow.js's own show fallback:
+              // a window that is still hidden after a minute must not stay so.
+              if (!mainWindow.isVisible()) {
+                logger.warn('[WINDOW] Force-showing window after creation timeout');
+                mainWindow.show();
+              }
             }
             _windowCreationPromise = null;
             resolve();
@@ -422,6 +486,7 @@ function createWindow() {
 function _createWindowInternal() {
   // No existing window, create a new one
   mainWindow = createMainWindow();
+  mainWindowFirstShowPending = true;
 
   // Windows log off / restart / shutdown skips before-quit; flush through
   // the window's session-end event instead (audit row LC-07).
@@ -444,6 +509,7 @@ function _createWindowInternal() {
   mainWindow.on('restore', restoreHandler);
 
   const showHandler = () => {
+    mainWindowFirstShowPending = false;
     logger.debug('[WINDOW] Window shown');
   };
   windowEventHandlers.set('show', showHandler);
@@ -781,6 +847,48 @@ async function runCoordinatedStartupInBackground(
   }
 }
 
+/**
+ * Delete old session logs and stale crash dumps. Called once the first-paint
+ * gate releases (or, after a startup error, one gate length after the
+ * degraded-mode window is created) and never awaited: both sweeps only remove files this launch
+ * does not need, and with a large userData (or one an antivirus is scanning)
+ * they used to hold the window back. Each catches per-file errors itself.
+ */
+function sweepOldLogsAndCrashDumps() {
+  try {
+    // Age + max file count; JSONL under userData/logs
+    errorHandler.cleanupLogs(7, 50).catch((/** @type {any} */ err) => {
+      logger.warn('[STARTUP] Log cleanup failed (non-fatal)', { error: err?.message });
+    });
+    // Local-only crash dumps (never uploaded). Electron's CrashReporter never
+    // rotates these, so one bad week can leave hundreds of megabytes of `.dmp`
+    // artifacts under userData.
+    errorHandler
+      .cleanupCrashDumps(path.join(app.getPath('userData'), 'crash-dumps'), 30, 20)
+      .catch((/** @type {any} */ err) => {
+        logger.warn('[STARTUP] Crash-dump cleanup failed (non-fatal)', { error: err?.message });
+      });
+  } catch (err) {
+    logger.warn('[STARTUP] Could not start log and crash-dump cleanup', { error: err?.message });
+  }
+}
+
+/**
+ * Same idea as the crash-loop counter reset, for the sticky GPU fallback flag:
+ * gpuConfig clears it only when this run used hardware acceleration, kept its
+ * window visible and saw no GPU process exit. Scheduled on the normal and the
+ * degraded startup path alike.
+ */
+function scheduleGpuFallbackClear() {
+  trackTimeout(() => {
+    try {
+      clearGpuFallbackAfterStableRun();
+    } catch (gpuFlagErr) {
+      logger.debug('[STARTUP] GPU fallback check failed', { error: gpuFlagErr?.message });
+    }
+  }, TIMEOUTS.GPU_FALLBACK_STABLE_RUN);
+}
+
 function scheduleLearningStartupScan(/** @type {any} */ serviceIntegrationInstance) {
   const scheduleScan = () => {
     trackTimeout(() => {
@@ -834,42 +942,8 @@ const { registerAllIpc, IpcServiceContext } = require('./ipc');
 let _ipcHandlersRegistered = false;
 let _lifecycleRegistered = false;
 
-// Prevent multiple instances
-// proceed anyway. This provides an escape hatch when a zombie process
-// holds the lock and the user cannot start the app.
-const macOSSystemVersion = process.platform === 'darwin' ? process.getSystemVersion() : null;
-const shouldRequestSingleInstanceLock = shouldUseSingleInstanceLock({
-  platform: process.platform,
-  isPackaged: app.isPackaged,
-  systemVersion: macOSSystemVersion,
-  logger
-});
-const gotTheLock = shouldRequestSingleInstanceLock ? app.requestSingleInstanceLock() : true;
-
-if (shouldRequestSingleInstanceLock) {
-  logger.info('[STARTUP] Single instance lock:', gotTheLock);
-} else {
-  logger.warn(
-    '[STARTUP] Skipping single-instance lock on older macOS to avoid Electron startup crash',
-    {
-      systemVersion: macOSSystemVersion,
-      disabledBelowMajor: LEGACY_MACOS_SINGLE_INSTANCE_LOCK_DISABLED_BELOW_MAJOR
-    }
-  );
-}
-
-if (!gotTheLock) {
-  if (process.env.STRATOSORT_FORCE_LAUNCH === '1') {
-    logger.warn('[STARTUP] Lock failed but STRATOSORT_FORCE_LAUNCH is set — continuing');
-  } else {
-    logger.info(
-      '[STARTUP] Failed to get lock, quitting (set STRATOSORT_FORCE_LAUNCH=1 to override)'
-    );
-    // app.quit() is async and allows further module-level execution.
-    // Use app.exit() to terminate immediately before startup proceeds.
-    app.exit(0);
-  }
-}
+// The single-instance lock (gotTheLock) is taken near the top of this file,
+// before the heavy requires; see SINGLE-INSTANCE LOCK there.
 
 // Proceed with setup (runs for both lock holder and forced launches).
 // Before we touch any persistent data we acquire a filesystem-level lock on
@@ -971,6 +1045,20 @@ if (gotTheLock || process.env.STRATOSORT_FORCE_LAUNCH === '1') {
 
 if (gotTheLock || process.env.STRATOSORT_FORCE_LAUNCH === '1') {
   const secondInstanceHandler = (/** @type {any} */ _event, /** @type {any} */ argv) => {
+    // A launch during shutdown cannot get a window (services are going down
+    // and createWindow() refuses), and the launching process exits on the
+    // lock. Ask lifecycle to relaunch once this process has exited so the
+    // click still opens the app. Jump List tasks in either instance's argv
+    // are dropped: there is no window left to act on, and lifecycle strips
+    // them from the relaunched instance's command line.
+    if (_shutdownState.shouldClose) {
+      const firstRequest = requestRelaunchAfterShutdown('second-instance');
+      logger.info('[SECOND-INSTANCE] Launch arrived during shutdown; relaunching after exit', {
+        firstRequest
+      });
+      return;
+    }
+
     // Someone tried to run a second instance, restore and focus our window
     // Use event-driven window state manager
     const { restoreWindow } = require('./core/windowState');
@@ -996,17 +1084,15 @@ if (gotTheLock || process.env.STRATOSORT_FORCE_LAUNCH === '1') {
       createWindow();
     }
   };
+  // Deliberately not added to eventListeners: lifecycle runs those cleanups in
+  // its first shutdown phase, and the handler must keep recording launches for
+  // the rest of the shutdown. It lives until the process exits.
   app.on('second-instance', secondInstanceHandler);
 
-  // Track for cleanup
-  eventListeners.push(() => app.removeListener('second-instance', secondInstanceHandler));
-
-  if (!forceSoftwareRenderer) {
-    app.commandLine.appendSwitch('enable-gpu-rasterization');
-    app.commandLine.appendSwitch('enable-zero-copy');
-  }
+  // enable-gpu-rasterization and enable-zero-copy are appended on Linux only
+  // (see initializeGpuConfig); elsewhere Chromium decides per driver.
   logger.info(
-    `[${isDev ? 'DEVELOPMENT' : 'PRODUCTION'}] GPU acceleration flags ${forceSoftwareRenderer ? 'disabled (software renderer)' : 'enabled'}`
+    `[${isDev ? 'DEVELOPMENT' : 'PRODUCTION'}] GPU acceleration ${forceSoftwareRenderer ? 'disabled (software renderer)' : 'enabled'}`
   );
 } // End of else block for single instance lock
 
@@ -1017,11 +1103,6 @@ app
     /** @returns {Promise<void>} */ async () => {
       logger.info('[STARTUP] app.whenReady resolved');
       perfMarks.mark('startup:main:app-ready');
-      perfMarks.measure(
-        'startup:main:time-to-app-ready',
-        'startup:main:module-eval',
-        'startup:main:app-ready'
-      );
 
       // macOS: Set the dock icon to the StratoSort logo so it replaces the default
       // Electron atom icon during development.  In production (packaged) builds
@@ -1102,7 +1183,26 @@ app
           onFileError: raiseLogDiskFlag
         });
         configureConsoleLogging(enableConsole);
-        logger.info('[LOGGING] File logging enabled', { logFilePath });
+        // The log filename was stamped moments ago in this same process, so the
+        // filename time already sits uptimeS seconds after process start.
+        // uptimeS is the in-process share of the pre-log gap (module load,
+        // single-instance lock, app ready); the rest of the gap between the
+        // double-click and the filename time happened before this process ran.
+        logger.info('[LOGGING] File logging enabled', {
+          logFilePath,
+          uptimeS: Math.round(process.uptime())
+        });
+        // Startup measures land in the JSONL file at info so a support log can
+        // place a stall without a developer attaching DevTools tracing. The
+        // measure is emitted here rather than where the mark was taken because
+        // the file destination only exists from this point on (marks persist).
+        perfMarks.measureAndLog(
+          'startup:main:time-to-app-ready',
+          'startup:main:module-eval',
+          'startup:main:app-ready',
+          logger,
+          { level: 'info' }
+        );
         logger.info('[DIAGNOSTICS] Runtime info', {
           appVersion: app.getVersion?.(),
           platform: process.platform,
@@ -1114,21 +1214,8 @@ app
         // Initialize error handler (uses same log file for consistency)
         await errorHandler.initialize({ logFilePath });
 
-        // Clean up old log files (age + max file count; JSONL under userData/logs)
-        await errorHandler.cleanupLogs(7, 50);
-
-        // Sweep stale crash dumps (local-only; not uploaded). Electron's
-        // CrashReporter never rotates these, so one bad week can leave hundreds
-        // of megabytes of `.dmp` artifacts under userData.
-        try {
-          await errorHandler.cleanupCrashDumps(
-            path.join(app.getPath('userData'), 'crash-dumps'),
-            30,
-            20
-          );
-        } catch (crashSweepErr) {
-          logger.warn('[STARTUP] Crash-dump cleanup failed (non-fatal):', crashSweepErr?.message);
-        }
+        // Old-log and crash-dump sweeps run after first paint
+        // (sweepOldLogsAndCrashDumps, chained on the first-paint gate below).
 
         // Recover incomplete atomic file operations from crash journals
         try {
@@ -1240,54 +1327,22 @@ app
           false;
 
         if (!hasDefaultFolder) {
-          const documentsDir = app.getPath('documents');
-          if (!documentsDir || typeof documentsDir !== 'string') {
-            throw new Error('Failed to get documents directory path');
-          }
-          const defaultFolderPath = path.join(documentsDir, 'Uncategorized');
-
+          // Never fatal and never unbounded: this runs before the window
+          // exists. createDefaultUncategorizedFolder caps each mkdir at
+          // TIMEOUTS.DEFAULT_FOLDER_PROBE and falls back to userData when
+          // Documents is not writable; organize creates a missing target
+          // directory on the first move, and the next launch re-adds a
+          // missing entry.
           try {
-            // Create directory if it doesn't exist
-            await fs.mkdir(defaultFolderPath, { recursive: true });
-
-            // Verify directory was created successfully
-            const stats = await fs.stat(defaultFolderPath);
-            if (!stats.isDirectory()) {
-              throw new Error('Default folder path exists but is not a directory');
-            }
-
-            const defaultFolder = {
-              id: `default-uncategorized-${Date.now()}`,
-              name: 'Uncategorized',
-              path: defaultFolderPath,
-              description: "Default folder for files that don't match any category",
-              keywords: /** @type {string[]} */ ([]),
-              isDefault: true,
-              createdAt: new Date().toISOString()
-            };
-
+            const defaultFolder = await createDefaultUncategorizedFolder();
             customFolders.push(defaultFolder);
             await saveCustomFolders(customFolders);
-
-            // Verify folder was persisted
-            const reloadedFolders = await loadCustomFolders();
-            const persistedDefault = reloadedFolders.find(
-              (f) => f?.isDefault || f?.name?.toLowerCase() === 'uncategorized'
-            );
-
-            if (!persistedDefault) {
-              logger.error('[STARTUP] Default folder created but failed to persist');
-            } else {
-              logger.info(
-                '[STARTUP] Created and verified default Uncategorized folder at:',
-                defaultFolderPath
-              );
-            }
+            logger.info('[STARTUP] Created default Uncategorized folder', {
+              path: defaultFolder.path
+            });
           } catch (error) {
-            logger.error('[STARTUP] Failed to create default folder:', error);
-            // This is critical - app should not proceed without default folder
-            throw new Error(`Failed to create default Uncategorized folder: ${error.message}`, {
-              cause: error
+            logger.warn('[STARTUP] Could not save the default Uncategorized folder; continuing', {
+              error: error?.message
             });
           }
         } else {
@@ -1490,14 +1545,18 @@ app
         };
         registerListener(ipcMain, IPC_CHANNELS.SYSTEM.ABORT_INVOKE, abortInvokeHandler);
 
-        logger.info('[STARTUP] Creating window before heavyweight service startup');
+        logger.info('[STARTUP] Creating window before heavyweight service startup', {
+          uptimeS: Math.round(process.uptime())
+        });
         perfMarks.mark('startup:main:before-window');
         createWindow();
         perfMarks.mark('startup:main:after-window');
-        perfMarks.measure(
+        perfMarks.measureAndLog(
           'startup:main:time-to-first-window',
           'startup:main:module-eval',
-          'startup:main:after-window'
+          'startup:main:after-window',
+          logger,
+          { level: 'info' }
         );
         clearTrackedTimer(startupKeepalive);
 
@@ -1514,6 +1573,7 @@ app
             /* best effort */
           }
         }, 30_000);
+        scheduleGpuFallbackClear();
         handleSettingsChanged(initialSettings);
 
         Promise.resolve()
@@ -1548,9 +1608,27 @@ app
             logger.debug('[STARTUP] Background IPC verification failed', { error: err?.message });
           });
 
-        Promise.resolve()
+        // Heavyweight startup (node-llama-cpp import, GPU probing, Orama load)
+        // waits for the window's first paint. Its synchronous stretches run on
+        // this thread, which also serves app:// and dispatches ready-to-show,
+        // so queuing it in the same tick as createWindow() delayed the first
+        // visible frame 1:1. The gate is capped (FIRST_PAINT_GATE) so headless
+        // and stuck-renderer runs still initialise services.
+        waitForFirstPaint(mainWindow, { timeoutMs: TIMEOUTS.FIRST_PAINT_GATE })
           .then(
-            /** @returns {Promise<void>} */ async () => {
+            /** @returns {Promise<void>} */ async (reason) => {
+              logger.info('[STARTUP] First-paint gate released', {
+                reason,
+                uptimeS: Math.round(process.uptime())
+              });
+
+              // Run first-time setup in background (non-blocking)
+              // Handled by ./core/backgroundSetup module
+              runBackgroundSetup();
+
+              // Not awaited; see sweepOldLogsAndCrashDumps.
+              sweepOldLogsAndCrashDumps();
+
               const startupResult = await runCoordinatedStartupInBackground(
                 startupManager,
                 serviceIntegration
@@ -1639,10 +1717,6 @@ app
               // tracker unavailable — already logged above
             }
           });
-
-        // Run first-time setup in background (non-blocking)
-        // Handled by ./core/backgroundSetup module
-        runBackgroundSetup();
 
         // Start periodic system metrics broadcast to renderer
         try {
@@ -1892,6 +1966,11 @@ app
         logger.warn('[STARTUP] Creating window in degraded mode due to startup errors');
         createWindow();
         clearTrackedTimer(startupKeepalive);
+        // A launch that keeps failing is exactly when logs and crash dumps pile
+        // up, so the sweeps run here too. They wait one first-paint-gate length
+        // so they do not compete with the window's first frame.
+        trackTimeout(sweepOldLogsAndCrashDumps, TIMEOUTS.FIRST_PAINT_GATE);
+        scheduleGpuFallbackClear();
       }
       return undefined;
     }

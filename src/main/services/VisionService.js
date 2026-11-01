@@ -26,7 +26,7 @@ const { resolveRuntimePath } = require('../utils/runtimePaths');
 const { TIMEOUTS } = require('../../shared/performanceConstants');
 const { delay, createBackgroundWorkTracker } = require('../../shared/promiseUtils');
 const { isVisionDecodePressureError } = require('./visionErrorClassification');
-const { GPUMonitor } = require('./GPUMonitor');
+const { getInstance: getGPUMonitor } = require('./GPUMonitor');
 const { resolveVisionRuntimeBackend } = require('../utils/llamaBackendSelector');
 
 // Registration name for the vision llama-server child in ModelMemoryManager.
@@ -116,8 +116,8 @@ async function getDetectedGpuInfo() {
 
   _gpuInfoPromise = (async () => {
     try {
-      const monitor = new GPUMonitor();
-      const info = await monitor.detectGPU();
+      // Process-wide singleton: detection already ran for LlamaService.
+      const info = await getGPUMonitor().detectGPU();
       _detectedGpuInfo = info || { type: 'cpu', name: 'CPU' };
     } catch (error) {
       logger.debug('[VisionService] Shared GPU detection failed', { error: error?.message });

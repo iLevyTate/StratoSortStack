@@ -1,12 +1,12 @@
 {
-  "generatedAt": "2026-11-01T03:44:03.372Z",
+  "generatedAt": "2026-11-01T03:51:24.342Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
     "detectedLicense": "PolyForm Noncommercial 1.0.0 (commercial license sold separately)"
   },
   "dependencySummary": {
-    "allowed": 2310,
+    "allowed": 2291,
     "review_required": 31,
     "high_risk": 0,
     "unknown": 0
@@ -5820,16 +5820,6 @@
       "lockfileOptional": false
     },
     {
-      "packageName": "@electron/universal/node_modules/minimatch",
-      "version": "9.0.9",
-      "license": "ISC",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
       "packageName": "@emnapi/core",
       "version": "1.11.2",
       "license": "MIT",
@@ -6450,49 +6440,19 @@
       "lockfileOptional": true
     },
     {
-      "packageName": "@isaacs/cliui",
-      "version": "8.0.2",
-      "license": "ISC",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "@isaacs/cliui/node_modules/ansi-styles",
-      "version": "6.2.3",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "@isaacs/cliui/node_modules/string-width",
-      "version": "5.1.2",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "@isaacs/cliui/node_modules/wrap-ansi",
-      "version": "8.1.0",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
       "packageName": "@isaacs/fs-minipass",
       "version": "4.0.1",
       "license": "ISC",
+      "riskLevel": "allowed",
+      "directRuntime": false,
+      "directDev": false,
+      "lockfileDev": false,
+      "lockfileOptional": false
+    },
+    {
+      "packageName": "@isaacs/nonrecursive-glob-match",
+      "version": "1.0.3",
+      "license": "BlueOak-1.0.0",
       "riskLevel": "allowed",
       "directRuntime": false,
       "directDev": false,
@@ -6811,7 +6771,7 @@
     },
     {
       "packageName": "@jest/reporters/node_modules/glob",
-      "version": "13.0.6",
+      "version": "14.0.3",
       "license": "BlueOak-1.0.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -8508,16 +8468,6 @@
       "directDev": false,
       "lockfileDev": false,
       "lockfileOptional": false
-    },
-    {
-      "packageName": "@pkgjs/parseargs",
-      "version": "0.11.0",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": true
     },
     {
       "packageName": "@pkgr/core",
@@ -10477,16 +10427,6 @@
       "packageName": "@typescript-eslint/typescript-estree",
       "version": "8.55.0",
       "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "@typescript-eslint/typescript-estree/node_modules/minimatch",
-      "version": "9.0.9",
-      "license": "ISC",
       "riskLevel": "allowed",
       "directRuntime": false,
       "directDev": false,
@@ -13446,16 +13386,6 @@
       "lockfileOptional": false
     },
     {
-      "packageName": "eastasianwidth",
-      "version": "0.2.0",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
       "packageName": "ee-first",
       "version": "1.1.1",
       "license": "MIT",
@@ -14747,26 +14677,6 @@
       "packageName": "for-each",
       "version": "0.3.5",
       "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "foreground-child",
-      "version": "3.3.1",
-      "license": "ISC",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "foreground-child/node_modules/signal-exit",
-      "version": "4.1.0",
-      "license": "ISC",
       "riskLevel": "allowed",
       "directRuntime": false,
       "directDev": false,
@@ -16283,16 +16193,6 @@
       "lockfileOptional": false
     },
     {
-      "packageName": "jackspeak",
-      "version": "3.4.3",
-      "license": "BlueOak-1.0.0",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
       "packageName": "jake",
       "version": "10.9.4",
       "license": "Apache-2.0",
@@ -16604,7 +16504,7 @@
     },
     {
       "packageName": "jest-config/node_modules/glob",
-      "version": "13.0.6",
+      "version": "14.0.3",
       "license": "BlueOak-1.0.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -17084,7 +16984,7 @@
     },
     {
       "packageName": "jest-runtime/node_modules/glob",
-      "version": "13.0.6",
+      "version": "14.0.3",
       "license": "BlueOak-1.0.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -18191,7 +18091,7 @@
     },
     {
       "packageName": "minimatch",
-      "version": "10.2.6",
+      "version": "11.0.3",
       "license": "BlueOak-1.0.0",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -19235,7 +19135,7 @@
     },
     {
       "packageName": "path-scurry",
-      "version": "2.0.2",
+      "version": "3.0.0",
       "license": "BlueOak-1.0.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -19245,7 +19145,7 @@
     },
     {
       "packageName": "path-scurry/node_modules/lru-cache",
-      "version": "11.5.2",
+      "version": "11.5.3",
       "license": "BlueOak-1.0.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -20784,7 +20684,7 @@
     },
     {
       "packageName": "rimraf/node_modules/glob",
-      "version": "13.0.6",
+      "version": "14.0.3",
       "license": "BlueOak-1.0.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -21588,36 +21488,6 @@
       "lockfileOptional": false
     },
     {
-      "packageName": "string-width-cjs",
-      "version": "4.2.3",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "string-width-cjs/node_modules/emoji-regex",
-      "version": "8.0.0",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "string-width-cjs/node_modules/strip-ansi",
-      "version": "6.0.1",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
       "packageName": "string-width/node_modules/emoji-regex",
       "version": "8.0.0",
       "license": "MIT",
@@ -21705,16 +21575,6 @@
       "directRuntime": false,
       "directDev": false,
       "lockfileDev": false,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "strip-ansi-cjs",
-      "version": "6.0.1",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
       "lockfileOptional": false
     },
     {
@@ -22121,8 +21981,8 @@
     },
     {
       "packageName": "test-exclude/node_modules/glob",
-      "version": "10.5.0",
-      "license": "ISC",
+      "version": "14.0.3",
+      "license": "BlueOak-1.0.0",
       "riskLevel": "allowed",
       "directRuntime": false,
       "directDev": false,
@@ -22131,27 +21991,7 @@
     },
     {
       "packageName": "test-exclude/node_modules/glob/node_modules/minimatch",
-      "version": "9.0.9",
-      "license": "ISC",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "test-exclude/node_modules/lru-cache",
-      "version": "10.4.3",
-      "license": "ISC",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "test-exclude/node_modules/path-scurry",
-      "version": "1.11.1",
+      "version": "11.0.3",
       "license": "BlueOak-1.0.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -23264,36 +23104,6 @@
       "bundledRenderer": true
     },
     {
-      "packageName": "wrap-ansi-cjs",
-      "version": "7.0.0",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "wrap-ansi-cjs/node_modules/ansi-styles",
-      "version": "4.3.0",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "wrap-ansi-cjs/node_modules/strip-ansi",
-      "version": "6.0.1",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
       "packageName": "wrappy",
       "version": "1.0.2",
       "license": "ISC",
@@ -23721,7 +23531,16 @@
       "!**/node_modules/**/benchmark/**",
       "!**/node_modules/**/benchmarks/**",
       "!**/node_modules/**/demo/**",
-      "!**/node_modules/**/demos/**"
+      "!**/node_modules/**/demos/**",
+      "!**/node_modules/node-llama-cpp/llama/gitRelease.bundle",
+      "!**/node_modules/node-llama-cpp/llama/CMakeLists.txt",
+      "!**/node_modules/node-llama-cpp/llama/{addon,cmake,patches,profiles,toolchains,xpack}/**",
+      "!**/node_modules/node-llama-cpp/templates/**",
+      "!**/node_modules/@fugood/whisper.node/CMakeLists.txt",
+      "!**/node_modules/@fugood/whisper.node/{src,whisper.cpp}/**",
+      "!**/node_modules/better-sqlite3/{deps,src}/**",
+      "!**/node_modules/better-sqlite3/prebuilds/!(${platform}-${arch}|${platform}musl-${arch}).node",
+      "!**/node_modules/@node-llama-cpp/win-!(${arch}|${arch}-*)/**"
     ],
     "extraResources": [
       {

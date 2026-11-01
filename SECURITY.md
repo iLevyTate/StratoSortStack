@@ -11,8 +11,8 @@ Security fixes land in the latest minor release line. Older lines are not back-p
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 5.0.x   | :white_check_mark: |
-| < 5.0   | :x:                |
+| 5.1.x   | :white_check_mark: |
+| < 5.1   | :x:                |
 
 ## Security Design Principles
 
@@ -146,7 +146,7 @@ the maintainers’ key in an initial advisory-only message. The project may publ
 
 ## Security Updates
 
-Security updates will be released as patch versions (e.g., 5.0.1, 5.0.2) and announced via:
+Security updates will be released as patch versions (e.g., 5.1.2, 5.1.3) and announced via:
 
 - GitHub Releases
 - In-app update notifications (if auto-update is enabled)
@@ -158,4 +158,4 @@ Contributors who report valid security issues will be acknowledged here (with pe
 
 ---
 
-_Last updated: 2026-10-26 — applies to StratoSort Stack 5.0.0._
+_Last updated: 2026-11-01 — applies to StratoSort Stack 5.1.1._

@@ -118,7 +118,7 @@ or on demand.
 | ----------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------- |
 | `npm run package`                   | host     | Full build + runtime setup, then `electron-builder build` for the host's default targets into `release/build/` |
 | `npm run dist`                      | host     | Default platform installer                                                                                     |
-| `npm run dist:win`                  | Windows  | NSIS installer + portable (x64); `predist:win` checks the installed Electron first                             |
+| `npm run dist:win`                  | Windows  | NSIS installer + zip (x64); `predist:win` checks the installed Electron first                                  |
 | `npm run dist:win:verify`           | Windows  | `verify:installed-electron` then the `dist:win` chain                                                          |
 | `npm run dist:win:arm64`            | Windows  | NSIS installer (arm64, no bundled FFmpeg)                                                                      |
 | `npm run dist:win:dual`             | Windows  | x64 + arm64 installers staged under `release/dual-windows/`; restores host-arch native modules                 |

@@ -29,11 +29,15 @@ function getWindowsVendorScore(/** @type {any} */ name) {
 /**
  * Run a shell command asynchronously, returning stdout as string.
  * Swallows errors and returns null on failure.
+ *
+ * `windowsHide` keeps nvidia-smi / powershell / wmic from flashing a conhost
+ * window on Windows; the probes are console programs spawned from a GUI app.
  */
 async function runCommand(/** @type {any} */ cmd, /** @type {any} */ args = [], options = {}) {
   try {
     const { stdout } = await execFileAsync(cmd, args, {
       timeout: TIMEOUTS.HEALTH_CHECK,
+      windowsHide: true,
       ...options
     });
     return stdout;
@@ -41,6 +45,9 @@ async function runCommand(/** @type {any} */ cmd, /** @type {any} */ args = [], 
     return null;
   }
 }
+
+// name, total VRAM (MiB) and driver version of the first NVIDIA GPU.
+const NVIDIA_SMI_GPU_QUERY = '--query-gpu=name,memory.total,driver_version';
 
 function parseNvidiaSmiGpuInfo(/** @type {any} */ output) {
   if (!output || typeof output !== 'string') return null;
@@ -50,19 +57,26 @@ function parseNvidiaSmiGpuInfo(/** @type {any} */ output) {
     .find((line) => line.length > 0);
   if (!firstLine) return null;
 
-  const [rawName, rawVram] = firstLine.split(',');
+  const [rawName, rawVram, rawDriver] = firstLine.split(',');
   const name = (rawName || '').trim() || 'NVIDIA GPU';
   const vramMB = Number.parseInt((rawVram || '').trim(), 10);
   if (!Number.isFinite(vramMB) || vramMB < 0) {
     return null;
   }
 
-  return {
+  /** @type {Record<string, any>} */
+  const info = {
     type: 'cuda',
     name,
     vramBytes: vramMB * 1024 * 1024,
     vramMB
   };
+  // The driver version lets the GPU backend cache notice a driver update.
+  const driverVersion = (rawDriver || '').trim();
+  if (driverVersion && !/^\[n\/a\]$/i.test(driverVersion)) {
+    info.driverVersion = driverVersion;
+  }
+  return info;
 }
 
 const logger = createLogger('GPUMonitor');
@@ -163,7 +177,7 @@ class GPUMonitor {
     // Try nvidia-smi first (use platform-specific executable for Windows)
     const nvidiaSmiCmd = getNvidiaSmiCommand();
     const nvidiaSmi = await runCommand(nvidiaSmiCmd, [
-      '--query-gpu=name,memory.total',
+      NVIDIA_SMI_GPU_QUERY,
       '--format=csv,noheader,nounits'
     ]);
     if (nvidiaSmi) {
@@ -177,7 +191,7 @@ class GPUMonitor {
     const ps = await runCommand('powershell', [
       '-NoProfile',
       '-Command',
-      'Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM | ConvertTo-Json'
+      'Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM,DriverVersion | ConvertTo-Json'
     ]);
 
     if (ps) {
@@ -224,7 +238,10 @@ class GPUMonitor {
               type: inferWindowsBackendFromName(gpuName),
               name: gpuName,
               vramBytes: ramBytes,
-              vramMB: Math.round(ramBytes / 1024 / 1024)
+              vramMB: Math.round(ramBytes / 1024 / 1024),
+              ...(typeof gpu?.DriverVersion === 'string' && gpu.DriverVersion.trim()
+                ? { driverVersion: gpu.DriverVersion.trim() }
+                : {})
             };
           }
         }
@@ -297,7 +314,7 @@ class GPUMonitor {
     // Try nvidia-smi (use platform-specific executable)
     const nvidiaSmiCmd = getNvidiaSmiCommand();
     const nvidiaSmi = await runCommand(nvidiaSmiCmd, [
-      '--query-gpu=name,memory.total',
+      NVIDIA_SMI_GPU_QUERY,
       '--format=csv,noheader,nounits'
     ]);
     if (nvidiaSmi) {

@@ -8,6 +8,8 @@
  * @module core/autoUpdater
  */
 
+const fs = require('fs');
+const path = require('path');
 const { BrowserWindow, app } = require('electron');
 const { IPC_EVENTS } = require('../../shared/constants');
 const { createLogger } = require('../../shared/logger');
@@ -85,6 +87,10 @@ function areAutoUpdatesEnabled() {
   // app-update.yml; dev/unpackaged runs never do. STRATOSORT_ENABLE_AUTO_UPDATES=false
   // turns updates off for locked-down or ad-hoc builds, and the user's
   // autoUpdateCheck setting still gates the automatic checks below.
+  return isPackagedApp();
+}
+
+function isPackagedApp() {
   try {
     return Boolean(app?.isPackaged);
   } catch {
@@ -113,14 +119,41 @@ function areAutomaticUpdatesEnabled() {
 }
 
 /**
+ * Positive signal that the running exe was installed by the NSIS installer.
+ *
+ * electron-builder's installer writes `Uninstall <productFilename>.exe` into
+ * the install directory next to `<productFilename>.exe` (app-builder-lib
+ * templates/nsis: UNINSTALL_FILENAME in common.nsh, written by
+ * include/installer.nsh), and every NSIS update rewrites it. A copy extracted
+ * from the zip has no uninstaller, and since the zip target sets no
+ * environment marker the way the old portable stub set
+ * PORTABLE_EXECUTABLE_DIR, the file is the most reliable signal available.
+ * The name is derived from the running exe so a product rename cannot
+ * desynchronize it.
+ *
+ * @returns {boolean}
+ */
+function hasNsisUninstallerBesideExe() {
+  try {
+    const exePath = process.execPath;
+    const uninstaller = path.join(path.dirname(exePath), `Uninstall ${path.basename(exePath)}`);
+    return fs.existsSync(uninstaller);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Identify whether the current packaged build is a target electron-updater
  * can actually replace in place.
  *
- * - Windows PORTABLE (`.exe` launched from any directory, sets
- *   `PORTABLE_EXECUTABLE_DIR`): electron-updater throws
- *   "Portable App Installer Not Supported" when it tries to run the NSIS
- *   updater. We cannot install an update, so we return a reason instead
- *   of uselessly spinning the UpdateIndicator.
+ * - Microsoft Store (appx/MSIX) installs: the Store owns updates.
+ * - Windows copies the NSIS installer did not install (the no-install zip
+ *   extracted by hand, or an old portable build): electron-updater would
+ *   download the NSIS installer and run it, and the installer writes to the
+ *   registered per-user install (or creates one under %LOCALAPPDATA%\Programs)
+ *   instead of the folder that is running. See `hasNsisUninstallerBesideExe`
+ *   for how an install is recognized.
  * - Linux non-AppImage packaged builds (deb/rpm/tar.gz/snap): the
  *   electron-builder linux updater only supports AppImage. Native
  *   package managers own the binary.
@@ -132,22 +165,26 @@ function areAutomaticUpdatesEnabled() {
  * Returns `{ supported: boolean, reason?: string }`.
  */
 function getUpdateTargetCapability() {
-  // Windows portable builds set PORTABLE_EXECUTABLE_DIR when run.
-  if (process.platform === 'win32' && process.env.PORTABLE_EXECUTABLE_DIR) {
-    return {
-      supported: false,
-      reason:
-        'Windows portable builds cannot auto-update in place. Download the NSIS installer instead.'
-    };
-  }
-
   // Microsoft Store (appx/MSIX) installs: the Store owns the update
   // lifecycle; self-updating would fight it (and the WindowsApps install
-  // dir is not writable by the app anyway).
+  // dir is not writable by the app anyway). Checked first because a Store
+  // install has no NSIS uninstaller either.
   if (process.platform === 'win32' && process.windowsStore === true) {
     return {
       supported: false,
       reason: 'Microsoft Store installs are updated by the Store, not in-app.'
+    };
+  }
+
+  // Only packaged builds: a dev or test run executes electron.exe or
+  // node.exe, which never has an uninstaller next to it.
+  if (process.platform === 'win32' && isPackagedApp() && !hasNsisUninstallerBesideExe()) {
+    return {
+      supported: false,
+      reason:
+        'This copy was not installed with the StratoSort Stack installer (for example, it ' +
+        'was extracted from the zip), so it cannot update itself. Download the new version ' +
+        'from the releases page, or use the installer to get automatic updates.'
     };
   }
 
@@ -220,14 +257,7 @@ function _validateUpdateFeedUrl(rawUrl) {
   // variable alone would be enough to redirect updates to an attacker host.
   // In dev we keep the old opt-in posture so local iteration does not require
   // setting two env vars just to point at a staging CDN.
-  const isPackaged = (() => {
-    try {
-      return Boolean(app?.isPackaged);
-    } catch {
-      return false;
-    }
-  })();
-  if (isPackaged && allowlist.length === 0) {
+  if (isPackagedApp() && allowlist.length === 0) {
     throw new Error(
       'STRATOSORT_UPDATE_FEED_URL requires STRATOSORT_UPDATE_FEED_ALLOWED_HOSTS in packaged builds'
     );

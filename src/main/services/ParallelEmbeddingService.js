@@ -15,6 +15,21 @@ const logger = createLogger('ParallelEmbeddingService');
 const { TIMEOUTS } = require('../../shared/performanceConstants');
 const { meanPoolVectors } = require('../../shared/vectorMath');
 
+/**
+ * LlamaService health snapshot (`{ initialized, gpuDetected, ... }`) or null
+ * when the service or its accessor is unavailable (lazy init, test doubles).
+ * @param {any} llamaService
+ * @returns {any}
+ */
+function readLlamaHealth(llamaService) {
+  try {
+    const health = llamaService?.getHealthStatus?.();
+    return health && typeof health === 'object' ? health : null;
+  } catch {
+    return null;
+  }
+}
+
 function isEmbeddingContextOverflow(/** @type {any} */ error) {
   const message = String(
     error?.message || error?.originalError?.message || error?.cause?.message || ''
@@ -98,12 +113,34 @@ class ParallelEmbeddingService {
     /** @type {any} */
     this._bgWork = createBackgroundWorkTracker('ParallelEmbeddingService');
 
-    // Align initial limit with system recommendation (async).
-    this._bgWork.track(
-      this._syncRecommendedConcurrency('startup').catch((e) => {
-        logger.debug('[ParallelEmbedding] Concurrency sync failed:', e?.message);
-      })
-    );
+    // Initial calculation often happens before LlamaService has detected GPU
+    /** @type {any} */
+    this._llamaInitHandler = null;
+    /** @type {any} */
+    this._llamaServiceRef = null;
+    /** @type {any} */
+    let llamaService = null;
+    try {
+      llamaService = getLlamaService();
+    } catch {
+      llamaService = null;
+    }
+
+    // Align initial limit with system recommendation (async). Without a GPU
+    // hint PerformanceService probes the hardware itself (nvidia-smi + wmic
+    // child processes), so only ask at construction when LlamaService has
+    // already detected the GPU and can supply the hint; otherwise the
+    // 'initialized' handler below runs the same sync once it has.
+    const llamaHealth = readLlamaHealth(llamaService);
+    if (llamaHealth?.initialized) {
+      this._bgWork.track(
+        this._syncRecommendedConcurrency('startup', {
+          gpuHint: llamaHealth.gpuDetected || null
+        }).catch((e) => {
+          logger.debug('[ParallelEmbedding] Concurrency sync failed:', e?.message);
+        })
+      );
+    }
     this._bgWork.track(
       Promise.resolve().then(
         /** @returns {any} */ () => {
@@ -113,13 +150,7 @@ class ParallelEmbeddingService {
       )
     );
 
-    // Initial calculation often happens before LlamaService has detected GPU
-    /** @type {any} */
-    this._llamaInitHandler = null;
-    /** @type {any} */
-    this._llamaServiceRef = null;
     try {
-      const llamaService = getLlamaService();
       if (llamaService && typeof llamaService.on === 'function') {
         this._llamaInitHandler = () => {
           const newLimit = Math.min(this._calculateOptimalConcurrency(), MAX_CONCURRENCY);
@@ -130,7 +161,9 @@ class ParallelEmbeddingService {
             });
           }
           this._bgWork.track(
-            this._syncRecommendedConcurrency('llama-init').catch((e) => {
+            this._syncRecommendedConcurrency('llama-init', {
+              gpuHint: readLlamaHealth(llamaService)?.gpuDetected || null
+            }).catch((e) => {
               logger.debug('[ParallelEmbedding] Concurrency sync failed:', e?.message);
             })
           );
@@ -151,10 +184,15 @@ class ParallelEmbeddingService {
     }
   }
 
-  async _syncRecommendedConcurrency(/** @type {any} */ source) {
+  /**
+   * @param {any} source
+   * @param {{ gpuHint?: any }} [options] - Forwarded to PerformanceService so a
+   *   GPU already detected by LlamaService is reused instead of re-probed.
+   */
+  async _syncRecommendedConcurrency(source, options = {}) {
     try {
       const { getRecommendedConcurrency } = require('./PerformanceService');
-      const recs = await getRecommendedConcurrency();
+      const recs = await getRecommendedConcurrency(options);
       if (!recs?.maxConcurrent) return;
       // Use embeddingConcurrency when available — embeddings are lightweight on GPU
       // and should not be capped by the text/vision maxConcurrent limit.

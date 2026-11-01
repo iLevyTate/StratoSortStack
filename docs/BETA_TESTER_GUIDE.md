@@ -44,7 +44,7 @@ No sign-up is needed: download the public release and send feedback through
 ## 1. Download one installer
 
 1. Open **[GitHub Releases](https://github.com/iLevyTate/StratoSortStack/releases)**.
-2. Pick the newest release and find the assets for your OS (current product version is **5.0.0**).
+2. Pick the newest release and find the assets for your OS (current product version is **5.1.1**).
 3. Download **exactly one app installer/package** for your OS (do not download checksum or `.yml`
    files unless asked).
 
@@ -60,19 +60,22 @@ No sign-up is needed: download the public release and send feedback through
 
 | Your computer                              | Typical filename pattern                      |
 | :----------------------------------------- | :-------------------------------------------- |
-| **Windows** (x64, preferred)               | `StratoSortStack-Setup-5.0.0.exe`             |
-| **Windows** (portable / alt build)         | `StratoSortStack-5.0.0-win-x64.exe`           |
-| **Windows on Arm** (arm64)                 | `StratoSortStack-Setup-5.0.0-arm64.exe`       |
-| **Mac** (Apple Silicon: M1 / M2 / M3 / M4) | `StratoSortStack-5.0.0-mac-arm64.dmg`         |
-| **Mac** (Intel)                            | `StratoSortStack-5.0.0-mac-x64.dmg`           |
-| **Linux** (x64)                            | `StratoSortStack-5.0.0-linux-x86_64.AppImage` |
-| **Linux** (arm64)                          | `StratoSortStack-5.0.0-linux-arm64.AppImage`  |
+| **Windows** (x64, preferred)               | `StratoSortStack-Setup-5.1.1.exe`             |
+| **Windows** (x64, no-install zip)          | `StratoSortStack-5.1.1-win-x64.zip`           |
+| **Windows on Arm** (arm64)                 | `StratoSortStack-Setup-5.1.1-arm64.exe`       |
+| **Mac** (Apple Silicon: M1 / M2 / M3 / M4) | `StratoSortStack-5.1.1-mac-arm64.dmg`         |
+| **Mac** (Intel)                            | `StratoSortStack-5.1.1-mac-x64.dmg`           |
+| **Linux** (x64)                            | `StratoSortStack-5.1.1-linux-x86_64.AppImage` |
+| **Linux** (arm64)                          | `StratoSortStack-5.1.1-linux-arm64.AppImage`  |
 
 Always take the **newest** installer for your OS, not one from an older release.
 
 **Notes**
 
-- **Windows:** Prefer `StratoSortStack-Setup-….exe` for normal installs.
+- **Windows:** Prefer `StratoSortStack-Setup-….exe` for normal installs. The zip is for machines
+  where you cannot install software: extract it once and run `StratoSort Stack.exe` from the
+  extracted folder; it does not update itself. Releases after v5.0.0 ship this zip instead of the
+  self-extracting portable `StratoSortStack-5.0.0-win-x64.exe`.
 - **Mac:** Apple Silicon and Intel builds both ship. Prefer the `arm64` DMG on M1–M4.
 - **Linux:** Use the `.AppImage` build (it updates itself; the `.deb` does not).
 - **Do not install:** `checksums-*.sha256`, `latest*.yml`, or `.blockmap` files (these are update
@@ -228,7 +231,7 @@ Do not attach documents or logs that contain private information; GitHub issues 
 5. **Your setup:**
    - OS (e.g. Windows 11, macOS 15, Ubuntu 24.04)
    - App version (**Settings → Application → About** or the app title area)
-   - Installer vs portable (if you know)
+   - Installer, zip, or old portable exe (if you know)
    - For AI/speed issues: rough RAM and GPU model
 
 ### Add if you can
@@ -265,7 +268,7 @@ Do not attach documents or logs that contain private information; GitHub issues 
 
 **Actual:** Empty results and a warning about model mismatch.
 
-**Environment:** Windows 11, StratoSort Stack 5.0.0 (installer), 32 GB RAM, RTX 3060.
+**Environment:** Windows 11, StratoSort Stack 5.1.1 (installer), 32 GB RAM, RTX 3060.
 
 **Attachment:** Exported logs from Settings → Diagnostics → Export logs.
 
@@ -273,7 +276,7 @@ Do not attach documents or logs that contain private information; GitHub issues 
 
 ## Other ways to help (no code)
 
-- Confirm someone else’s bug on **your** OS and version (“Reproduced on macOS 15 / app 5.0.0”).
+- Confirm someone else’s bug on **your** OS and version (“Reproduced on macOS 15 / app 5.1.1”).
 - Test each new release and note **regressions** (things that used to work).
 - Suggest UX improvements with **screenshots** and short before/after notes.
 

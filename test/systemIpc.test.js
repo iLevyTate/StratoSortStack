@@ -25,7 +25,8 @@ jest.mock('../src/main/services/DegradedStateTracker', () => ({
 // APPLY_UPDATE routes through core/autoUpdater.quitAndInstall(), not electron-updater
 // directly. Mock must be hoisted (top-level jest.mock) so the SUT's `require(...)` sees it.
 jest.mock('../src/main/core/autoUpdater', () => ({
-  quitAndInstall: jest.fn()
+  quitAndInstall: jest.fn(),
+  checkForUpdates: jest.fn()
 }));
 
 jest.mock('../src/shared/config/index', () => ({
@@ -312,6 +313,66 @@ describe('registerSystemIpc', () => {
 
       expect(result).toMatchObject({ success: false });
       expect(mockLogger.error).toHaveBeenCalledWith('Failed to apply update:', expect.any(Error));
+    });
+  });
+
+  describe('CHECK_FOR_UPDATES handler', () => {
+    let checkForUpdatesMock;
+
+    beforeEach(() => {
+      ({ checkForUpdates: checkForUpdatesMock } = require('../src/main/core/autoUpdater'));
+      checkForUpdatesMock.mockReset();
+    });
+
+    test('returns success when the check starts', async () => {
+      checkForUpdatesMock.mockResolvedValue({ success: true });
+
+      const result = await handlers[SYSTEM_CHANNELS.CHECK_FOR_UPDATES]();
+
+      expect(checkForUpdatesMock).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({ success: true });
+    });
+
+    test('passes the reason through when this copy cannot update itself', async () => {
+      const reason = 'This copy was not installed with the StratoSort Stack installer.';
+      checkForUpdatesMock.mockResolvedValue({ success: false, unsupported: true, error: reason });
+
+      const result = await handlers[SYSTEM_CHANNELS.CHECK_FOR_UPDATES]();
+
+      expect(result).toEqual({ success: true, unsupported: true, reason });
+    });
+
+    test('passes disabled through when auto-updates are turned off', async () => {
+      checkForUpdatesMock.mockResolvedValue({ success: true, disabled: true });
+
+      const result = await handlers[SYSTEM_CHANNELS.CHECK_FOR_UPDATES]();
+
+      expect(result).toEqual({ success: true, disabled: true });
+    });
+
+    test('returns an error response when the check fails', async () => {
+      checkForUpdatesMock.mockResolvedValue({
+        success: false,
+        error: 'net::ERR_INTERNET_DISCONNECTED'
+      });
+
+      const result = await handlers[SYSTEM_CHANNELS.CHECK_FOR_UPDATES]();
+
+      expect(result).toMatchObject({ success: false });
+      expect(result.unsupported).toBeUndefined();
+      expect(JSON.stringify(result.error)).toContain('net::ERR_INTERNET_DISCONNECTED');
+    });
+
+    test('catches thrown errors and logs them', async () => {
+      checkForUpdatesMock.mockRejectedValue(new Error('boom'));
+
+      const result = await handlers[SYSTEM_CHANNELS.CHECK_FOR_UPDATES]();
+
+      expect(result).toMatchObject({ success: false });
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        'Failed to check for updates:',
+        expect.any(Error)
+      );
     });
   });
 

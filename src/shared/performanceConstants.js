@@ -92,8 +92,23 @@ const TIMEOUTS = {
   SEMANTIC_QUERY: 30000,
   FLUSH_MAX_WAIT: 30000,
   WINDOW_LOAD_DELAY: 100, // Delay before loading window content
+  // Electron recommends showing complex apps immediately with a backgroundColor;
+  // this bounds the hidden period when ready-to-show is late (GPU process hang,
+  // slow renderer bootstrap). The window is force-shown once this elapses.
+  WINDOW_SHOW_FALLBACK: 4000,
+  // Heavyweight coordinated startup waits for the first paint (show or
+  // did-finish-load) before it starts, capped here so a headless or stuck
+  // renderer still initialises services.
+  FIRST_PAINT_GATE: 3000,
   // First show can wait on GPU model warmup + renderer bootstrap; mutex must not expire early.
   WINDOW_CREATION_READY: 60000,
+  // Bound on each stat/mkdir of the Uncategorized folder before the window is
+  // created. Documents can sit on a slow or offline volume (redirected to a
+  // network share, a cloud placeholder); startup continues without it.
+  DEFAULT_FOLDER_PROBE: 3000,
+  // A hardware-accelerated session must keep its window up this long with no
+  // GPU process exits before the sticky .gpu-fallback flag is cleared.
+  GPU_FALLBACK_STABLE_RUN: 30000,
   // Analysis lock and monitoring timeouts
   ANALYSIS_LOCK: 5 * 60 * 1000, // 5 minutes - forces lock release if analysis hangs
   GLOBAL_ANALYSIS: 10 * 60 * 1000, // 10 minutes - max total analysis time

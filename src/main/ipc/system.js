@@ -476,9 +476,16 @@ function registerSystemIpc(servicesOrParams) {
           // autoUpdater's `@returns {Promise<void>}` on checkForUpdates understates the
           // actual `{ success, ... }` result objects it returns; cast until that file opts in.
           const result = /** @type {any} */ (await checkForUpdates());
-          return result?.success === false
-            ? createErrorResponse(new Error(result.error || 'Failed to check for updates'))
-            : { success: true };
+          // A copy that cannot update itself (zip extract, Store install,
+          // non-AppImage Linux) is an answer, not a failure: pass its reason
+          // through so Settings can show it instead of a generic error.
+          if (result?.unsupported) {
+            return { success: true, unsupported: true, reason: result.error };
+          }
+          if (result?.success === false) {
+            return createErrorResponse(new Error(result.error || 'Failed to check for updates'));
+          }
+          return result?.disabled ? { success: true, disabled: true } : { success: true };
         } catch (error) {
           logger.error('Failed to check for updates:', error);
           return createErrorResponse(error);

@@ -7,6 +7,11 @@
 const SUPPORTS_AUTO_UPDATE = !(process.platform === 'linux' && !process.env.APPIMAGE);
 const testIfSupported = SUPPORTS_AUTO_UPDATE ? test : test.skip;
 
+const path = require('path');
+
+const ORIGINAL_EXEC_PATH = process.execPath;
+const ORIGINAL_PLATFORM = process.platform;
+
 const mockGetAllWindows = jest.fn();
 let mockAutoUpdaterHandlers = new Map();
 
@@ -51,7 +56,31 @@ jest.mock('../src/main/ipc/ipcWrappers', () => ({
 }));
 
 describe('autoUpdater', () => {
+  // Windows install layouts. The NSIS installer writes `Uninstall <exe name>`
+  // next to the exe; a copy extracted from the zip has the exe alone. Every
+  // test starts from the installed layout so the packaged happy-path tests
+  // also pass on win32 CI, where the Windows guard is live.
+  const layoutRoot = path.resolve('/ss-updater-layout');
+  const installedExe = path.join(layoutRoot, 'installed', 'StratoSort Stack.exe');
+  const zipExe = path.join(layoutRoot, 'zip', 'StratoSort Stack.exe');
+
+  // fs is memfs in this suite and jest.resetModules() hands the next require a
+  // fresh instance, so seed through that same instance after the reset.
+  function seedWindowsLayouts() {
+    const fs = require('fs');
+    for (const exe of [installedExe, zipExe]) {
+      fs.mkdirSync(path.dirname(exe), { recursive: true });
+      fs.writeFileSync(exe, '');
+    }
+    fs.writeFileSync(path.join(path.dirname(installedExe), 'Uninstall StratoSort Stack.exe'), '');
+  }
+
+  afterAll(() => {
+    process.execPath = ORIGINAL_EXEC_PATH;
+  });
+
   beforeEach(() => {
+    process.execPath = installedExe;
     mockAutoUpdaterHandlers = new Map();
     mockElectronApp.isPackaged = false;
     mockGetAllWindows.mockReset();
@@ -68,6 +97,7 @@ describe('autoUpdater', () => {
     const { safeSend } = require('../src/main/ipc/ipcWrappers');
     safeSend.mockClear();
     jest.resetModules();
+    seedWindowsLayouts();
   });
 
   test('skips updater initialization when auto-updates are disabled', async () => {
@@ -312,6 +342,80 @@ describe('autoUpdater', () => {
 
     expect(result).toEqual({ success: true });
     expect(mockAutoUpdater.quitAndInstall).toHaveBeenCalledTimes(1);
+  });
+
+  describe('getUpdateTargetCapability on Windows', () => {
+    const setPlatform = (value) =>
+      Object.defineProperty(process, 'platform', { value, configurable: true });
+
+    afterEach(() => {
+      setPlatform(ORIGINAL_PLATFORM);
+      delete process.windowsStore;
+    });
+
+    test('an NSIS install (uninstaller next to the exe) can update in place', () => {
+      setPlatform('win32');
+      mockElectronApp.isPackaged = true;
+      process.execPath = installedExe;
+
+      const { getUpdateTargetCapability } = require('../src/main/core/autoUpdater');
+
+      expect(getUpdateTargetCapability()).toEqual({ supported: true });
+    });
+
+    test('a copy extracted from the zip (no uninstaller) cannot update in place', () => {
+      setPlatform('win32');
+      mockElectronApp.isPackaged = true;
+      process.execPath = zipExe;
+
+      const { getUpdateTargetCapability } = require('../src/main/core/autoUpdater');
+      const capability = getUpdateTargetCapability();
+
+      expect(capability.supported).toBe(false);
+      expect(capability.reason).toMatch(/extracted from the zip/);
+    });
+
+    test('dev and test runs are not mistaken for a zip copy', () => {
+      setPlatform('win32');
+      mockElectronApp.isPackaged = false;
+      process.execPath = zipExe;
+
+      const { getUpdateTargetCapability } = require('../src/main/core/autoUpdater');
+
+      expect(getUpdateTargetCapability()).toEqual({ supported: true });
+    });
+
+    test('Microsoft Store installs keep the Store reason', () => {
+      setPlatform('win32');
+      mockElectronApp.isPackaged = true;
+      process.windowsStore = true;
+      process.execPath = zipExe;
+
+      const { getUpdateTargetCapability } = require('../src/main/core/autoUpdater');
+
+      expect(getUpdateTargetCapability()).toEqual({
+        supported: false,
+        reason: expect.stringMatching(/Microsoft Store/)
+      });
+    });
+
+    test('a zip copy skips updater setup and manual checks report the reason', async () => {
+      setPlatform('win32');
+      mockElectronApp.isPackaged = true;
+      process.execPath = zipExe;
+      mockGetAllWindows.mockReturnValue([]);
+
+      const { initializeAutoUpdater, checkForUpdates } = require('../src/main/core/autoUpdater');
+      await initializeAutoUpdater(false, jest.fn().mockReturnValue(null));
+
+      expect(mockAutoUpdater.on).not.toHaveBeenCalled();
+      expect(mockAutoUpdater.checkForUpdates).not.toHaveBeenCalled();
+      expect(await checkForUpdates()).toEqual({
+        success: false,
+        unsupported: true,
+        error: expect.stringMatching(/extracted from the zip/)
+      });
+    });
   });
 
   // Regression: STRATOSORT_UPDATE_FEED_URL is an attacker-influential env var

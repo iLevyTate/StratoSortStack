@@ -68,13 +68,13 @@ are signed and notarized by Kennedy Applied Sciences, Inc. The
 [Install Guide](docs/INSTALL_GUIDE.md) covers first-launch prompts and how to check the download's
 checksum.
 
-| System      | Supported                                                       | Installers            |
-| :---------- | :-------------------------------------------------------------- | :-------------------- |
-| **Windows** | Windows 10 (22H2) or 11, x64 or arm64                           | Installer or portable |
-| **macOS**   | macOS 13 (Ventura) or later, Apple Silicon or Intel             | DMG or ZIP            |
-| **Linux**   | Ubuntu 22.04 or later and derivatives, x64 or arm64             | AppImage or .deb      |
-| **Memory**  | 8 GB RAM minimum; 16 GB RAM and an 8 GB GPU for Better Quality  |                       |
-| **GPU**     | Optional. NVIDIA CUDA, Apple Metal or Vulkan; falls back to CPU |                       |
+| System      | Supported                                                       | Installers             |
+| :---------- | :-------------------------------------------------------------- | :--------------------- |
+| **Windows** | Windows 10 (22H2) or 11, x64 or arm64                           | Installer or zip (x64) |
+| **macOS**   | macOS 13 (Ventura) or later, Apple Silicon or Intel             | DMG or ZIP             |
+| **Linux**   | Ubuntu 22.04 or later and derivatives, x64 or arm64             | AppImage or .deb       |
+| **Memory**  | 8 GB RAM minimum; 16 GB RAM and an 8 GB GPU for Better Quality  |                        |
+| **GPU**     | Optional. NVIDIA CUDA, Apple Metal or Vulkan; falls back to CPU |                        |
 
 Need it on a machine with no internet access? See
 [Offline and air-gapped install](docs/INSTALL_GUIDE.md#offline-and-air-gapped-install).
