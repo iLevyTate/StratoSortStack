@@ -67,7 +67,9 @@
     "!**/node_modules/node-llama-cpp/templates/**",
     "!**/node_modules/@fugood/whisper.node/CMakeLists.txt",
     "!**/node_modules/@fugood/whisper.node/{src,whisper.cpp}/**",
-    "!**/node_modules/better-sqlite3/{deps,src}/**"
+    "!**/node_modules/better-sqlite3/{deps,src}/**",
+    "!**/node_modules/better-sqlite3/prebuilds/!(${platform}-${arch}|${platform}musl-${arch}).node",
+    "!**/node_modules/@node-llama-cpp/win-!(${arch}|${arch}-*)/**"
   ],
   "extraMetadata": {
     "main": "dist/main.js"
@@ -88,11 +90,7 @@
   "win": {
     "icon": "assets/icons/win/icon.ico",
     "target": ["nsis", "zip"],
-    "compression": "normal",
-    "files": [
-      "!**/node_modules/better-sqlite3/prebuilds/!(win32-${arch}).node",
-      "!**/node_modules/@node-llama-cpp/win-!(${arch}|${arch}-*)/**"
-    ]
+    "compression": "normal"
   },
   "nsis": {
     "oneClick": false,
@@ -111,9 +109,6 @@
     "artifactName": "StratoSortStack-Setup-${version}.exe"
   },
   "mac": {
-    "files": [
-      "!**/node_modules/better-sqlite3/prebuilds/!(darwin-${arch}).node"
-    ],
     "icon": "assets/icons/mac/icon.icns",
     "category": "public.app-category.productivity",
     "hardenedRuntime": true,
@@ -143,9 +138,6 @@
     ]
   },
   "linux": {
-    "files": [
-      "!**/node_modules/better-sqlite3/prebuilds/!(linux-${arch}|linuxmusl-${arch}).node"
-    ],
     "icon": "assets/icons/png/512x512.png",
     "maintainer": "Kennedy Applied Sciences, Inc. <contact@kennedyappliedsciences.com>",
     "target": ["AppImage", "deb"],

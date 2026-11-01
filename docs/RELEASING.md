@@ -409,14 +409,14 @@ supported-GPU floor moves with it. `verify-packaged-artifacts.js` requires all f
 package code: nothing reads it unless it builds from source, and nothing builds from source inside
 Electron.
 
-| Pattern                                                                                           | Why it is unused at runtime                                                                                                                                                                                                                                           | Estimated saving                                        |
-| :------------------------------------------------------------------------------------------------ | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------ |
-| `node-llama-cpp/llama/gitRelease.bundle`                                                          | Read only by `utils/gitReleaseBundles.js`, which only the source download/clone path uses. `getLlama` defaults `build` to `"never"` when `process.versions.electron` is set and the app never overrides it, so `canBuild` is false and the clone path is unreachable. | 36 MB, 1 file                                           |
-| `node-llama-cpp/llama/{addon,cmake,patches,profiles,toolchains,xpack}`, `llama/CMakeLists.txt`    | Inputs to `compileLlamaCpp` (cmake-js), behind the same `canBuild` gate.                                                                                                                                                                                              | 0.3 MB, 57 files                                        |
-| `node-llama-cpp/templates`                                                                        | Used only by the `init` CLI command.                                                                                                                                                                                                                                  | 0.2 MB, 3 files                                         |
-| `@fugood/whisper.node/{src,whisper.cpp}`, `CMakeLists.txt`                                        | C/C++ sources for building the addon. `lib/` only `require`s the prebuilt variant packages (or `build/Release`).                                                                                                                                                      | 5.4 MB, about 117 files                                 |
-| `better-sqlite3/{deps,src}`                                                                       | SQLite amalgamation and addon sources for node-gyp. `lib/binding.js` loads `prebuilds/<platform>-<arch>.node` or `build/Release`.                                                                                                                                     | 10.4 MB, 33 files                                       |
-| `better-sqlite3/prebuilds/` other than this build's own (`win.files`, `mac.files`, `linux.files`) | `getPrebuildPath()` loads only `<platform>-<arch>.node`, or `linuxmusl-<arch>.node` on musl Linux. Each platform's rule keeps `win32-${arch}`, `darwin-${arch}` or `linux-${arch}` plus `linuxmusl-${arch}`; electron-builder expands `${arch}` per packed arch.      | 15 MB, 7 files (Windows, macOS); 12 MB, 6 files (Linux) |
+| Pattern                                                                                        | Why it is unused at runtime                                                                                                                                                                                                                                                                                                                                         | Estimated saving                                        |
+| :--------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :------------------------------------------------------ |
+| `node-llama-cpp/llama/gitRelease.bundle`                                                       | Read only by `utils/gitReleaseBundles.js`, which only the source download/clone path uses. `getLlama` defaults `build` to `"never"` when `process.versions.electron` is set and the app never overrides it, so `canBuild` is false and the clone path is unreachable.                                                                                               | 36 MB, 1 file                                           |
+| `node-llama-cpp/llama/{addon,cmake,patches,profiles,toolchains,xpack}`, `llama/CMakeLists.txt` | Inputs to `compileLlamaCpp` (cmake-js), behind the same `canBuild` gate.                                                                                                                                                                                                                                                                                            | 0.3 MB, 57 files                                        |
+| `node-llama-cpp/templates`                                                                     | Used only by the `init` CLI command.                                                                                                                                                                                                                                                                                                                                | 0.2 MB, 3 files                                         |
+| `@fugood/whisper.node/{src,whisper.cpp}`, `CMakeLists.txt`                                     | C/C++ sources for building the addon. `lib/` only `require`s the prebuilt variant packages (or `build/Release`).                                                                                                                                                                                                                                                    | 5.4 MB, about 117 files                                 |
+| `better-sqlite3/{deps,src}`                                                                    | SQLite amalgamation and addon sources for node-gyp. `lib/binding.js` loads `prebuilds/<platform>-<arch>.node` or `build/Release`.                                                                                                                                                                                                                                   | 10.4 MB, 33 files                                       |
+| `better-sqlite3/prebuilds/` other than this build's own                                        | `getPrebuildPath()` loads only `<platform>-<arch>.node`, or `linuxmusl-<arch>.node` on musl Linux. The rule keeps `${platform}-${arch}` and `${platform}musl-${arch}`: electron-builder expands `${platform}` to the build machine's `process.platform` (each release leg builds on its own OS) and `${arch}` per packed arch, and only Linux has `musl` prebuilds. | 15 MB, 7 files (Windows, macOS); 12 MB, 6 files (Linux) |
 
 Together that is roughly 65 MB and 220 files less to write and scan on first launch (estimates from
 the on-disk sizes in `node_modules`; the download shrinks less, by an estimated 40 to 50 MB, because
@@ -424,14 +424,22 @@ the installer compresses the source files well). Update the download size in
 [INSTALL_GUIDE.md](INSTALL_GUIDE.md) after the next packaged build. `verify-packaged-artifacts.js`
 checks that `llama/binariesGithubRelease.json` (read by node-llama-cpp on import) still ships and
 that `llama/gitRelease.bundle` does not. `@node-llama-cpp/win-arm64` (11 MB) declares
-`cpu: ["arm64", "x64"]`, so npm installs it on x64 runners too. `win.files` excludes the other
-arch's llama prebuilts with `!**/node_modules/@node-llama-cpp/win-!(${arch}|${arch}-*)/**`:
-electron-builder expands `${arch}` per packed arch, so the x64 build drops `win-arm64` and the arm64
-build (which inherits `win.files` through `extends`) drops any `win-x64*` package.
-`verify-packaged-artifacts.js` fails if a package for the other arch still holds files. It also
-requires each build's own `better-sqlite3` prebuild (without it `lib/binding.js` falls back to
-`build/Release`, which is not packaged, and SQLite cannot load) and fails if a prebuild for another
-platform or arch was packaged.
+`cpu: ["arm64", "x64"]`, so npm installs it on x64 runners too. The rule
+`!**/node_modules/@node-llama-cpp/win-!(${arch}|${arch}-*)/**` excludes the other arch's llama
+prebuilts: electron-builder expands `${arch}` per packed arch, so the x64 build drops `win-arm64`
+and the arm64 build (`electron-builder.win-arm64.json` extends the base config) drops any `win-x64*`
+package. npm does not install `win-*` packages on macOS or Linux. `verify-packaged-artifacts.js`
+fails if a package for the other arch still holds files. It also requires each build's own
+`better-sqlite3` prebuild (without it `lib/binding.js` falls back to `build/Release`, which is not
+packaged, and SQLite cannot load) and fails if a prebuild for another platform or arch was packaged.
+
+Keep every `files` rule in the top-level list. electron-builder turns the top-level strings into one
+file set, but a string list under `win`, `mac` or `linux` becomes a second matcher that holds only
+exclusions, and electron-builder starts such a matcher with `**/*`. 5.1.0 shipped that way: its
+`app.asar` held the whole project folder (webpack cache, docs, sources, tests; about 300 MB more),
+so every download grew by 57 to 82 MB instead of shrinking. `verify-packaged-artifacts.js` now fails
+when `app.asar` holds anything besides `dist`, `node_modules`, `package.json` and `src/shared`, and
+`test/electron-builder-config.test.js` runs electron-builder's own matchers for each release leg.
 
 ## Signing And Notarization Requirements
 

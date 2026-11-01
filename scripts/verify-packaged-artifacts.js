@@ -106,8 +106,8 @@ function getRequiredLlamaPrebuiltPackages(platform, arch) {
 }
 
 /**
- * node-llama-cpp prebuilt packages for the OTHER Windows arch, which `win.files`
- * excludes through `win-!(${arch}|${arch}-*)`. @node-llama-cpp/win-arm64
+ * node-llama-cpp prebuilt packages for the OTHER Windows arch, which the top-level
+ * "files" rule `win-!(${arch}|${arch}-*)` excludes. @node-llama-cpp/win-arm64
  * declares `cpu: ["arm64", "x64"]`, so npm installs it on x64 runners too.
  */
 function getForeignArchLlamaPrebuiltPackages(platform, arch) {
@@ -232,6 +232,68 @@ function ensureExecutable(targetPath, label) {
   }
 }
 
+/**
+ * What app.asar may hold at its top level: the webpack output, package.json,
+ * the production dependencies and src/shared (the top-level "files" in
+ * electron-builder.json). Anything else means a "files" matcher fell back to
+ * `**\/*` and packed the project folder, as 5.1.0 did (.webpack-cache, docs,
+ * src/main, test: about 300 MB).
+ */
+const ALLOWED_ASAR_ENTRIES = {
+  dist: null,
+  node_modules: null,
+  'package.json': null,
+  src: ['shared']
+};
+
+/**
+ * Reads the JSON header of an asar archive: a uint32 size pickle (4, header
+ * size) followed by the header pickle (payload size, string length, JSON).
+ */
+function readAsarHeader(asarPath) {
+  const fd = fs.openSync(asarPath, 'r');
+  try {
+    const sizePickle = Buffer.alloc(8);
+    fs.readSync(fd, sizePickle, 0, 8, 0);
+    const headerPickle = Buffer.alloc(sizePickle.readUInt32LE(4));
+    fs.readSync(fd, headerPickle, 0, headerPickle.length, 8);
+    const jsonLength = headerPickle.readUInt32LE(4);
+    return JSON.parse(headerPickle.toString('utf8', 8, 8 + jsonLength));
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function verifyAsarContents(asarPath, label) {
+  ensureExists(asarPath, label);
+  let header;
+  try {
+    header = readAsarHeader(asarPath);
+  } catch (err) {
+    throw new Error(`${label} has no readable asar header: ${asarPath}`, { cause: err });
+  }
+  const unexpected = [];
+  Object.entries(header.files || {}).forEach(([name, entry]) => {
+    if (!Object.prototype.hasOwnProperty.call(ALLOWED_ASAR_ENTRIES, name)) {
+      unexpected.push(name);
+      return;
+    }
+    const allowedChildren = ALLOWED_ASAR_ENTRIES[name];
+    if (allowedChildren && entry.files) {
+      Object.keys(entry.files)
+        .filter((child) => !allowedChildren.includes(child))
+        .forEach((child) => unexpected.push(`${name}/${child}`));
+    }
+  });
+  if (unexpected.length > 0) {
+    throw new Error(
+      `${label} contains files that are not part of the app: ${unexpected.sort().join(', ')}. ` +
+        'Keep every "files" rule in the top-level list of electron-builder.json; a string list ' +
+        'under win/mac/linux becomes its own matcher, which packs the whole project folder.'
+    );
+  }
+}
+
 function verifyRequiredFiles(basePath, fileNames, labelPrefix) {
   fileNames.forEach((fileName) => {
     ensureExists(path.join(basePath, fileName), `${labelPrefix} ${fileName}`);
@@ -311,7 +373,7 @@ function verifyLlamaPrebuiltPackages(unpackedNodeModulesRoot, platform, arch) {
     if (containsAnyFile(packageDir)) {
       throw new Error(
         `node-llama-cpp prebuilt package ${packageName} for another arch was packaged: ` +
-          `${packageDir}. Check the @node-llama-cpp exclusion in electron-builder.json "win.files".`
+          `${packageDir}. Check the @node-llama-cpp exclusion in electron-builder.json "files".`
       );
     }
   });
@@ -364,7 +426,7 @@ function verifyWindowsArtifacts(buildRoot, arch, version = readPackageVersion())
   ensureExists(path.join(appRoot, 'StratoSort Stack.exe'), 'Windows executable');
   verifyRequiredFiles(appRoot, REQUIRED_ELECTRON_RUNTIME_FILES, 'Windows runtime file');
   ensureExists(resources, 'Windows resources directory');
-  ensureExists(path.join(resources, 'app.asar'), 'Windows app.asar');
+  verifyAsarContents(path.join(resources, 'app.asar'), 'Windows app.asar');
   ensureExists(
     path.join(resources, 'assets', 'runtime', 'llama-server.exe'),
     'Windows runtime binary'
@@ -406,7 +468,7 @@ function verifyMacArtifacts(buildRoot, arch) {
       getRequiredMacElectronRuntimeFiles(arch),
       'macOS runtime file'
     );
-    ensureExists(path.join(resources, 'app.asar'), 'macOS app.asar');
+    verifyAsarContents(path.join(resources, 'app.asar'), 'macOS app.asar');
     ensureExists(path.join(resources, 'assets', 'runtime', 'llama-server'), 'macOS runtime binary');
     ensureExecutable(
       path.join(resources, 'assets', 'runtime', 'ffmpeg', 'ffmpeg'),
@@ -430,7 +492,7 @@ function verifyLinuxArtifacts(buildRoot, arch) {
   ensureExists(appRoot, 'Linux unpacked root');
   verifyRequiredFiles(appRoot, REQUIRED_ELECTRON_RUNTIME_FILES, 'Linux runtime file');
   ensureExists(resources, 'Linux resources directory');
-  ensureExists(path.join(resources, 'app.asar'), 'Linux app.asar');
+  verifyAsarContents(path.join(resources, 'app.asar'), 'Linux app.asar');
   ensureExists(path.join(resources, 'assets', 'runtime', 'llama-server'), 'Linux vision runtime');
   ensureExecutable(
     path.join(resources, 'assets', 'runtime', 'ffmpeg', 'ffmpeg'),
@@ -479,6 +541,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  ALLOWED_ASAR_ENTRIES,
   getRequiredLlamaPrebuiltPackages,
   getForeignArchLlamaPrebuiltPackages,
   getBetterSqlitePrebuilds,
@@ -497,6 +560,8 @@ module.exports = {
   verifyLinuxArtifacts,
   verifyMacArtifacts,
   verifyNativeModuleFolders,
+  readAsarHeader,
+  verifyAsarContents,
   verifyRequiredFiles,
   verifyWhisperVariantFolders,
   verifyWindowsArtifacts

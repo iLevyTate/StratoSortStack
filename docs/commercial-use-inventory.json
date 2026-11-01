@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-31T15:05:19.740Z",
+  "generatedAt": "2026-11-01T00:30:59.499Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
@@ -23818,7 +23818,9 @@
       "!**/node_modules/node-llama-cpp/templates/**",
       "!**/node_modules/@fugood/whisper.node/CMakeLists.txt",
       "!**/node_modules/@fugood/whisper.node/{src,whisper.cpp}/**",
-      "!**/node_modules/better-sqlite3/{deps,src}/**"
+      "!**/node_modules/better-sqlite3/{deps,src}/**",
+      "!**/node_modules/better-sqlite3/prebuilds/!(${platform}-${arch}|${platform}musl-${arch}).node",
+      "!**/node_modules/@node-llama-cpp/win-!(${arch}|${arch}-*)/**"
     ],
     "extraResources": [
       {

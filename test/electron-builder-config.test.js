@@ -68,34 +68,144 @@ describe('electron-builder.json Windows compression', () => {
   });
 });
 
-// Runs app-builder-lib's own node_modules filter (the one NodeModuleCopyHelper
-// applies while copying dependencies) against the committed `files` patterns.
+// electron-builder does not read `files` as written: before packaging it
+// normalizes the top-level strings into a `{ filter: [...] }` file set
+// (doMergeConfigs) and builds its app and node_modules filters from that plus
+// the platform's own options. These helpers run the same steps on the
+// committed configs. A string `files` list under win/mac/linux turned into a
+// second, exclude-only matcher, which electron-builder starts with `**/*`, so
+// 5.1.0 packed the whole project folder into app.asar.
+const { doMergeConfigs } = require('app-builder-lib/out/util/config/config');
+const {
+  getMainFileMatchers,
+  getNodeModuleFileMatcher,
+  FileMatcher
+} = require('app-builder-lib/out/fileMatcher');
+
+const NODE_PLATFORM = { win: 'win32', mac: 'darwin', linux: 'linux' };
+
+function loadNormalizedConfig(configFile) {
+  const read = (name) => JSON.parse(JSON.stringify(require(`../${name.replace(/^\.\//, '')}`)));
+  const config = read(configFile);
+  const parent = config.extends;
+  delete config.extends;
+  return doMergeConfigs(parent ? [read(parent), config] : [config]);
+}
+
+// Each release leg builds on its own OS, so ${platform} (process.platform at
+// build time) is the target's Node platform name.
+function macroExpanderFor(platformKey, arch) {
+  return (pattern) =>
+    pattern
+      .replace(/\$\{arch\}/g, arch)
+      .replace(/\$\{platform\}/g, NODE_PLATFORM[platformKey])
+      .replace(/\$\{os\}/g, platformKey);
+}
+
+function packagerFor(config) {
+  return {
+    config,
+    projectDir: '/project',
+    buildResourcesDir: `/project/${config.directories.buildResources}`,
+    isPrepackedAppAsar: false,
+    debugLogger: { isEnabled: false }
+  };
+}
+
+// Mirrors the copy walk: a file is packaged when some matcher accepts it and
+// every folder above it.
+function isAppFilePackaged(configFile, platformKey, arch, relativePath) {
+  const config = loadNormalizedConfig(configFile);
+  const matchers = getMainFileMatchers(
+    '/project',
+    '/out/app',
+    macroExpanderFor(platformKey, arch),
+    config[platformKey] || {},
+    { info: packagerFor(config) },
+    `/project/${config.directories.output}`,
+    false
+  );
+  const segments = relativePath.split('/');
+  return matchers.some((matcher) => {
+    const filter = matcher.createFilter();
+    return segments.every((_, index) => {
+      const isDirectory = index < segments.length - 1;
+      const moduleFullFilePath = segments.slice(0, index + 1).join('/');
+      return filter(`/project/${moduleFullFilePath}`, {
+        isDirectory: () => isDirectory,
+        moduleFullFilePath
+      });
+    });
+  });
+}
+
+function isModulePackaged(platformKey, moduleRelativePath, arch = 'x64', configFile) {
+  const config = loadNormalizedConfig(configFile || 'electron-builder.json');
+  const macroExpander = macroExpanderFor(platformKey, arch);
+  const nodeModuleMatcher = getNodeModuleFileMatcher(
+    '/project',
+    '/out/app',
+    macroExpander,
+    config[platformKey] || {},
+    packagerFor(config)
+  );
+  const [, scope, name] = moduleRelativePath.match(/^node_modules\/(@[^/]+\/)?([^/]+)/);
+  const depDir = `/project/node_modules/${scope || ''}${name}`;
+  const filter = new FileMatcher(
+    depDir,
+    '/out/app',
+    macroExpander,
+    nodeModuleMatcher.patterns
+  ).createFilter();
+  const stat = { isDirectory: () => false, moduleFullFilePath: moduleRelativePath };
+  return filter(`/project/${moduleRelativePath}`, stat);
+}
+
+const RELEASE_LEGS = [
+  ['electron-builder.json', 'win', 'x64'],
+  ['electron-builder.win-arm64.json', 'win', 'arm64'],
+  ['electron-builder.json', 'mac', 'x64'],
+  ['electron-builder.json', 'mac', 'arm64'],
+  ['electron-builder.json', 'linux', 'x64'],
+  ['electron-builder.json', 'linux', 'arm64']
+];
+
+describe('electron-builder app files', () => {
+  test.each(RELEASE_LEGS)(
+    '%s (%s %s) packages the built app and none of the project tree',
+    (configFile, platformKey, arch) => {
+      const packaged = (relativePath) =>
+        isAppFilePackaged(configFile, platformKey, arch, relativePath);
+      ['dist/main.js', 'dist/index.html', 'package.json', 'src/shared/logger.js'].forEach(
+        (relativePath) =>
+          expect([relativePath, packaged(relativePath)]).toEqual([relativePath, true])
+      );
+      [
+        '.webpack-cache/default-production/0.pack',
+        'docs/assets/screenshot.png',
+        'docs/walkthrough-assets/step-1.png',
+        'src/main/simple-main.js',
+        'src/renderer/index.js',
+        'test/electron-builder-config.test.js',
+        'scripts/verify-packaged-artifacts.js',
+        'CLAUDE.md',
+        '.env',
+        'webpack.config.js'
+      ].forEach((relativePath) =>
+        expect([relativePath, packaged(relativePath)]).toEqual([relativePath, false])
+      );
+    }
+  );
+
+  test('no platform block carries its own files list', () => {
+    // A string list there becomes the exclude-only matcher described above.
+    ['win', 'mac', 'linux'].forEach((platformKey) => {
+      expect([platformKey, builderConfig[platformKey].files]).toEqual([platformKey, undefined]);
+    });
+  });
+});
+
 describe('electron-builder.json node_modules exclusions', () => {
-  const { getNodeModuleFileMatcher, FileMatcher } = require('app-builder-lib/out/fileMatcher');
-
-  function isPackaged(platformKey, moduleRelativePath, arch = 'x64') {
-    const packager = { config: builderConfig, debugLogger: { isEnabled: false } };
-    // app-builder-lib expands ${arch} in `files` patterns per packed arch.
-    const macroExpander = (pattern) => pattern.replace(/\$\{arch\}/g, arch);
-    const nodeModuleMatcher = getNodeModuleFileMatcher(
-      '/project',
-      '/out/app',
-      macroExpander,
-      builderConfig[platformKey] || {},
-      packager
-    );
-    const [, scope, name] = moduleRelativePath.match(/^node_modules\/(@[^/]+\/)?([^/]+)/);
-    const depDir = `/project/node_modules/${scope || ''}${name}`;
-    const filter = new FileMatcher(
-      depDir,
-      '/out/app',
-      macroExpander,
-      nodeModuleMatcher.patterns
-    ).createFilter();
-    const stat = { isDirectory: () => false, moduleFullFilePath: moduleRelativePath };
-    return filter(`/project/${moduleRelativePath}`, stat);
-  }
-
   test.each([
     'node_modules/node-llama-cpp/llama/gitRelease.bundle',
     'node_modules/node-llama-cpp/llama/CMakeLists.txt',
@@ -111,7 +221,7 @@ describe('electron-builder.json node_modules exclusions', () => {
     'node_modules/better-sqlite3/prebuilds/darwin-arm64.node',
     'node_modules/better-sqlite3/prebuilds/linuxmusl-x64.node'
   ])('Windows build leaves out build-only %s', (moduleRelativePath) => {
-    expect(isPackaged('win', moduleRelativePath)).toBe(false);
+    expect(isModulePackaged('win', moduleRelativePath)).toBe(false);
   });
 
   test.each([
@@ -125,9 +235,10 @@ describe('electron-builder.json node_modules exclusions', () => {
     'node_modules/better-sqlite3/lib/binding.js',
     'node_modules/better-sqlite3/prebuilds/win32-x64.node'
   ])('Windows build keeps runtime file %s', (moduleRelativePath) => {
-    expect(isPackaged('win', moduleRelativePath)).toBe(true);
+    expect(isModulePackaged('win', moduleRelativePath)).toBe(true);
   });
 
+  const WIN_ARM64_CONFIG = 'electron-builder.win-arm64.json';
   test.each([
     ['x64', 'node_modules/@node-llama-cpp/win-arm64/bins/win-arm64/llama-addon.node', false],
     ['x64', 'node_modules/@node-llama-cpp/win-arm64/package.json', false],
@@ -141,7 +252,8 @@ describe('electron-builder.json node_modules exclusions', () => {
     ['arm64', 'node_modules/@node-llama-cpp/win-x64-cuda/bins/win-x64-cuda/ggml-cuda.dll', false],
     ['arm64', 'node_modules/node-llama-cpp/dist/bindings/getLlama.js', true]
   ])('Windows %s build packages %s: %s', (arch, moduleRelativePath, expected) => {
-    expect(isPackaged('win', moduleRelativePath, arch)).toBe(expected);
+    const configFile = arch === 'arm64' ? WIN_ARM64_CONFIG : undefined;
+    expect(isModulePackaged('win', moduleRelativePath, arch, configFile)).toBe(expected);
   });
 
   // lib/binding.js loads prebuilds/<platform>-<arch>.node (linuxmusl-<arch> on
@@ -165,10 +277,18 @@ describe('electron-builder.json node_modules exclusions', () => {
     ['linux', 'x64', ['linux-x64', 'linuxmusl-x64']],
     ['linux', 'arm64', ['linux-arm64', 'linuxmusl-arm64']]
   ])('%s %s build keeps only its own better-sqlite3 prebuilds', (platformKey, arch, expected) => {
+    const configFile = platformKey === 'win' && arch === 'arm64' ? WIN_ARM64_CONFIG : undefined;
     const kept = SQLITE_PREBUILDS.filter((name) =>
-      isPackaged(platformKey, `node_modules/better-sqlite3/prebuilds/${name}.node`, arch)
+      isModulePackaged(
+        platformKey,
+        `node_modules/better-sqlite3/prebuilds/${name}.node`,
+        arch,
+        configFile
+      )
     );
     expect(kept).toEqual(expected);
-    expect(isPackaged(platformKey, 'node_modules/better-sqlite3/lib/binding.js', arch)).toBe(true);
+    expect(
+      isModulePackaged(platformKey, 'node_modules/better-sqlite3/lib/binding.js', arch, configFile)
+    ).toBe(true);
   });
 });

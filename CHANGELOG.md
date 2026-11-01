@@ -12,23 +12,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Packaging:** the app archive (`app.asar`) holds only the app again: the built `dist` folder,
+  `package.json`, the production dependencies and `src/shared`. In 5.1.0 it also held the project's
+  webpack build cache, documentation images, sources and tests (about 300 MB unpacked), which made
+  every download 57 to 82 MB larger than 5.0.0. The release check now fails a build whose `app.asar`
+  holds anything else.
+
 ## [5.1.0] - 2026-10-31
 
-Faster, more predictable Windows startup, a zip instead of the self-extracting portable exe, and
-smaller downloads on every platform.
+Faster, more predictable Windows startup and a zip instead of the self-extracting portable exe.
+
+### Known issues
+
+- Every download is 57 to 82 MB larger than 5.0.0 (the Windows x64 installer is 735 MB instead of
+  671 MB) because the build packed the project's webpack build cache, documentation images, sources
+  and tests into `app.asar` next to the app. The app never loads these files. Fixed for the next
+  release (see Unreleased).
 
 ### Security
 
 - `minimatch` 10 → 11.0.3 for GHSA-g3hv-75wg-m249 (denial of service via globparts amplification).
-- Electron 41 → 45 (45.1.0). Electron 41 was outside upstream security support and affected by eight
-  advisories, including GHSA-jr5w-w6x2-84p9 (HID/USB permission checks attributed to the wrong
-  origin; SameSite cookies not applied to windows opened from links).
 
 ### Changed
 
-- `better-sqlite3` 12 → 13. 12.x no longer compiles against Electron 45; 13.x ships N-API prebuilds,
-  so it is no longer rebuilt per Electron version.
-- macOS 13 (Ventura) is now the minimum supported macOS version (Electron 44 dropped macOS 12).
 - **Windows:** the self-extracting portable exe (`StratoSortStack-5.0.0-win-x64.exe`), which
   unpacked the whole app into `%TEMP%` on every start, is replaced by
   `StratoSortStack-5.1.0-win-x64.zip`. Extract it once and run `StratoSort Stack.exe` from the
@@ -41,8 +49,8 @@ smaller downloads on every platform.
   (`STRATOSORT_ENABLE_EMBEDDING_WORKER`) uses the same record and supported-backend filter.
 - The Windows x64 build no longer ships node-llama-cpp's arm64 prebuilt (about 11 MB).
 - Each build ships only its own SQLite (`better-sqlite3`) native binary instead of the ones for
-  every platform: about 15 MB smaller on macOS, about 12 MB on Linux, and one 2 MB file less on
-  Windows.
+  every platform: about 15 MB less on macOS, about 12 MB on Linux, and one 2 MB file less on
+  Windows. In 5.1.0 these savings are outweighed by the known issue above.
 - On Windows and macOS the app no longer forces Chromium's `enable-gpu-rasterization` and
   `enable-zero-copy` switches, so Chromium's per-driver GPU blocklist applies. Linux keeps forcing
   them, as before.
@@ -70,6 +78,15 @@ smaller downloads on every platform.
 First public release of StratoSort Stack: source published on GitHub under the PolyForm
 Noncommercial License 1.0.0, with signed installers on GitHub Releases.
 
+The Security entry and the first two Changed entries shipped in 5.0.0 but were missing from its
+release notes; the 5.1.0 notes listed them by mistake.
+
+### Security
+
+- Electron 41 → 45 (45.1.0). Electron 41 was outside upstream security support and affected by eight
+  advisories, including GHSA-jr5w-w6x2-84p9 (HID/USB permission checks attributed to the wrong
+  origin; SameSite cookies not applied to windows opened from links).
+
 ### Added
 
 - Atlas map, timeline, knowledge stats card, Downloads triage trust pack, MCP server kit, and
@@ -77,6 +94,9 @@ Noncommercial License 1.0.0, with signed installers on GitHub Releases.
 
 ### Changed
 
+- `better-sqlite3` 12 → 13. 12.x no longer compiles against Electron 45; 13.x ships N-API prebuilds,
+  so it is no longer rebuilt per Electron version.
+- macOS 13 (Ventura) is now the minimum supported macOS version (Electron 44 dropped macOS 12).
 - **License:** StratoSort Stack is now released under the PolyForm Noncommercial License 1.0.0.
   Personal and other noncommercial use is free with every feature; commercial use needs a paid key
   (see [docs/COMMERCIAL.md](docs/COMMERCIAL.md)).
