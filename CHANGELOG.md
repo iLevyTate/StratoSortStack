@@ -12,6 +12,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [5.1.2] - 2026-11-01
+
+A maintenance release: security updates for the build and test tooling, and a macOS release build
+that survives a dropped connection to Apple. The installed app works the same as 5.1.1.
+
+### Security
+
+- Build and test tooling only: the `glob` 10.x and 13.x copies used by Jest, `rimraf` and the
+  coverage tooling move to 14.0.3 for GHSA-3g3m-2fjr-6pw4, and the `minimatch` 9.x and 10.x copies
+  used by ESLint, electron-builder, `@typescript-eslint` and the coverage tooling move to 11.0.3 for
+  GHSA-g3hv-75wg-m249. None of these copies ship in the app; the production dependency audit was
+  already clean.
+
+### Changed
+
+- macOS release builds retry notarizing the app up to three times, 30 s and 60 s apart, instead of
+  failing on the first dropped connection to Apple's notary service, which had stopped the macOS
+  Intel build for both 5.1.0 and 5.1.1 (`scripts/notarize-mac-app.js`).
+
 ## [5.1.1] - 2026-11-01
 
 Smaller downloads again: fixes the 5.1.0 builds, which packed the project folder into the app.
@@ -797,7 +816,8 @@ notes.
 Note: versions before 5.0.0 were released from predecessor repositories whose tags are not part of
 this repository's history, so they are listed without links.
 
-[Unreleased]: https://github.com/iLevyTate/StratoSortStack/compare/v5.1.1...HEAD
+[Unreleased]: https://github.com/iLevyTate/StratoSortStack/compare/v5.1.2...HEAD
+[5.1.2]: https://github.com/iLevyTate/StratoSortStack/compare/v5.1.1...v5.1.2
 [5.1.1]: https://github.com/iLevyTate/StratoSortStack/compare/v5.1.0...v5.1.1
 [5.1.0]: https://github.com/iLevyTate/StratoSortStack/compare/v5.0.0...v5.1.0
 [5.0.0]: https://github.com/iLevyTate/StratoSortStack/releases/tag/v5.0.0

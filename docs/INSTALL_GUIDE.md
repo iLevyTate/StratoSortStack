@@ -42,7 +42,7 @@ download the single file that matches your operating system.
 | **Linux** x64 (if artifact is attached)   | **`StratoSortStack-X.X.X-linux-x86_64.AppImage`** |
 | **Linux** arm64 (if artifact is attached) | **`StratoSortStack-X.X.X-linux-arm64.AppImage`**  |
 
-Replace **X.X.X** with the version number shown on the Releases page (e.g. `5.1.1`). The Windows
+Replace **X.X.X** with the version number shown on the Releases page (e.g. `5.1.2`). The Windows
 arm64 build ships without bundled FFmpeg, so audio/video analysis there needs FFmpeg on your `PATH`.
 
 ### Windows -- installer vs zip
