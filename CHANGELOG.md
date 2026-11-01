@@ -12,6 +12,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [5.1.1] - 2026-11-01
+
+Smaller downloads again: fixes the 5.1.0 builds, which packed the project folder into the app.
+
 ### Fixed
 
 - **Packaging:** the app archive (`app.asar`) holds only the app again: the built `dist` folder,
@@ -28,8 +32,7 @@ Faster, more predictable Windows startup and a zip instead of the self-extractin
 
 - Every download is 57 to 82 MB larger than 5.0.0 (the Windows x64 installer is 735 MB instead of
   671 MB) because the build packed the project's webpack build cache, documentation images, sources
-  and tests into `app.asar` next to the app. The app never loads these files. Fixed for the next
-  release (see Unreleased).
+  and tests into `app.asar` next to the app. The app never loads these files. Fixed in 5.1.1.
 
 ### Security
 
@@ -794,6 +797,7 @@ notes.
 Note: versions before 5.0.0 were released from predecessor repositories whose tags are not part of
 this repository's history, so they are listed without links.
 
-[Unreleased]: https://github.com/iLevyTate/StratoSortStack/compare/v5.1.0...HEAD
+[Unreleased]: https://github.com/iLevyTate/StratoSortStack/compare/v5.1.1...HEAD
+[5.1.1]: https://github.com/iLevyTate/StratoSortStack/compare/v5.1.0...v5.1.1
 [5.1.0]: https://github.com/iLevyTate/StratoSortStack/compare/v5.0.0...v5.1.0
 [5.0.0]: https://github.com/iLevyTate/StratoSortStack/releases/tag/v5.0.0
