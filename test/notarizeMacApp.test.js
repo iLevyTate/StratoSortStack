@@ -50,6 +50,26 @@ describe('electron-builder notarization config', () => {
     expect(builderConfig.afterSign).toBe('./scripts/notarize-mac-app.js');
   });
 
+  test('electron-builder resolves the configured hook to afterSign', async () => {
+    const { resolveFunction } = require('app-builder-lib/out/util/resolve');
+    const projectRoot = path.resolve(__dirname, '..');
+    const cwd = process.cwd();
+    // A "./" hook path resolves against the working directory, as in `npm run dist:*`.
+    process.chdir(projectRoot);
+    try {
+      const hook = await resolveFunction(
+        'commonjs',
+        builderConfig.afterSign,
+        'afterSign',
+        projectRoot
+      );
+      expect(typeof hook).toBe('function');
+      expect(hook.name).toBe('afterSign');
+    } finally {
+      process.chdir(cwd);
+    }
+  });
+
   test('the hook loads the @electron/notarize that electron-builder uses', () => {
     expect(typeof loadNotarize()).toBe('function');
   });
