@@ -168,11 +168,16 @@ git push origin v4.0.0
 1. **`Detect mac release mode`** prints `::notice::Using signed + notarized mac release mode.` (If
    you see `::warning::macOS signing/notarization secrets are not configured`, one of the five
    secrets is missing or misnamed — go back to Phase 6.)
-2. **`Build signed Mac app and DMG`** runs (the `if: signed == 'true'` branch).
+2. **`Build signed Mac app and DMG`** runs (the `if: signed == 'true'` branch). After codesigning,
+   electron-builder's `afterSign` hook (`scripts/notarize-mac-app.js`) notarizes and staples the
+   `.app` before the DMG and ZIP are built, trying up to three times 30 s and 60 s apart.
+   electron-builder's own notarization is off (`mac.notarize: false`) because it makes one attempt,
+   and a dropped connection to Apple failed the macOS x64 job for both 5.1.0 and 5.1.1.
 3. **`Verify app signature`** runs `codesign --verify --deep --strict` on each `.app` bundle.
 4. **`Notarize and staple artifacts`** uploads to Apple via `xcrun notarytool submit --wait`, then
-   `xcrun stapler staple` attaches the ticket to each DMG. First submission from a new Team ID
-   typically takes 5–15 minutes; subsequent ones complete in 2–5 minutes.
+   `xcrun stapler staple` attaches the ticket to each DMG. Each call is retried up to three times.
+   First submission from a new Team ID typically takes 5–15 minutes; subsequent ones complete in 2–5
+   minutes.
 5. **`publish-release`** merges the per-arch `latest-mac-<arch>.yml` staging files into a single
    `latest-mac.yml` (the only name electron-updater requests on macOS) and uploads it with the DMG +
    ZIP files to the GitHub Release page. The per-arch staging files are never published.

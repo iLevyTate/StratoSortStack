@@ -108,7 +108,9 @@
     "license": "build/license_en.txt",
     "artifactName": "StratoSortStack-Setup-${version}.exe"
   },
+  "afterSign": "./scripts/notarize-mac-app.js",
   "mac": {
+    "notarize": false,
     "icon": "assets/icons/mac/icon.icns",
     "category": "public.app-category.productivity",
     "hardenedRuntime": true,
