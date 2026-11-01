@@ -1,0 +1,87 @@
+# Rewrites the changelog part of a published release's notes from CHANGELOG.md
+# on main, keeping the download and signing notes above it
+# (scripts/update-release-notes.js). release.yml writes a release's notes only
+# when it publishes, so run this after correcting a shipped version's
+# CHANGELOG.md entry. Leave dry_run on first: the run summary shows the change.
+name: Update Release Notes
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: Published release whose notes to update (vX.Y.Z)
+        required: true
+        type: string
+      dry_run:
+        description: Only show the new notes; leave the release unchanged
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-notes-${{ github.event.inputs.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  update-notes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+          sparse-checkout: |
+            .nvmrc
+            CHANGELOG.md
+            scripts/update-release-notes.js
+          sparse-checkout-cone-mode: false
+
+      - name: Use Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Build the new notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.event.inputs.tag_name }}
+        run: |
+          set -euo pipefail
+          tag="$(printf '%s' "$TAG_NAME" | tr -d '[:space:]')"
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::tag_name must match v<major>.<minor>.<patch>; received '$TAG_NAME'."
+            exit 1
+          fi
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+          current="$RUNNER_TEMP/current-notes.md"
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json body --jq .body | tr -d '\r' > "$current"
+          node scripts/update-release-notes.js --tag="$tag" --body="$current" \
+            --output="$RUNNER_TEMP/new-notes.md"
+          {
+            echo "## Release notes for $tag"
+            echo
+            echo '````diff'
+            diff -u --label "current" --label "from CHANGELOG.md" "$current" "$RUNNER_TEMP/new-notes.md" || true
+            echo '````'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Edit the release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/new-notes.md"
+          # Read the notes back; blank-line differences are GitHub's, not ours.
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body | tr -d '\r' \
+            > "$RUNNER_TEMP/published-notes.md"
+          if ! diff -B -q "$RUNNER_TEMP/new-notes.md" "$RUNNER_TEMP/published-notes.md" > /dev/null; then
+            echo "::error::The $TAG release notes do not match what was sent."
+            exit 1
+          fi
+          echo "Updated the $TAG release notes." | tee -a "$GITHUB_STEP_SUMMARY"

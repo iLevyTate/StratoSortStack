@@ -200,6 +200,17 @@ secrets or fixing a transient build failure).
 Release workflows are packaging/publish workflows, not full CI replacements. Run `npm run ci` before
 tagging, then use the release workflows to build and upload artifacts.
 
+### Correcting published release notes
+
+`release.yml` writes a release's notes once, when it publishes: the "Release Notes" download and
+signing bullets, then the version's `CHANGELOG.md` section. To correct a shipped version's notes,
+fix its `CHANGELOG.md` section on `main`, then run **Update Release Notes**
+(`update-release-notes.yml`) from the Actions tab with the release tag. It replaces only that
+version's section on the release page (`scripts/update-release-notes.js`) and keeps the bullets
+above it. `dry_run` is on by default and puts the change in the run summary; run it again with
+`dry_run` off to edit the release. Re-running the release workflows instead would rebuild and
+re-upload every artifact.
+
 ## Published Artifacts
 
 Windows workflow publishes:
