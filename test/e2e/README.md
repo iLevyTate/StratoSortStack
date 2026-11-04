@@ -14,7 +14,7 @@ This test suite covers full user flows through the application UI, including:
 
 ## Prerequisites
 
-1. **Node.js 20.19+** - Required (`package.json` engines; `.nvmrc` pins `20.19.0`)
+1. **Node.js 24.11+** - Required (`package.json` engines; `.nvmrc` pins `24.22.1`)
 2. **Build the renderer** - Run `npm run build:dev` before testing
 3. **Models downloaded (optional)** - Required for AI analysis tests, but tests handle missing
    models gracefully

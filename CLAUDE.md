@@ -8,7 +8,8 @@ happens on-device with no required external services - no data leaves the machin
 
 ## Tech Stack
 
-- **Runtime:** Electron 45 (main + renderer + preload processes), Node.js 20.19+
+- **Runtime:** Electron 45 (main + renderer + preload processes), Node.js 24 (`.nvmrc` pins 24.22.1,
+  the Node inside Electron 45.2)
 - **Frontend:** React 19 + Redux Toolkit + Tailwind CSS 4 + Framer Motion
 - **AI Backend:** node-llama-cpp (in-process LLM) + Orama (in-process vectors) + Tesseract.js (OCR)
 - **Build:** Webpack 5 (3 configs: main, preload, renderer) + Babel 8

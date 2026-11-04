@@ -53,8 +53,8 @@ function getNotarizeOptions(appPath, env = process.env) {
 
 /**
  * The @electron/notarize electron-builder itself loads (app-builder-lib's own
- * copy). The project's top-level @electron/notarize is ESM-only and needs
- * Node 22.12, newer than the Node 20 the release runners use.
+ * copy). The project's top-level @electron/notarize is ESM-only; keep calling
+ * the CommonJS copy electron-builder ships so this script stays require()-able.
  */
 function loadNotarize() {
   const appBuilderLib = path.dirname(require.resolve('app-builder-lib/package.json'));

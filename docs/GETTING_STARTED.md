@@ -27,7 +27,7 @@ local, in-process AI stack and does not rely on external servers.
 
 | Component       | Purpose                  | Requirement / Setup                                             |
 | :-------------- | :----------------------- | :-------------------------------------------------------------- |
-| **Node.js**     | Core Application Runtime | v20+ (see `.nvmrc` for exact version; dev needs Node installed) |
+| **Node.js**     | Core Application Runtime | v24+ (see `.nvmrc` for exact version; dev needs Node installed) |
 | **GGUF Models** | Local AI Inference       | Auto-downloaded on first use (`npm run setup:models`)           |
 | **Orama**       | Vector Search DB         | Bundled in the app (no external install)                        |
 | **Tesseract**   | Image Text Recognition   | Bundled `tesseract.js` + English tessdata; native optional      |

@@ -1,12 +1,12 @@
 {
-  "generatedAt": "2026-11-04T21:50:07.828Z",
+  "generatedAt": "2026-11-04T23:18:46.412Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
     "detectedLicense": "PolyForm Noncommercial 1.0.0 (commercial license sold separately)"
   },
   "dependencySummary": {
-    "allowed": 2290,
+    "allowed": 2289,
     "review_required": 31,
     "high_risk": 0,
     "unknown": 0
@@ -10260,25 +10260,13 @@
     },
     {
       "packageName": "@types/node",
-      "version": "20.19.43",
+      "version": "24.19.2",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
       "directDev": true,
       "lockfileDev": true,
-      "lockfileOptional": false,
-      "bundledRenderer": true
-    },
-    {
-      "packageName": "@types/node/node_modules/undici-types",
-      "version": "6.21.0",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": false,
-      "bundledRenderer": true
+      "lockfileOptional": false
     },
     {
       "packageName": "@types/react",
@@ -11173,6 +11161,28 @@
       "packageName": "apache-arrow",
       "version": "17.0.0",
       "license": "Apache-2.0",
+      "riskLevel": "allowed",
+      "directRuntime": false,
+      "directDev": false,
+      "lockfileDev": true,
+      "lockfileOptional": false,
+      "bundledRenderer": true
+    },
+    {
+      "packageName": "apache-arrow/node_modules/@types/node",
+      "version": "20.19.43",
+      "license": "MIT",
+      "riskLevel": "allowed",
+      "directRuntime": false,
+      "directDev": false,
+      "lockfileDev": true,
+      "lockfileOptional": false,
+      "bundledRenderer": true
+    },
+    {
+      "packageName": "apache-arrow/node_modules/undici-types",
+      "version": "6.21.0",
+      "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
       "directDev": false,
@@ -13543,16 +13553,6 @@
       "directRuntime": true,
       "directDev": false,
       "lockfileDev": false,
-      "lockfileOptional": false
-    },
-    {
-      "packageName": "electron/node_modules/@types/node",
-      "version": "24.10.9",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
       "lockfileOptional": false
     },
     {
@@ -19434,16 +19434,6 @@
       "lockfileOptional": false
     },
     {
-      "packageName": "png-to-ico/node_modules/undici-types",
-      "version": "7.24.6",
-      "license": "MIT",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
       "packageName": "pngjs",
       "version": "7.0.0",
       "license": "MIT",
@@ -22483,7 +22473,7 @@
     },
     {
       "packageName": "undici-types",
-      "version": "7.16.0",
+      "version": "7.24.6",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,

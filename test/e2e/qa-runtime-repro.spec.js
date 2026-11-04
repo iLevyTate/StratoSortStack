@@ -9,8 +9,8 @@
  *   A1     Graph similarity edge label/thickness not stuck at 0%
  *   FI-04  filename vs semantic search discrepancy
  *
- * Run: SOAK-free, Node 20:
- *   fnm exec --using=20 -- node node_modules/@playwright/test/cli.js test test/e2e/qa-runtime-repro.spec.js
+ * Run: SOAK-free, on the .nvmrc Node:
+ *   fnm exec -- node node_modules/@playwright/test/cli.js test test/e2e/qa-runtime-repro.spec.js
  */
 
 const { test, expect } = require('@playwright/test');
