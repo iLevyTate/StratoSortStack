@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-01T03:51:24.342Z",
+  "generatedAt": "2026-11-04T21:04:21.796Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
@@ -260,7 +260,7 @@
     },
     {
       "packageName": "@babel/core",
-      "version": "8.0.9",
+      "version": "8.0.10",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -290,7 +290,7 @@
     },
     {
       "packageName": "@babel/core/node_modules/@babel/generator",
-      "version": "8.0.6",
+      "version": "8.0.10",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -350,7 +350,7 @@
     },
     {
       "packageName": "@babel/core/node_modules/@babel/parser",
-      "version": "8.0.8",
+      "version": "8.0.10",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -370,7 +370,7 @@
     },
     {
       "packageName": "@babel/core/node_modules/@babel/traverse",
-      "version": "8.0.7",
+      "version": "8.0.10",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -380,7 +380,7 @@
     },
     {
       "packageName": "@babel/core/node_modules/@babel/types",
-      "version": "8.0.8",
+      "version": "8.0.10",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -930,7 +930,7 @@
     },
     {
       "packageName": "@babel/helpers",
-      "version": "8.0.8",
+      "version": "8.0.10",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -970,7 +970,7 @@
     },
     {
       "packageName": "@babel/helpers/node_modules/@babel/parser",
-      "version": "8.0.8",
+      "version": "8.0.10",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -990,7 +990,7 @@
     },
     {
       "packageName": "@babel/helpers/node_modules/@babel/types",
-      "version": "8.0.8",
+      "version": "8.0.10",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7391,7 +7391,7 @@
     },
     {
       "packageName": "@napi-rs/canvas",
-      "version": "1.0.11",
+      "version": "1.1.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -7401,7 +7401,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-android-arm64",
-      "version": "1.0.11",
+      "version": "1.1.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7411,7 +7411,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-darwin-arm64",
-      "version": "1.0.11",
+      "version": "1.1.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7421,7 +7421,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-darwin-x64",
-      "version": "1.0.11",
+      "version": "1.1.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7431,7 +7431,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-linux-arm-gnueabihf",
-      "version": "1.0.11",
+      "version": "1.1.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7441,7 +7441,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-linux-arm64-gnu",
-      "version": "1.0.11",
+      "version": "1.1.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7451,7 +7451,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-linux-arm64-musl",
-      "version": "1.0.11",
+      "version": "1.1.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7461,7 +7461,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-linux-riscv64-gnu",
-      "version": "1.0.11",
+      "version": "1.1.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7471,7 +7471,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-linux-x64-gnu",
-      "version": "1.0.11",
+      "version": "1.1.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7481,7 +7481,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-linux-x64-musl",
-      "version": "1.0.11",
+      "version": "1.1.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7491,7 +7491,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-win32-arm64-msvc",
-      "version": "1.0.11",
+      "version": "1.1.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7501,7 +7501,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-win32-x64-msvc",
-      "version": "1.0.11",
+      "version": "1.1.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -10736,7 +10736,7 @@
     },
     {
       "packageName": "@uwdata/mosaic-core",
-      "version": "0.34.2",
+      "version": "0.34.3",
       "license": "BSD-3-Clause",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -10747,7 +10747,7 @@
     },
     {
       "packageName": "@uwdata/mosaic-sql",
-      "version": "0.34.2",
+      "version": "0.34.3",
       "license": "BSD-3-Clause",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -13407,7 +13407,7 @@
     },
     {
       "packageName": "electron",
-      "version": "45.1.0",
+      "version": "45.2.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -13557,7 +13557,7 @@
     },
     {
       "packageName": "elkjs",
-      "version": "0.12.0",
+      "version": "0.12.1",
       "license": "EPL-2.0 OR GPL-3.0-or-later",
       "riskLevel": "review_required",
       "directRuntime": false,
@@ -13842,7 +13842,7 @@
     },
     {
       "packageName": "eslint",
-      "version": "10.13.0",
+      "version": "10.14.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -14725,7 +14725,7 @@
     },
     {
       "packageName": "framer-motion",
-      "version": "14.7.1",
+      "version": "14.9.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -17457,7 +17457,7 @@
     },
     {
       "packageName": "knip",
-      "version": "6.43.0",
+      "version": "6.44.0",
       "license": "ISC",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -17849,7 +17849,7 @@
     },
     {
       "packageName": "lucide-react",
-      "version": "1.62.0",
+      "version": "1.65.0",
       "license": "ISC",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -18241,7 +18241,7 @@
     },
     {
       "packageName": "motion-dom",
-      "version": "14.7.1",
+      "version": "14.9.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -18785,7 +18785,7 @@
     },
     {
       "packageName": "officeparser",
-      "version": "8.3.0",
+      "version": "8.4.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -19465,7 +19465,7 @@
     },
     {
       "packageName": "postal-mime",
-      "version": "4.1.4",
+      "version": "4.2.0",
       "license": "MIT-0",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -20332,7 +20332,7 @@
     },
     {
       "packageName": "react-window",
-      "version": "2.5.1",
+      "version": "2.5.2",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -20383,7 +20383,7 @@
     },
     {
       "packageName": "rechoir",
-      "version": "0.8.0",
+      "version": "1.0.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -22874,7 +22874,7 @@
     },
     {
       "packageName": "webpack-cli",
-      "version": "7.2.3",
+      "version": "7.3.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
