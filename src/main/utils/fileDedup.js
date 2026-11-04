@@ -21,6 +21,8 @@ const DEFAULTS = {
  * @param {Object} [options]
  * @param {{ get: Function, set: Function }} [options.cache] - HashCache-compatible adapter
  * @param {{ size: number, mtimeMs: number }} [options.stat] - Pre-read stat info (avoids extra fs.stat)
+ * @param {boolean} [options.fresh] - Read the file even on a cache hit; the cache is
+ *   still refreshed with the result. Used to confirm a match before acting on it.
  * @returns {Promise<string>}
  */
 async function computeFileChecksum(filePath, options = {}) {
@@ -36,7 +38,7 @@ async function computeFileChecksum(filePath, options = {}) {
         statInfo = null;
       }
     }
-    if (statInfo) {
+    if (statInfo && !options.fresh) {
       const cached = await cache.get(filePath, statInfo);
       if (cached) return cached;
     }
@@ -133,10 +135,29 @@ function isSameFileByStat(a, b) {
   return Boolean(a && b && a.ino && b.ino && a.ino === b.ino && a.dev === b.dev);
 }
 
-function statForChecksum(/** @type {any} */ st) {
-  if (!st || typeof st.size !== 'number') return undefined;
+/**
+ * @param {any} st
+ * @param {any} [cache]
+ */
+function statForChecksum(st, cache) {
+  if (!st || typeof st.size !== 'number') return cache ? { cache } : undefined;
   const mtimeMs = Number.isFinite(st.mtimeMs) ? st.mtimeMs : 0;
-  return { stat: { size: st.size, mtimeMs } };
+  return cache ? { stat: { size: st.size, mtimeMs }, cache } : { stat: { size: st.size, mtimeMs } };
+}
+
+/**
+ * The persistent hash cache (userData/hash-cache.json), keyed by path, size
+ * and mtime. Dedup reads through it so an organize does not re-read every
+ * same-size file in the destination on every move. Null when it cannot load
+ * (no Electron app), which falls back to plain hashing.
+ * @returns {any}
+ */
+function resolveHashCache() {
+  try {
+    return require('./hashCache').getHashCache();
+  } catch {
+    return null;
+  }
 }
 
 function isFileStat(/** @type {any} */ stat) {
@@ -172,7 +193,8 @@ async function findDuplicateInDirectory({
   maxCandidates = DEFAULTS.maxCandidates,
   maxDirEntries = DEFAULTS.maxDirEntries,
   logger,
-  returnSourceHash = false
+  returnSourceHash = false,
+  hashCache = resolveHashCache()
 }) {
   if (!sourcePath || !destinationDir) return null;
   const sourceStat = await statSafe(sourcePath);
@@ -216,7 +238,7 @@ async function findDuplicateInDirectory({
 
   let sourceHash;
   try {
-    sourceHash = await checksumFn(sourcePath, statForChecksum(sourceStat));
+    sourceHash = await checksumFn(sourcePath, statForChecksum(sourceStat, hashCache));
   } catch (error) {
     if (logger?.debug) {
       logger.debug('[DEDUP] Failed to compute source checksum', {
@@ -229,7 +251,7 @@ async function findDuplicateInDirectory({
   for (const { path: candidatePath, stat: cstat } of candidates) {
     let candidateHash;
     try {
-      candidateHash = await checksumFn(candidatePath, statForChecksum(cstat));
+      candidateHash = await checksumFn(candidatePath, statForChecksum(cstat, hashCache));
     } catch (error) {
       if (logger?.debug) {
         logger.debug('[DEDUP] Failed to compute candidate checksum', {
@@ -266,7 +288,8 @@ async function findDuplicateForDestination({
   logger,
   maxCandidates,
   maxDirEntries,
-  returnSourceHash = false
+  returnSourceHash = false,
+  hashCache = resolveHashCache()
 }) {
   if (!sourcePath || !destinationPath) return null;
 
@@ -283,8 +306,8 @@ async function findDuplicateForDestination({
   if (isFileStat(destStat) && !isSameFileByStat(destStat, sourceStat)) {
     try {
       const [sourceHash, destHash] = await Promise.all([
-        checksumFn(sourcePath, statForChecksum(sourceStat)),
-        checksumFn(destinationPath, statForChecksum(destStat))
+        checksumFn(sourcePath, statForChecksum(sourceStat, hashCache)),
+        checksumFn(destinationPath, statForChecksum(destStat, hashCache))
       ]);
       if (sourceHash === destHash) {
         return returnSourceHash ? { path: destinationPath, sourceHash } : destinationPath;
@@ -311,7 +334,8 @@ async function findDuplicateForDestination({
     maxCandidates,
     maxDirEntries,
     logger,
-    returnSourceHash
+    returnSourceHash,
+    hashCache
   });
 }
 
@@ -324,17 +348,45 @@ async function handleDuplicateMove({
   logPrefix = '[DEDUP]',
   dedupContext = 'unknown',
   removeEmbeddings,
-  unlinkFn
+  unlinkFn,
+  hashCache = resolveHashCache()
 }) {
   const duplicateMatch = await findDuplicateForDestination({
     sourcePath,
     destinationPath,
     checksumFn,
     logger,
-    returnSourceHash: true
+    returnSourceHash: true,
+    hashCache
   });
   const duplicatePath = duplicateMatch?.path;
   if (!duplicatePath) return null;
+
+  // The match may have come from cached hashes. The source is about to be
+  // removed, so both files are read again before acting: a stale cache entry
+  // (content changed, mtime restored) must never cost the user a file.
+  if (hashCache) {
+    try {
+      const [sourceNow, duplicateNow] = await Promise.all([
+        checksumFn(sourcePath, { fresh: true, cache: hashCache }),
+        checksumFn(duplicatePath, { fresh: true, cache: hashCache })
+      ]);
+      if (sourceNow !== duplicateNow) {
+        logger?.warn?.('[DEDUP] Cached hashes matched but the files differ; moving instead', {
+          source: sourcePath,
+          destination: duplicatePath
+        });
+        return null;
+      }
+    } catch (error) {
+      logger?.debug?.('[DEDUP] Could not re-read the match; moving instead', {
+        source: sourcePath,
+        destination: duplicatePath,
+        error: /** @type {any} */ (error)?.message
+      });
+      return null;
+    }
+  }
 
   const sourceHash = duplicateMatch?.sourceHash;
   logger?.info?.(`${logPrefix} Skipping move - duplicate already exists`, {

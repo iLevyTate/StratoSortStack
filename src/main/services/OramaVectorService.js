@@ -2862,6 +2862,32 @@ class OramaVectorService extends EventEmitter {
   }
 
   /**
+   * Content fingerprint (SHA-256) for a file row. A caller-supplied
+   * meta.fileHash wins; otherwise the file is hashed through the persistent
+   * hash cache, so an unchanged file (same path, size and mtime) is not read
+   * again. Storing it on every row is what lets exact-duplicate grouping and
+   * triage's findByHash work without the manual Reindex File Hashes action.
+   * Returns '' when the file cannot be read (moved, deleted, no path).
+   *
+   * @private
+   * @param {any} file
+   * @returns {Promise<string>}
+   */
+  async _resolveFileHash(file) {
+    const supplied = file?.meta?.fileHash;
+    if (typeof supplied === 'string' && supplied) return supplied;
+    const filePath = file?.meta?.path || file?.meta?.filePath;
+    if (typeof filePath !== 'string' || !filePath) return '';
+    try {
+      const { computeFileChecksum } = require('../utils/fileDedup');
+      const { getHashCache } = require('../utils/hashCache');
+      return await computeFileChecksum(filePath, { cache: getHashCache() });
+    } catch {
+      return '';
+    }
+  }
+
+  /**
    * Update the stored fileHash for an existing file record without re-embedding.
    * Used by the opportunistic hash backfill (Reindex File Hashes settings action).
    *
@@ -2961,13 +2987,17 @@ class OramaVectorService extends EventEmitter {
       isOrphaned: false,
       orphanedAt: '',
       extractionMethod: file.meta?.extractionMethod || '',
-      fileHash: typeof file.meta?.fileHash === 'string' ? file.meta.fileHash : ''
+      fileHash: await this._resolveFileHash(file)
     };
 
     try {
       // Try to get existing document
       const existing = await getByID(this._databases.files, file.id);
       if (existing) {
+        // A file that cannot be read right now keeps the fingerprint it had.
+        if (!doc.fileHash && typeof existing.fileHash === 'string') {
+          doc.fileHash = existing.fileHash;
+        }
         await update(this._databases.files, file.id, doc);
       } else {
         await insert(this._databases.files, doc);
