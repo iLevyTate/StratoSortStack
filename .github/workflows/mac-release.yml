@@ -119,7 +119,7 @@ jobs:
         run: |
           node -e "const tag=process.env.RELEASE_TAG; if (!tag) { throw new Error('RELEASE_TAG env var not set; cannot verify package.json'); } const pkg=require('./package.json'); const expected=String(tag).replace(/^v/, ''); if (pkg.version !== expected) { throw new Error('package.json version ' + pkg.version + ' does not match release tag ' + tag); }"
 
-      - name: Use Node.js 20.x
+      - name: Use Node.js from .nvmrc
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: '.nvmrc'
@@ -419,7 +419,7 @@ jobs:
         run: |
           node -e "const tag=process.env.RELEASE_TAG; if (!tag) { throw new Error('RELEASE_TAG env var not set; cannot verify package.json'); } const pkg=require('./package.json'); const expected=String(tag).replace(/^v/, ''); if (pkg.version !== expected) { throw new Error('package.json version ' + pkg.version + ' does not match release tag ' + tag); }"
 
-      - name: Use Node.js 20.x
+      - name: Use Node.js from .nvmrc
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: '.nvmrc'

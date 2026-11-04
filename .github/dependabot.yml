@@ -19,10 +19,11 @@ updates:
       - dependency-name: '@napi-rs/canvas'
         versions: ['1.0.12', '1.0.13']
 
-      # @types/node must track the runtime major (Node 20.19, see .nvmrc and
-      # package.json#engines). Allow minor/patch bumps within 20.x; refuse
-      # cross-major jumps (e.g. 25.x) which would expose Node-25-only APIs to
-      # TypeScript even though the runtime is still 20.x. Re-evaluate this
+      # @types/node must track the runtime major (Node 24, see .nvmrc and
+      # package.json#engines; .nvmrc pins the Node inside Electron 45.2).
+      # Allow minor/patch bumps within 24.x; refuse cross-major jumps (e.g.
+      # 25.x) which would expose Node-25-only APIs to TypeScript even though
+      # the runtime is still 24.x. Re-evaluate this
       # ignore rule whenever .nvmrc moves to a new major.
       - dependency-name: '@types/node'
         update-types:
@@ -50,8 +51,8 @@ updates:
       #   - better-sqlite3 12 -> 13: 12.x no longer compiles against
       #     electron 45's V8 (GetPrototypeV2). 13.x is node-addon-api and
       #     loads its bundled prebuilds, so it is no longer rebuilt (see
-      #     scripts/native-modules.js). It needs Node >= 22, which only the
-      #     electron runtime has to satisfy; Jest mocks it on host Node 20.
+      #     scripts/native-modules.js). It needs Node >= 22; both the electron
+      #     runtime and the host toolchain (Node 24) satisfy it.
       #   - babel targets in webpack.config.js / webpack.main.config.js.
       #
       # Verification recipe for the next major (in a separate worktree: a
@@ -104,31 +105,12 @@ updates:
         update-types:
           - 'version-update:semver-major'
 
-      # ─── Node >= 22 majors: hold until the runtime moves ─────────────────
-      # This repo runs Node 20.19 (.nvmrc, package.json#engines). Each of
-      # these majors declares engines.node >= 22:
-      #   better-sqlite3 13.x  — also one of the two modules on the Electron
-      #                          native-rebuild chain (scripts/native-modules.js)
-      #   @testing-library/jest-dom 7.x — under Node 20 it also breaks
-      #                          per-file `jest.mock('fs', …)` factories
-      #                          (43 suites / 539 tests failed on 7.0.1)
-      #   cssnano 8.x          — build-time only, but same engine floor
-      #                          (^22.11). 8.0.4+ of postcss-merge-longhand
-      #                          calls Set.prototype.difference, so under
-      #                          Node 20 cssnano fails to load, Tailwind is
-      #                          never compiled and the renderer build dies
-      #                          on a duplicate styles.css. Held at 7.x.
-      # Lift all three together with the Node major bump, re-running
-      # `npm run ci` and the electron verification recipe above.
-      - dependency-name: 'better-sqlite3'
-        update-types:
-          - 'version-update:semver-major'
-      - dependency-name: '@testing-library/jest-dom'
-        update-types:
-          - 'version-update:semver-major'
-      - dependency-name: 'cssnano'
-        update-types:
-          - 'version-update:semver-major'
+      # ─── Node >= 22 majors: holds lifted 2026-11-04 ──────────────────────
+      # better-sqlite3, @testing-library/jest-dom and cssnano majors were held
+      # while the host toolchain was Node 20.19 (jest-dom 7 broke 43 suites;
+      # cssnano 8 calls Set.prototype.difference). The toolchain is Node 24
+      # now, so their majors arrive as ordinary Dependabot PRs again; each
+      # still has to pass `npm run ci` on its own.
   - package-ecosystem: github-actions
     directory: '/'
     schedule:

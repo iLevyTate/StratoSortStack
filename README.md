@@ -138,7 +138,7 @@ The same docs are published at [stratosort.com/docs](https://stratosort.com/docs
 
 ## Build from source
 
-Requires Node.js 20.19 or later (see `.nvmrc`).
+Requires Node.js 24.11 or later (see `.nvmrc`, which pins the Node that Electron 45 ships).
 
 ```bash
 git clone https://github.com/iLevyTate/StratoSortStack.git
