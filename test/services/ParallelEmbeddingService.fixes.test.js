@@ -145,6 +145,25 @@ describe('ParallelEmbeddingService Fixes', () => {
     expect(LlamaService.getInstance().generateEmbedding).toHaveBeenCalledTimes(2);
   });
 
+  test('should recover when the runtime reports usable context size', async () => {
+    const LlamaService = require('../../src/main/services/LlamaService');
+    LlamaService.getInstance().generateEmbedding.mockImplementation(async (input) => {
+      if ((input || '').length > 1200) {
+        throw new Error(
+          'Input is longer than the usable context size. Try to increase the context size or use another model that supports longer contexts.'
+        );
+      }
+      return { embedding: [0.11, 0.22], model: 'test-model' };
+    });
+
+    const longDenseText = 'x'.repeat(2400);
+    const result = await service.embedText(longDenseText);
+
+    expect(result.success).toBe(true);
+    expect(result.vector).toEqual([0.11, 0.22]);
+    expect(LlamaService.getInstance().generateEmbedding).toHaveBeenCalledTimes(2);
+  });
+
   test('should cap concurrency to embedding worker thread count', async () => {
     const workerPools = require('../../src/main/utils/workerPools');
     workerPools.getEmbeddingPool.mockReturnValue({

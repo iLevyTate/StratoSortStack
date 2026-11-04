@@ -38,7 +38,7 @@ const DEFAULT_AI_STATE = {
   }
 };
 
-// "document analysis and chat" / "document analysis, chat and organization suggestions"
+// "analysis and reanalysis and chat" / "analysis and reanalysis, chat and organization suggestions"
 function formatList(items) {
   if (items.length <= 1) return items.join('');
   return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;

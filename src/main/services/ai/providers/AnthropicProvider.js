@@ -6,9 +6,10 @@ const {
   redactSensitive,
   DEFAULT_REQUEST_TIMEOUT_MS
 } = require('./_providerHelpers');
+const { anthropicUserContent } = require('./visionContent');
 
 const ENDPOINT = 'https://api.anthropic.com/v1/messages';
-const DEFAULT_MODEL = 'claude-opus-4-7';
+const DEFAULT_MODEL = 'claude-opus-5-5';
 const DEFAULT_MAX_TOKENS = 4096;
 const ANTHROPIC_VERSION = '2023-06-01';
 // Abort an in-flight stream if no chunk arrives within this window. Without
@@ -126,7 +127,7 @@ class AnthropicProvider {
    * @param {{
    *   prompt?: string,
    *   systemPrompt?: string,
-   *   options?: { maxTokens?: number },
+   *   options?: { maxTokens?: number, images?: Array<{ mediaType: string, data: string }> },
    *   signal?: AbortSignal,
    *   onToken?: (t: string) => void,
    *   stream?: boolean
@@ -151,7 +152,7 @@ class AnthropicProvider {
     const body = {
       model: this._model,
       max_tokens: options.maxTokens || DEFAULT_MAX_TOKENS,
-      messages: [{ role: 'user', content: String(prompt ?? '') }],
+      messages: [{ role: 'user', content: anthropicUserContent(prompt, options.images) }],
       stream: !!stream
     };
     if (systemPrompt) body.system = systemPrompt;

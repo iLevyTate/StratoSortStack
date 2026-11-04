@@ -9,6 +9,7 @@ import { createLogger } from '../../../shared/logger';
 import { embeddingsIpc, getElectronAPI, llamaIpc, systemIpc } from '../../services/ipc';
 
 const logger = createLogger('DiagnosticsSnapshot');
+const LIVE_REFRESH_MS = 15000;
 
 const UNAVAILABLE_MARKER = '__diagnostics_unavailable__';
 // The preload serializes llama:test-connection; a probe already in flight
@@ -163,7 +164,7 @@ function DiagnosticsSnapshotSection({ addNotification }) {
     };
   }, []);
 
-  const fetchAll = React.useCallback(async ({ silent = false } = {}) => {
+  const fetchAll = React.useCallback(async ({ silent = false, probeLlama = true } = {}) => {
     if (!silent) setLoading(true);
     setRefreshing(true);
     try {
@@ -174,15 +175,17 @@ function DiagnosticsSnapshotSection({ addNotification }) {
           if (!getLlamaApi()) return UNAVAILABLE_MARKER;
           return llamaIpc.getConfig();
         }),
-        safeFetch('llama health', async () => {
-          if (!getLlamaApi()) return UNAVAILABLE_MARKER;
-          try {
-            return await llamaIpc.testConnection();
-          } catch (error) {
-            if (isTestConnectionInFlight(error)) return IN_FLIGHT_MARKER;
-            throw error;
-          }
-        }),
+        probeLlama
+          ? safeFetch('llama health', async () => {
+              if (!getLlamaApi()) return UNAVAILABLE_MARKER;
+              try {
+                return await llamaIpc.testConnection();
+              } catch (error) {
+                if (isTestConnectionInFlight(error)) return IN_FLIGHT_MARKER;
+                throw error;
+              }
+            })
+          : Promise.resolve({ ok: true, value: IN_FLIGHT_MARKER }),
         safeFetch('vector db stats', async () => {
           const api = getVectorDbApi();
           if (api) return api.getStats();
@@ -240,8 +243,19 @@ function DiagnosticsSnapshotSection({ addNotification }) {
     fetchAll();
   }, [fetchAll]);
 
+  // The section unmounts when Diagnostics is collapsed, so this only runs
+  // while the panel is open. The timer skips the Llama probe: that call
+  // initializes the engine and would fight a live analysis.
+  React.useEffect(() => {
+    const id = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      fetchAll({ silent: true, probeLlama: false });
+    }, LIVE_REFRESH_MS);
+    return () => clearInterval(id);
+  }, [fetchAll]);
+
   const handleRefresh = React.useCallback(() => {
-    fetchAll({ silent: true });
+    fetchAll({ silent: true, probeLlama: true });
   }, [fetchAll]);
 
   const handleCopy = React.useCallback(async () => {
@@ -307,7 +321,7 @@ function DiagnosticsSnapshotSection({ addNotification }) {
   return (
     <SettingsCard
       title="System diagnostics snapshot"
-      description="Read-only snapshot of app metrics, AI health, vector store, and effective feature flags. Use Copy to paste into a support ticket."
+      description="Live while this section is open. Counts refresh every 15 seconds. Refresh also rechecks the local model. Copy pastes the snapshot into a support ticket."
       headerAction={headerAction}
     >
       {loading ? (

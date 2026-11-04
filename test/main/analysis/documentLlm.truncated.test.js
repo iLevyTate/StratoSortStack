@@ -63,13 +63,11 @@ describe('documentLlm cloud OUTPUT_TRUNCATED handling', () => {
     mockLlamaService.listModels.mockResolvedValue([{ name: 'test-model.gguf' }]);
   });
 
-  test('salvages partialText through the JSON repair path instead of failing the file', async () => {
-    // Unterminated JSON — exactly what a max_tokens stop leaves behind.
-    mockAnalyze.mockRejectedValueOnce(
-      truncatedError(
-        '{"category":"Financial","keywords":["invoice","q1"],"confidence":0.9,"suggestedName":"invoice_q1","purpose":"Billing summ'
-      )
-    );
+  test('retries a truncated cloud reply once, then salvages if the retry is also cut off', async () => {
+    const partial =
+      '{"category":"Financial","keywords":["invoice","q1"],"confidence":0.9,"suggestedName":"invoice_q1","purpose":"Billing summ';
+    mockAnalyze.mockRejectedValueOnce(truncatedError(partial));
+    mockAnalyze.mockRejectedValueOnce(truncatedError(partial));
 
     const result = await analyzeTextWithLlama(
       'Invoice for Q1 services rendered (truncated-salvage case)',
@@ -80,6 +78,10 @@ describe('documentLlm cloud OUTPUT_TRUNCATED handling', () => {
     expect(result.error).toBeUndefined();
     expect(result.category).toBe('Financial');
     expect(result.keywords).toEqual(expect.arrayContaining(['invoice']));
+    expect(mockAnalyze).toHaveBeenCalledTimes(2);
+    expect(mockAnalyze.mock.calls[1][1].maxTokens).toBeGreaterThan(
+      mockAnalyze.mock.calls[0][1].maxTokens
+    );
     expect(mockLlamaService.generateText).not.toHaveBeenCalled();
   });
 

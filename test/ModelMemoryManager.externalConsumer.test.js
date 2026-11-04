@@ -270,6 +270,7 @@ describe('ModelMemoryManager — canFitExternalLoad (vision runtime budget, ML-0
     manager.registerExternalConsumer({ type: 'vision-runtime', sizeBytes: 5 * GiB, dispose });
     manager.acquireRef('vision-runtime');
     manager._modelSizeEstimates.embedding = 1 * GiB;
+    manager._pinnedResidentWaitMs = 0;
 
     await expect(manager.ensureModelLoaded('embedding')).rejects.toMatchObject({
       code: 'MODEL_MEMORY_BUDGET_EXCEEDED'
@@ -278,6 +279,29 @@ describe('ModelMemoryManager — canFitExternalLoad (vision runtime budget, ML-0
     expect(dispose).not.toHaveBeenCalled();
     expect(llamaService._loadModel).not.toHaveBeenCalled();
   }, 20000);
+
+  test('loads once a pinned resident releases during the wait', async () => {
+    const llamaService = makeLlamaShim();
+    const manager = new ModelMemoryManager(llamaService);
+    manager._maxMemoryUsage = 5 * 1024 * 1024 * 1024;
+    manager._pinnedResidentWaitMs = 500;
+    manager._pinnedResidentPollMs = 20;
+    jest.spyOn(manager, '_refreshMemoryBudget').mockImplementation(() => {});
+    manager._loadedModels.set('text', {
+      context: {},
+      lastUsed: 1,
+      sizeBytes: 4 * 1024 * 1024 * 1024
+    });
+    manager._currentMemoryUsage = 4 * 1024 * 1024 * 1024;
+    manager.acquireRef('text');
+    manager._modelSizeEstimates.embedding = 1024 * 1024 * 1024;
+    setTimeout(() => manager.releaseRef('text'), 40);
+
+    await manager.ensureModelLoaded('embedding');
+
+    expect(llamaService._loadModel).toHaveBeenCalledWith('embedding', expect.objectContaining({}));
+    expect(manager._loadedModels.has('text')).toBe(false);
+  });
 });
 
 describe('ModelMemoryManager — recorded size follows the refined estimate (ML-03)', () => {

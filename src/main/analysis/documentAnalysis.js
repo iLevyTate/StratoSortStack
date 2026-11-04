@@ -18,6 +18,7 @@ const {
 const { TRUNCATION, TIMEOUTS } = require('../../shared/performanceConstants');
 const { withTimeout, delay } = require('../../shared/promiseUtils');
 const { createLogger } = require('../../shared/logger');
+const { isMemoryBudgetExceeded } = require('../../shared/analysisProvenance');
 const { getTextModel, getLlamaService } = require('../llamaUtils');
 const { AppConfig } = require('./documentLlm');
 
@@ -1011,6 +1012,17 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
         return normalized;
       }
 
+      if (isMemoryBudgetExceeded(analysis?.error || analysis)) {
+        // The text model never ran. A confidence-60 "document" stub would be
+        // stored as the analysis and skipped by the embedding gate, so the
+        // file would never be read. Leave it unanalyzed for the caller to retry.
+        const budgetError = /** @type {Error & { code?: string }} */ (
+          new Error(String(analysis?.error || 'memory budget exceeded'))
+        );
+        budgetError.code = 'MODEL_MEMORY_BUDGET_EXCEEDED';
+        throw budgetError;
+      }
+
       logger.warn(`[AI-ANALYSIS-FAILED] Content extracted but AI analysis failed`, { fileName });
       return normalizeAnalysisResult(
         {
@@ -1082,7 +1094,8 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
       error instanceof ReferenceError ||
       error instanceof SyntaxError ||
       error instanceof RangeError ||
-      isCancellationError(error)
+      isCancellationError(error) ||
+      isMemoryBudgetExceeded(error)
     ) {
       throw error;
     }

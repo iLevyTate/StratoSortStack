@@ -125,7 +125,7 @@ describe('AIProviderBadge', () => {
     const badge = screen.getByRole('status');
     const label = badge.getAttribute('aria-label');
     expect(label).toMatch(/chat on Anthropic Claude/);
-    expect(label).toMatch(/document analysis on Local Llama/);
+    expect(label).toMatch(/analysis and reanalysis on Local Llama/);
     expect(label).toMatch(/organization suggestions on Local Llama/);
   });
 

@@ -10,7 +10,7 @@ const { generateSuggestedNameFromAnalysis } = require('../services/autoOrganize/
 const { normalizeNamingConventionState } = require('../../shared/namingConventions');
 const { safeFilePath } = require('../utils/safeAccess');
 const { validateFileOperationPath } = require('../../shared/pathSanitization');
-const { isFallbackAnalysis } = require('../../shared/analysisProvenance');
+const { isFallbackAnalysis, isMemoryBudgetExceeded } = require('../../shared/analysisProvenance');
 const { mapFoldersToCategories, getFolderNamesString } = require('../../shared/folderUtils');
 const { recognizeIfAvailable } = require('../utils/tesseractUtils');
 const {
@@ -24,6 +24,15 @@ const BatchAnalysisService = require('../services/BatchAnalysisService');
 const { sendOperationProgress, sendFileComplete } = require('./files/batchProgressReporter');
 const { createMediaAnalyzerAdapter } = require('../services/mediaAnalyzerAdapter');
 const { getInstance: getWhisperService } = require('../services/WhisperService');
+
+function shouldPropagateAnalysisError(/** @type {any} */ error) {
+  return (
+    error?.code === 'OPERATION_CANCELLED' ||
+    error?.code === 'ABORT_ERR' ||
+    error?.name === 'AbortError' ||
+    isMemoryBudgetExceeded(error)
+  );
+}
 
 function safeGetWhisperService() {
   try {
@@ -507,11 +516,7 @@ function registerAnalysisIpc(servicesOrParams) {
     } catch (error) {
       // Cancellation must propagate, not degrade into a persisted fallback
       // analysis the user never asked for.
-      if (
-        error?.code === 'OPERATION_CANCELLED' ||
-        error?.code === 'ABORT_ERR' ||
-        error?.name === 'AbortError'
-      ) {
+      if (shouldPropagateAnalysisError(error)) {
         throw error;
       }
       const errorContext = buildErrorContext({
@@ -631,11 +636,7 @@ function registerAnalysisIpc(servicesOrParams) {
     } catch (error) {
       // Cancellation must propagate, not degrade into a persisted fallback
       // analysis the user never asked for.
-      if (
-        error?.code === 'OPERATION_CANCELLED' ||
-        error?.code === 'ABORT_ERR' ||
-        error?.name === 'AbortError'
-      ) {
+      if (shouldPropagateAnalysisError(error)) {
         throw error;
       }
       const errorContext = buildErrorContext({
@@ -761,11 +762,7 @@ function registerAnalysisIpc(servicesOrParams) {
     } catch (error) {
       // Cancellation must propagate, not degrade into a persisted fallback
       // analysis the user never asked for.
-      if (
-        error?.code === 'OPERATION_CANCELLED' ||
-        error?.code === 'ABORT_ERR' ||
-        error?.name === 'AbortError'
-      ) {
+      if (shouldPropagateAnalysisError(error)) {
         throw error;
       }
       const errorContext = buildErrorContext({

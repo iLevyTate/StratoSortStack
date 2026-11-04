@@ -151,4 +151,156 @@ describe('repairKnowledge', () => {
       repairKnowledge({ entries: { a: entry('/x') }, ...deps, vectorDb: null })
     ).resolves.toEqual(expect.objectContaining({ checked: 0 }));
   });
+
+  test('fills empty passages from stored text and leaves the file vector in place', async () => {
+    const deps = makeDeps({
+      docs: { 'file:/docs/a.pdf': { id: 'file:/docs/a.pdf', hasVector: true } },
+      existing: new Set(['/docs/a.pdf'])
+    });
+    deps.vectorDb.hasUsableVector = jest.fn(async () => true);
+    deps.vectorDb.describeFileChunks = jest.fn(async () => ({
+      count: 4,
+      placeholderCount: 4,
+      missingVectorCount: 0
+    }));
+    const repairPassages = jest.fn(async () => ({ action: 'repaired' }));
+    const result = await repairKnowledge({
+      entries: {
+        e1: entry('/docs/a.pdf', { analysis: { summary: 's', extractedText: 'x'.repeat(200) } })
+      },
+      ...deps,
+      repairPassages
+    });
+
+    expect(deps.embedEntry).not.toHaveBeenCalled();
+    expect(repairPassages).toHaveBeenCalledTimes(1);
+    expect(result).toEqual(expect.objectContaining({ passages: 1, healthy: 0, embedded: 0 }));
+  });
+
+  test('builds passages that were never created', async () => {
+    const deps = makeDeps({
+      docs: { 'file:/docs/a.pdf': { id: 'file:/docs/a.pdf', hasVector: true } },
+      existing: new Set(['/docs/a.pdf'])
+    });
+    deps.vectorDb.hasUsableVector = jest.fn(async () => true);
+    deps.vectorDb.describeFileChunks = jest.fn(async () => ({
+      count: 0,
+      placeholderCount: 0,
+      missingVectorCount: 0
+    }));
+    const repairPassages = jest.fn(async () => ({ action: 'repaired' }));
+    const result = await repairKnowledge({
+      entries: {
+        e1: entry('/docs/a.pdf', { analysis: { summary: 's', extractedText: 'y'.repeat(240) } })
+      },
+      ...deps,
+      repairPassages
+    });
+
+    expect(result.passages).toBe(1);
+    expect(deps.embedEntry).not.toHaveBeenCalled();
+  });
+
+  test('leaves a file alone when its passages already hold real vectors', async () => {
+    const deps = makeDeps({
+      docs: { 'file:/docs/a.pdf': { id: 'file:/docs/a.pdf', hasVector: true } },
+      existing: new Set(['/docs/a.pdf'])
+    });
+    deps.vectorDb.hasUsableVector = jest.fn(async () => true);
+    deps.vectorDb.describeFileChunks = jest.fn(async () => ({
+      count: 3,
+      placeholderCount: 0,
+      missingVectorCount: 0
+    }));
+    const repairPassages = jest.fn(async () => ({ action: 'repaired' }));
+    const result = await repairKnowledge({
+      entries: {
+        e1: entry('/docs/a.pdf', { analysis: { summary: 's', extractedText: 'z'.repeat(240) } })
+      },
+      ...deps,
+      repairPassages
+    });
+
+    expect(repairPassages).not.toHaveBeenCalled();
+    expect(deps.embedEntry).not.toHaveBeenCalled();
+    expect(result.healthy).toBe(1);
+  });
+
+  test('does not invent passages for short text or when passage repair is off', async () => {
+    const deps = makeDeps({
+      docs: {
+        'file:/docs/a.pdf': { id: 'file:/docs/a.pdf', hasVector: true },
+        'file:/docs/b.pdf': { id: 'file:/docs/b.pdf', hasVector: true }
+      },
+      existing: new Set(['/docs/a.pdf', '/docs/b.pdf'])
+    });
+    deps.vectorDb.describeFileChunks = jest.fn(async () => ({
+      count: 0,
+      placeholderCount: 0,
+      missingVectorCount: 0
+    }));
+    const repairPassages = jest.fn(async () => ({ action: 'repaired' }));
+
+    const short = await repairKnowledge({
+      entries: { short: entry('/docs/a.pdf', { analysis: { extractedText: 'too short' } }) },
+      ...deps,
+      repairPassages
+    });
+    expect(deps.vectorDb.describeFileChunks).not.toHaveBeenCalled();
+    expect(short.healthy).toBe(1);
+
+    await repairKnowledge({
+      entries: { off: entry('/docs/b.pdf', { analysis: { extractedText: 'q'.repeat(400) } }) },
+      ...deps,
+      repairPassages,
+      checkPassages: false
+    });
+    expect(repairPassages).not.toHaveBeenCalled();
+  });
+
+  test('re-embeds a file whose stored vector is only zeros', async () => {
+    const deps = makeDeps({
+      docs: { 'file:/docs/a.pdf': { id: 'file:/docs/a.pdf', hasVector: true } },
+      existing: new Set(['/docs/a.pdf'])
+    });
+    deps.vectorDb.hasUsableVector = jest.fn(async () => false);
+    const result = await repairKnowledge({
+      entries: { e1: entry('/docs/a.pdf') },
+      ...deps
+    });
+
+    expect(deps.embedEntry).toHaveBeenCalledTimes(1);
+    expect(result.embedded).toBe(1);
+    expect(result.healthy).toBe(0);
+  });
+
+  test('defers passage repair once the launch cap is spent', async () => {
+    const deps = makeDeps({
+      docs: {
+        'file:/docs/a.pdf': { hasVector: true },
+        'file:/docs/b.pdf': { hasVector: true }
+      },
+      existing: new Set(['/docs/a.pdf', '/docs/b.pdf'])
+    });
+    deps.vectorDb.hasUsableVector = jest.fn(async () => true);
+    deps.vectorDb.describeFileChunks = jest.fn(async () => ({
+      count: 2,
+      placeholderCount: 2,
+      missingVectorCount: 0
+    }));
+    const repairPassages = jest.fn(async () => ({ action: 'repaired' }));
+    const result = await repairKnowledge({
+      entries: {
+        a: entry('/docs/a.pdf', { analysis: { extractedText: 'a'.repeat(220) } }),
+        b: entry('/docs/b.pdf', { analysis: { extractedText: 'b'.repeat(220) } })
+      },
+      ...deps,
+      repairPassages,
+      maxEmbeds: 1
+    });
+
+    expect(repairPassages).toHaveBeenCalledTimes(1);
+    expect(result.passages).toBe(1);
+    expect(result.deferred).toBe(1);
+  });
 });

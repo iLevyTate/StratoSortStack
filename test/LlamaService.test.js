@@ -649,6 +649,27 @@ describe('LlamaService', () => {
   });
 
   describe('enterVisionBatchMode', () => {
+    test('waits for an in-flight text load before starting a vision batch', async () => {
+      const service = new LlamaService();
+      const unloadModel = jest.fn().mockResolvedValue(true);
+      service._modelMemoryManager = {
+        unloadModel,
+        registerExternalConsumer: jest.fn(),
+        unregisterExternalConsumer: jest.fn()
+      };
+      service._bgWork = { track: jest.fn() };
+      service._textLoadDepth = 1;
+      service._lanePollMs = 10;
+      setTimeout(() => {
+        service._textLoadDepth = 0;
+      }, 40);
+
+      await service.enterVisionBatchMode();
+
+      expect(unloadModel).toHaveBeenCalledWith('text');
+      expect(service._visionBatchMode).toBe(true);
+    });
+
     test('evicts audio (whisper) in addition to text and embedding', async () => {
       const service = new LlamaService();
       const unloadModel = jest.fn().mockResolvedValue(true);

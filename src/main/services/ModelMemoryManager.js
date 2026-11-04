@@ -47,6 +47,11 @@ class ModelMemoryManager {
     this._gpuInfo = options.gpuInfo || null;
     this._maxMemoryUsage = this._calculateMaxMemory();
     this._currentMemoryUsage = 0;
+    // A pinned text or vision model can stay busy for a whole inference.
+    // Queue the next load behind it instead of refusing after a few seconds
+    // and turning the file into a stored fallback.
+    this._pinnedResidentWaitMs = 3 * 60 * 1000;
+    this._pinnedResidentPollMs = 2000;
 
     // Default model size estimates (in bytes) used when actual file size is unknown.
     // These are conservative upper-bound estimates including KV cache and runtime overhead.
@@ -322,14 +327,18 @@ class ModelMemoryManager {
     }
 
     // Budget still exceeded after evicting everything evictable — the
-    // remaining residents are pinned by in-flight inference. Wait briefly
-    // for those refs to drain and retry eviction so concurrent bursts
-    // (vision + whisper + batch analysis) queue instead of stacking loads.
-    if (!this.canLoadModel(modelType) && this._loadedModels.size > 0) {
-      const MAX_WAIT_ROUNDS = 5;
-      const WAIT_MS = 2000;
-      for (let round = 0; round < MAX_WAIT_ROUNDS && !this.canLoadModel(modelType); round += 1) {
-        await delay(WAIT_MS);
+    // remaining residents are pinned by in-flight inference. Wait for those
+    // refs to drain and retry eviction so a document queued behind a vision
+    // batch (or an embedding queued behind a text inference) runs once the
+    // resident releases, instead of stacking a second multi-GB model.
+    if (
+      !this.canLoadModel(modelType) &&
+      this._loadedModels.size > 0 &&
+      this._pinnedResidentWaitMs > 0
+    ) {
+      const deadline = Date.now() + this._pinnedResidentWaitMs;
+      while (!this.canLoadModel(modelType) && Date.now() < deadline) {
+        await delay(this._pinnedResidentPollMs);
         this._refreshMemoryBudget();
         while (!this.canLoadModel(modelType) && this._loadedModels.size > 0) {
           const sizeBefore = this._loadedModels.size;

@@ -7,6 +7,7 @@ const {
   DEFAULT_REQUEST_TIMEOUT_MS
 } = require('./_providerHelpers');
 const { isAllowedProviderBaseUrl } = require('../providerBaseUrl');
+const { openAiUserContent } = require('./visionContent');
 
 const DEFAULT_MAX_TOKENS = 4096;
 // Abort an in-flight stream if no chunk arrives within this window.
@@ -138,7 +139,7 @@ class OpenAICompatibleProvider {
    * @param {{
    *   prompt?: string,
    *   systemPrompt?: string,
-   *   options?: { maxTokens?: number, jsonMode?: boolean },
+   *   options?: { maxTokens?: number, jsonMode?: boolean, images?: Array<{ mediaType: string, data: string }> },
    *   signal?: AbortSignal,
    *   onToken?: (t: string) => void,
    *   stream?: boolean
@@ -161,7 +162,7 @@ class OpenAICompatibleProvider {
 
     const messages = [];
     if (systemPrompt) messages.push({ role: 'system', content: String(systemPrompt) });
-    messages.push({ role: 'user', content: String(prompt ?? '') });
+    messages.push({ role: 'user', content: openAiUserContent(prompt, options.images) });
 
     /** @type {Record<string, any>} */
     const body = {

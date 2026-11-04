@@ -26,7 +26,11 @@ const { swallow } = require('../../../shared/promiseUtils');
  */
 
 const PRICING_PER_M_TOKENS = Object.freeze({
-  // Anthropic Claude (USD per 1M tokens)
+  // Anthropic Claude (USD per 1M tokens). Older ids stay so a saved setting
+  // still prices correctly after the picker moves to the current generation.
+  'claude-opus-5-5': { input: 4, output: 20 },
+  'claude-sonnet-5-5': { input: 2, output: 10 },
+  'claude-haiku-5-5': { input: 0.1, output: 0.5 },
   'claude-opus-4-7': { input: 15, output: 75 },
   'claude-sonnet-4-6': { input: 3, output: 15 },
   'claude-haiku-4-5': { input: 1, output: 5 },

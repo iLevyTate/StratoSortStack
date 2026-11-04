@@ -192,7 +192,7 @@ in Qwen2.5 7B and nomic-embed-text v1.5.
 Direct integration with the Anthropic Messages API via `fetch`. No SDK; we control the wire format
 end-to-end.
 
-**Required:** Anthropic API key (`sk-ant-…`). **Default model:** `claude-opus-4-7` (configurable per
+**Required:** Anthropic API key (`sk-ant-…`). **Default model:** `claude-opus-5-5` (configurable per
 provider in Settings). **Streaming:** Yes (chat responses stream tokens as they arrive). **Pricing
 model:** Per-million tokens, input + output, latest published rates.
 

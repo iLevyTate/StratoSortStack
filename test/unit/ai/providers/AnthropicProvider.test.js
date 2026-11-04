@@ -94,6 +94,33 @@ describe('AnthropicProvider', () => {
     expect(result.usage).toEqual({ input_tokens: 100, output_tokens: 20 });
   });
 
+  test('analyze() sends up to four image blocks ahead of the text', async () => {
+    const fetchFn = mockFetchOk({
+      content: [{ type: 'text', text: '{"category":"Work"}' }],
+      usage: { input_tokens: 10, output_tokens: 5 }
+    });
+    const p = new AnthropicProvider({
+      getKey: () => 'sk-ant-test',
+      model: 'claude-sonnet-5-5',
+      fetchFn
+    });
+    const images = [1, 2, 3, 4, 5].map((n) => ({
+      mediaType: 'image/jpeg',
+      data: `frame-${n}`
+    }));
+    await p.analyze('organize this video', { images });
+    const body = JSON.parse(fetchFn.mock.calls[0][1].body);
+    const content = body.messages[0].content;
+    expect(Array.isArray(content)).toBe(true);
+    expect(content.filter((block) => block.type === 'image')).toHaveLength(4);
+    expect(content[0].source).toEqual({
+      type: 'base64',
+      media_type: 'image/jpeg',
+      data: 'frame-1'
+    });
+    expect(content[4]).toEqual({ type: 'text', text: 'organize this video' });
+  });
+
   test('analyze() returns text as-is when jsonMode=false', async () => {
     const fetchFn = mockFetchOk({
       content: [{ type: 'text', text: 'just some text' }],

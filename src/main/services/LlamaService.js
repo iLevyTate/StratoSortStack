@@ -48,6 +48,12 @@ const { parsePositiveInt } = require('../../shared/numberUtils');
 
 const logger = createLogger('LlamaService');
 const NEGATIVE_VISION_SUPPORT_TTL_MS = 15_000;
+// One model family at a time. A document load waits out the current vision
+// batch, and a new vision batch waits out an in-flight text load, instead of
+// failing the document in a few seconds and storing a stub.
+const VISION_BATCH_IDLE_WAIT_MS = 10 * 60 * 1000;
+const TEXT_LANE_IDLE_WAIT_MS = 10 * 60 * 1000;
+const MODEL_LANE_POLL_MS = 250;
 
 function getSystemAnalyticsSafe() {
   try {
@@ -272,6 +278,12 @@ class LlamaService extends EventEmitter {
     this._visionBatchMode = false;
     this._visionBatchModeRefs = 0;
     this._visionBatchModeLock = Promise.resolve();
+    // Text loads in flight. Vision batch entry waits for this to hit zero
+    // so it does not unload a document that is mid-inference.
+    this._textLoadDepth = 0;
+    this._visionBatchIdleWaitMs = VISION_BATCH_IDLE_WAIT_MS;
+    this._textLaneIdleWaitMs = TEXT_LANE_IDLE_WAIT_MS;
+    this._lanePollMs = MODEL_LANE_POLL_MS;
   }
 
   _createGate() {
@@ -1480,17 +1492,32 @@ class LlamaService extends EventEmitter {
    *
    * @param {string} modelType
    * @param {any} [options]
+   * @returns {Promise<any>}
    */
-  async _ensureModelLoaded(modelType, /** @type {any} */ { selfRef = false } = {}) {
+  async _ensureModelLoaded(modelType, /** @type {any} */ options = {}) {
+    const selfRef = options.selfRef === true;
+    if (modelType === 'text' && options._textLaneHeld !== true) {
+      this._textLoadDepth += 1;
+      try {
+        return await this._ensureModelLoaded(modelType, {
+          ...options,
+          selfRef,
+          _textLaneHeld: true
+        });
+      } finally {
+        this._textLoadDepth = Math.max(0, this._textLoadDepth - 1);
+      }
+    }
+
     if (!this._initialized) await this.initialize();
 
     // VRAM contention safety net: if the vision server is still resident
     // (e.g., a keep-alive timer hasn't fired yet) and we're loading a
     // different model type, the vision process is holding ~4 GB of VRAM
     // out-of-process — ModelMemoryManager can't see or evict that. Without
-    // tearing it down we race into busy VRAM and the load fails. Skip in
-    // batch mode (which manages vision lifecycle explicitly) and when we're
-    // loading the vision model itself.
+    // tearing it down we race into busy VRAM and the load fails. A text load
+    // waits for vision batch mode to end first (the batch owns the server),
+    // then tears it down. Embedding and vision loads do not.
     //
     // We probe twice: once before the load lock (so a queued caller starts
     // shutdown early and CUDA has more time to release VRAM while we wait
@@ -1595,6 +1622,26 @@ class LlamaService extends EventEmitter {
   }
 
   /**
+   * Poll until `predicate` is true, the timeout elapses, or shutdown starts.
+   * A non-positive timeout returns the current predicate result immediately.
+   * @param {() => boolean} predicate
+   * @param {number} timeoutMs
+   * @returns {Promise<boolean>}
+   * @private
+   */
+  async _waitUntil(predicate, timeoutMs) {
+    if (predicate()) return true;
+    if (!(timeoutMs > 0)) return false;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (this._shutdownAbort?.signal?.aborted) return predicate();
+      await delay(this._lanePollMs);
+      if (predicate()) return true;
+    }
+    return predicate();
+  }
+
+  /**
    * Probe the vision service and tear it down if it's still holding VRAM
    * we're about to need for a text model load. Idempotent and safe to
    * call multiple times; `shutdown()` deduplicates via `_shutdownPromise`.
@@ -1606,12 +1653,29 @@ class LlamaService extends EventEmitter {
    * respawn). Genuine VRAM exhaustion on the embedding path is absorbed by
    * its GPU→auto→CPU load fallback tiers.
    *
+   * A text load that arrives during vision batch mode waits for the batch
+   * to finish, then tears the server down. Giving up while the batch is
+   * still running is what stored unread documents as finished analyses.
+   *
    * @param {string} modelType
    * @param {'pre-lock' | 'post-lock'} phase  for log breadcrumbs
    * @private
    */
   async _releaseVisionForLoad(modelType, phase) {
-    if (modelType === 'vision' || modelType === 'embedding' || this._visionBatchMode) return;
+    if (modelType === 'vision' || modelType === 'embedding') return;
+    if (this._visionBatchMode) {
+      // The batch owns the vision server. Waiting here (the text lane is
+      // already held) lets the batch finish and blocks a new one from
+      // starting, then the teardown below frees VRAM for the text model.
+      await this._waitUntil(() => !this._visionBatchMode, this._visionBatchIdleWaitMs);
+      if (this._visionBatchMode) {
+        logger.info(
+          '[LlamaService] Vision batch still active after wait; leaving server for the text load',
+          { modelType, phase }
+        );
+        return;
+      }
+    }
 
     let visionService;
     try {
@@ -3699,29 +3763,47 @@ class LlamaService extends EventEmitter {
    * when the batch is done.
    */
   async enterVisionBatchMode() {
-    return this._withVisionBatchModeLock(async () => {
-      this._visionBatchModeRefs += 1;
-      if (this._visionBatchModeRefs > 1) {
+    const deadline = Date.now() + Math.max(0, this._textLaneIdleWaitMs);
+    for (;;) {
+      while (this._textLoadDepth > 0 && Date.now() < deadline) {
+        if (this._shutdownAbort?.signal?.aborted) break;
+        await delay(this._lanePollMs);
+      }
+      const outcome = await this._withVisionBatchModeLock(async () => {
+        // Lost the race to a text load that started after the wait. Don't
+        // hold this lock while we wait again — exitVisionBatchMode needs it.
+        if (
+          this._textLoadDepth > 0 &&
+          Date.now() < deadline &&
+          !this._shutdownAbort?.signal?.aborted
+        ) {
+          return 'retry';
+        }
+        this._visionBatchModeRefs += 1;
+        if (this._visionBatchModeRefs > 1) {
+          this._visionBatchMode = true;
+          logger.debug('[LlamaService] Joined existing vision batch mode', {
+            refs: this._visionBatchModeRefs
+          });
+          return 'entered';
+        }
+
         this._visionBatchMode = true;
-        logger.debug('[LlamaService] Joined existing vision batch mode', {
+        try {
+          await this._releaseMemoryForVisionRuntime('batch');
+        } catch (error) {
+          this._visionBatchModeRefs = Math.max(0, this._visionBatchModeRefs - 1);
+          this._visionBatchMode = this._visionBatchModeRefs > 0;
+          throw error;
+        }
+
+        logger.info('[LlamaService] Entered vision batch mode', {
           refs: this._visionBatchModeRefs
         });
-        return;
-      }
-
-      this._visionBatchMode = true;
-      try {
-        await this._releaseMemoryForVisionRuntime('batch');
-      } catch (error) {
-        this._visionBatchModeRefs = Math.max(0, this._visionBatchModeRefs - 1);
-        this._visionBatchMode = this._visionBatchModeRefs > 0;
-        throw error;
-      }
-
-      logger.info('[LlamaService] Entered vision batch mode', {
-        refs: this._visionBatchModeRefs
+        return 'entered';
       });
-    });
+      if (outcome === 'entered') return;
+    }
   }
 
   /**

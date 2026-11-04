@@ -12,8 +12,10 @@
 const { BatchProcessor } = require('../utils/llmOptimization');
 const { createLogger } = require('../../shared/logger');
 const { Semaphore, delay } = require('../../shared/promiseUtils');
+const { isMemoryBudgetExceeded } = require('../../shared/analysisProvenance');
 
 const logger = createLogger('BatchAnalysisService');
+const MEMORY_BUDGET_ATTEMPTS = 3;
 const { analyzeDocumentFile } = require('../analysis/documentAnalysis');
 const { analyzeImageFile } = require('../analysis/imageAnalysis');
 const { getInstance: getWhisperService } = require('./WhisperService');
@@ -688,12 +690,28 @@ class BatchAnalysisService {
         }
         shouldFinalizeProgress = true;
         fileStartedAt = performance.now();
-        const result = await analyzer(filePath, smartFolders, {
-          isCancelled,
-          // Default analyzers (analyzeDocumentFile/analyzeImageFile) read
-          // `abortSignal`; custom IPC analyzers may close over their own.
-          abortSignal
-        });
+        let result;
+        for (let attempt = 1; ; attempt += 1) {
+          try {
+            result = await analyzer(filePath, smartFolders, {
+              isCancelled,
+              // Default analyzers (analyzeDocumentFile/analyzeImageFile) read
+              // `abortSignal`; custom IPC analyzers may close over their own.
+              abortSignal
+            });
+            break;
+          } catch (error) {
+            const cancelled = typeof isCancelled === 'function' && isCancelled();
+            if (isMemoryBudgetExceeded(error) && attempt < MEMORY_BUDGET_ATTEMPTS && !cancelled) {
+              logger.warn(
+                '[BATCH-ANALYSIS] Memory budget busy; retrying file once the resident model releases',
+                { path: filePath, section, attempt }
+              );
+              continue;
+            }
+            throw error;
+          }
+        }
         embeddingStats.embeddings += 1;
 
         const normalized = {

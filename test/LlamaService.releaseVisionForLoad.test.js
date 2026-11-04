@@ -213,13 +213,28 @@ describe('LlamaService._releaseVisionForLoad', () => {
     expect(mockVision.shutdown).not.toHaveBeenCalled();
   });
 
-  test('skips teardown while vision batch mode is active', async () => {
+  test('leaves the server up when vision batch mode outlasts the wait', async () => {
     configureVision({ startPromise: null, port: 12345, isReady: true });
     service._visionBatchMode = true;
+    service._visionBatchIdleWaitMs = 0;
 
     await service._releaseVisionForLoad('text', 'pre-lock');
 
     expect(mockVision.shutdown).not.toHaveBeenCalled();
+  });
+
+  test('waits out vision batch mode, then releases the server for a text load', async () => {
+    configureVision({ startPromise: null, port: 12345, isReady: true });
+    service._visionBatchMode = true;
+    service._visionBatchIdleWaitMs = 1000;
+    service._lanePollMs = 10;
+    setTimeout(() => {
+      service._visionBatchMode = false;
+    }, 30);
+
+    await service._releaseVisionForLoad('text', 'pre-lock');
+
+    expect(mockVision.shutdown).toHaveBeenCalledTimes(1);
   });
 
   test('skips teardown when the runtime is not alive', async () => {
