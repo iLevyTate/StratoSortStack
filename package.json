@@ -237,7 +237,7 @@
     "tesseract.js": "^7.0.0",
     "tesseract.js-core": "^7.0.0",
     "umap-js": "^1.4.0",
-    "unpdf": "^1.9.1",
+    "unpdf": "^2.1.0",
     "wink-eng-lite-web-model": "^1.8.1",
     "wink-nlp": "^2.4.0",
     "word-extractor": "^1.0.4",
