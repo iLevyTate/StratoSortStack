@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-04T23:18:46.412Z",
+  "generatedAt": "2026-11-04T23:54:44.841Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
@@ -13417,7 +13417,7 @@
     },
     {
       "packageName": "electron",
-      "version": "45.2.0",
+      "version": "45.2.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -14969,7 +14969,7 @@
     },
     {
       "packageName": "globals",
-      "version": "17.13.0",
+      "version": "17.14.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -17457,7 +17457,7 @@
     },
     {
       "packageName": "knip",
-      "version": "6.44.0",
+      "version": "6.44.1",
       "license": "ISC",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -17849,7 +17849,7 @@
     },
     {
       "packageName": "lucide-react",
-      "version": "1.65.0",
+      "version": "1.66.0",
       "license": "ISC",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -18785,7 +18785,7 @@
     },
     {
       "packageName": "officeparser",
-      "version": "8.4.1",
+      "version": "8.5.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -19175,7 +19175,7 @@
     },
     {
       "packageName": "pdfjs-dist",
-      "version": "6.4.299",
+      "version": "6.5.438",
       "license": "Apache-2.0",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -20322,7 +20322,7 @@
     },
     {
       "packageName": "react-window",
-      "version": "2.5.2",
+      "version": "2.5.3",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
