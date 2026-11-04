@@ -1,12 +1,12 @@
 {
-  "generatedAt": "2026-11-04T21:04:21.796Z",
+  "generatedAt": "2026-11-04T21:50:07.828Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
     "detectedLicense": "PolyForm Noncommercial 1.0.0 (commercial license sold separately)"
   },
   "dependencySummary": {
-    "allowed": 2291,
+    "allowed": 2290,
     "review_required": 31,
     "high_risk": 0,
     "unknown": 0
@@ -21990,16 +21990,6 @@
       "lockfileOptional": false
     },
     {
-      "packageName": "test-exclude/node_modules/glob/node_modules/minimatch",
-      "version": "11.0.3",
-      "license": "BlueOak-1.0.0",
-      "riskLevel": "allowed",
-      "directRuntime": false,
-      "directDev": false,
-      "lockfileDev": true,
-      "lockfileOptional": false
-    },
-    {
       "packageName": "thingies",
       "version": "2.5.0",
       "license": "MIT",
@@ -22553,7 +22543,7 @@
     },
     {
       "packageName": "unpdf",
-      "version": "1.9.1",
+      "version": "2.1.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": true,
