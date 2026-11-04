@@ -78,10 +78,25 @@ function isCapabilityFallback(analysis) {
   return CAPABILITY_REASON_PATTERN.test(String(analysis?.fallbackReason || ''));
 }
 
+/**
+ * A load the memory manager refused because another model is still pinned.
+ * This is contention, not a result: callers retry once the resident releases
+ * instead of storing a low-confidence fallback.
+ * @param {any} error
+ * @returns {boolean}
+ */
+function isMemoryBudgetExceeded(error) {
+  if (!error) return false;
+  if (error.code === 'MODEL_MEMORY_BUDGET_EXCEEDED') return true;
+  const message = typeof error === 'string' ? error : error.message;
+  return typeof message === 'string' && /memory budget exceeded/i.test(message);
+}
+
 module.exports = {
   FALLBACK_METHODS,
   CAPABILITY_FALLBACK_METHODS,
   PROVISIONAL_MAX_RETRIES,
   isFallbackAnalysis,
-  isCapabilityFallback
+  isCapabilityFallback,
+  isMemoryBudgetExceeded
 };

@@ -4,8 +4,8 @@
 /**
  * The three kinds of text work the AI router places. Each can be sent to its
  * own provider (ai.routing.perOperation[id]); an operation with no entry
- * follows ai.routing.default. Embeddings, search and image pixels are never
- * routed: they stay on the machine whatever is configured here. `sends` is
+ * follows ai.routing.default. Embeddings, search and speech-to-text stay on
+ * the machine. Video frames follow Analysis. `sends` is
  * the plain-language statement of what leaves the machine when the operation
  * resolves to a cloud provider.
  * @type {ReadonlyArray<{ id: 'analyze' | 'chat' | 'suggest', label: string, sends: string }>}
@@ -13,14 +13,15 @@
 const AI_ROUTED_OPERATIONS = Object.freeze([
   Object.freeze({
     id: 'analyze',
-    label: 'Document analysis',
-    sends: 'the text of each file or media transcript when it is analyzed'
+    label: 'Analysis and reanalysis',
+    sends:
+      'each document, each audio transcript, and up to four video frames plus the transcript, on first analysis and on reanalysis'
   }),
   Object.freeze({
     id: 'chat',
     label: 'Chat',
     sends:
-      'every question, with the matching passages, summaries and paths of up to five files, including text read from images'
+      'every Knowledge OS chat question, with the matching passages, summaries and paths of up to five files'
   }),
   Object.freeze({
     id: 'suggest',
@@ -33,16 +34,16 @@ const CLOUD_PROVIDER_IDS = Object.freeze(['anthropic', 'openaiCompatible']);
 
 /**
  * Human-readable scope for settings UI and the header Cloud AI badge.
- * Embeddings always use the local embedding model and image pixels never
- * leave the machine (imageAnalysis.js forces the vision step local). Text
- * read from an image by OCR is stored with the analysis like any other
- * extracted text, so chat and suggestions can send it to a cloud provider.
+ * Embeddings always use the local embedding model. Speech-to-text stays
+ * local because the cloud APIs used here do not accept audio. Video frames
+ * are sent with the transcript when Analysis is a cloud provider. Still
+ * images stay on the local vision model.
  */
 const AI_CLOUD_ROUTING_SCOPE_DETAIL =
-  'The default covers document and media text analysis, every Knowledge OS chat question (which sends the matching passages, summaries and paths, including text read from images) and organization suggestions. Each of the three can be sent to a different provider below. Embeddings, search and image pixels always stay on your machine.';
+  'The default covers analysis and reanalysis, every Knowledge OS chat question, and organization suggestions. Each of the three can be sent to a different provider below. Analysis sends documents, audio transcripts, and up to four video frames with the transcript. Speech-to-text, embeddings, search and still images stay on your machine.';
 
 const AI_CLOUD_ROUTING_SCOPE_SHORT =
-  'Folder override for re-analysis of files in this folder. Chat and suggestions follow the per-operation choices in Settings → AI Provider. Embeddings, search and image pixels always stay on-device.';
+  'Folder override for analysis and reanalysis of files in this folder. Chat and suggestions follow the per-operation choices in Settings → AI Provider. Speech-to-text, embeddings, search and still images stay on-device.';
 
 /**
  * @param {string} providerId

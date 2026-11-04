@@ -1,7 +1,6 @@
 import React from 'react';
 import PropTypes from 'prop-types';
 import Button from '../ui/Button';
-import SettingRow from './SettingRow';
 import SettingsCard from './SettingsCard';
 import { logger } from '../../../shared/logger';
 import {
@@ -123,153 +122,111 @@ function AboutSection({ addNotification }) {
   const versionDisplay = info?.appVersion ? `v${info.appVersion}` : null;
   const platformDisplay = info ? formatPlatform(info.platform, info.arch, info.osRelease) : null;
 
+  const buildLabel = info
+    ? `${info.isPackaged ? 'Packaged' : 'Dev'}${info.buildSha ? ` · ${info.buildSha}` : ''}`
+    : null;
+
   return (
     <SettingsCard
       title="About"
-      description="Version, runtime details, and legal documents. Contact support by email and attach logs when reporting a problem."
+      description="Version and support. The runtime line is what to paste when you write in."
     >
-      <SettingRow label="Application">
-        <div className="text-sm font-medium text-system-gray-800 sm:text-right">
-          {info?.appName || 'StratoSort Stack'}
-          {versionDisplay ? ` ${versionDisplay}` : ''}
-        </div>
-      </SettingRow>
-
-      {platformDisplay && (
-        <SettingRow label="Platform">
-          <div className="text-sm font-medium text-system-gray-800 sm:text-right">
-            {platformDisplay}
-          </div>
-        </SettingRow>
-      )}
-
-      {info && (
-        <SettingRow
-          label="Runtime"
-          description="Include this when contacting support so engineering can match the build."
-        >
-          <dl className="grid grid-cols-[auto_auto] gap-x-3 gap-y-1 text-sm sm:justify-end">
-            <dt className="text-system-gray-500">Electron</dt>
-            <dd className="font-medium text-system-gray-800 sm:text-right">
-              {info.electronVersion || 'unknown'}
-            </dd>
-            <dt className="text-system-gray-500">Chrome</dt>
-            <dd className="font-medium text-system-gray-800 sm:text-right">
-              {info.chromeVersion || 'unknown'}
-            </dd>
-            <dt className="text-system-gray-500">Node</dt>
-            <dd className="font-medium text-system-gray-800 sm:text-right">
-              {info.nodeVersion || 'unknown'}
-            </dd>
-            <dt className="text-system-gray-500">Build</dt>
-            <dd className="font-medium text-system-gray-800 sm:text-right">
-              {info.isPackaged ? 'packaged' : 'dev'}
-              {info.buildSha ? ` · ${info.buildSha}` : ''}
-            </dd>
-          </dl>
-        </SettingRow>
-      )}
-
-      {info && (
-        <SettingRow
-          label="Media (Whisper)"
-          description="Speech-to-text for audio and video. Shows the installed model; GPU/CPU path appears after transcription starts."
-        >
-          <div className="text-sm font-medium text-system-gray-800 sm:text-right">
-            {describeWhisperStack(info.mediaStack)}
-          </div>
-        </SettingRow>
-      )}
-
-      {loadError && (
-        <SettingRow label="Status">
-          <div className="text-sm text-red-600 sm:text-right" role="alert">
-            {loadError}
-          </div>
-        </SettingRow>
-      )}
-
-      <SettingRow
-        label="Support"
-        description="Email support with your runtime details and attach logs from Open logs folder."
-      >
-        <div className="space-y-2">
-          <div className="text-sm font-medium text-system-gray-800 sm:text-right">
-            {SUPPORT_EMAIL}
-          </div>
-          <div className="flex flex-wrap gap-cozy sm:justify-end">
-            <Button variant="primary" size="sm" onClick={handleContactSupport}>
-              Email support
-            </Button>
-            <Button
-              variant="subtle"
-              size="sm"
-              onClick={handleOpenLogsFolder}
-              disabled={!canOpenLogsFolder}
-              isLoading={isOpeningLogs}
-            >
-              Open logs folder
-            </Button>
-            <Button
-              variant="subtle"
-              size="sm"
-              onClick={handleCopyVersion}
-              disabled={!info}
-              isLoading={isCopying}
-            >
-              Copy version info
-            </Button>
-          </div>
-        </div>
-      </SettingRow>
-
-      <SettingRow
-        label="AI model attribution"
-        description="Local inference uses Meta Llama models among others. Built with Llama."
-      >
-        <div className="space-y-compact sm:text-right">
-          <p className="text-sm font-semibold text-system-gray-800">Built with Llama</p>
-          <p className="text-micro text-system-gray-500">
-            Meta Llama 3.2 is licensed under the Llama 3.2 Community License. Full notices ship with
-            the app (THIRD_PARTY_NOTICES).
+      <div className="flex flex-col gap-default">
+        <div className="min-w-0">
+          <p className="text-base font-semibold tracking-tight text-system-gray-900">
+            {info?.appName || 'StratoSort Stack'}
+            {versionDisplay ? (
+              <span className="ml-2 text-sm font-medium text-system-gray-500">
+                {versionDisplay}
+              </span>
+            ) : null}
           </p>
+          {platformDisplay && (
+            <p className="mt-0.5 text-sm text-system-gray-500">{platformDisplay}</p>
+          )}
         </div>
-      </SettingRow>
 
-      <SettingRow
-        label="Legal"
-        description="License, privacy policy, and security policy bundled with this app."
-      >
-        <div className="flex flex-wrap gap-cozy sm:justify-end">
-          <Button
-            variant="subtle"
-            size="sm"
-            onClick={() => handleOpenLegalDocument('license')}
-            disabled={!canOpenLegalDocument}
-            isLoading={openingLegalKind === 'license'}
-          >
-            License
+        {info && (
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
+            {[
+              ['Electron', info.electronVersion || 'unknown'],
+              ['Chrome', info.chromeVersion || 'unknown'],
+              ['Node', info.nodeVersion || 'unknown'],
+              ['Build', buildLabel]
+            ].map(([label, value]) => (
+              <div key={label} className="min-w-0">
+                <dt className="text-xs font-medium uppercase tracking-wide text-system-gray-500">
+                  {label}
+                </dt>
+                <dd className="mt-0.5 truncate text-sm font-medium text-system-gray-800">
+                  {value}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        )}
+
+        {info && (
+          <p className="text-sm text-system-gray-600">
+            <span className="text-system-gray-500">Speech-to-text. </span>
+            {describeWhisperStack(info.mediaStack)}
+          </p>
+        )}
+
+        {loadError && (
+          <p className="text-sm text-red-600" role="alert">
+            {loadError}
+          </p>
+        )}
+
+        <div className="flex flex-wrap items-center gap-cozy">
+          <Button variant="primary" size="sm" onClick={handleContactSupport}>
+            Email support
           </Button>
           <Button
             variant="subtle"
             size="sm"
-            onClick={() => handleOpenLegalDocument('privacy')}
-            disabled={!canOpenLegalDocument}
-            isLoading={openingLegalKind === 'privacy'}
+            onClick={handleCopyVersion}
+            disabled={!info}
+            isLoading={isCopying}
           >
-            Privacy policy
+            Copy version
           </Button>
           <Button
             variant="subtle"
             size="sm"
-            onClick={() => handleOpenLegalDocument('security')}
-            disabled={!canOpenLegalDocument}
-            isLoading={openingLegalKind === 'security'}
+            onClick={handleOpenLogsFolder}
+            disabled={!canOpenLogsFolder}
+            isLoading={isOpeningLogs}
           >
-            Security policy
+            Open logs
           </Button>
+          <span className="text-xs text-system-gray-500">{SUPPORT_EMAIL}</span>
         </div>
-      </SettingRow>
+
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border-soft pt-3">
+          {[
+            ['license', 'License'],
+            ['privacy', 'Privacy'],
+            ['security', 'Security']
+          ].map(([kind, label]) => (
+            <button
+              key={kind}
+              type="button"
+              className="text-sm text-system-gray-600 underline-offset-2 hover:text-system-gray-900 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-stratosort-blue disabled:opacity-50"
+              onClick={() => handleOpenLegalDocument(kind)}
+              disabled={!canOpenLegalDocument || openingLegalKind !== null}
+            >
+              {openingLegalKind === kind ? 'Opening…' : label}
+            </button>
+          ))}
+        </div>
+
+        <p className="text-xs leading-relaxed text-system-gray-500">
+          Built with Llama. Meta Llama 3.2 is licensed under the Llama 3.2 Community License. Full
+          notices ship with the app.
+        </p>
+      </div>
     </SettingsCard>
   );
 }

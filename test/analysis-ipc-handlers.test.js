@@ -217,6 +217,21 @@ describe('Analysis IPC Handlers', () => {
       expect(result).toEqual({ fallback: true });
     });
 
+    test('does not persist a fallback when the text model is waiting on memory', async () => {
+      const handler = registeredHandlers[IPC_CHANNELS.ANALYSIS.ANALYZE_DOCUMENT];
+      const error = new Error(
+        'Cannot load text model: memory budget exceeded and resident models are in active use'
+      );
+      error.code = 'MODEL_MEMORY_BUDGET_EXCEEDED';
+      mockAnalysisUtils.withProcessingState.mockRejectedValue(error);
+      mockAnalysisUtils.createAnalysisFallback.mockClear();
+
+      await expect(handler({}, '/path/to/doc.pdf')).rejects.toMatchObject({
+        code: 'MODEL_MEMORY_BUDGET_EXCEEDED'
+      });
+      expect(mockAnalysisUtils.createAnalysisFallback).not.toHaveBeenCalled();
+    });
+
     test('handles invalid file path', async () => {
       const handler = registeredHandlers[IPC_CHANNELS.ANALYSIS.ANALYZE_DOCUMENT];
       validateFileOperationPath.mockResolvedValueOnce({

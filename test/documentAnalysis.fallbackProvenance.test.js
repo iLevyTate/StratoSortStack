@@ -165,6 +165,19 @@ describe('office extraction failures are stamped as fallbacks', () => {
     expect(result.fallbackReason.length).toBeGreaterThan(0);
   });
 
+  test('a memory-budget refusal is not stored as a document fallback', async () => {
+    documentExtractors.readTextFileWithEncoding.mockResolvedValue('a real document');
+    const budget = new Error(
+      'Cannot load text model: memory budget exceeded and resident models are in active use'
+    );
+    budget.code = 'MODEL_MEMORY_BUDGET_EXCEEDED';
+    documentLlm.analyzeTextWithLlama.mockRejectedValue(budget);
+
+    await expect(analyzeDocumentFile(uniquePath('notes.md'), [])).rejects.toMatchObject({
+      code: 'MODEL_MEMORY_BUDGET_EXCEEDED'
+    });
+  });
+
   test('fallback reasons are stable labels, not the raw extractor error text', async () => {
     // The IPC classifier records `fallbackReason` as the pipeline outcome
     // reason, and the Diagnostics tile counts those; a free-text error

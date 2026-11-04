@@ -29,7 +29,7 @@ describe('aiSettings', () => {
       expect(merged.providers.anthropic).toEqual({
         enabled: true,
         displayName: 'Anthropic Claude',
-        model: 'claude-opus-4-7'
+        model: 'claude-opus-5-5'
       });
       expect(merged.providers.openaiCompatible.baseUrl).toBe('https://api.openai.com/v1');
       expect(merged.routing).toEqual({ default: 'anthropic', perOperation: {}, perFolder: {} });
@@ -151,7 +151,7 @@ describe('aiSettings', () => {
       expect(settings.providers.anthropic).toEqual({
         enabled: true,
         displayName: 'Anthropic Claude',
-        model: 'claude-opus-4-7'
+        model: 'claude-opus-5-5'
       });
       expect(settings.providers.local.enabled).toBe(true);
       expect(settings.routing).toEqual({

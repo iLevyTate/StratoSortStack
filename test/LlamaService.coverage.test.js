@@ -367,8 +367,9 @@ describe('LlamaService - extended coverage', () => {
       expect(mockVisionService.shutdown).not.toHaveBeenCalled();
     });
 
-    test('does not touch vision in batch mode (caller manages lifecycle)', async () => {
+    test('does not touch vision when the batch-mode wait expires', async () => {
       service._visionBatchMode = true;
+      service._visionBatchIdleWaitMs = 0;
       mockVisionService.isAlive.mockReturnValue(true);
       mockVisionService.isIdleKeepAliveEnabled.mockReturnValue(true);
 

@@ -35,7 +35,9 @@ function isEmbeddingContextOverflow(/** @type {any} */ error) {
     error?.message || error?.originalError?.message || error?.cause?.message || ''
   ).toLowerCase();
   return (
-    message.includes('input is longer than the context size') || message.includes('context size of')
+    message.includes('input is longer than the context size') ||
+    message.includes('usable context size') ||
+    message.includes('context size of')
   );
 }
 

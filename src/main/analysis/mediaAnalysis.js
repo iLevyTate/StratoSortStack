@@ -29,6 +29,7 @@ const { createLogger } = require('../../shared/logger');
 const { ERROR_CODES } = require('../../shared/errorCodes');
 const { attachErrorCode } = require('../../shared/errorHandlingUtils');
 const { normalizeAnalysisResult } = require('./utils');
+const { analyzeVideoWithCloud, resolveCloudAnalyzeProvider } = require('./cloudMedia');
 
 const logger = createLogger('MediaAnalysis');
 
@@ -510,12 +511,20 @@ async function analyzeMediaFile(filePath, dependencies = {}, options = {}) {
       useCache: !bypassCache
     });
 
-    // 2. Optional keyframes for video. Failures are non-fatal — the
-    // transcript alone is usable and we don't want to block the whole
-    // pipeline on a missing codec.
-    // Frames are only extracted when they will be captioned; uncaptioned
-    // frames carried nothing but timestamps into the result.
-    if (kind === 'video' && extractVideoKeyframes && shouldCaptionKeyframes) {
+    // Cloud analysis (Settings → AI Provider → Analysis) can see video
+    // frames. Speech itself stays on Whisper: the cloud API has no audio
+    // input. Frames are extracted for that call even when local captioning
+    // is off.
+    const cloudProvider = await resolveCloudAnalyzeProvider(smartFolderId);
+    const sendFramesToCloud = kind === 'video' && Boolean(cloudProvider);
+
+    // 2. Keyframes for video. Local captioning extracts only when it will
+    // caption. Cloud analysis extracts so the frames can be sent with the
+    // transcript. Failures are non-fatal.
+    if (
+      kind === 'video' &&
+      ((extractVideoKeyframes && shouldCaptionKeyframes) || sendFramesToCloud)
+    ) {
       try {
         keyframeDir = await createKeyframeWorkspace(filePath);
         keyframes = await extractKeyframesFn(filePath, keyframeDir, {
@@ -537,11 +546,27 @@ async function analyzeMediaFile(filePath, dependencies = {}, options = {}) {
       }
     }
 
-    // 3. Optional vision-LLM captioning of keyframes. Even-spaced
-    // downsampling keeps the cost bounded on long videos: a 30-minute
-    // tutorial might extract 12 scene-change frames but only 6 of them
-    // need to be captioned to give the LLM enough visual signal.
+    const transcriptOnlyForLlm = formatSegmentsForLlm(transcript.segments) || transcript.text || '';
+
+    // 3. Cloud video: up to four frames plus the transcript, one request.
+    // Local captioning runs only when that call does not return an analysis.
+    /** @type {Record<string, any> | null} */
+    let cloudAnalysis = null;
+    if (sendFramesToCloud && keyframes.length > 0) {
+      const framesForCloud = pickEvenlySpaced(keyframes, 4);
+      cloudAnalysis = await analyzeVideoWithCloud({
+        provider: cloudProvider,
+        fileName,
+        transcript: transcriptOnlyForLlm,
+        frames: framesForCloud,
+        smartFolders,
+        signal
+      });
+    }
+
+    // 4. Optional local vision captions when the cloud call did not run.
     if (
+      !cloudAnalysis &&
       kind === 'video' &&
       shouldCaptionKeyframes &&
       keyframes.length > 0 &&
@@ -575,21 +600,19 @@ async function analyzeMediaFile(filePath, dependencies = {}, options = {}) {
       }
     }
 
-    // 4. Run the existing text analyzer on the transcript (or the
-    // multimodal merge when captions are present) so the result matches
-    // the documentAnalysis schema. If the transcript is empty (silent
-    // audio, music-only, etc.) we still return a normalized result with
-    // a low-confidence fallback rather than throwing — that lets
-    // organize/search treat the file gracefully.
-    const transcriptOnlyForLlm = formatSegmentsForLlm(transcript.segments) || transcript.text || '';
+    // 5. Transcript route. Audio always uses this: Whisper stays local, and
+    // the transcript is sent to whichever provider Analysis is set to,
+    // including Claude. Video uses it when the frame call did not return
+    // an analysis. An empty transcript still produces a low-confidence
+    // result rather than throwing.
     const hasUsableCaptions = captioned.some((c) => c?.caption);
     const transcriptForLlm = hasUsableCaptions
       ? mergeTranscriptAndCaptions(transcript.segments, captioned)
       : transcriptOnlyForLlm;
     const hasUsableTranscript = transcriptForLlm.trim().length > 0;
 
-    let llmResult = null;
-    if (hasUsableTranscript) {
+    let llmResult = cloudAnalysis;
+    if (!llmResult && hasUsableTranscript) {
       try {
         // analyzeTextWithLlama is positional:
         //   (textContent, originalFileName, smartFolders, fileDate, namingContext, options)
@@ -620,11 +643,14 @@ async function analyzeMediaFile(filePath, dependencies = {}, options = {}) {
 
     // A file with no speech is not a transcription; recording it as one
     // made the fallback look like real content downstream (audit row MI-04).
-    const extractionMethod = hasUsableCaptions
-      ? 'whisper-transcription+vision-captions'
-      : hasUsableTranscript
-        ? 'whisper-transcription'
-        : 'no-speech';
+    const usedCloudFrames = Boolean(cloudAnalysis);
+    const extractionMethod = usedCloudFrames
+      ? 'whisper-transcription+cloud-frames'
+      : hasUsableCaptions
+        ? 'whisper-transcription+vision-captions'
+        : hasUsableTranscript
+          ? 'whisper-transcription'
+          : 'no-speech';
 
     const normalized = normalizeAnalysisResult(
       {
@@ -637,11 +663,13 @@ async function analyzeMediaFile(filePath, dependencies = {}, options = {}) {
         suggestedName: llmResult?.suggestedName,
         purpose:
           llmResult?.purpose ||
-          (hasUsableTranscript
-            ? hasUsableCaptions
-              ? 'Spoken content + visual descriptions extracted via whisper.cpp + vision LLM'
-              : 'Spoken content transcribed via whisper.cpp'
-            : 'Media file with no detectable speech'),
+          (usedCloudFrames
+            ? 'Spoken content transcribed locally; video frames analyzed by the selected cloud provider'
+            : hasUsableTranscript
+              ? hasUsableCaptions
+                ? 'Spoken content + visual descriptions extracted via whisper.cpp + vision LLM'
+                : 'Spoken content transcribed via whisper.cpp'
+              : 'Media file with no detectable speech'),
         contentLength: transcriptForLlm.length,
         extractionMethod
       },

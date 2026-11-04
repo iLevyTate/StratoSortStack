@@ -28,7 +28,7 @@ function defaultAiSettings() {
       anthropic: {
         enabled: false,
         displayName: 'Anthropic Claude',
-        model: 'claude-opus-4-7'
+        model: 'claude-opus-5-5'
       },
       openaiCompatible: {
         enabled: false,

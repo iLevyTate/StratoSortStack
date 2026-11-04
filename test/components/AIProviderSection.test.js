@@ -190,7 +190,7 @@ describe('per-operation routing', () => {
     renderSection();
     const chat = await screen.findByLabelText('Chat');
     expect(chat.value).toBe('');
-    expect(screen.getByLabelText('Document analysis')).toBeInTheDocument();
+    expect(screen.getByLabelText('Analysis and reanalysis')).toBeInTheDocument();
     expect(screen.getByLabelText('Organization suggestions')).toBeInTheDocument();
     expect(
       within(chat).getByRole('option', { name: /Default \(Local Llama\)/ })

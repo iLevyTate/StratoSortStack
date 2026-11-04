@@ -24,9 +24,9 @@ const PROVIDER_LABELS = {
 };
 
 const ANTHROPIC_MODELS = [
-  { value: 'claude-opus-4-7', label: 'Claude Opus 4.7 — best quality (~$15/M tokens)' },
-  { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 — balanced (~$3/M tokens)' },
-  { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5 — fastest (~$0.80/M tokens)' }
+  { value: 'claude-opus-5-5', label: 'Claude Opus 5.5 — best quality (~$4/M input)' },
+  { value: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5 — balanced (~$2/M input)' },
+  { value: 'claude-haiku-5-5', label: 'Claude Haiku 5.5 — fastest (~$0.10/M input)' }
 ];
 
 // Mirrors the Zod ceiling on spendCapMonthlyUsd (ipc/validationSchemas.js).
@@ -46,7 +46,7 @@ function parseSpendCapInput(raw) {
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
 
 function defaultModelFor(provider) {
-  return provider === 'anthropic' ? 'claude-opus-4-7' : 'gpt-4o';
+  return provider === 'anthropic' ? 'claude-opus-5-5' : 'gpt-4o';
 }
 
 /**

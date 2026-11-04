@@ -5047,6 +5047,43 @@ class OramaVectorService extends EventEmitter {
   }
 
   /**
+   * Passage-vector health for one file. `count` is every chunk row.
+   * `placeholderCount` is all-zero vectors. `missingVectorCount` is rows
+   * whose embedding was never stored. A file whose text should have been
+   * split and comes back with count 0 was never given passages.
+   * @param {string} fileId
+   * @returns {Promise<{ count: number, placeholderCount: number, missingVectorCount: number } | null>}
+   */
+  async describeFileChunks(fileId) {
+    if (!fileId) return { count: 0, placeholderCount: 0, missingVectorCount: 0 };
+    await this.initialize();
+    try {
+      const hits = await this._collectExactFileChunkHits(fileId, 'describe-file-chunks');
+      const store = this._chunkVectorStore();
+      let placeholderCount = 0;
+      let missingVectorCount = 0;
+      for (const hit of hits) {
+        const doc = hit?.document || {};
+        const chunkId = typeof doc.id === 'string' ? doc.id : null;
+        const stored = chunkId && store instanceof Map ? store.get(chunkId) : null;
+        const normalized = this._normalizeEmbeddingVector(stored || doc.embedding, this._dimension);
+        const present = Array.isArray(normalized) && normalized.length === this._dimension;
+        if (!present) {
+          missingVectorCount++;
+          continue;
+        }
+        if (normalized[0] === 0 && normalized.every((/** @type {any} */ value) => value === 0)) {
+          placeholderCount++;
+        }
+      }
+      return { count: hits.length, placeholderCount, missingVectorCount };
+    } catch (error) {
+      logger.debug('[OramaVectorService] describeFileChunks failed:', error.message);
+      return null;
+    }
+  }
+
+  /**
    * Diagnose eligibility for primary file-level vector search.
    * Helps explain cases where file embeddings exist but vector retrieval returns no hits.
    *

@@ -393,6 +393,18 @@ describe('documentLlm – extended', () => {
     expect(outerCatchCall[1]).toHaveProperty('name', 'Error');
   });
 
+  test('rethrows a memory-budget refusal instead of returning an analysis', async () => {
+    const budget = new Error(
+      'Cannot load text model: memory budget exceeded and resident models are in active use'
+    );
+    budget.code = 'MODEL_MEMORY_BUDGET_EXCEEDED';
+    mockLlamaService.generateText.mockRejectedValue(budget);
+
+    await expect(analyzeTextWithLlama('Text', 'doc.pdf', [])).rejects.toMatchObject({
+      code: 'MODEL_MEMORY_BUDGET_EXCEEDED'
+    });
+  });
+
   // ─── Cache hit path ────────────────────────────────────────
 
   test('returns cached result without calling LLM', async () => {

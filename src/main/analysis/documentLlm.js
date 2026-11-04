@@ -11,6 +11,7 @@ const { sanitizeSuggestedBaseName } = require('../../shared/pathSanitization');
 const { withAbortableTimeout } = require('../../shared/promiseUtils');
 const { TIMEOUTS, CONTENT_SELECTION } = require('../../shared/performanceConstants');
 const { createLogger } = require('../../shared/logger');
+const { isMemoryBudgetExceeded } = require('../../shared/analysisProvenance');
 const { selectRepresentativeContent, extractDocumentOutline } = require('./contentSelector');
 const FolderMatchingService = require('../services/FolderMatchingService');
 const { getInstance: getAnalysisCache } = require('../services/AnalysisCacheService');
@@ -36,7 +37,7 @@ const {
  *                                     (e.g., image OCR fallback text — see imageAnalysis.js).
  * @param {string | null} [smartFolderId]
  * @param {boolean} [forceLocal]
- * @returns {{ fn: Function, providerName: string, providerId: string } | null}
+ * @returns {{ fn: Function, providerName: string, providerId: string, model: string | null } | null}
  */
 function _getRouterInferenceBackend(smartFolderId = null, forceLocal = false) {
   if (forceLocal) return null;
@@ -55,6 +56,7 @@ function _getRouterInferenceBackend(smartFolderId = null, forceLocal = false) {
     return {
       providerName: provider.displayName || provider.id || 'cloud',
       providerId: provider.id || 'local',
+      model: typeof provider._model === 'string' ? provider._model : null,
       fn: async (
         /** @type {{ prompt: string, maxTokens: number, temperature: number, signal?: AbortSignal }} */ {
           prompt,
@@ -470,6 +472,10 @@ ${truncated}
         'PROVIDER_FAILED',
         'OUTPUT_TRUNCATED'
       ]);
+      // Cloud models do not share the local context window. A 25% slice of a
+      // 1024–4096 local context stops Haiku mid-JSON (OUTPUT_TRUNCATED).
+      const CLOUD_OUTPUT_TOKENS = 2048;
+      const CLOUD_OUTPUT_RETRY_TOKENS = 4096;
 
       const generateDocumentText = (
         /** @type {string} */ promptText,
@@ -486,18 +492,66 @@ ${truncated}
                 signal: abortController.signal
               });
 
+            const callCloud = (/** @type {number} */ tokenBudget) =>
+              routerBackend.fn({
+                prompt: promptText,
+                maxTokens: tokenBudget,
+                temperature: AppConfig.ai.textAnalysis.temperature,
+                signal: abortController.signal
+              });
+
             const inference = async () => {
               if (!routerBackend) return localInference();
               try {
-                return await routerBackend.fn({
-                  prompt: promptText,
-                  maxTokens: requestedMaxTokens,
-                  temperature: AppConfig.ai.textAnalysis.temperature,
-                  signal: abortController.signal
-                });
+                return await callCloud(requestedMaxTokens);
               } catch (err) {
                 const code = err && err.name === 'AIProviderError' ? err.code : null;
                 if (code === 'OUTPUT_TRUNCATED' && err.partialText?.trim()) {
+                  const raised = Math.min(
+                    CLOUD_OUTPUT_RETRY_TOKENS,
+                    Math.max(requestedMaxTokens * 2, CLOUD_OUTPUT_TOKENS)
+                  );
+                  if (raised > requestedMaxTokens) {
+                    logger.warn(
+                      '[documentLlm] cloud output truncated; retrying with a larger budget',
+                      {
+                        provider: routerBackend.providerName,
+                        fileName: originalFileName,
+                        partialChars: err.partialText.length,
+                        retryMaxTokens: raised
+                      }
+                    );
+                    try {
+                      return await callCloud(raised);
+                    } catch (retryErr) {
+                      const retryCode =
+                        retryErr && retryErr.name === 'AIProviderError' ? retryErr.code : null;
+                      if (retryCode === 'OUTPUT_TRUNCATED' && retryErr.partialText?.trim()) {
+                        logger.warn(
+                          '[documentLlm] cloud output truncated; salvaging partial text',
+                          {
+                            provider: routerBackend.providerName,
+                            fileName: originalFileName,
+                            partialChars: retryErr.partialText.length
+                          }
+                        );
+                        return { response: retryErr.partialText };
+                      }
+                      if (retryCode && CLOUD_FALLBACK_CODES.has(retryCode)) {
+                        logger.warn(
+                          '[documentLlm] cloud provider error; falling back to local LLM',
+                          {
+                            provider: routerBackend.providerName,
+                            code: retryCode,
+                            fileName: originalFileName
+                          }
+                        );
+                        inferenceProviderId = 'local';
+                        return localInference();
+                      }
+                      throw retryErr;
+                    }
+                  }
                   // A max_tokens stop usually leaves parseable-but-unterminated
                   // JSON; the extract/repair path below handles that far more
                   // cheaply than a full local re-analysis.
@@ -539,7 +593,13 @@ ${truncated}
           { signal: options.signal }
         );
 
-      let usedMaxTokens = maxTokens;
+      let usedMaxTokens = routerBackend
+        ? Math.min(AppConfig.ai.textAnalysis.maxTokens, Math.max(maxTokens, CLOUD_OUTPUT_TOKENS))
+        : maxTokens;
+      const reportedModel =
+        inferenceProviderId === 'local'
+          ? modelToUse
+          : routerBackend?.model || routerBackend?.providerName || modelToUse;
       logger.debug('[documentLlm] Using text model', {
         model: modelToUse,
         fileName: originalFileName,
@@ -555,7 +615,7 @@ ${truncated}
         logger.info('[documentLlm] LLM inference completed', {
           fileName: originalFileName,
           durationMs: Date.now() - inferenceStartTime,
-          model: modelToUse
+          model: inferenceProviderId === 'local' ? modelToUse : reportedModel
         });
       } catch (error) {
         logger.warn('[documentLlm] LLM inference failed or timed out', {
@@ -843,7 +903,7 @@ ${truncated}
           // the logs (exportable from Diagnostics) carry no file content.
           logger.info('[DocumentLLM] Analysis complete', {
             fileName: originalFileName,
-            model: modelToUse,
+            model: inferenceProviderId === 'local' ? modelToUse : reportedModel,
             contentMeta,
             cached: false,
             extraction: {
@@ -879,7 +939,11 @@ ${truncated}
     // Cancellation is not an engine failure: rethrow so callers classify it
     // as user cancel instead of converting it into a low-confidence "result"
     // that would route the file into the catch-all folder.
-    if (error?.code === 'OPERATION_CANCELLED' || error?.name === 'AbortError') {
+    if (
+      error?.code === 'OPERATION_CANCELLED' ||
+      error?.name === 'AbortError' ||
+      isMemoryBudgetExceeded(error)
+    ) {
       throw error;
     }
     // The outer catch is reached on GPU OOM, native llama-cpp crash,
