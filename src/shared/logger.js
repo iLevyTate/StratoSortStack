@@ -72,6 +72,40 @@ const _rotationState = {
   basePath: null
 };
 const _fileStreams = new Set();
+// Set by shutdownLogging. A file stream can still be opening when logging
+// shuts down (sonic-boom opens asynchronously); if its open then fails, there
+// is no one left to tell, and in Jest the late console.error lands after the
+// test has finished ("Cannot log after tests are done"), which failed whole
+// CI runs on otherwise green suites. Cleared when file logging is configured.
+let _loggingShutDown = false;
+// Streams already asked to end. sonic-boom defers end() until the file is
+// open, so a second end() on a stream still opening queues a second deferred
+// end that throws "SonicBoom destroyed" once the first has torn it down.
+/** @type {WeakSet<any>} */
+const _endingStreams = new WeakSet();
+
+/** @param {any} stream */
+function _endFileStreamOnce(stream) {
+  if (!stream || typeof stream.end !== 'function' || _endingStreams.has(stream)) return;
+  _endingStreams.add(stream);
+  try {
+    stream.end();
+  } catch {
+    // Already closed/destroyed.
+  }
+}
+
+/**
+ * @param {any} stream
+ * @returns {Promise<void>}
+ */
+function _waitFileStreamClosed(stream) {
+  return new Promise((resolve) => {
+    if (!stream || stream.destroyed) return resolve();
+    stream.once('close', () => resolve());
+    stream.once('error', () => resolve());
+  });
+}
 /** @type {Map<string, any>} */
 const _destinationsByPath = new Map();
 
@@ -92,6 +126,7 @@ function _lazyFs() {
 function _emitFileError(err) {
   _rotationState.diskErrorRaised = true;
   const code = err?.code;
+  if (_loggingShutDown) return;
   console.error('[Logger] File log stream error', { code, message: err?.message });
   if (typeof _rotationState.onError === 'function') {
     try {
@@ -148,11 +183,7 @@ function _closeStaleFileDestinations(activePath) {
   for (const [logFile, stream] of _destinationsByPath) {
     if (logFile === activePath) continue;
     _destinationsByPath.delete(logFile);
-    try {
-      stream.end();
-    } catch {
-      // Already closed/destroyed — nothing to release.
-    }
+    _endFileStreamOnce(stream);
   }
 }
 
@@ -1053,6 +1084,7 @@ function createLogger(context) {
  *   by the rotation timer, so we don't reset the rotation counter or onError.
  */
 function configureFileLogging(logFilePath, options = {}) {
+  _loggingShutDown = false;
   _globalLogConfig.enableFile = true;
   _globalLogConfig.logFile = logFilePath;
   if (typeof options.enableConsole === 'boolean') {
@@ -1182,6 +1214,7 @@ function createSafeLogger(name) {
 async function shutdownLogging() {
   const FLUSH_TIMEOUT = 3000;
   _stopRotationTimer();
+  _loggingShutDown = true;
 
   /** @param {any} pinoInstance */
   const flushOne = (pinoInstance) =>
@@ -1195,9 +1228,8 @@ async function shutdownLogging() {
       const dest = pinoInstance[Symbol.for('pino.serializers')] ? undefined : pinoInstance;
       const stream = dest?.stream ?? pinoInstance[Symbol.for('pino.stream')];
       if (stream && typeof stream.end === 'function') {
-        stream.once('close', resolve);
-        stream.once('error', resolve);
-        stream.end();
+        _waitFileStreamClosed(stream).then(() => resolve(undefined));
+        _endFileStreamOnce(stream);
       } else {
         resolve();
       }
@@ -1209,6 +1241,14 @@ async function shutdownLogging() {
     if (instance?.pino) {
       tasks.push(flushOne(instance.pino));
     }
+  }
+
+  // Every file stream, including a rotated-away one still opening: end() on a
+  // sonic-boom that has not opened yet waits for the open, so the file is
+  // open and closed before the caller removes its directory.
+  for (const stream of _fileStreams) {
+    tasks.push(_waitFileStreamClosed(stream));
+    _endFileStreamOnce(stream);
   }
 
   if (_sharedDevTransport && typeof _sharedDevTransport.end === 'function') {
