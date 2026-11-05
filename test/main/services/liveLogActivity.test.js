@@ -48,14 +48,14 @@ const CASES = [
     record: {
       level: 'info',
       context: 'SmartFolderWatcher',
-      msg: '[SMART-FOLDER-WATCHER] Analysis complete: [REDACTED_PATH]\\layout.unknownext'
+      msg: '[SMART-FOLDER-WATCHER] Analysis complete: [REDACTED_PATH]\\lease.docx'
     },
     expected: {
       kind: 'analyzed',
       icon: 'check',
       tone: 'success',
-      text: 'Analyzed layout.unknownext',
-      file: 'layout.unknownext'
+      text: 'Analyzed lease.docx',
+      file: 'lease.docx'
     }
   },
   {
@@ -971,24 +971,65 @@ describe('activityFromLogRecord', () => {
     ).toBeNull();
   });
 
-  test('a watched document or image reads one "Analyzing" and one "Analyzed" line', () => {
-    // The analyzers announce these files themselves ("Analyzing X",
-    // "Analyzed X → Category"); the watcher's own lines would repeat them.
+  test('the watcher\'s own "Analyzing file:" line is not an activity', () => {
+    // The analyzers announce the same file ("Analyzing X").
+    expect(
+      activityFromLogRecord({
+        level: 'info',
+        context: 'SmartFolderWatcher',
+        msg: '[SMART-FOLDER-WATCHER] Analyzing file: [REDACTED_PATH]\\lease.pdf'
+      })
+    ).toBeNull();
+  });
+
+  test('watcher completion reads "Analyzed X" for every file type, cache hits included', () => {
     const watcher = (msg) =>
       activityFromLogRecord({ level: 'info', context: 'SmartFolderWatcher', msg });
-    expect(watcher('[SMART-FOLDER-WATCHER] Analyzing file: [REDACTED_PATH]\\lease.pdf')).toBeNull();
-    for (const name of ['lease.pdf', 'notes.txt', 'receipt-0412.jpg', 'IMG_2041.HEIC']) {
-      expect(
-        watcher(`[SMART-FOLDER-WATCHER] Analysis complete: [REDACTED_PATH]\\${name}`)
-      ).toBeNull();
+    for (const name of ['lease.pdf', 'notes.txt', 'receipt-0412.jpg', 'clip.MP4', 'a.unknownext']) {
+      expect(watcher(`[SMART-FOLDER-WATCHER] Analysis complete: [REDACTED_PATH]\\${name}`)).toEqual(
+        {
+          kind: 'analyzed',
+          icon: 'check',
+          tone: 'success',
+          text: `Analyzed ${name}`,
+          file: name
+        }
+      );
     }
-    // Audio and video have no analyzer success line, so the watcher's stays.
-    expect(watcher('[SMART-FOLDER-WATCHER] Analysis complete: [REDACTED_PATH]/clip.MP4')).toEqual(
-      expect.objectContaining({ text: 'Analyzed clip.MP4', file: 'clip.MP4' })
-    );
-    // No usable name: nothing to say.
-    expect(watcher('[SMART-FOLDER-WATCHER] Analysis complete: [REDACTED_PATH]')).toBeNull();
+    expect(watcher('[SMART-FOLDER-WATCHER] Analysis complete: [REDACTED_PATH]')).toEqual({
+      kind: 'analyzed',
+      icon: 'check',
+      tone: 'success',
+      text: 'Analyzed a file'
+    });
   });
+
+  test.each([
+    ['DocumentAnalysis', '[AI-ANALYSIS-SUCCESS] Document analyzed', 'Q3 budget (final).xlsx'],
+    ['ImageAnalysis', '[AI-ANALYSIS-SUCCESS] Image analyzed', 'IMG_2041.HEIC']
+  ])(
+    '%s success and watcher completion share kind and file, so the feed can merge them',
+    (context, msg, name) => {
+      const analyzer = activityFromLogRecord({
+        level: 'info',
+        context,
+        msg,
+        data: { fileName: name, category: 'Finance' }
+      });
+      const watcher = activityFromLogRecord({
+        level: 'info',
+        context: 'SmartFolderWatcher',
+        msg: `[SMART-FOLDER-WATCHER] Analysis complete: [REDACTED_PATH]\\${name}`
+      });
+      expect(analyzer.text).toBe(`Analyzed ${name} → Finance`);
+      expect(watcher.text).toBe(`Analyzed ${name}`);
+      expect({ kind: watcher.kind, file: watcher.file }).toEqual({
+        kind: analyzer.kind,
+        file: analyzer.file
+      });
+      expect(analyzer.file).toBe(name);
+    }
+  );
 
   test('a file field without a usable name reads "a file"', () => {
     expect(

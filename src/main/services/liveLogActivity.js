@@ -24,21 +24,11 @@
  * @typedef {{ id: string, contexts: string[] | null, pattern: RegExp, build: ActivityBuilder }} ActivityRule
  */
 
-const path = require('path');
-const {
-  ANALYSIS_SUPPORTED_EXTENSIONS,
-  SUPPORTED_AUDIO_EXTENSIONS,
-  SUPPORTED_VIDEO_EXTENSIONS
-} = require('../../shared/constants');
-
 const MAX_TEXT_CHARS = 300;
 const MAX_FILE_CHARS = 120;
 const REDACTED_PATH = '[REDACTED_PATH]';
 const PROBLEM_LEVELS = new Set(['warn', 'error', 'fatal']);
 const PROBLEM_FALLBACK_TEXT = 'Something went wrong';
-/** Extensions SmartFolderWatcher sends to an analyzer (else: metadata fallback). */
-const ANALYZED_EXTENSIONS = new Set(ANALYSIS_SUPPORTED_EXTENSIONS);
-const MEDIA_EXTENSIONS = new Set([...SUPPORTED_AUDIO_EXTENSIONS, ...SUPPORTED_VIDEO_EXTENSIONS]);
 /** Orama collection names as the user knows them; unknown names are left out. */
 const COLLECTION_WORDS = Object.freeze({
   files: 'files',
@@ -195,7 +185,12 @@ function patternRule(id, contexts, pattern, build) {
   return { id, contexts, pattern, build };
 }
 
-/** @type {ActivityBuilder} */
+/**
+ * Every "analyzed" line (analyzer success and watcher completion) carries
+ * kind 'analyzed' and the bare file name as 'file', so the feed can merge
+ * "Analyzed X → Finance" and a following "Analyzed X" for the same file.
+ * @type {ActivityBuilder}
+ */
 const analyzedWithCategory = (input) => {
   const file = baseName(input.data?.fileName);
   const category = text(input.data?.category);
@@ -222,18 +217,6 @@ const folderSuggestion = (input) => {
   );
 };
 
-/**
- * True when the watcher's "Analysis complete" is the only success line a file
- * gets: audio/video (the media analyzer logs no success line) and types with
- * no analyzer at all (the watcher's metadata fallback). Documents and images
- * already read "Analyzed <file> → <category>" from their analyzer.
- * @param {string} file
- */
-function watcherIsOnlySuccessLine(file) {
-  const ext = path.extname(file).toLowerCase();
-  return MEDIA_EXTENSIONS.has(ext) || !ANALYZED_EXTENSIONS.has(ext);
-}
-
 /** @param {unknown} filePath */
 const analyzingFromPath = (filePath) => {
   const file = baseName(filePath);
@@ -256,15 +239,17 @@ const ANY = null;
 /** @type {ActivityRule[]} */
 const RULES = [
   // The watcher's own "Analyzing file:" line is not a rule: the document and
-  // image analyzers already announce the same file.
+  // image analyzers already announce the same file. Its "Analysis complete:"
+  // stays for every type: it is the only success line on cache hits, analyzer
+  // fallbacks, media and unsupported files. Duplicates of an analyzer's
+  // "Analyzed X → Category" are merged by the feed (same kind and file).
   prefixRule('watcher-queued', WATCHER, '[SMART-FOLDER-WATCHER] Queued for analysis:', (input) => {
     const file = baseName(input.data?.filePath);
     return activity('analyze', 'analyze', 'info', `Queued ${orAFile(file)} for analysis`, file);
   }),
   prefixRule('watcher-complete', WATCHER, '[SMART-FOLDER-WATCHER] Analysis complete:', (_i, m) => {
     const file = baseName(m[1]);
-    if (!file || !watcherIsOnlySuccessLine(file)) return null;
-    return activity('analyzed', 'check', 'success', `Analyzed ${file}`, file);
+    return activity('analyzed', 'check', 'success', `Analyzed ${orAFile(file)}`, file);
   }),
   prefixRule('document-analyzing', DOCUMENT, 'Analyzing document file', (input) =>
     analyzingFromPath(input.data?.path)
