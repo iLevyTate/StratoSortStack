@@ -48,6 +48,7 @@ const { findUserExclusion } = require('./watcherExclusions');
 const { delay } = require('../../shared/promiseUtils');
 const { shouldEmbed } = require('./embedding/embeddingGate');
 const { embedFileChunks } = require('../analysis/chunkEmbedding');
+const { getEmbeddingHandoff } = require('../analysis/embeddingHandoff');
 const { buildEmbeddingSummary } = require('../analysis/embeddingSummary');
 const { resolveEmbeddingModelOptions } = require('../analysis/embeddingModelOptions');
 const { computeFileChecksum, handleDuplicateMove } = require('../utils/fileDedup');
@@ -1549,6 +1550,28 @@ class DownloadWatcher {
       const resolvedSmartFolder = findContainingSmartFolder(filePath, smartFolders);
       if (!resolvedSmartFolder) {
         logger.debug('[DOWNLOAD-WATCHER] Skipping embedding - not in smart folder:', filePath);
+        return;
+      }
+
+      // The analysis pass may already have indexed this file where it still
+      // is. Re-embedding then only writes the same vector and passages again.
+      // A rename or move gives the file a new id, so that case (and any run
+      // whose hand-off is missing or partial) still embeds below.
+      const handoff = getEmbeddingHandoff(analysisResult);
+      if (
+        handoff?.wasEnqueued &&
+        handoff.meta?.path === filePath &&
+        (isImagePath(filePath) || handoff.chunksEmbedded)
+      ) {
+        logger.debug('[DOWNLOAD-WATCHER] Already indexed by analysis, not re-embedding:', filePath);
+        try {
+          await this.analysisHistoryService?.updateEmbeddingStateByPath?.(filePath, {
+            status: 'pending',
+            model: handoff.model || null
+          });
+        } catch {
+          // Non-fatal
+        }
         return;
       }
 

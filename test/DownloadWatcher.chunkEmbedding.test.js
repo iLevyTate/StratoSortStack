@@ -121,4 +121,100 @@ describe('DownloadWatcher passage vectors', () => {
     expect(vectorDbService.upsertFile).not.toHaveBeenCalled();
     expect(embedFileChunks).not.toHaveBeenCalled();
   });
+
+  describe('when the analysis pass already indexed the file where it still is', () => {
+    const handoffFor = (filePath, extra = {}) => ({
+      vector: [0.1, 0.2],
+      model: 'embed-model',
+      meta: { path: filePath },
+      wasEnqueued: true,
+      chunksEmbedded: true,
+      ...extra
+    });
+
+    test('a document is not embedded or chunked a second time', async () => {
+      const { watcher, folderMatcher, vectorDbService } = makeWatcher();
+      const filePath = '/custom/docs/report.pdf';
+      watcher.analysisHistoryService = {
+        getAnalysisByPath: jest.fn().mockResolvedValue(null),
+        updateEmbeddingStateByPath: jest.fn().mockResolvedValue(undefined)
+      };
+
+      await watcher._embedAnalyzedFile(filePath, {
+        summary: 'A report',
+        subject: 'Report',
+        extractedText: longText,
+        _embeddingForPersistence: handoffFor(filePath)
+      });
+
+      expect(folderMatcher.embedText).not.toHaveBeenCalled();
+      expect(vectorDbService.upsertFile).not.toHaveBeenCalled();
+      expect(embedFileChunks).not.toHaveBeenCalled();
+      expect(watcher.analysisHistoryService.updateEmbeddingStateByPath).toHaveBeenCalledWith(
+        filePath,
+        { status: 'pending', model: 'embed-model' }
+      );
+    });
+
+    test('an image the image pipeline queued is not embedded a second time', async () => {
+      const { watcher, folderMatcher, vectorDbService } = makeWatcher();
+      const filePath = '/custom/docs/photo.jpg';
+
+      await watcher._embedAnalyzedFile(filePath, {
+        summary: 'A photo',
+        subject: 'Photo',
+        _embeddingForPersistence: handoffFor(filePath, { chunksEmbedded: undefined })
+      });
+
+      expect(folderMatcher.embedText).not.toHaveBeenCalled();
+      expect(vectorDbService.upsertFile).not.toHaveBeenCalled();
+    });
+
+    test('a renamed file is embedded under its new path', async () => {
+      const { watcher, vectorDbService } = makeWatcher();
+
+      await watcher._embedAnalyzedFile('/custom/docs/2024-report.pdf', {
+        summary: 'A report',
+        subject: 'Report',
+        extractedText: longText,
+        _embeddingForPersistence: handoffFor('/custom/docs/report.pdf')
+      });
+
+      expect(vectorDbService.upsertFile).toHaveBeenCalledTimes(1);
+      expect(vectorDbService.upsertFile.mock.calls[0][0].meta.path).toBe(
+        '/custom/docs/2024-report.pdf'
+      );
+      expect(embedFileChunks).toHaveBeenCalledTimes(1);
+    });
+
+    test('a document whose passages were not written is embedded in full', async () => {
+      const { watcher, vectorDbService } = makeWatcher();
+      const filePath = '/custom/docs/report.pdf';
+
+      await watcher._embedAnalyzedFile(filePath, {
+        summary: 'A report',
+        subject: 'Report',
+        extractedText: longText,
+        _embeddingForPersistence: handoffFor(filePath, { chunksEmbedded: false })
+      });
+
+      expect(vectorDbService.upsertFile).toHaveBeenCalledTimes(1);
+      expect(embedFileChunks).toHaveBeenCalledTimes(1);
+    });
+
+    test('a hand-off that was never queued is embedded in full', async () => {
+      const { watcher, vectorDbService } = makeWatcher();
+      const filePath = '/custom/docs/report.pdf';
+
+      await watcher._embedAnalyzedFile(filePath, {
+        summary: 'A report',
+        subject: 'Report',
+        extractedText: longText,
+        _embeddingForPersistence: handoffFor(filePath, { wasEnqueued: false })
+      });
+
+      expect(vectorDbService.upsertFile).toHaveBeenCalledTimes(1);
+      expect(embedFileChunks).toHaveBeenCalledTimes(1);
+    });
+  });
 });

@@ -45,6 +45,7 @@ const {
   applySemanticFolderMatching: applyUnifiedFolderMatching,
   getServices
 } = require('./semanticFolderMatcher');
+const { forAnalysisCache } = require('./embeddingHandoff');
 const { fetchNamingContextFromBm25 } = require('./namingContextBm25');
 const { container, ServiceIds } = require('../services/ServiceContainer');
 const { getImageAnalysisCache } = require('../services/AnalysisCacheService');
@@ -67,7 +68,9 @@ const getSharp = createSharpLoader({
  */
 function setImageCache(signature, value) {
   if (!signature) return;
-  getImageAnalysisCache().set(signature, value);
+  // A hit hands back this stored object, and on a hit nothing was queued,
+  // so the stored copy must not claim it was (embeddingHandoff.js).
+  getImageAnalysisCache().set(signature, forAnalysisCache(value));
 }
 
 /**
@@ -1859,8 +1862,12 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
           try {
             logger.debug('[IMAGE] Analysis indicates text content, attempting OCR post-extraction');
             ocrAttempted = true;
+            // Tesseract only. The vision model has just described this
+            // image; asking it again to read the text costs a second full
+            // inference (tens of seconds) for text it already had the
+            // chance to report.
             extractedText = await extractTextFromImage(filePath, {
-              allowVisionOcr: true,
+              allowVisionOcr: false,
               fileExtension: effectiveExtension,
               ...ocrInput()
             });
@@ -1967,7 +1974,7 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
               return analysis;
             }
             await embeddingQueueManager.removeByFilePath?.(filePath);
-            await analysisQueue.enqueue({
+            const enqueueResult = await analysisQueue.enqueue({
               id: getSemanticFileId(filePath),
               path: filePath,
               text:
@@ -1996,6 +2003,12 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
               path: filePath
             });
             usedPrecomputedEmbedding = true;
+            // The folder matcher leaves images to this block, so its hand-off
+            // says "not queued". Correct it once the queue has accepted the
+            // vector, so the watchers stop re-embedding the same image.
+            if (enqueueResult?.success === true) {
+              persistedEmbedding.wasEnqueued = true;
+            }
           }
 
           if (!usedPrecomputedEmbedding) {
@@ -2053,7 +2066,7 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
                   return analysis;
                 }
                 await embeddingQueueManager.removeByFilePath?.(filePath);
-                await analysisQueue.enqueue({
+                const enqueueResult = await analysisQueue.enqueue({
                   id: getSemanticFileId(filePath),
                   path: filePath,
                   text: textToEmbed,
@@ -2074,6 +2087,17 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
                   }
                 });
                 logger.debug('[IMAGE] Queued embedding for persistence', { path: filePath });
+                // No folder-matcher hand-off reached here, so leave one that
+                // says the queue has this file. No vector in it: the queued
+                // item already carries this analysis object, and a second
+                // copy of the vector would ride along in the queue's file.
+                if (enqueueResult?.success === true) {
+                  analysis._embeddingForPersistence = {
+                    model: model || null,
+                    meta: { path: filePath, name: fileName },
+                    wasEnqueued: true
+                  };
+                }
               }
             }
           }

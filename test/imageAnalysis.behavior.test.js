@@ -929,4 +929,86 @@ describe('Image Analysis Behavior', () => {
     expect(result.embeddingStatus).toBe('skipped');
     expect(analysisQueue.enqueue).not.toHaveBeenCalled();
   });
+
+  test('post-vision OCR never asks the vision model to read the image a second time', async () => {
+    // Vision has just described this image. When Tesseract finds no text,
+    // the old post-vision pass fell back to a second full vision inference
+    // (tens of seconds) on the same picture.
+    mockLlamaService.analyzeImage.mockResolvedValue({
+      response: JSON.stringify({
+        category: 'Work',
+        keywords: ['memo'],
+        confidence: 45,
+        has_text: true,
+        content_type: 'text_document'
+      })
+    });
+    const { recognizeIfAvailable } = require('../src/main/utils/tesseractUtils');
+    recognizeIfAvailable.mockResolvedValue({ success: false, text: '' });
+
+    const result = await analyzeImageFile('/path/to/image.webp');
+
+    expect(recognizeIfAvailable).toHaveBeenCalled();
+    expect(mockLlamaService.analyzeImage).toHaveBeenCalledTimes(1);
+    expect(result.error).toBeUndefined();
+  });
+
+  describe('hand-off to the watchers once the queue accepts the image vector', () => {
+    const visionResponse = {
+      response: JSON.stringify({ category: 'Docs', keywords: ['a', 'b'], confidence: 80 })
+    };
+
+    test('says the file vector is queued, and only for this run (not in the cache)', async () => {
+      mockLlamaService.analyzeImage.mockResolvedValue(visionResponse);
+      const { analysisQueue } = require('../src/main/analysis/embeddingQueue/stageQueues');
+      analysisQueue.enqueue.mockResolvedValueOnce({ success: true, warnings: [] });
+
+      const result = await analyzeImageFile('/path/to/image.png', []);
+
+      expect(analysisQueue.enqueue).toHaveBeenCalledTimes(1);
+      expect(result._embeddingForPersistence).toMatchObject({
+        wasEnqueued: true,
+        meta: { path: '/path/to/image.png' }
+      });
+      // A later cache hit queues nothing, so the stored copy must not say it did.
+      expect(mockCacheInstance.set).toHaveBeenCalledTimes(1);
+      const cached = mockCacheInstance.set.mock.calls[0][1];
+      expect(cached._embeddingForPersistence.wasEnqueued).toBe(false);
+    });
+
+    test('corrects the folder matcher hand-off, which leaves images "not queued"', async () => {
+      mockLlamaService.analyzeImage.mockResolvedValue(visionResponse);
+      const { applySemanticFolderMatching } = require('../src/main/analysis/semanticFolderMatcher');
+      applySemanticFolderMatching.mockImplementationOnce(async ({ analysis, filePath }) => {
+        analysis._embeddingForPersistence = {
+          vector: [0.3, 0.4],
+          model: 'embed-model',
+          meta: { path: filePath, summary: 'An image' },
+          wasEnqueued: false
+        };
+        return analysis;
+      });
+      const { analysisQueue } = require('../src/main/analysis/embeddingQueue/stageQueues');
+      analysisQueue.enqueue.mockResolvedValueOnce({ success: true, warnings: [] });
+
+      const result = await analyzeImageFile('/path/to/image.png', []);
+
+      expect(analysisQueue.enqueue.mock.calls[0][0].vector).toEqual([0.3, 0.4]);
+      expect(result._embeddingForPersistence).toMatchObject({
+        vector: [0.3, 0.4],
+        wasEnqueued: true
+      });
+    });
+
+    test('claims nothing when the queue refused the vector', async () => {
+      mockLlamaService.analyzeImage.mockResolvedValue(visionResponse);
+      const { analysisQueue } = require('../src/main/analysis/embeddingQueue/stageQueues');
+      analysisQueue.enqueue.mockResolvedValueOnce({ success: false, reason: 'shutting_down' });
+
+      const result = await analyzeImageFile('/path/to/image.png', []);
+
+      expect(analysisQueue.enqueue).toHaveBeenCalledTimes(1);
+      expect(result._embeddingForPersistence?.wasEnqueued).toBeFalsy();
+    });
+  });
 });

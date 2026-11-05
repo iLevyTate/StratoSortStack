@@ -60,6 +60,7 @@ const { globalDeduplicator } = require('../utils/llmOptimization');
 const {
   applySemanticFolderMatching: applyUnifiedFolderMatching
 } = require('./semanticFolderMatcher');
+const { forAnalysisCache } = require('./embeddingHandoff');
 const { fetchNamingContextFromBm25 } = require('./namingContextBm25');
 const { container, ServiceIds } = require('../services/ServiceContainer');
 const { LRUCache } = require('../../shared/LRUCache');
@@ -126,7 +127,9 @@ function getFileCache(signature) {
  */
 function setFileCache(signature, value) {
   if (!signature) return;
-  fileAnalysisCache.set(signature, value);
+  // A hit hands back this stored object, and on a hit nothing was queued or
+  // chunked, so the stored copy must not claim either (embeddingHandoff.js).
+  fileAnalysisCache.set(signature, forAnalysisCache(value));
 }
 
 /**

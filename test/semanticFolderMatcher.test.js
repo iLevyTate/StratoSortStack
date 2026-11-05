@@ -234,6 +234,62 @@ describe('semanticFolderMatcher', () => {
     expect(matcher.embedText).toHaveBeenCalledWith('passage');
   });
 
+  describe('hand-off marker for passages written in this run', () => {
+    const runDocument = async () => {
+      const vectorDb = { initialize: jest.fn().mockResolvedValue(undefined) };
+      const matcher = {
+        embeddingCache: { initialized: true },
+        initialize: jest.fn().mockResolvedValue(undefined),
+        batchUpsertFolders: jest.fn().mockResolvedValue({ count: 1 }),
+        embedText: jest.fn().mockResolvedValue({ vector: [1, 2, 3], model: 'm' }),
+        matchVectorToFolders: jest.fn().mockResolvedValue([])
+      };
+      container.tryResolve.mockReturnValueOnce(vectorDb).mockReturnValueOnce(matcher);
+      findContainingSmartFolder.mockReturnValue({ name: 'Financial', path: '/sorted/financial' });
+      const analysis = { category: 'Documents', confidence: 0.9, keywords: ['a'] };
+      await applySemanticFolderMatching({
+        analysis,
+        filePath: '/sorted/financial/a.pdf',
+        fileName: 'a.pdf',
+        fileExtension: '.pdf',
+        fileSize: 123,
+        extractedText: 'A long document body. '.repeat(40),
+        smartFolders: [{ name: 'Financial', path: '/sorted/financial' }]
+      });
+      return analysis._embeddingForPersistence;
+    };
+
+    test('says the passages are written when the chunk pass persisted them', async () => {
+      shouldEmbed.mockResolvedValue({ shouldEmbed: true, timing: 'ok', policy: 'ok' });
+      const { embedFileChunks } = require('../src/main/analysis/chunkEmbedding');
+      embedFileChunks.mockResolvedValueOnce({ persisted: 3, skipped: null });
+
+      const handoff = await runDocument();
+
+      expect(handoff).toMatchObject({ wasEnqueued: true, chunksEmbedded: true });
+    });
+
+    test('does not claim passages when the chunk pass wrote none', async () => {
+      shouldEmbed.mockResolvedValue({ shouldEmbed: true, timing: 'ok', policy: 'ok' });
+      const { embedFileChunks } = require('../src/main/analysis/chunkEmbedding');
+      embedFileChunks.mockResolvedValueOnce({ persisted: 0, skipped: 'error' });
+
+      const handoff = await runDocument();
+
+      expect(handoff.wasEnqueued).toBe(true);
+      expect(handoff.chunksEmbedded).toBe(false);
+    });
+
+    test('does not claim passages when the embedding gate skipped the file', async () => {
+      shouldEmbed.mockResolvedValue({ shouldEmbed: false, timing: 'manual', policy: 'skip' });
+
+      const handoff = await runDocument();
+
+      expect(handoff.wasEnqueued).toBe(false);
+      expect(handoff.chunksEmbedded).toBe(false);
+    });
+  });
+
   test('does not build passage vectors when the embedding gate says skip', async () => {
     const { embedFileChunks } = require('../src/main/analysis/chunkEmbedding');
     const vectorDb = { initialize: jest.fn().mockResolvedValue(undefined) };
