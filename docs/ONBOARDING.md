@@ -152,7 +152,8 @@ orchestrate**. Don't put business logic in `src/main/ipc/*.js`.
 - **State:** Redux Toolkit. Slices live in `store/slices/` (ui, files, analysis, system, mcpServer,
   aiProvider, license). Middleware: `ipcMiddleware` subscribes to main→renderer events, validates
   them against `src/shared/ipcEventSchemas.js` and dispatches them into the store;
-  `persistenceMiddleware` debounces writes to localStorage (1s debounce, 5s max wait).
+  `persistenceMiddleware` debounces writes to localStorage (1s debounce, 5s max wait; while an
+  analysis runs and only its results, file states or selection change, at most every 30 s).
 - **Components by feature:**
   `components/{discover,organize,search,settings,setup,triage,layout,ui}`. Tailwind 4 + Framer
   Motion + Lucide.

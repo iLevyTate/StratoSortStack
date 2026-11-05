@@ -12,6 +12,150 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+Cloud analysis now covers audio and video, and video frames are sent only with your consent and the
+"Describe video keyframes" setting. When the disk fills up, the app says so and stops analyzing
+until it can save again. Exact duplicates are found without a manual step, and Find Duplicates can
+keep a whole set. A batch of images no longer restarts the vision model for every image, and much
+less is rewritten to disk while a batch runs. Contributors now need Node 24.
+
+Changes you will notice:
+
+- If you use a cloud provider, you are asked to accept the updated consent text once (see Privacy).
+  Until you do, no video frame is sent.
+- Video frames are extracted and sent only with **Describe video keyframes** on.
+- A full disk shows a banner, and the smart-folder and Downloads watchers wait until it can save.
+- The first launch after updating may re-embed files whose search vectors were missing, so expect
+  some embedding activity shortly after startup (capped per launch).
+- Building from source needs Node 24 (`.nvmrc` 24.22.1). The installed app is unaffected; it already
+  ran on the Node inside Electron.
+
+### Privacy
+
+- **Video frames can go to the cloud Analysis provider.** With a cloud provider for Analysis and
+  **Describe video keyframes** (`captionVideoKeyframes`) on, video analysis sends up to four frames
+  with the transcript. With the setting off, no frames are extracted or sent anywhere. Frames go to
+  a cloud provider only under the current consent (version 2), which the main process checks before
+  every upload; without it, the local model describes the frames and only text is sent. The pixels
+  of still images stay local.
+- **Updated consent, asked once.** The consent dialog now says that video frames are sent with
+  keyframes on, and that text read from images and saved descriptions can travel with chat and
+  suggestions. Accepting stores the consent version; consent given before counts as version 1, which
+  still covers text work but never frames. Existing users see the new text the next time they pick a
+  cloud provider, change a cloud provider's settings, or turn on keyframes while Analysis uses a
+  cloud provider.
+- Settings routing text, the keyframe switch, About and Diagnostics say what each operation sends.
+  `PRIVACY.md` and `docs/AI_PROVIDERS.md` (new "Video frames" and "Consent versions" sections) are
+  updated to match.
+
+### Added
+
+- **Cloud analysis for audio and video.** Audio and video can use the cloud Analysis provider.
+  Speech is still transcribed on the machine (Whisper) and the transcript is sent; video frames
+  follow the Privacy rules above. Still photos stay on the local vision model. If the cloud call
+  fails on budget, rate limit, network or authentication, the file goes through the local text
+  route. Cancelling a video stops the cloud request. Cloud video results get the same folder
+  matching, name cleanup and extension restore as the transcript route, and repeats come from the
+  analysis cache. A category that matches no folder now comes back empty, or as the Uncategorized
+  folder if you have one, the same as documents.
+- **Storage-full banner and hold.** When the disk is too full for the search index or the analysis
+  history to save (`ENOSPC`, `EDQUOT` or SQLite's `SQLITE_FULL`), a banner names the store that
+  cannot save. While it is up, the smart-folder watcher holds its queue and the Downloads watcher
+  holds new downloads, checking again every minute, and the watcher status line reads "paused, disk
+  full · N files waiting". The search index retries its save once a minute, and work resumes on its
+  own once every store can save. Dismissing the banner hides it but does not lift the hold. Held
+  downloads are kept in memory only, so quitting while the disk is full drops them.
+- **Keep all in Find Duplicates.** Each set has a **Keep all** button that leaves every file alone
+  and stops listing the set. The choice is remembered; if a new copy appears, the set is listed
+  again. **Show N kept** → **Restore** brings sets back. Kept sets show no Keep/Delete badges and
+  are left out of the graph's duplicate badge.
+- **Automatic file fingerprints.** Every file's search entry now stores a fingerprint (SHA-256) of
+  its contents, so **Exact duplicates** and Downloads triage's "already in a smart folder" check
+  work without running Settings → **Reindex file hashes**. That action is now only a backfill for
+  files indexed by an older version.
+
+### Changed
+
+- **The vision model stays loaded across a batch of images.** On a GPU with little memory, it was
+  shut down and restarted after every image to make room for the embedding model. During a vision
+  batch the embedding model now runs on the CPU beside it (without raising the "running on CPU"
+  badge), and moves back to the GPU after the batch.
+- **Much less is rewritten to disk during analysis.**
+  - Search index saves write only the collections that changed, refresh the `.bak` copy at most
+    every 30 minutes, and are spaced by how long a save takes (5 s to 2 min). On a large library one
+    save had been about 785 MB.
+  - Analysis history saves wait for 2 s of quiet and are at least 10 s apart, holding a change for
+    at most about 10 s; quitting writes at once. A crash can lose at most those last seconds of
+    entries.
+  - The hash cache (`hash-cache.json`) saves 5 s after the last change, at most every 30 s, and is
+    flushed on quit.
+  - While analysis runs, the window's saved state (results, file states, selection) is written at
+    most every 30 s instead of every 1 to 5 s.
+- **Each analyzed file is indexed once.** The smart-folder and Downloads watchers no longer embed a
+  document's passages or an image's vector a second time after analysis already queued them.
+- **OCR after vision uses Tesseract only.** When Tesseract finds no text in an image that vision has
+  just described, the app no longer makes a second, slow vision call. OCR before vision is
+  unchanged.
+- **Quieter in the background.** The graph's duplicate badge rescans only after the file count has
+  settled for 5 s, and at most every 30 s; the duplicate scan caches its result and yields to the
+  main process while it runs, so cancel and progress work. Startup repair checks only the files that
+  need work on disk. Status polling pauses while the window is hidden, the Atlas rebuild poll backs
+  off from 3 s to 1 min, the metrics push skips a minimized window, and the memory heartbeat logs
+  only when memory use changes (at least every 5 min).
+- The keyword index used for naming context is rebuilt at most every 2 minutes during a batch,
+  instead of before every file. Search keeps its own freshness check.
+- **Organize** checks for duplicates on each move with the stored fingerprints instead of reading
+  every same-size file; a match is confirmed with fresh reads before anything goes to the Trash.
+- The related slider in Find Duplicates starts at 90%, the bottom of its range.
+- The default Anthropic model is `claude-opus-5-5`. Older saved model ids still price correctly.
+- **Contributors:** the toolchain runs on Node 24.22.1, the Node inside Electron 45.2 (`.nvmrc`,
+  `engines` `>=24.11.0`, every workflow, `@types/node` 24). A new unmocked PDF test
+  (`test/integration/pdfExtraction.unmocked.test.js`) runs the real extractor, which caught unpdf
+  2.x failing on Node 20 while every mocked test passed. Dependabot no longer holds the
+  better-sqlite3, `@testing-library/jest-dom` and cssnano majors.
+- Dependencies: Electron 45.1.0 → 45.2.1, unpdf 1.9.1 → 2.1.0, pdfjs-dist 6.4.299 → 6.5.438,
+  officeparser 8.3.0 → 8.5.0, `@napi-rs/canvas` 1.0.11 → 1.1.0 and postal-mime 4.1.4 → 4.2.0, plus
+  minor updates to renderer libraries and build tooling.
+
+### Fixed
+
+- **Startup repair re-embeds missing vectors under default settings.** The file-vector backfill
+  asked whether embedding was allowed after organizing, which is refused under the default "during
+  analysis" timing, so missing file vectors were never rebuilt and the file was marked skipped.
+  Files whose passages were never written, or were saved as all zeros, are now re-embedded from the
+  text already stored, without calling a language model and under the same ids. Repair respects each
+  file's embedding setting (skip, web only, manual), only re-embeds broken passages in place instead
+  of rebuilding a set from capped text, and scans the passage index once per launch.
+- **Documents no longer turn into low-confidence stubs during a vision batch.** A text model load
+  waits for the batch to finish instead of failing after a few seconds.
+- **Vision batches no longer stall.** An image whose vision step failed fell back to the text model,
+  which waited for its own batch to end, so the image hung until the 300 s timeout and stored a
+  stub. Cancel and timeouts now free the batch at once, outside text requests no longer wait about
+  23 minutes and then fail, embeddings move back to the GPU after a batch, and the next batch is no
+  longer held up by the text model reloading.
+- **Find Duplicates' Send to Trash acts only on the sets you can see.** Before, it also acted on
+  related sets hidden by raising the slider, so a keeper picked in one of those trashed its other
+  files unseen. Exact-duplicate sets are re-verified: the keeper and each copy are hashed fresh from
+  disk, a copy that no longer matches is skipped and reported, and if the keeper cannot be read
+  nothing in that set is trashed. **Restore** no longer re-arms a pre-picked keeper.
+- **Model output is checked.** An image's content type is always one of `text_document`,
+  `photograph`, `screenshot` or `other`; models had copied the prompt's example list back verbatim.
+  Title-like categories (such as "Mystery Bin Declutter: 2-5-10 Method") are no longer offered as
+  new folder names.
+- A memory-budget error or a cancel during audio or video transcript analysis is no longer saved as
+  a low-confidence stub. A download that hits a memory-budget error is retried every 60 s, up to 5
+  times, instead of being left unprocessed.
+- A file that had finished indexing could be set back to "pending" by the smart-folder or Downloads
+  watcher. On a document cache hit, the watcher now writes the stored file vector instead of none.
+- A failed embedding-queue save, or a failed write of the search index's embeddings file, is no
+  longer treated as saved; the change stays marked and is written again. The hash-cache flush at
+  quit waits for a save already in progress, then writes anything newer.
+- **Settings → AI Provider** shows a saved older model (such as `claude-opus-4-7`) as its own option
+  instead of as Opus 5.5.
+- **Diagnostics:** the 15 s refresh skips while a fetch is still running, no longer disables Copy,
+  and an older result can no longer overwrite a newer one.
+- Test runs that failed with every test passing: a log-file error arriving after logging had shut
+  down was written to a console that was already gone. Such late errors are no longer printed.
+
 ## [5.1.2] - 2026-11-01
 
 A maintenance release: security updates for the build and test tooling, and a macOS release build
