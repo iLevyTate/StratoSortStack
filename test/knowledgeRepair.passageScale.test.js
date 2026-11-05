@@ -49,7 +49,10 @@ jest.mock('../src/main/services/SettingsService', () => ({
 // defaults); single tests override it to stand in for global settings.
 const mockShouldEmbed = jest.fn();
 jest.mock('../src/main/services/embedding/embeddingGate', () => ({
-  shouldEmbed: (...args) => mockShouldEmbed(...args)
+  shouldEmbed: (...args) => mockShouldEmbed(...args),
+  // Repair asks shouldEmbedForRepair; route it through the same spy (its
+  // analysis-stage question is the one these settings answer).
+  shouldEmbedForRepair: (params) => mockShouldEmbed({ ...params, stage: 'analysis' })
 }));
 
 const { create, insert, count } = require('@orama/orama');

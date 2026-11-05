@@ -472,9 +472,8 @@ async function repairStoredPassages({ entry, filePath, embedText, vectorDb, isIn
     return { action: 'skipped', reason: 'no-embedder' };
   }
 
-  const { shouldEmbed } = require('./embeddingGate');
-  const gate = await shouldEmbed({
-    stage: 'analysis',
+  const { shouldEmbedForRepair } = require('./embeddingGate');
+  const gate = await shouldEmbedForRepair({
     policyOverride: entry?.embedding?.policy || undefined,
     analysis: entry?.analysis || null,
     isInSmartFolder

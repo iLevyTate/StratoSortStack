@@ -132,8 +132,27 @@ async function shouldEmbed(params) {
   return { shouldEmbed: false, timing, policy, scope };
 }
 
+/**
+ * Repair and backfill ask a different question than a live stage: would this
+ * file be embedded under the current settings at all? Asking only about the
+ * 'final' stage (as the startup file-vector backfill did) answered no under
+ * the default 'during_analysis' timing, so missing vectors were never
+ * rebuilt and the file was marked skipped; asking only about 'analysis'
+ * does the same under 'after_organize'. Policy, provenance, scope and
+ * 'manual' timing still refuse exactly as they do for a live stage.
+ *
+ * @param {Omit<Parameters<typeof shouldEmbed>[0], 'stage'>} params
+ * @returns {ReturnType<typeof shouldEmbed>}
+ */
+async function shouldEmbedForRepair(params) {
+  const atAnalysis = await shouldEmbed({ ...params, stage: 'analysis' });
+  if (atAnalysis.shouldEmbed || atAnalysis.timing !== 'after_organize') return atAnalysis;
+  return shouldEmbed({ ...params, stage: 'final' });
+}
+
 module.exports = {
   shouldEmbed,
+  shouldEmbedForRepair,
   normalizeTiming,
   normalizePolicy,
   normalizeScope

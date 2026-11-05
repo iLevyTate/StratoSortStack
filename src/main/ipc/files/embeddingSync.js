@@ -8,7 +8,7 @@ const { findContainingSmartFolder } = require('../../../shared/folderUtils');
 const { getAllIdVariants } = require('../../utils/fileIdUtils');
 const { organizeQueue } = require('../../analysis/embeddingQueue/stageQueues');
 const embeddingQueueManager = require('../../analysis/embeddingQueue/queueManager');
-const { shouldEmbed } = require('../../services/embedding/embeddingGate');
+const { shouldEmbed, shouldEmbedForRepair } = require('../../services/embedding/embeddingGate');
 const { crossPlatformBasename } = require('../../../shared/crossPlatformUtils');
 
 const logger =
@@ -526,8 +526,8 @@ async function embedHistoryEntry({ entry, filePath, smartFolder = null, services
     return { action: 'skipped', reason: 'no-analysis' };
   }
 
-  const gate = await shouldEmbed({
-    stage: 'final',
+  // Startup repair is the only caller: a backfill, not a live stage.
+  const gate = await shouldEmbedForRepair({
     policyOverride: entry?.embedding?.policy || null,
     analysis: entry.analysis
   });
