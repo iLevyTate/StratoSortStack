@@ -1121,12 +1121,53 @@ describe('activityFromLogRecord', () => {
     });
   });
 
+  test.each([
+    // Windows: the logger keeps spaces and brackets in a name, so the whole
+    // name is the file (redact mode must hide all of it, not just "My").
+    ['[REDACTED_PATH]\\My Invoice 2024.pdf', 'My Invoice 2024.pdf', 'Problem: My Invoice 2024.pdf'],
+    ["[REDACTED_PATH]\\it's (copy).pdf", "it's (copy).pdf", "Problem: it's (copy).pdf"],
+    // Over-capturing trailing words is accepted: it errs toward hiding.
+    [
+      'Cannot read [REDACTED_PATH]\\My Invoice.pdf failed',
+      'My Invoice.pdf failed',
+      'Problem: Cannot read My Invoice.pdf failed'
+    ],
+    // POSIX: the logger's redaction stops at whitespace, and so does the name.
+    [
+      'Cannot read [REDACTED_PATH]/notes.txt because it is locked',
+      'notes.txt',
+      'Problem: Cannot read notes.txt because it is locked'
+    ]
+  ])('a redacted path in %j names the file %j', (msg, file, text) => {
+    expect(activityFromLogRecord({ level: 'warn', context: 'X', msg })).toEqual({
+      kind: 'problem',
+      icon: 'alert',
+      tone: 'warn',
+      text,
+      file
+    });
+  });
+
+  test('a bare redacted-path token is removed from Problem text', () => {
+    expect(
+      activityFromLogRecord({ level: 'error', context: 'X', msg: 'Cannot open [REDACTED_PATH]' })
+    ).toEqual({ kind: 'problem', icon: 'alert', tone: 'error', text: 'Problem: Cannot open' });
+    expect(activityFromLogRecord({ level: 'error', context: 'X', msg: '[REDACTED_PATH]' })).toEqual(
+      {
+        kind: 'problem',
+        icon: 'alert',
+        tone: 'error',
+        text: 'Problem: Something went wrong'
+      }
+    );
+  });
+
   test('a leading redacted path is part of the message, not a [TAG] to strip', () => {
     expect(
       activityFromLogRecord({
         level: 'warn',
         context: 'X',
-        msg: '[REDACTED_PATH]\\scan.pdf could not be read'
+        msg: '[REDACTED_PATH]/scan.pdf could not be read'
       })
     ).toEqual({
       kind: 'problem',

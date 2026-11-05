@@ -37,10 +37,15 @@ const COLLECTION_WORDS = Object.freeze({
   feedback: 'learning',
   learningPatterns: 'learning'
 });
-/** `[REDACTED_PATH]\name` / `[REDACTED_PATH]/name`: the logger's redacted path. */
-const REDACTED_PATH_TOKEN = /\[REDACTED_PATH\][\\/]/g;
-/** The file name right after the first redacted-path token. */
-const REDACTED_PATH_FILE = /\[REDACTED_PATH\][\\/]([^\s\\/:*?"<>|]+)/;
+/** The logger's redacted-path token, with its separator when it has one. */
+const REDACTED_PATH_TOKEN = /\[REDACTED_PATH\][\\/]?/g;
+/**
+ * The file name after the first redacted-path token, captured the way
+ * sanitizeLogData wrote it: after `\` (Windows) the name runs to a character
+ * Windows forbids in names, spaces included, so it may over-capture trailing
+ * words (erring toward hiding more); after `/` (POSIX) it stops at whitespace.
+ */
+const REDACTED_PATH_FILE = /\[REDACTED_PATH\](?:\\([^\\/:*?"<>|\r\n]+)|\/([^/\s]+))/;
 
 /** @param {string} value */
 function escapeRegExp(value) {
@@ -157,7 +162,8 @@ function stripLeadingTag(msg) {
  */
 function problem(message, tone) {
   const fileMatch = message.match(REDACTED_PATH_FILE);
-  const rawFile = fileMatch ? fileMatch[1].replace(/[.,;)'"]+$/, '') : '';
+  const captured = fileMatch ? fileMatch[1] || fileMatch[2] || '' : '';
+  const rawFile = captured.replace(/[\s.,;)'"]+$/, '');
   const file = rawFile ? baseName(rawFile) : undefined;
   const shown = message.replace(REDACTED_PATH_TOKEN, '').trim();
   return activity('problem', 'alert', tone, `Problem: ${shown || PROBLEM_FALLBACK_TEXT}`, file);
