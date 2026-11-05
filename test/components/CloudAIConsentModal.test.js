@@ -25,7 +25,7 @@ beforeEach(() => {
         status: {
           providers: [],
           routing: { default: 'local', perFolder: {} },
-          consent: { acknowledgedCloudAt: '2026-04-15T00:00:00.000Z' }
+          consent: { acknowledgedCloudAt: '2026-04-15T00:00:00.000Z', version: 2 }
         }
       }))
     }
@@ -49,10 +49,30 @@ describe('CloudAIConsentModal', () => {
     expect(
       hasAcknowledgedCloudAI({
         aiProvider: {
-          settings: { consent: { acknowledgedCloudAt: '2026-04-15T00:00:00.000Z' } }
+          settings: { consent: { acknowledgedCloudAt: '2026-04-15T00:00:00.000Z', version: 2 } }
         }
       })
     ).toBe(true);
+  });
+
+  test('consent accepted before video frames were covered does not count (asks again)', () => {
+    expect(
+      hasAcknowledgedCloudAI({
+        aiProvider: {
+          settings: { consent: { acknowledgedCloudAt: '2026-04-15T00:00:00.000Z' } }
+        }
+      })
+    ).toBe(false);
+    expect(
+      hasAcknowledgedCloudAI({
+        aiProvider: {
+          settings: { consent: { acknowledgedCloudAt: '2026-04-15T00:00:00.000Z', version: 1 } }
+        }
+      })
+    ).toBe(false);
+    // The older localStorage hint is not agreement to the current text either.
+    window.localStorage.setItem('stratosort.cloudAI.consentAcknowledged.v1', '1');
+    expect(hasAcknowledgedCloudAI()).toBe(false);
   });
 
   test('hasAcknowledgedCloudAI falls back to localStorage flag when state is empty', () => {
@@ -196,5 +216,21 @@ describe('CloudAIConsentModal privacy copy', () => {
     // provider-agnostic record; the copy says both.
     expect(dialog).toHaveTextContent(/up to twelve in Deep mode/i);
     expect(dialog).toHaveTextContent(/any cloud provider or OpenAI-compatible endpoint/i);
+  });
+
+  test('says video analysis can send frames, and only image pixels stay here', () => {
+    renderWithStore(
+      <CloudAIConsentModal provider="anthropic" onAccept={() => {}} onDecline={() => {}} />
+    );
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveTextContent(/up to four frames of each video, with its transcript/i);
+    expect(dialog).toHaveTextContent(/Describe video keyframes/);
+    expect(dialog).toHaveTextContent(/The pixels of still images stay here/i);
+    expect(dialog).toHaveTextContent(
+      /text read from them and their saved descriptions can travel/i
+    );
+    expect(dialog).toHaveTextContent(/you will be asked again/i);
+    // The old promise did not hold once video frames could be sent.
+    expect(dialog).not.toHaveTextContent(/only their extracted text can travel/i);
   });
 });

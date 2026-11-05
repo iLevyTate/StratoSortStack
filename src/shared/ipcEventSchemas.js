@@ -458,7 +458,10 @@ const schemas = z
           // with the absent field on the next status push.
           consent: z
             .object({
-              acknowledgedCloudAt: z.string().nullable().optional()
+              acknowledgedCloudAt: z.string().nullable().optional(),
+              // Which consent text was accepted; the renderer re-asks when
+              // it is older than CLOUD_CONSENT_VERSION.
+              version: z.number().nullable().optional()
             })
             .optional()
         })

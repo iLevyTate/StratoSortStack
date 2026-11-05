@@ -3,7 +3,47 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { analyzeVideoWithCloud } = require('../../../src/main/analysis/cloudMedia');
+
+const mockRouter = {
+  frameConsent: true,
+  provider: { id: 'anthropic', analyze: jest.fn() },
+  choose: jest.fn(() => mockRouter.provider),
+  hasFrameConsent: jest.fn(() => mockRouter.frameConsent)
+};
+jest.mock('../../../src/main/ipc/aiProvider', () => ({
+  getActiveAiRouter: () => mockRouter
+}));
+
+const {
+  analyzeVideoWithCloud,
+  resolveCloudFrameProvider
+} = require('../../../src/main/analysis/cloudMedia');
+
+describe('resolveCloudFrameProvider', () => {
+  beforeEach(() => {
+    mockRouter.frameConsent = true;
+    mockRouter.provider = { id: 'anthropic', analyze: jest.fn() };
+    mockRouter.choose.mockClear();
+  });
+
+  test('returns the cloud analyze provider when consent covers video frames', async () => {
+    await expect(resolveCloudFrameProvider('folder-1')).resolves.toBe(mockRouter.provider);
+    expect(mockRouter.choose).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: 'analyze', smartFolderId: 'folder-1' })
+    );
+  });
+
+  test('returns null when the stored consent predates video frames', async () => {
+    mockRouter.frameConsent = false;
+    await expect(resolveCloudFrameProvider(null)).resolves.toBeNull();
+    expect(mockRouter.choose).not.toHaveBeenCalled();
+  });
+
+  test('returns null for the local provider', async () => {
+    mockRouter.provider = { id: 'local', analyze: jest.fn() };
+    await expect(resolveCloudFrameProvider(null)).resolves.toBeNull();
+  });
+});
 
 describe('analyzeVideoWithCloud', () => {
   test('sends the transcript and jpeg frames to the provider and parses the JSON', async () => {

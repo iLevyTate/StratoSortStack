@@ -169,7 +169,7 @@ describe('AIProviderConfigModal', () => {
               }
             },
             routing: { default: 'local', perFolder: {} },
-            consent: { acknowledgedCloudAt: '2026-01-01T00:00:00.000Z' }
+            consent: { acknowledgedCloudAt: '2026-01-01T00:00:00.000Z', version: 2 }
           },
           status: { providers: [], routing: { default: 'local', perFolder: {} } },
           keyStatus: { openaiCompatible: { hasKey: true, lastFour: '1234' } },
@@ -213,7 +213,7 @@ describe('AIProviderConfigModal', () => {
               }
             },
             routing: { default: 'local', perFolder: {} },
-            consent: { acknowledgedCloudAt: '2026-01-01T00:00:00.000Z' }
+            consent: { acknowledgedCloudAt: '2026-01-01T00:00:00.000Z', version: 2 }
           },
           status: { providers: [], routing: { default: 'local', perFolder: {} } },
           keyStatus: { openaiCompatible: { hasKey: false, lastFour: null } },
@@ -312,7 +312,10 @@ describe('AIProviderConfigModal', () => {
     }));
     window.electronAPI.aiProvider.acknowledgeCloud = jest.fn(async () => ({
       success: true,
-      status: { providers: [], consent: { acknowledgedCloudAt: '2026-02-02T00:00:00.000Z' } }
+      status: {
+        providers: [],
+        consent: { acknowledgedCloudAt: '2026-02-02T00:00:00.000Z', version: 2 }
+      }
     }));
     const store = configureStore({
       reducer: { aiProvider: aiProviderReducer },
@@ -447,7 +450,10 @@ describe('AIProviderConfigModal', () => {
     }));
     window.electronAPI.aiProvider.acknowledgeCloud = jest.fn(async () => ({
       success: true,
-      status: { providers: [], consent: { acknowledgedCloudAt: '2026-03-03T00:00:00.000Z' } }
+      status: {
+        providers: [],
+        consent: { acknowledgedCloudAt: '2026-03-03T00:00:00.000Z', version: 2 }
+      }
     }));
     const store = configureStore({
       reducer: { aiProvider: aiProviderReducer },
@@ -612,7 +618,7 @@ describe('AIProviderConfigModal', () => {
               }
             },
             routing: { default: 'local', perOperation: {}, perFolder: {} },
-            consent: { acknowledgedCloudAt: '2026-01-01T00:00:00.000Z' }
+            consent: { acknowledgedCloudAt: '2026-01-01T00:00:00.000Z', version: 2 }
           },
           status: { providers: [], routing: { default: 'local', perOperation: {}, perFolder: {} } },
           keyStatus: { openaiCompatible: { hasKey: true, lastFour: '1234' } },
@@ -659,7 +665,7 @@ describe('AIProviderConfigModal', () => {
               }
             },
             routing: { default: 'local', perOperation: {}, perFolder: {} },
-            consent: { acknowledgedCloudAt: '2026-01-01T00:00:00.000Z' }
+            consent: { acknowledgedCloudAt: '2026-01-01T00:00:00.000Z', version: 2 }
           },
           status: { providers: [], routing: { default: 'local', perOperation: {}, perFolder: {} } },
           keyStatus: { openaiCompatible: { hasKey: true, lastFour: '1234' } },
@@ -711,7 +717,7 @@ describe('AIProviderConfigModal', () => {
               }
             },
             routing: { default: 'local', perOperation: {}, perFolder: {} },
-            consent: { acknowledgedCloudAt: '2026-01-01T00:00:00.000Z' }
+            consent: { acknowledgedCloudAt: '2026-01-01T00:00:00.000Z', version: 2 }
           },
           status: { providers: [], routing: { default: 'local', perOperation: {}, perFolder: {} } },
           keyStatus: { openaiCompatible: { hasKey: true, lastFour: '1234' } },

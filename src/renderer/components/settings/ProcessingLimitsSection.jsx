@@ -4,8 +4,11 @@ import NumericSettingInput from './NumericSettingInput';
 import Switch from '../ui/Switch';
 import SettingRow from './SettingRow';
 import SettingsCard from './SettingsCard';
+import CloudAIConsentModal, { hasAcknowledgedCloudAI } from '../common/CloudAIConsentModal';
+import { useAppSelector } from '../../store/hooks';
 import { getElectronAPI } from '../../services/ipc';
 import { DEFAULT_SETTINGS } from '../../../shared/defaultSettings';
+import { isCloudProviderId, resolveOperationProviderId } from '../../../shared/aiProviderRouting';
 
 const BYTES_PER_MB = 1024 * 1024;
 const CONCURRENCY_MIN = 1;
@@ -29,6 +32,20 @@ function mbToBytes(mb) {
 }
 
 /**
+ * The cloud provider that video analysis could send frames to: the Analysis
+ * provider when it is a cloud one, else the first smart-folder override that
+ * is. Null when every analysis stays local.
+ * @param {any} aiSettings
+ * @returns {string | null}
+ */
+function cloudAnalysisProviderOf(aiSettings) {
+  const analyze = resolveOperationProviderId(aiSettings, 'analyze');
+  if (isCloudProviderId(analyze)) return analyze;
+  const perFolder = Object.values(aiSettings?.routing?.perFolder || {});
+  return perFolder.find((id) => isCloudProviderId(id)) || null;
+}
+
+/**
  * Processing limits - advanced settings for file size and concurrency.
  *
  * Uses NumericSettingInput so invalid keystrokes surface a role="alert"
@@ -36,6 +53,12 @@ function mbToBytes(mb) {
  */
 function ProcessingLimitsSection({ settings, setSettings }) {
   const [recommendedConcurrency, setRecommendedConcurrency] = useState(null);
+  const cloudAnalysisProvider = useAppSelector((s) =>
+    cloudAnalysisProviderOf(s.aiProvider?.settings)
+  );
+  const consentCurrent = useAppSelector((s) => hasAcknowledgedCloudAI(s));
+  // Cloud provider awaiting the user's answer before frames may be sent.
+  const [pendingFrameConsent, setPendingFrameConsent] = useState(null);
 
   useEffect(() => {
     const api = getElectronAPI();
@@ -119,6 +142,17 @@ function ProcessingLimitsSection({ settings, setSettings }) {
 
   const captionVideoKeyframes =
     (settings.captionVideoKeyframes ?? DEFAULT_SETTINGS.captionVideoKeyframes) === true;
+
+  // Turning keyframes on while Analysis uses a cloud provider lets frames
+  // leave the machine. A user whose consent predates frames sees the current
+  // consent text first; "Keep local" leaves the setting off.
+  const handleKeyframeToggle = (checked) => {
+    if (checked === true && cloudAnalysisProvider && !consentCurrent) {
+      setPendingFrameConsent(cloudAnalysisProvider);
+      return;
+    }
+    updateSetting('captionVideoKeyframes', checked === true);
+  };
 
   return (
     <SettingsCard
@@ -216,16 +250,27 @@ function ProcessingLimitsSection({ settings, setSettings }) {
         label="Describe video keyframes"
         description={
           captionVideoKeyframes
-            ? 'On: each video also gets scene-change frames described by the vision model and merged into its transcript. Adds ffmpeg scene detection plus up to 6 vision-model calls per video (often 30 to 90 seconds on CPU).'
-            : 'Off: videos are analyzed from their audio transcript only; no frames are extracted. Turn on to add visual descriptions, at the cost of ffmpeg scene detection plus up to 6 vision-model calls per video.'
+            ? 'On: each video also gets scene-change frames. If Analysis uses a cloud provider, up to four frames are sent to it with the transcript; otherwise the local vision model describes up to 6 of them (often 30 to 90 seconds on CPU).'
+            : 'Off: videos are analyzed from their audio transcript only; no frames are extracted or sent anywhere. Turn on to add what is on screen, at the cost of ffmpeg scene detection plus local vision calls, or up to four frames sent to a cloud Analysis provider.'
         }
       >
         <Switch
           checked={captionVideoKeyframes}
-          onChange={(checked) => updateSetting('captionVideoKeyframes', checked === true)}
+          onChange={handleKeyframeToggle}
           aria-label="Toggle video keyframe descriptions"
         />
       </SettingRow>
+
+      {pendingFrameConsent && (
+        <CloudAIConsentModal
+          provider={pendingFrameConsent}
+          onAccept={() => {
+            setPendingFrameConsent(null);
+            updateSetting('captionVideoKeyframes', true);
+          }}
+          onDecline={() => setPendingFrameConsent(null)}
+        />
+      )}
     </SettingsCard>
   );
 }

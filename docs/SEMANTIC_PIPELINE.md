@@ -6,7 +6,8 @@ the problems each stage solves in chunking, embedding, retrieval speed and multi
 By default all processing is **local and in-process** (node-llama-cpp + Orama) and no data leaves
 the machine. If a user opts into a BYOK cloud provider, text analysis, chat and organization
 suggestions can be routed to it (see [`AI_PROVIDERS.md`](AI_PROVIDERS.md)); embeddings, search and
-image pixels always stay local.
+the pixels of still images always stay local. When `captionVideoKeyframes` is on, cloud video
+analysis also sends up to four frames per video with its transcript.
 
 ---
 
@@ -76,7 +77,9 @@ invalidation, and `_embedAnalyzedFile()` (file vector + optional chunks).
 - **Whisper** (`WhisperService`) transcribes via ffmpeg → PCM → whisper.cpp.
 - **Video only:** optional keyframe extraction (ffmpeg) and vision captions on stills
   (`captionKeyframes` in `mediaAnalyzerAdapter`, driven by the `captionVideoKeyframes` setting —
-  **off by default**).
+  **off by default**). With a cloud Analysis provider and current consent, up to four of those
+  frames go to the provider with the transcript instead of local captioning. With the setting off,
+  no frames are extracted or sent.
 - **Text LLM** analyzes the transcript (or multimodal merge when captions exist).
 - **`extractedText`** = the same blob the LLM saw — critical for search and chunking.
 - If Whisper is not installed, adapter returns a skip-shape (empty transcript, no meaningful embed).

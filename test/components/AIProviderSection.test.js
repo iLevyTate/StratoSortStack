@@ -65,7 +65,7 @@ beforeEach(() => {
         status: {
           providers: [],
           routing: { default: 'local', perFolder: {} },
-          consent: { acknowledgedCloudAt: '2026-04-15T00:00:00.000Z' }
+          consent: { acknowledgedCloudAt: '2026-04-15T00:00:00.000Z', version: 2 }
         }
       })),
       onStatusChanged: jest.fn(() => () => {})

@@ -2,6 +2,7 @@
 'use strict';
 const { z } = require('zod');
 const { PROVIDER_BASE_URL_RULE, isAllowedProviderBaseUrl } = require('./providerBaseUrl');
+const { CLOUD_CONSENT_VERSION, consentVersionOf } = require('../../../shared/aiProviderRouting');
 
 const PROVIDER_NAMES = ['local', 'anthropic', 'openaiCompatible'];
 
@@ -42,9 +43,12 @@ const routingSchema = z
   })
   .strict();
 
+// version: which consent text the user accepted (see CLOUD_CONSENT_VERSION).
+// A record without one was accepted before versions existed and counts as 1.
 const consentSchema = z
   .object({
-    acknowledgedCloudAt: z.string().datetime().optional()
+    acknowledgedCloudAt: z.string().datetime().optional(),
+    version: z.number().int().min(1).max(1000).optional()
   })
   .strict();
 
@@ -81,6 +85,18 @@ function hasCloudConsent(/** @type {any} */ settings) {
   return parsedMs <= Date.now();
 }
 
+/**
+ * True when the stored consent covers sending video frames to a cloud
+ * provider. Frames were added after the first consent text, so a user who
+ * accepted that older text keeps cloud text work but must accept the current
+ * text before any frame is sent.
+ * @param {any} settings
+ * @returns {boolean}
+ */
+function hasCloudFrameConsent(settings) {
+  return hasCloudConsent(settings) && consentVersionOf(settings?.consent) >= CLOUD_CONSENT_VERSION;
+}
+
 function settingsRequireCloudConsent(/** @type {any} */ settings) {
   if (!settings) return false;
   if (CLOUD_PROVIDERS.includes(settings.routing?.default)) return true;
@@ -101,6 +117,8 @@ module.exports = {
   routingSchema,
   consentSchema,
   aiSettingsSchema,
+  CLOUD_CONSENT_VERSION,
   hasCloudConsent,
+  hasCloudFrameConsent,
   settingsRequireCloudConsent
 };

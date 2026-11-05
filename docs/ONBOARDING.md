@@ -16,7 +16,9 @@ AI**. Privacy is the product: by default, nothing leaves the machine.
 - **No default external API.** The LLM (`node-llama-cpp`), the vector DB (`@orama/orama`), and OCR
   (`tesseract.js`) all run inside the Electron main process. Optional, opt-in BYOK cloud providers
   can handle document/media text analysis, chat and organization suggestions
-  (`src/shared/aiProviderRouting.js`); embeddings, search and image pixels always stay local.
+  (`src/shared/aiProviderRouting.js`); embeddings, search and the pixels of still images always stay
+  local. With "Describe video keyframes" on, cloud video analysis also sends up to four frames per
+  video (see `docs/AI_PROVIDERS.md`).
 - **Three processes, one box.** Main (Node + AI services), preload (security boundary), renderer
   (React 19 SPA). They talk via Electron IPC.
 - **Sandboxed renderer + strict CSP.** No `unsafe-eval`, no runtime `require()` in the renderer.

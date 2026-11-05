@@ -19,9 +19,13 @@
   the matching passages, summaries and paths of up to five files, or up to twelve when the question
   runs in Deep mode (including text read from images by OCR). Organization suggestions send each
   candidate's cached analysis. Search never leaves the machine.
+- **Video frames are opt-in on top of that.** With a cloud Analysis provider, a video sends up to
+  four frames with its transcript only when "Describe video keyframes" is on. Still-image pixels
+  never leave the machine. See [Video frames](#video-frames).
 - **Consent is one answer for every cloud provider.** The first time cloud AI is enabled you are
   asked once; that answer covers any cloud provider or OpenAI-compatible endpoint configured later,
-  and switching providers does not ask again.
+  and switching providers does not ask again. You are asked again only when the consent text changes
+  to cover something new (see [Consent versions](#consent-versions)).
 - **Local-endpoint detection.** If you point the OpenAI-compatible provider at Ollama, LM Studio,
   vLLM, or any other `http://localhost` / `127.0.0.1` / `[::1]` endpoint, StratoSort treats those
   calls as $0 spend (they don't count against your budget cap).
@@ -98,13 +102,51 @@ When a cloud provider is the default, or is chosen for an operation:
    happens on each question, not once per file.
 3. **Organization suggestions send each candidate file's cached analysis** (about 1,200 characters)
    to the cloud default.
-4. **Search, undo and the index never leave your machine.** Embeddings are computed locally always;
-   the vector index is never uploaded; image pixels stay local (only their OCR text is stored with
-   the analysis).
-5. **Cache stays local.** If you later disable cloud routing, the cached summaries continue to work
+4. **Video analysis can send up to four frames per video**, with the transcript, when "Describe
+   video keyframes" is on and the consent you accepted mentions video frames. See
+   [Video frames](#video-frames).
+5. **Search, undo and the index never leave your machine.** Embeddings are computed locally always;
+   the vector index is never uploaded. The pixels of still images stay local: images are analyzed by
+   the local vision model, and only the text read from them (OCR) and their saved description are
+   stored with the analysis, which chat (item 2) and suggestions (item 3) can send.
+6. **Cache stays local.** If you later disable cloud routing, the cached summaries continue to work
    — they're just JSON in your `userData/analysis-history`.
 
 The first-run consent dialog spells this out before you can store an API key.
+
+### Video frames
+
+Video analysis with a cloud Analysis provider (the default, the Analysis choice, or a smart-folder
+override) sends up to four evenly spaced frames (JPEG) of each video, with its local Whisper
+transcript, in one request. This happens only when all of these hold:
+
+- **Settings → Processing limits → Describe video keyframes** is on (`captionVideoKeyframes`, off by
+  default). With it off, no frames are extracted and none are sent; videos are analyzed from their
+  transcript only.
+- The consent you accepted is the current version (it mentions video frames). The main process
+  checks this before every frame upload (`hasCloudFrameConsent` in
+  `src/main/services/ai/schemas.js`, called through `AIRouter.hasFrameConsent()` by
+  `src/main/analysis/cloudMedia.js`).
+
+If either is missing, or the frame request fails, the video falls back to the transcript route: the
+local vision model describes the frames (when the setting is on) and the transcript plus those
+descriptions go to the Analysis provider as text. Audio never leaves the machine.
+
+### Consent versions
+
+Accepting cloud AI stores `ai.consent = { acknowledgedCloudAt, version }`. `version` is
+`CLOUD_CONSENT_VERSION` from `src/shared/aiProviderRouting.js`:
+
+| Version   | What the accepted text covers                                   |
+| :-------- | :-------------------------------------------------------------- |
+| 1 or none | File text for analysis, chat passages, suggestions              |
+| 2         | Version 1, plus up to four frames per video with its transcript |
+
+Consent saved before versions existed counts as version 1. It still covers text work, so existing
+cloud routing keeps running, but no video frame is sent under it. Settings asks again with the
+current text the next time you choose a cloud provider, change a cloud provider's configuration, or
+turn on "Describe video keyframes" while Analysis is on a cloud provider. A future change to what is
+sent bumps the version again.
 
 ---
 
@@ -172,7 +214,8 @@ spend.
 The header shows a **Cloud AI** badge when any operation (analysis, chat or suggestions) resolves to
 a **ready** cloud provider (enabled + API key loaded). If you select OpenAI/Anthropic but it is not
 ready, that work falls back to local Llama and the badge stays hidden. Hover the badge to see where
-each operation goes and the scope (text work only; not embeddings or images).
+each operation goes and the scope (embeddings, search and the pixels of still images stay local;
+video frames are sent only as described in [Video frames](#video-frames)).
 
 ---
 

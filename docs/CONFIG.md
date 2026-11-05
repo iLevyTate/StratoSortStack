@@ -142,7 +142,7 @@ These settings are configurable via **Settings > Performance > Processing limits
 | `maxImageFileSize`      | 100 MB  | Maximum size for image analysis.                                                                                                                                                                                                                                             |
 | `maxDocumentFileSize`   | 200 MB  | Maximum size for document extraction.                                                                                                                                                                                                                                        |
 | `maxTextFileSize`       | 50 MB   | Text files over this limit are analyzed from their first 50 MB.                                                                                                                                                                                                              |
-| `captionVideoKeyframes` | `false` | Describe extracted video keyframes with the vision model during media analysis (slow on CPU).                                                                                                                                                                                |
+| `captionVideoKeyframes` | `false` | Extract video keyframes during media analysis. A cloud Analysis provider (with current consent) gets up to four frames with the transcript; otherwise the local vision model describes them (slow on CPU). Off: no frames are extracted or sent.                             |
 
 ### Startup & Health Checks
 
