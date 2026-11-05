@@ -778,6 +778,11 @@ class SmartFolderWatcher {
       clearInterval(this.queueTimer);
       this.queueTimer = null;
     }
+    // And the disk-full recheck, so a held queue is not processed after stop.
+    if (this._storageFullHoldTimer) {
+      clearTimeout(this._storageFullHoldTimer);
+      this._storageFullHoldTimer = null;
+    }
 
     // Wait for in-flight queue processing to finish (up to 30s)
     if (this.isProcessingQueue) {
@@ -3676,6 +3681,11 @@ class SmartFolderWatcher {
       processingCount: this.processingFiles.size,
       pendingReanalyzeCount: this._pendingReanalyzeItems.length,
       parkedCount: this._parkedItems.length,
+      // True while queued files wait for disk space: _processQueue holds the
+      // queue whenever the storage-full flag is up, so the queue is not
+      // "being analyzed" and the status line must not say it is.
+      heldForDiskFull:
+        this.analysisQueue.length > 0 && require('./DegradedStateTracker').isStorageFull(),
       stats: { ...this.stats },
       lastStartError: this._lastStartError || null
     };

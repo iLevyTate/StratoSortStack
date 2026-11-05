@@ -136,6 +136,15 @@ class DownloadWatcher {
     // either drops events or spins).
     this._dirtyWhileProcessing = new Map(); // pathKey -> latest raw filePath
     this._inFlightHandles = new Set(); // Running handleFile promises, drained by stop()
+    // Downloads held while the disk is full, one entry per file however many
+    // events it gets, with one shared recheck timer. stop() cancels the
+    // timer but keeps the list, and the next start() hands the files back to
+    // the debounced pipeline: chokidar's ignoreInitial would never report
+    // them again.
+    /** @type {Map<string, string>} pathKey -> latest raw filePath */
+    this._heldForDiskFull = new Map();
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    this._diskFullRecheckTimer = null;
     this.debounceDelay = 500; // 500ms debounce for rapid events
     this.restartTimer = null; // Track restart timer for cleanup
     // Transient: true only while stop() is in progress (in-flight pipelines
@@ -298,6 +307,9 @@ class DownloadWatcher {
       });
 
       this.isStarting = false;
+      // Downloads held for a full disk before a stop are not reported again
+      // (ignoreInitial), so pick them up here.
+      this._releaseHeldDownloads();
     } catch (error) {
       this.isStarting = false;
       this._handleWatcherError(error);
@@ -518,6 +530,12 @@ class DownloadWatcher {
     }
     this.debounceTimers.clear();
     this._dirtyWhileProcessing.clear();
+    // Held downloads stay listed for the next start(); only the recheck
+    // stops, so a watcher the user turned off does not analyze them later.
+    if (this._diskFullRecheckTimer) {
+      clearTimeout(this._diskFullRecheckTimer);
+      this._diskFullRecheckTimer = null;
+    }
 
     // Drain in-flight handleFile pipelines (bounded). Clearing
     // processingFiles while a pipeline still runs would let moves/history
@@ -627,8 +645,59 @@ class DownloadWatcher {
       maxRestartAttempts: this.maxRestartAttempts,
       lastError: this.lastError ? /** @type {any} */ (this.lastError).toJSON() : null,
       processingCount: this.processingFiles.size,
-      pendingDebounce: this.debounceTimers.size
+      pendingDebounce: this.debounceTimers.size,
+      heldForDiskFullCount: this._heldForDiskFull.size
     };
+  }
+
+  /**
+   * Hold a download until the disk has room again. A file is held once, by
+   * its canonical path, however many watcher events it gets meanwhile.
+   * @private
+   * @param {string} filePath
+   */
+  _holdForDiskFull(filePath) {
+    const pathKey = normalizePathForIndex(filePath) || filePath;
+    if (!this._heldForDiskFull.has(pathKey)) {
+      logger.warn('[DOWNLOAD-WATCHER] Disk full; holding new download', {
+        filePath,
+        held: this._heldForDiskFull.size + 1
+      });
+    }
+    this._heldForDiskFull.set(pathKey, filePath);
+    this._scheduleDiskFullRecheck();
+  }
+
+  /** @private */
+  _scheduleDiskFullRecheck() {
+    if (this._diskFullRecheckTimer || this._stopped || !this.watcher) return;
+    this._diskFullRecheckTimer = setTimeout(() => {
+      this._diskFullRecheckTimer = null;
+      this._releaseHeldDownloads();
+    }, STORAGE_FULL_RECHECK_MS);
+    if (typeof this._diskFullRecheckTimer?.unref === 'function') {
+      this._diskFullRecheckTimer.unref();
+    }
+  }
+
+  /**
+   * Send held downloads back through the debounced pipeline once the disk
+   * has room, so the per-file dedupe applies to them like any new event.
+   * While it is still full, just look again later.
+   * @private
+   */
+  _releaseHeldDownloads() {
+    if (this._heldForDiskFull.size === 0 || this._stopped || !this.watcher) return;
+    if (require('./DegradedStateTracker').isStorageFull()) {
+      this._scheduleDiskFullRecheck();
+      return;
+    }
+    const held = [...this._heldForDiskFull.values()];
+    this._heldForDiskFull.clear();
+    logger.info('[DOWNLOAD-WATCHER] Disk has room again; processing held downloads', {
+      count: held.length
+    });
+    for (const filePath of held) this._debouncedHandleFile(filePath);
   }
 
   /**
@@ -649,14 +718,10 @@ class DownloadWatcher {
   async handleFile(filePath) {
     if (this._stopped) return;
 
-    // Disk full: hold this download rather than analyze it into a vector store
-    // that cannot save. It is retried until the store saves again.
+    // Disk full: hold this download rather than analyze it into a store that
+    // cannot save. It is retried until the stores save again.
     if (require('./DegradedStateTracker').isStorageFull()) {
-      logger.warn('[DOWNLOAD-WATCHER] Disk full; holding new download', { filePath });
-      const timer = setTimeout(() => {
-        void this.handleFile(filePath);
-      }, STORAGE_FULL_RECHECK_MS);
-      if (typeof timer?.unref === 'function') timer.unref();
+      this._holdForDiskFull(filePath);
       return;
     }
 

@@ -44,6 +44,7 @@ const ERROR_CODE_MAP = {
   EBUSY: ErrorCategory.FILE_IN_USE,
   ENOSPC: ErrorCategory.DISK_FULL,
   EDQUOT: ErrorCategory.DISK_FULL, // Linux disk quota exceeded
+  SQLITE_FULL: ErrorCategory.DISK_FULL, // better-sqlite3 on a full disk
   ENAMETOOLONG: ErrorCategory.PATH_TOO_LONG,
   ENOTEMPTY: ErrorCategory.DIRECTORY_NOT_EMPTY,
   EXDEV: ErrorCategory.CROSS_DEVICE,
@@ -283,6 +284,26 @@ function isExistsError(error) {
   return error?.code === 'EEXIST';
 }
 
+// Codes that mean "no room on the disk", as opposed to a bad path or a lock.
+// Node reports ENOSPC / EDQUOT; the SQLite stores (better-sqlite3) report
+// SQLITE_FULL for the same condition, so a check on errno codes alone never
+// fires for them.
+const DISK_FULL_CODES = new Set(['ENOSPC', 'EDQUOT', 'SQLITE_FULL']);
+const DISK_FULL_MESSAGE = /no space left on device|database or disk is full|disk quota exceeded/i;
+
+/**
+ * Check if an error (or a bare error code) means the disk is full
+ *
+ * @param {ClassifiableError|string|null|undefined} errorOrCode - The error or its code
+ * @returns {boolean} True if the write failed for lack of disk space
+ */
+function isDiskFullError(errorOrCode) {
+  if (!errorOrCode) return false;
+  if (typeof errorOrCode === 'string') return DISK_FULL_CODES.has(errorOrCode);
+  if (typeof errorOrCode.code === 'string' && DISK_FULL_CODES.has(errorOrCode.code)) return true;
+  return typeof errorOrCode.message === 'string' && DISK_FULL_MESSAGE.test(errorOrCode.message);
+}
+
 /**
  * Check if an error indicates a critical/unrecoverable issue
  * These errors typically require user intervention
@@ -340,5 +361,6 @@ module.exports = {
   isNotFoundError,
   isCrossDeviceError,
   isExistsError,
+  isDiskFullError,
   isCriticalError
 };

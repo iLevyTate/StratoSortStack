@@ -70,10 +70,16 @@ function WatcherStatusLine({ folderCount, intervalMs = DEFAULT_INTERVAL_MS }) {
     const watched = Number(status.watchedCount) || 0;
     const inFlight = (Number(status.queueLength) || 0) + (Number(status.processingCount) || 0);
     const folders = `Watching ${watched} folder${watched === 1 ? '' : 's'}`;
-    message =
-      inFlight > 0
-        ? `${folders} · ${inFlight} file${inFlight === 1 ? '' : 's'} being analyzed`
-        : `${folders} · index up to date`;
+    const files = `${inFlight} file${inFlight === 1 ? '' : 's'}`;
+    if (status.heldForDiskFull) {
+      // The watcher holds its queue while the disk is full; saying "being
+      // analyzed" would claim work that is not happening.
+      message = `${folders} · paused, disk full · ${files} waiting`;
+      tone = 'text-stratosort-warning';
+    } else {
+      message =
+        inFlight > 0 ? `${folders} · ${files} being analyzed` : `${folders} · index up to date`;
+    }
   }
 
   return (

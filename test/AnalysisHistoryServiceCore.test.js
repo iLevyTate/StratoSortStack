@@ -1060,6 +1060,64 @@ describe('AnalysisHistoryServiceCore', () => {
       expect(tracker.isStorageFull()).toBe(false);
     });
 
+    // The shipped history store is SQLite: better-sqlite3 reports a full disk
+    // as SQLITE_FULL, never ENOSPC, so a check on errno codes never fired.
+    test('a SQLite SQLITE_FULL history save raises the storage-full banner', async () => {
+      const tracker = require('../src/main/services/DegradedStateTracker');
+      tracker.getInstance()._reset();
+      persistence.saveHistory.mockRejectedValueOnce(
+        Object.assign(new Error('database or disk is full'), { code: 'SQLITE_FULL' })
+      );
+
+      await record('sqlite-full.pdf');
+      await jest.advanceTimersByTimeAsync(service.HISTORY_SAVE_QUIET_MS);
+
+      expect(tracker.isStorageFull()).toBe(true);
+      expect(tracker.getInstance().list()[0].message).toMatch(/analysis history/);
+    });
+
+    test('an immediate save (an organize move) that succeeds lifts history’s hold', async () => {
+      const tracker = require('../src/main/services/DegradedStateTracker');
+      tracker.getInstance()._reset();
+      persistence.saveHistory.mockRejectedValueOnce(
+        Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' })
+      );
+      await record('moved.pdf');
+      await jest.advanceTimersByTimeAsync(service.HISTORY_SAVE_QUIET_MS);
+      expect(tracker.isStorageFull()).toBe(true);
+
+      // Space freed; the next history write is a move, saved immediately. It
+      // also cancels the coalesced retry, which used to be the only clear.
+      const result = await service.updateEntryPaths([
+        { oldPath: '/batch/moved.pdf', newPath: '/docs/moved.pdf', newName: 'moved.pdf' }
+      ]);
+      expect(result.updated).toBe(1);
+      expect(tracker.isStorageFull()).toBe(false);
+    });
+
+    test('a good history save does not lift the vector store’s hold', async () => {
+      const tracker = require('../src/main/services/DegradedStateTracker');
+      tracker.getInstance()._reset();
+      // The vector store cannot save (its own source on the shared flag)...
+      tracker.raiseStorageFull(tracker.STORAGE_FULL_SOURCES.VECTOR_STORE, { errno: 'ENOSPC' });
+      // ...and history fails too, then saves once a little space frees.
+      persistence.saveHistory.mockRejectedValueOnce(
+        Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' })
+      );
+      await record('both.pdf');
+      await jest.advanceTimersByTimeAsync(service.HISTORY_SAVE_QUIET_MS);
+      await jest.advanceTimersByTimeAsync(service.HISTORY_SAVE_MIN_INTERVAL_MS);
+      expect(service.hasUnsavedChanges()).toBe(false);
+
+      // Background analysis must stay held: the search index still cannot save.
+      expect(tracker.isStorageFull()).toBe(true);
+      expect(tracker.getInstance().sourcesOf(tracker.STORAGE_FULL_CODE)).toEqual([
+        tracker.STORAGE_FULL_SOURCES.VECTOR_STORE
+      ]);
+      expect(tracker.getInstance().list()[0].message).toMatch(/search index/);
+      expect(tracker.getInstance().list()[0].message).not.toMatch(/analysis history/);
+    });
+
     test('embedding-state updates join the coalesced save instead of writing immediately', async () => {
       await record('embed.pdf');
       await jest.advanceTimersByTimeAsync(service.HISTORY_SAVE_QUIET_MS);

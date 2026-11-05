@@ -47,6 +47,27 @@ describe('WatcherStatusLine', () => {
     expect(screen.getByTestId('watcher-status')).toHaveTextContent(/6 files being analyzed/);
   });
 
+  // The watcher holds its queue while the disk is full; the line used to say
+  // those files were "being analyzed" for as long as the hold lasted.
+  test('says the queue is paused, not being analyzed, while the disk is full', async () => {
+    arm({
+      available: true,
+      isRunning: true,
+      watchedCount: 3,
+      queueLength: 12,
+      processingCount: 0,
+      heldForDiskFull: true
+    });
+    render(<WatcherStatusLine folderCount={3} />);
+    await flush();
+    const line = screen.getByTestId('watcher-status');
+    expect(line).toHaveTextContent(/Watching 3 folders/);
+    expect(line).toHaveTextContent(/paused, disk full/i);
+    expect(line).toHaveTextContent(/12 files waiting/);
+    expect(line).not.toHaveTextContent(/being analyzed/);
+    expect(line).toHaveClass('text-stratosort-warning');
+  });
+
   test('warns when watching is off so new files will not be picked up', async () => {
     arm({ available: true, isRunning: false, isStarting: false, watchedCount: 0 });
     render(<WatcherStatusLine folderCount={2} />);

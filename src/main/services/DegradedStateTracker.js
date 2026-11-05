@@ -38,6 +38,8 @@ const logger = createLogger('DegradedStateTracker');
  * @property {number} lastSeenAt  Epoch ms of most recent raise
  * @property {number} count       Number of times raised (>=1)
  * @property {boolean} dismissed  User-dismissed in UI (still tracked for logs)
+ * @property {string[]} [sources] Subsystems currently holding the flag up, for a
+ *   flag more than one subsystem raises (see raise({ source }))
  */
 
 const MAX_FLAGS = 64;
@@ -47,12 +49,18 @@ class DegradedStateTracker extends EventEmitter {
     super();
     /** @type {Map<string, DegradedFlag>} */
     this._flags = new Map();
+    // code -> the subsystems that raised it with a `source`. A flag two
+    // subsystems share stays up until every one of them has cleared it, so
+    // one recovering cannot lift the other's condition.
+    /** @type {Map<string, Set<string>>} */
+    this._sources = new Map();
   }
 
   /**
    * Raise or update a flag. Safe to call many times; duplicate raises just bump
-   * `count` and `lastSeenAt`.
-   * @param {Omit<DegradedFlag, 'raisedAt' | 'lastSeenAt' | 'count' | 'dismissed'>} input
+   * `count` and `lastSeenAt`. Pass `source` when several subsystems raise the
+   * same code; clear(code, source) then releases only that subsystem's hold.
+   * @param {Omit<DegradedFlag, 'raisedAt' | 'lastSeenAt' | 'count' | 'dismissed' | 'sources'> & { source?: string }} input
    * @returns {DegradedFlag}
    */
   raise(input) {
@@ -60,6 +68,14 @@ class DegradedStateTracker extends EventEmitter {
       throw new TypeError('DegradedStateTracker.raise requires { code }');
     }
     const now = Date.now();
+    if (typeof input.source === 'string' && input.source) {
+      let sources = this._sources.get(input.code);
+      if (!sources) {
+        sources = new Set();
+        this._sources.set(input.code, sources);
+      }
+      sources.add(input.source);
+    }
     const existing = this._flags.get(input.code);
     if (existing) {
       existing.lastSeenAt = now;
@@ -70,15 +86,19 @@ class DegradedStateTracker extends EventEmitter {
       }
       if (input.message) existing.message = input.message;
       if (input.detail) existing.detail = input.detail;
-      this.emit('update', { ...existing });
-      return { ...existing };
+      this._syncSources(existing);
+      this.emit('update', snapshot(existing));
+      return snapshot(existing);
     }
 
     if (this._flags.size >= MAX_FLAGS) {
       // Evict the oldest flag to keep the set bounded; degraded state should not
       // be a memory leak vector.
       const oldestKey = this._flags.keys().next().value;
-      if (oldestKey) this._flags.delete(oldestKey);
+      if (oldestKey) {
+        this._flags.delete(oldestKey);
+        this._sources.delete(oldestKey);
+      }
     }
 
     /** @type {DegradedFlag} */
@@ -93,6 +113,7 @@ class DegradedStateTracker extends EventEmitter {
       count: 1,
       dismissed: false
     };
+    this._syncSources(flag);
     this._flags.set(flag.code, flag);
     logger.warn('[DegradedState] flag raised', {
       code: flag.code,
@@ -100,17 +121,46 @@ class DegradedStateTracker extends EventEmitter {
       severity: flag.severity,
       message: flag.message
     });
-    this.emit('raised', { ...flag });
-    return { ...flag };
+    this.emit('raised', snapshot(flag));
+    return snapshot(flag);
+  }
+
+  /**
+   * @private
+   * @param {DegradedFlag} flag
+   */
+  _syncSources(flag) {
+    const sources = this._sources.get(flag.code);
+    if (sources && sources.size > 0) flag.sources = [...sources];
+    else delete flag.sources;
   }
 
   /**
    * Clear a flag entirely (e.g. after user runs a rebuild and the subsystem is
    * healthy again). Use `dismiss` instead to keep the record but hide from UI.
+   *
+   * With `source`, only that subsystem's hold is released: the flag goes away
+   * once no source holds it, and a source that never raised it changes
+   * nothing. While another source still holds it the flag stays, dismissed
+   * or not.
    * @param {string} code
+   * @param {string} [source]
    * @returns {boolean} true if a flag was removed
    */
-  clear(code) {
+  clear(code, source) {
+    if (typeof source === 'string') {
+      const sources = this._sources.get(code);
+      if (!sources || !sources.delete(source)) return false;
+      if (sources.size > 0) {
+        const flag = this._flags.get(code);
+        if (flag) {
+          this._syncSources(flag);
+          this.emit('update', snapshot(flag));
+        }
+        return false;
+      }
+    }
+    this._sources.delete(code);
     const existed = this._flags.delete(code);
     if (existed) {
       logger.info('[DegradedState] flag cleared', { code });
@@ -134,11 +184,37 @@ class DegradedStateTracker extends EventEmitter {
   }
 
   /**
+   * Subsystems currently holding a flag up (empty when none raised it with a
+   * `source`).
+   * @param {string} code
+   * @returns {string[]}
+   */
+  sourcesOf(code) {
+    return [...(this._sources.get(code) || [])];
+  }
+
+  /**
+   * Replace a raised flag's message without counting it as another raise.
+   * @param {string} code
+   * @param {string} message
+   * @returns {boolean} true when the flag exists
+   */
+  setMessage(code, message) {
+    const flag = this._flags.get(code);
+    if (!flag) return false;
+    if (message && flag.message !== message) {
+      flag.message = message;
+      this.emit('update', snapshot(flag));
+    }
+    return true;
+  }
+
+  /**
    * Snapshot all flags. Returns a shallow copy; callers can pass this across IPC.
    * @returns {DegradedFlag[]}
    */
   list() {
-    return Array.from(this._flags.values()).map((f) => ({ ...f }));
+    return Array.from(this._flags.values()).map(snapshot);
   }
 
   /**
@@ -166,8 +242,18 @@ class DegradedStateTracker extends EventEmitter {
   /** Reset — intended for tests. */
   _reset() {
     this._flags.clear();
+    this._sources.clear();
     this.removeAllListeners();
   }
+}
+
+/**
+ * Copy of a flag that shares no arrays with the tracker's own record.
+ * @param {DegradedFlag} flag
+ * @returns {DegradedFlag}
+ */
+function snapshot(flag) {
+  return flag.sources ? { ...flag, sources: [...flag.sources] } : { ...flag };
 }
 
 /** @type {DegradedStateTracker|null} */
@@ -178,11 +264,67 @@ function getInstance() {
 }
 
 /**
- * Raised while the disk is too full for the vector store to save. Background
- * analysis holds until it clears, so new results are not computed into a
- * store that cannot keep them.
+ * Raised while the disk is too full for a store to save. Background analysis
+ * holds until it clears, so new results are not computed into a store that
+ * cannot keep them. Two stores raise it, each under its own source
+ * (STORAGE_FULL_SOURCES), so it stays up until both can save again.
  */
 const STORAGE_FULL_CODE = 'storage.full';
+
+/** The stores that raise STORAGE_FULL_CODE. */
+const STORAGE_FULL_SOURCES = Object.freeze({
+  VECTOR_STORE: 'vector-store',
+  ANALYSIS_HISTORY: 'analysis-history'
+});
+/** How the banner names each store. @type {Record<string, string>} */
+const STORAGE_FULL_LABELS = {
+  [STORAGE_FULL_SOURCES.VECTOR_STORE]: 'search index',
+  [STORAGE_FULL_SOURCES.ANALYSIS_HISTORY]: 'analysis history'
+};
+
+/**
+ * @param {string[]} sources
+ * @returns {string}
+ */
+function storageFullMessage(sources) {
+  const labels = sources.map((s) => STORAGE_FULL_LABELS[s] || s);
+  const what = labels.length > 0 ? labels.join(' or its ') : 'data';
+  return `Your disk is full, so StratoSort cannot save its ${what}. New files are not analyzed until there is free space; it will resume on its own.`;
+}
+
+/**
+ * Hold the storage-full flag up on behalf of one store. The banner names
+ * every store that currently cannot save.
+ * @param {string} source One of STORAGE_FULL_SOURCES
+ * @param {Record<string, any>} [detail]
+ */
+function raiseStorageFull(source, detail) {
+  const tracker = getInstance();
+  const sources = new Set(tracker.sourcesOf(STORAGE_FULL_CODE));
+  sources.add(source);
+  tracker.raise({
+    code: STORAGE_FULL_CODE,
+    subsystem: 'storage',
+    severity: 'error',
+    source,
+    message: storageFullMessage([...sources]),
+    detail: { ...detail, source }
+  });
+}
+
+/**
+ * Release one store's hold on the storage-full flag. The flag, and the
+ * watchers' hold, stay while another store still cannot save.
+ * @param {string} source One of STORAGE_FULL_SOURCES
+ * @returns {boolean} true when no store holds the flag any more
+ */
+function clearStorageFull(source) {
+  const tracker = getInstance();
+  if (tracker.clear(STORAGE_FULL_CODE, source)) return true;
+  const remaining = tracker.sourcesOf(STORAGE_FULL_CODE);
+  if (remaining.length > 0) tracker.setMessage(STORAGE_FULL_CODE, storageFullMessage(remaining));
+  return !tracker.isRaised(STORAGE_FULL_CODE);
+}
 
 /** @returns {boolean} */
 function isStorageFull() {
@@ -197,5 +339,8 @@ module.exports = {
   DegradedStateTracker,
   getInstance,
   STORAGE_FULL_CODE,
+  STORAGE_FULL_SOURCES,
+  raiseStorageFull,
+  clearStorageFull,
   isStorageFull
 };
