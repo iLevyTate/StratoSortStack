@@ -12,10 +12,12 @@
  *   oldest entries beyond either cap are dropped and counted in `dropped`.
  *   The backlog handed to a new subscriber keeps the newest entries within
  *   the same character budget.
- * - Each line is bounded: msg MAX_MSG_CHARS, context MAX_CONTEXT_CHARS, and
- *   `dataText` comes from a budgeted serializer that stops descending once it
- *   has spent MAX_DATA_TEXT_CHARS, so a huge payload costs no more than a
- *   small one.
+ * - Each line is bounded: msg MAX_MSG_CHARS, context MAX_CONTEXT_CHARS,
+ *   time MAX_TIME_CHARS, and `dataText` (at most MAX_DATA_TEXT_CHARS) comes
+ *   from a budgeted serializer: long strings are cut before escaping, arrays
+ *   are sliced and objects copied down to what could still fit, and nothing
+ *   is descended into once the budget is spent. The walk is bounded by the
+ *   budget, but a payload still costs whatever the logger spent building it.
  * - A subscriber is dropped when its webContents is destroyed, its renderer
  *   process goes away, or its main frame navigates (a reload or crash
  *   recovery reuses the same webContents; the new page subscribes again).
@@ -45,6 +47,11 @@ const MAX_BATCH_CHARS = 256_000;
 const MAX_MSG_CHARS = 2000;
 const MAX_DATA_TEXT_CHARS = 1500;
 const MAX_CONTEXT_CHARS = 120;
+const MAX_TIME_CHARS = 40;
+/** Placeholder for an object or array the data budget has no room left for. */
+const DATA_CUT_PLACEHOLDER = '…';
+/** Below this much remaining budget an object or array is not descended into. */
+const MIN_CONTAINER_ROOM = 8;
 const ACTIVITY_MERGE_WINDOW_MS = 10_000;
 /**
  * Activity kinds whose repeats for the same file are one event announced
@@ -100,10 +107,29 @@ function truncate(value, max) {
 }
 
 /**
- * Compact JSON for the Raw tab, bounded by MAX_DATA_TEXT_CHARS. The replacer
- * keeps an approximate running length and stops descending once it is over
- * budget: long strings are cut before they are escaped, arrays are sliced to
- * what could still fit, and everything after the budget is spent is omitted.
+ * Own enumerable keys of `value`, stopping after `limit + 1` so a huge object
+ * is never fully enumerated.
+ * @param {object} value
+ * @param {number} limit
+ */
+function firstOwnKeys(value, limit) {
+  /** @type {string[]} */
+  const keys = [];
+  for (const key in value) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+    keys.push(key);
+    if (keys.length > limit) break;
+  }
+  return keys;
+}
+
+/**
+ * Compact JSON for the Raw tab, never longer than MAX_DATA_TEXT_CHARS. The
+ * replacer keeps an approximate running length: long strings are cut before
+ * they are escaped, arrays are sliced and objects copied down to what could
+ * still fit, and once the budget is spent primitives are omitted and objects
+ * or arrays become a short placeholder instead of being descended into. A
+ * cut is marked with a trailing "…".
  * @param {unknown} data
  */
 function stringifyData(data) {
@@ -117,9 +143,10 @@ function stringifyData(data) {
    * @returns {unknown}
    */
   function budgeted(key, value) {
+    const isContainer = value !== null && typeof value === 'object';
     if (budget <= 0) {
       cut = true;
-      return undefined;
+      return isContainer ? DATA_CUT_PLACEHOLDER : undefined;
     }
     budget -= Array.isArray(this) ? 1 : key.length + 4;
     if (typeof value === 'string') {
@@ -132,23 +159,40 @@ function stringifyData(data) {
       budget -= value.length + 2;
       return value;
     }
+    if (!isContainer) {
+      budget -= 6;
+      return value;
+    }
+    budget -= 2;
+    if (budget < MIN_CONTAINER_ROOM) {
+      cut = true;
+      budget -= DATA_CUT_PLACEHOLDER.length + 2;
+      return DATA_CUT_PLACEHOLDER;
+    }
     if (Array.isArray(value)) {
-      budget -= 2;
-      const room = Math.max(Math.ceil(budget / 2), 0);
+      const room = Math.ceil(budget / 2);
       if (value.length > room) {
         cut = true;
         return value.slice(0, room);
       }
       return value;
     }
-    budget -= value !== null && typeof value === 'object' ? 2 : 6;
-    return value;
+    // Each kept property costs at least `"k":0,` (6 characters).
+    const room = Math.ceil(budget / 6);
+    const keys = firstOwnKeys(value, room);
+    if (keys.length <= room) return value;
+    cut = true;
+    /** @type {Record<string, unknown>} */
+    const copy = {};
+    const source = /** @type {Record<string, unknown>} */ (value);
+    for (const k of keys.slice(0, room)) copy[k] = source[k];
+    return copy;
   }
   try {
     const serialized = JSON.stringify(data, budgeted);
     if (typeof serialized !== 'string') return '';
-    if (serialized.length > MAX_DATA_TEXT_CHARS) return truncate(serialized, MAX_DATA_TEXT_CHARS);
-    return cut && !serialized.endsWith('…') ? `${serialized}…` : serialized;
+    const marked = cut && !serialized.endsWith('…') ? `${serialized}…` : serialized;
+    return marked.length > MAX_DATA_TEXT_CHARS ? truncate(marked, MAX_DATA_TEXT_CHARS) : marked;
   } catch {
     return '[unserializable]';
   }
@@ -229,7 +273,10 @@ function createLiveLogFeed(deps = {}) {
     if (activity && isMergedDuplicate(activity, id)) activity = null;
     return {
       id,
-      time: typeof record.time === 'string' ? record.time : new Date(now()).toISOString(),
+      time:
+        typeof record.time === 'string'
+          ? truncate(record.time, MAX_TIME_CHARS)
+          : new Date(now()).toISOString(),
       level,
       context,
       msg,
@@ -428,6 +475,7 @@ module.exports = {
   MAX_MSG_CHARS,
   MAX_DATA_TEXT_CHARS,
   MAX_CONTEXT_CHARS,
+  MAX_TIME_CHARS,
   ACTIVITY_MERGE_WINDOW_MS,
   MERGEABLE_KINDS
 };

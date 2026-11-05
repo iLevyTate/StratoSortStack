@@ -14,6 +14,7 @@ const {
   MAX_BATCH_CHARS,
   MAX_DATA_TEXT_CHARS,
   MAX_CONTEXT_CHARS,
+  MAX_TIME_CHARS,
   ACTIVITY_MERGE_WINDOW_MS,
   MERGEABLE_KINDS
 } = require('../../../src/main/services/liveLogFeed');
@@ -442,6 +443,73 @@ describe('liveLogFeed', () => {
       expect(entry.dataText.endsWith('…')).toBe(true);
     });
 
+    test('dataText never exceeds its cap, whatever the size near the boundary', () => {
+      const lengths = [];
+      for (let n = 1400; n <= 1600; n += 1) {
+        for (const data of [
+          { a: 'x'.repeat(n), b: 'y' },
+          ['a'.repeat(n), 'b'],
+          { a: 'x'.repeat(n - 20), nested: { deep: [1, 2, 3] } }
+        ]) {
+          lengths.push(onlyEntry({ data }).dataText.length);
+        }
+      }
+      expect(Math.max(...lengths)).toBeLessThanOrEqual(MAX_DATA_TEXT_CHARS);
+      expect(lengths).toContain(MAX_DATA_TEXT_CHARS);
+    });
+
+    test('the documented boundary shapes stay within the cap and keep the cut marker', () => {
+      const shapes = [{ a: 'x'.repeat(1484), b: 'y' }, ['a'.repeat(1491), 'b']];
+      for (const data of shapes) {
+        const { dataText } = onlyEntry({ data });
+        expect(dataText.length).toBeLessThanOrEqual(MAX_DATA_TEXT_CHARS);
+        expect(dataText.endsWith('…')).toBe(true);
+      }
+    });
+
+    test('once the budget is spent, nested objects become a placeholder and are not walked', () => {
+      let reads = 0;
+      const huge = {};
+      for (let i = 0; i < 50_000; i += 1) {
+        Object.defineProperty(huge, `k${i}`, {
+          enumerable: true,
+          get() {
+            reads += 1;
+            return i;
+          }
+        });
+      }
+      // Fully spent, and nearly spent (a few characters left when "huge" arrives).
+      for (const prefix of [MAX_DATA_TEXT_CHARS, MAX_DATA_TEXT_CHARS - 20]) {
+        const entry = onlyEntry({ data: { a: 'x'.repeat(prefix), huge, list: [1] } });
+        expect(reads).toBe(0);
+        expect(entry.dataText.length).toBeLessThanOrEqual(MAX_DATA_TEXT_CHARS);
+        expect(entry.dataText.endsWith('…')).toBe(true);
+        if (prefix < MAX_DATA_TEXT_CHARS) expect(entry.dataText).toContain('"huge":"…"');
+      }
+    });
+
+    test('a huge object with room left is copied down, not fully enumerated or read', () => {
+      let reads = 0;
+      const huge = {};
+      for (let i = 0; i < 50_000; i += 1) {
+        Object.defineProperty(huge, `k${i}`, {
+          enumerable: true,
+          get() {
+            reads += 1;
+            return i;
+          }
+        });
+      }
+      const entry = onlyEntry({ data: huge });
+
+      expect(reads).toBeGreaterThan(0);
+      expect(reads).toBeLessThanOrEqual(Math.ceil(MAX_DATA_TEXT_CHARS / 6));
+      expect(entry.dataText.startsWith('{"k0":0,"k1":1')).toBe(true);
+      expect(entry.dataText.length).toBeLessThanOrEqual(MAX_DATA_TEXT_CHARS);
+      expect(entry.dataText.endsWith('…')).toBe(true);
+    });
+
     test('small data is serialized exactly, with no cut marker', () => {
       const data = { fileName: 'a.pdf', count: 3, ok: true, tags: ['x', 'y'], nested: { n: null } };
       expect(onlyEntry({ data }).dataText).toBe(JSON.stringify(data));
@@ -457,6 +525,12 @@ describe('liveLogFeed', () => {
     test('a non-string msg is stringified; a missing msg becomes empty', () => {
       expect(onlyEntry({ msg: 42 }).msg).toBe('42');
       expect(onlyEntry({ msg: undefined }).msg).toBe('');
+    });
+
+    test('time is capped at MAX_TIME_CHARS', () => {
+      const entry = onlyEntry({ time: '2026-11-05T09:00:00.000Z'.padEnd(500, 'Z') });
+      expect(entry.time).toHaveLength(MAX_TIME_CHARS);
+      expect(onlyEntry({}).time).toBe('2026-11-05T09:00:00.000Z');
     });
 
     test('a missing time falls back to the current clock', () => {
