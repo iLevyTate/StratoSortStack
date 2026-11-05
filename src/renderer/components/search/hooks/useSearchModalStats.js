@@ -11,12 +11,36 @@
  * by the existing modal suites; renderHook smokes live in
  * test/renderer/components/search/useSearchModalStats.test.js.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createLogger } from '../../../../shared/logger';
 import { embeddingsIpc } from '../../../services/ipc';
+import { useAppSelector } from '../../../store/hooks';
 import { getErrorMessage } from '../utils';
 
 const logger = createLogger('useSearchModalStats');
+
+/**
+ * The two embedding settings shown as indexing hints, or null when settings
+ * have not loaded.
+ * @param {any} settings
+ */
+function toEmbeddingConfig(settings) {
+  if (!settings || typeof settings !== 'object') return null;
+  return {
+    timing:
+      settings.embeddingTiming === 'during_analysis' ||
+      settings.embeddingTiming === 'after_organize' ||
+      settings.embeddingTiming === 'manual'
+        ? settings.embeddingTiming
+        : null,
+    policy:
+      settings.defaultEmbeddingPolicy === 'embed' ||
+      settings.defaultEmbeddingPolicy === 'skip' ||
+      settings.defaultEmbeddingPolicy === 'web_only'
+        ? settings.defaultEmbeddingPolicy
+        : null
+  };
+}
 
 /**
  * @param {{
@@ -38,7 +62,11 @@ export function useSearchModalStats({
   const [statsUnavailable, setStatsUnavailable] = useState(false);
   const [isLoadingStats, setIsLoadingStats] = useState(false);
   const [hasLoadedStats, setHasLoadedStats] = useState(false);
-  const [embeddingConfig, setEmbeddingConfig] = useState(null);
+  // Settings already live in the store (loaded at startup, updated on every
+  // save), so the hint reads them there instead of asking the main process
+  // on every stats refresh.
+  const uiSettings = useAppSelector((/** @type {any} */ state) => state?.ui?.settings);
+  const embeddingConfig = useMemo(() => toEmbeddingConfig(uiSettings), [uiSettings]);
   const [isRebuildingFolders, setIsRebuildingFolders] = useState(false);
   const [isRebuildingFiles, setIsRebuildingFiles] = useState(false);
 
@@ -59,35 +87,12 @@ export function useSearchModalStats({
     const requestId = (statsRequestCounterRef.current += 1);
     if (isMountedRef.current) setIsLoadingStats(true);
     try {
-      const [statsResult, settingsResult] = await Promise.allSettled([
-        embeddingsIpc.getStatsCached({ forceRefresh }),
-        window.electronAPI?.settings?.get?.()
-      ]);
-      const res = statsResult.status === 'fulfilled' ? statsResult.value : null;
-      const settings = settingsResult.status === 'fulfilled' ? settingsResult.value : null;
-
-      if (
-        isMountedRef.current &&
-        statsRequestCounterRef.current === requestId &&
-        settings &&
-        typeof settings === 'object'
-      ) {
-        setEmbeddingConfig({
-          timing:
-            settings.embeddingTiming === 'during_analysis' ||
-            settings.embeddingTiming === 'after_organize' ||
-            settings.embeddingTiming === 'manual'
-              ? settings.embeddingTiming
-              : null,
-          policy:
-            settings.defaultEmbeddingPolicy === 'embed' ||
-            settings.defaultEmbeddingPolicy === 'skip' ||
-            settings.defaultEmbeddingPolicy === 'web_only'
-              ? settings.defaultEmbeddingPolicy
-              : null
-        });
-      } else if (isMountedRef.current && statsRequestCounterRef.current === requestId) {
-        setEmbeddingConfig(null);
+      /** @type {any} */
+      let res = null;
+      try {
+        res = await embeddingsIpc.getStatsCached({ forceRefresh });
+      } catch {
+        // A failed stats call reads as "no stats", same as an unsuccessful one.
       }
 
       if (isMountedRef.current && statsRequestCounterRef.current === requestId && res?.success) {
@@ -130,7 +135,6 @@ export function useSearchModalStats({
       if (isMountedRef.current && statsRequestCounterRef.current === requestId) {
         setStats(null);
         setStatsUnavailable(false);
-        setEmbeddingConfig(null);
       }
     } finally {
       if (isMountedRef.current && statsRequestCounterRef.current === requestId) {
@@ -149,7 +153,6 @@ export function useSearchModalStats({
     setStatsUnavailable(false);
     setHasLoadedStats(false);
     setIsLoadingStats(false);
-    setEmbeddingConfig(null);
     refreshStats();
   }, [isOpen, refreshStats]);
 

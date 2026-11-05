@@ -91,4 +91,49 @@ describe('WatcherStatusLine', () => {
     });
     expect(watcherStatus).toHaveBeenCalledTimes(2);
   });
+
+  describe('while the window is hidden', () => {
+    let hidden = false;
+    beforeAll(() => {
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+    });
+    afterAll(() => {
+      delete document.hidden;
+    });
+    afterEach(() => {
+      hidden = false;
+    });
+
+    const setHidden = (value) => {
+      hidden = value;
+      act(() => {
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+    };
+
+    test('stops polling, and refreshes as soon as the window is shown', async () => {
+      jest.useFakeTimers();
+      const watcherStatus = arm({ available: true, isRunning: true, watchedCount: 1 });
+      render(<WatcherStatusLine folderCount={1} intervalMs={5000} />);
+      await flush();
+      expect(watcherStatus).toHaveBeenCalledTimes(1);
+
+      setHidden(true);
+      await act(async () => {
+        jest.advanceTimersByTime(60000);
+      });
+      await flush();
+      expect(watcherStatus).toHaveBeenCalledTimes(1);
+
+      setHidden(false);
+      await flush();
+      expect(watcherStatus).toHaveBeenCalledTimes(2);
+
+      await act(async () => {
+        jest.advanceTimersByTime(5000);
+      });
+      await flush();
+      expect(watcherStatus).toHaveBeenCalledTimes(3);
+    });
+  });
 });

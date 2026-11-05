@@ -12,6 +12,11 @@
  *    rebuilt from the stored extracted text on a later launch. A file vector
  *    that looks present does not hide an empty passage.
  *
+ * It runs on every launch, and on almost every launch nothing needs doing. So
+ * the vector store (in memory) is read first, and only files that need a
+ * repair are checked on disk or handed to the embedder. A healthy launch costs
+ * one in-memory lookup per history entry: no file stats, no model load.
+ *
  * Pure orchestration: every side effect is injected so the policy is unit
  * testable and the caller decides where `fs`, the store and the embedder come
  * from. Never throws; counts everything it did and did not do.
@@ -40,6 +45,9 @@ function isFallbackOnly(entry) {
 }
 
 /**
+ * `checked` counts healthy entries plus entries that needed work and whose
+ * file was found; `skippedMissing` counts only entries that needed work and
+ * whose file is gone (a healthy row is not checked on disk).
  * @typedef {{
  *   checked: number, healthy: number, restored: number, embedded: number,
  *   passages: number, failed: number, deferred: number, skippedMissing: number,
@@ -105,6 +113,29 @@ async function passagesNeedRepair(vectorDb, fileId, entry, filePath, checkPassag
 }
 
 /**
+ * passagesNeedRepair, with a lookup failure logged and read as "fine" (the
+ * file is looked at again next launch).
+ * @param {any} vectorDb
+ * @param {string} fileId
+ * @param {Record<string, any>} entry
+ * @param {string} filePath
+ * @param {boolean} checkPassages
+ * @param {{ debug: Function }} log
+ * @returns {Promise<boolean>}
+ */
+async function checkPassagesSafely(vectorDb, fileId, entry, filePath, checkPassages, log) {
+  try {
+    return await passagesNeedRepair(vectorDb, fileId, entry, filePath, checkPassages);
+  } catch (error) {
+    log.debug('Passage lookup failed during repair', {
+      filePath,
+      error: /** @type {any} */ (error)?.message
+    });
+    return false;
+  }
+}
+
+/**
  * @param {{
  *   entries: Record<string, any> | null | undefined,
  *   vectorDb: { getFile: (id: string) => Promise<any>,
@@ -156,7 +187,17 @@ async function repairKnowledge({
   /** @type {string[]} */
   const toRestore = [];
   const seen = new Set();
+  /**
+   * @type {Array<{ entry: Record<string, any>, filePath: string, id: string,
+   *   usable: boolean, restoring: boolean, passagesBroken: boolean | null }>}
+   */
+  const needsWork = [];
 
+  // Pass 1 reads only the in-memory vector store. A file whose row is live,
+  // carries a real vector and has the passages it should have gets no repair
+  // whether or not it is still on disk, so it is counted healthy without a
+  // disk check. On a normal launch that is every entry, and the run ends here
+  // without touching the disk or the embedding model.
   for (const entry of Object.values(entries)) {
     if (shouldStop()) {
       summary.stopped = true;
@@ -172,12 +213,7 @@ async function repairKnowledge({
       summary.skippedFallback++;
       continue;
     }
-    if (!(await fileExists(filePath))) {
-      summary.skippedMissing++;
-      continue;
-    }
 
-    summary.checked++;
     const id = getSemanticFileId(filePath);
     let doc = null;
     try {
@@ -190,8 +226,37 @@ async function repairKnowledge({
     }
 
     const usable = await fileVectorUsable(vectorDb, doc, id);
-    const atCap = () => summary.embedded + summary.passages + summary.failed >= maxEmbeds;
     const restoring = Boolean(doc?.isOrphaned && doc.hasVector !== false && usable);
+    // Passages are only looked at here when the file vector needs nothing;
+    // otherwise pass 2 looks after the re-embed, in the original order.
+    /** @type {boolean | null} */
+    let passagesBroken = null;
+    if (usable && !restoring) {
+      passagesBroken = await checkPassagesSafely(vectorDb, id, entry, filePath, checkPassages, log);
+      if (!passagesBroken) {
+        summary.checked++;
+        summary.healthy++;
+        continue;
+      }
+    }
+    needsWork.push({ entry, filePath, id, usable, restoring, passagesBroken });
+  }
+
+  // Pass 2: only files that need something. Each is checked on disk first,
+  // as before — a missing file is never restored or re-embedded.
+  for (const item of needsWork) {
+    if (shouldStop()) {
+      summary.stopped = true;
+      break;
+    }
+    const { entry, filePath, id, usable, restoring } = item;
+    if (!(await fileExists(filePath))) {
+      summary.skippedMissing++;
+      continue;
+    }
+
+    summary.checked++;
+    const atCap = () => summary.embedded + summary.passages + summary.failed >= maxEmbeds;
 
     if (restoring) {
       toRestore.push(id);
@@ -213,15 +278,9 @@ async function repairKnowledge({
       }
     }
 
-    let passagesBroken = false;
-    try {
-      passagesBroken = await passagesNeedRepair(vectorDb, id, entry, filePath, checkPassages);
-    } catch (error) {
-      log.debug('Passage lookup failed during repair', {
-        filePath,
-        error: /** @type {any} */ (error)?.message
-      });
-    }
+    const passagesBroken =
+      item.passagesBroken ??
+      (await checkPassagesSafely(vectorDb, id, entry, filePath, checkPassages, log));
     if (passagesBroken) {
       if (atCap()) {
         summary.deferred++;
@@ -318,7 +377,11 @@ function scheduleStartupKnowledgeRepair({
         getSmartFolderForPath
       } = require('../../ipc/files/embeddingSync');
       const { isAutoChunkEnabled } = require('../../../shared/experienceMode');
-      const services = resolveServices();
+      // Resolved on first use: a launch where every file is healthy never
+      // reaches the embedder, so it should not wire one up either.
+      /** @type {ReturnType<typeof resolveServices> | null} */
+      let services = null;
+      const getServices = () => (services ??= resolveServices());
       let checkPassages;
       try {
         const { getInstance } = require('../SettingsService');
@@ -344,19 +407,19 @@ function scheduleStartupKnowledgeRepair({
           embedHistoryEntry({
             entry,
             filePath,
-            smartFolder: getSmartFolderForPath(filePath, services),
-            services
+            smartFolder: getSmartFolderForPath(filePath, getServices()),
+            services: getServices()
           }),
         repairPassages: checkPassages
-          ? ({ entry, filePath }) =>
-              repairStoredPassages({
+          ? ({ entry, filePath }) => {
+              const { folderMatchingService } = getServices();
+              return repairStoredPassages({
                 entry,
                 filePath,
-                embedText: services.folderMatchingService?.embedText?.bind(
-                  services.folderMatchingService
-                ),
+                embedText: folderMatchingService?.embedText?.bind(folderMatchingService),
                 vectorDb
-              })
+              });
+            }
           : undefined
       });
       const touched =

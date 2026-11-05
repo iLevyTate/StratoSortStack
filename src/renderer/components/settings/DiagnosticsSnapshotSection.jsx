@@ -164,80 +164,89 @@ function DiagnosticsSnapshotSection({ addNotification }) {
     };
   }, []);
 
-  const fetchAll = React.useCallback(async ({ silent = false, probeLlama = true } = {}) => {
-    if (!silent) setLoading(true);
-    setRefreshing(true);
-    try {
-      const [metrics, degraded, llamaConfig, llamaHealth, vectorStats] = await Promise.all([
-        safeFetch('system metrics', () => systemIpc.getMetrics()),
-        safeFetch('degraded state', () => systemIpc.getDegradedState()),
-        safeFetch('llama config', async () => {
-          if (!getLlamaApi()) return UNAVAILABLE_MARKER;
-          return llamaIpc.getConfig();
-        }),
-        probeLlama
-          ? safeFetch('llama health', async () => {
-              if (!getLlamaApi()) return UNAVAILABLE_MARKER;
-              try {
-                return await llamaIpc.testConnection();
-              } catch (error) {
-                if (isTestConnectionInFlight(error)) return IN_FLIGHT_MARKER;
-                throw error;
-              }
-            })
-          : Promise.resolve({ ok: true, value: IN_FLIGHT_MARKER }),
-        safeFetch('vector db stats', async () => {
-          const api = getVectorDbApi();
-          if (api) return api.getStats();
-          // Fallback: embedding stats (richer shape) when vectorDb not exposed.
-          return embeddingsIpc.getStatsCached({ forceRefresh: true });
-        })
-      ]);
-      if (!mountedRef.current) return;
-      setSnapshot((prev) => ({
-        metrics: { ok: metrics.ok, value: metrics.ok ? metrics.value : null, error: metrics.error },
-        degraded: {
-          ok: degraded.ok,
-          value: degraded.ok ? degraded.value : null,
-          error: degraded.error
-        },
-        llamaConfig: {
-          ok: llamaConfig.ok,
-          value:
-            llamaConfig.ok && llamaConfig.value !== UNAVAILABLE_MARKER ? llamaConfig.value : null,
-          error:
-            llamaConfig.ok && llamaConfig.value === UNAVAILABLE_MARKER
-              ? 'Llama IPC unavailable in this build'
-              : llamaConfig.error
-        },
-        llamaHealth:
-          llamaHealth.ok && llamaHealth.value === IN_FLIGHT_MARKER
-            ? prev.llamaHealth
-            : {
-                ok: llamaHealth.ok,
-                value:
-                  llamaHealth.ok && llamaHealth.value !== UNAVAILABLE_MARKER
-                    ? llamaHealth.value
-                    : null,
-                error:
-                  llamaHealth.ok && llamaHealth.value === UNAVAILABLE_MARKER
-                    ? 'Llama IPC unavailable in this build'
-                    : llamaHealth.error
-              },
-        vectorStats: {
-          ok: vectorStats.ok,
-          value: vectorStats.ok ? vectorStats.value : null,
-          error: vectorStats.error
+  const fetchAll = React.useCallback(
+    async ({ silent = false, probeLlama = true, forceStats = true } = {}) => {
+      if (!silent) setLoading(true);
+      setRefreshing(true);
+      try {
+        const [metrics, degraded, llamaConfig, llamaHealth, vectorStats] = await Promise.all([
+          safeFetch('system metrics', () => systemIpc.getMetrics()),
+          safeFetch('degraded state', () => systemIpc.getDegradedState()),
+          safeFetch('llama config', async () => {
+            if (!getLlamaApi()) return UNAVAILABLE_MARKER;
+            return llamaIpc.getConfig();
+          }),
+          probeLlama
+            ? safeFetch('llama health', async () => {
+                if (!getLlamaApi()) return UNAVAILABLE_MARKER;
+                try {
+                  return await llamaIpc.testConnection();
+                } catch (error) {
+                  if (isTestConnectionInFlight(error)) return IN_FLIGHT_MARKER;
+                  throw error;
+                }
+              })
+            : Promise.resolve({ ok: true, value: IN_FLIGHT_MARKER }),
+          safeFetch('vector db stats', async () => {
+            const api = getVectorDbApi();
+            if (api) return api.getStats();
+            // Fallback: embedding stats (richer shape) when vectorDb not exposed.
+            // The live tick reads through the short stats cache; only an opened
+            // panel or the Refresh button forces a fresh read.
+            return embeddingsIpc.getStatsCached({ forceRefresh: forceStats });
+          })
+        ]);
+        if (!mountedRef.current) return;
+        setSnapshot((prev) => ({
+          metrics: {
+            ok: metrics.ok,
+            value: metrics.ok ? metrics.value : null,
+            error: metrics.error
+          },
+          degraded: {
+            ok: degraded.ok,
+            value: degraded.ok ? degraded.value : null,
+            error: degraded.error
+          },
+          llamaConfig: {
+            ok: llamaConfig.ok,
+            value:
+              llamaConfig.ok && llamaConfig.value !== UNAVAILABLE_MARKER ? llamaConfig.value : null,
+            error:
+              llamaConfig.ok && llamaConfig.value === UNAVAILABLE_MARKER
+                ? 'Llama IPC unavailable in this build'
+                : llamaConfig.error
+          },
+          llamaHealth:
+            llamaHealth.ok && llamaHealth.value === IN_FLIGHT_MARKER
+              ? prev.llamaHealth
+              : {
+                  ok: llamaHealth.ok,
+                  value:
+                    llamaHealth.ok && llamaHealth.value !== UNAVAILABLE_MARKER
+                      ? llamaHealth.value
+                      : null,
+                  error:
+                    llamaHealth.ok && llamaHealth.value === UNAVAILABLE_MARKER
+                      ? 'Llama IPC unavailable in this build'
+                      : llamaHealth.error
+                },
+          vectorStats: {
+            ok: vectorStats.ok,
+            value: vectorStats.ok ? vectorStats.value : null,
+            error: vectorStats.error
+          }
+        }));
+        setLastRefreshedAt(new Date());
+      } finally {
+        if (mountedRef.current) {
+          setLoading(false);
+          setRefreshing(false);
         }
-      }));
-      setLastRefreshedAt(new Date());
-    } finally {
-      if (mountedRef.current) {
-        setLoading(false);
-        setRefreshing(false);
       }
-    }
-  }, []);
+    },
+    []
+  );
 
   React.useEffect(() => {
     fetchAll();
@@ -249,7 +258,7 @@ function DiagnosticsSnapshotSection({ addNotification }) {
   React.useEffect(() => {
     const id = setInterval(() => {
       if (typeof document !== 'undefined' && document.hidden) return;
-      fetchAll({ silent: true, probeLlama: false });
+      fetchAll({ silent: true, probeLlama: false, forceStats: false });
     }, LIVE_REFRESH_MS);
     return () => clearInterval(id);
   }, [fetchAll]);

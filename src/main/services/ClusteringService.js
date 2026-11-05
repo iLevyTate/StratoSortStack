@@ -11,7 +11,7 @@
 const { createLogger } = require('../../shared/logger');
 const path = require('path');
 const fs = require('fs');
-const { tryParse: safeJsonTryParse } = require('../../shared/safeJsonOps');
+const { tryParse: safeJsonTryParse, deepClone } = require('../../shared/safeJsonOps');
 const {
   cosineSimilarity,
   squaredEuclideanDistance,
@@ -31,6 +31,55 @@ const {
 const logger = createLogger('ClusteringService');
 const fsPromises = fs.promises;
 const SEMANTIC_ID_PREFIX_RE = /^(file|image):/i;
+
+// How many vector pairs the duplicate scan compares before it hands the event
+// loop back. The scan is plain arithmetic over up to 1000 vectors (~500k
+// pairs); without a break the main process cannot answer IPC, and an abort
+// from the renderer is never seen until the whole scan is done. ~20k pairs is
+// a few tens of milliseconds of work.
+const DUPLICATE_SCAN_YIELD_PAIRS = 20000;
+
+const yieldToEventLoop = () => new Promise((resolve) => setImmediate(resolve));
+
+/**
+ * True when two vectors hold the same numbers. The vector store swaps in a new
+ * array when a vector changes rather than editing it in place, so the same
+ * array object is the fast path; anything else is compared value by value.
+ *
+ * @param {any} a
+ * @param {any} b
+ * @returns {boolean}
+ */
+function sameVector(a, b) {
+  if (a === b) return true;
+  const lenA = a?.length || 0;
+  const lenB = b?.length || 0;
+  if (lenA !== lenB) return false;
+  for (let i = 0; i < lenA; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+/**
+ * True when a duplicate scan would read exactly the same input as the cached
+ * one: same files in the same order, same vectors, same metadata (path, hash,
+ * name, tags...). The scan is a pure function of that input and its options,
+ * so equal input means the cached answer is the answer.
+ *
+ * @param {{ ids: any[], vectors: any[], metadataJson: string }} cached
+ * @param {{ ids: any[], vectors: any[], metadataJson: string }} next
+ * @returns {boolean}
+ */
+function sameDuplicateScanInput(cached, next) {
+  if (cached.ids.length !== next.ids.length) return false;
+  if (cached.metadataJson !== next.metadataJson) return false;
+  for (let i = 0; i < next.ids.length; i++) {
+    if (cached.ids[i] !== next.ids[i]) return false;
+    if (!sameVector(cached.vectors[i], next.vectors[i])) return false;
+  }
+  return true;
+}
 // -----------------------------------------------------------------------------
 // Distinctive term extraction (for "topic" insights)
 // -----------------------------------------------------------------------------
@@ -365,6 +414,25 @@ class ClusteringService {
 
     // Lock to prevent concurrent cluster computation (race condition fix)
     this._computePromise = null;
+
+    // Last duplicate scan, kept so the graph tab's badge refresh does not
+    // redo the whole pairwise comparison when nothing in the index changed.
+    // findNearDuplicates only returns it when the options AND the vectors and
+    // metadata it just read are identical to what produced it.
+    /** @type {{ paramsKey: string, input: { ids: any[], vectors: any[], metadataJson: string }, result: Record<string, any> } | null} */
+    this._duplicateScanCache = null;
+    // Any write to the vector store also drops it, so a change that the input
+    // comparison could not see (an array edited in place) still forces a scan.
+    // The generation lets a scan that was running during a write decline to
+    // cache what it computed from the older data.
+    this._vectorDataGeneration = 0;
+    this._onVectorDataMutated = () => {
+      this._vectorDataGeneration += 1;
+      this._duplicateScanCache = null;
+    };
+    if (typeof this.vectorDb.on === 'function') {
+      this.vectorDb.on('search-data-mutated', this._onVectorDataMutated);
+    }
   }
 
   /**
@@ -2161,6 +2229,7 @@ Examples of good names: "Q4 Financial Reports", "Employee Onboarding Materials",
     }
 
     try {
+      const generationAtStart = this._vectorDataGeneration;
       await this.vectorDb.initialize();
 
       // Get file count from stats
@@ -2196,6 +2265,32 @@ Examples of good names: "Q4 Financial Reports", "Employee Onboarding Materials",
 
       if (!result.ids || result.ids.length < 2) {
         return emptyResult;
+      }
+
+      // Same options + same vectors and metadata as the last scan → same
+      // answer. A copy goes out because the IPC handler adds file sizes to
+      // the members it returns, and that must not leak into the next reply.
+      const paramsKey = JSON.stringify([threshold, nearIdenticalMin, relatedMin, maxResults]);
+      // Shallow copies: the lists are kept with the cached answer, and the
+      // reader may reuse its arrays. The vectors themselves are kept by
+      // reference (see sameVector).
+      const scanInput = {
+        ids: result.ids.slice(),
+        vectors: (result.embeddings || []).slice(),
+        metadataJson: JSON.stringify(result.metadatas || [])
+      };
+      const cachedScan = this._duplicateScanCache;
+      if (
+        cachedScan &&
+        cachedScan.paramsKey === paramsKey &&
+        sameDuplicateScanInput(cachedScan.input, scanInput)
+      ) {
+        if (isAborted()) throw makeAbortError();
+        logger.debug('[ClusteringService] Duplicate scan unchanged since last run; reusing it', {
+          fileCount: scanInput.ids.length
+        });
+        emitProgress({ phase: 'compare', cached: true, done: true });
+        return deepClone(cachedScan.result);
       }
 
       // Build embedding map (id -> { vector, metadata })
@@ -2255,7 +2350,16 @@ Examples of good names: "Q4 Financial Reports", "Employee Onboarding Materials",
       if (isAborted()) throw makeAbortError();
       emitProgress({ phase: 'compare', pairsCompared: 0, totalPairs, matches: 0 });
 
+      let pairsAtLastYield = 0;
+
       outerLoop: for (let i = 0; i < embeddingIds.length; i++) {
+        // Hand the event loop back between rows every so often, so the main
+        // process keeps answering IPC and an abort from the renderer lands.
+        if (pairsCompared - pairsAtLastYield >= DUPLICATE_SCAN_YIELD_PAIRS) {
+          pairsAtLastYield = pairsCompared;
+          await yieldToEventLoop();
+          if (isAborted()) throw makeAbortError();
+        }
         for (let j = i + 1; j < embeddingIds.length; j++) {
           if (duplicatePairs.length >= MAX_PAIRS_LIMIT) {
             pairsLimitReached = true;
@@ -2385,7 +2489,7 @@ Examples of good names: "Q4 Financial Reports", "Employee Onboarding Materials",
         truncated
       });
 
-      return {
+      const scanResult = {
         success: true,
         tiers: {
           exact: limitedExact,
@@ -2408,6 +2512,14 @@ Examples of good names: "Q4 Financial Reports", "Employee Onboarding Materials",
           ? `Results truncated: exceeded ${MAX_PAIRS_LIMIT} pairs limit. Consider increasing threshold.`
           : undefined
       };
+      if (generationAtStart === this._vectorDataGeneration) {
+        this._duplicateScanCache = {
+          paramsKey,
+          input: scanInput,
+          result: deepClone(scanResult)
+        };
+      }
+      return scanResult;
     } catch (error) {
       logger.error('[ClusteringService] Failed to find near-duplicates:', error);
       return {
@@ -2439,6 +2551,10 @@ Examples of good names: "Q4 Financial Reports", "Employee Onboarding Materials",
     this.clusterLabels.clear();
     this.lastComputedAt = null;
     this._computePromise = null;
+    this._duplicateScanCache = null;
+    if (typeof this.vectorDb?.removeListener === 'function') {
+      this.vectorDb.removeListener('search-data-mutated', this._onVectorDataMutated);
+    }
 
     logger.info('[ClusteringService] Cleanup complete');
   }

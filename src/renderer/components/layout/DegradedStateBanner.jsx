@@ -192,12 +192,20 @@ function DegradedStateBanner() {
   useEffect(() => {
     // Adaptive polling: start at base interval, exponentially back off when
     // results stay empty, snap back to base as soon as anything appears.
+    // Nobody reads the banner while the window is hidden, so polling pauses
+    // then and one fetch runs as soon as the window is shown again.
     let cancelled = false;
     let timeoutId = null;
     let consecutiveEmpty = 0;
+    let inFlight = false;
+    const isHidden = () => typeof document !== 'undefined' && document.hidden;
 
     const tick = async () => {
       if (cancelled) return;
+      timeoutId = null;
+      // Hidden: stop here; the visibility listener restarts the loop.
+      if (isHidden()) return;
+      inFlight = true;
       try {
         const dispatched = dispatch(fetchDegradedState());
         const result = dispatched?.unwrap ? await dispatched.unwrap() : await dispatched;
@@ -208,6 +216,8 @@ function DegradedStateBanner() {
         // Slice records the error; treat as empty for backoff purposes.
         if (cancelled) return;
         consecutiveEmpty += 1;
+      } finally {
+        inFlight = false;
       }
       if (cancelled) return;
       const overshoot = Math.max(0, consecutiveEmpty - POLL_BACKOFF_AFTER_EMPTY);
@@ -218,10 +228,20 @@ function DegradedStateBanner() {
       timeoutId = setTimeout(tick, nextDelay);
     };
 
+    const onVisibilityChange = () => {
+      // A fetch already under way schedules the next one itself.
+      if (cancelled || isHidden() || inFlight) return;
+      // Shown again: fetch now rather than wait out a backed-off timer.
+      if (timeoutId) clearTimeout(timeoutId);
+      tick();
+    };
+
     tick();
+    document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
       cancelled = true;
       if (timeoutId) clearTimeout(timeoutId);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, [dispatch]);
 
