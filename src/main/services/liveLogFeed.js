@@ -8,8 +8,17 @@
  * - A ring buffer keeps the last RING_CAPACITY entries as the backlog a new
  *   subscriber receives. It is cleared on the last unsubscribe.
  * - Entries are pushed in batches every FLUSH_INTERVAL_MS, at most
- *   MAX_BATCH_ENTRIES per batch (oldest dropped first, counted in `dropped`).
- * - A destroyed webContents unsubscribes itself.
+ *   MAX_BATCH_ENTRIES and MAX_BATCH_CHARS (msg + dataText) per batch; the
+ *   oldest entries beyond either cap are dropped and counted in `dropped`.
+ *   The backlog handed to a new subscriber keeps the newest entries within
+ *   the same character budget.
+ * - Each line is bounded: msg MAX_MSG_CHARS, context MAX_CONTEXT_CHARS, and
+ *   `dataText` comes from a budgeted serializer that stops descending once it
+ *   has spent MAX_DATA_TEXT_CHARS, so a huge payload costs no more than a
+ *   small one.
+ * - A subscriber is dropped when its webContents is destroyed, its renderer
+ *   process goes away, or its main frame navigates (a reload or crash
+ *   recovery reuses the same webContents; the new page subscribes again).
  * - Records produced synchronously while a batch is being delivered (e.g.
  *   safeSend's validation / failure logs) are ignored, so a failing send
  *   cannot feed itself. The guard is module-wide: no feed buffers what any
@@ -32,8 +41,9 @@ const { activityFromLogRecord } = require('./liveLogActivity');
 const RING_CAPACITY = 500;
 const FLUSH_INTERVAL_MS = 250;
 const MAX_BATCH_ENTRIES = 200;
+const MAX_BATCH_CHARS = 256_000;
 const MAX_MSG_CHARS = 2000;
-const MAX_DATA_TEXT_CHARS = 4000;
+const MAX_DATA_TEXT_CHARS = 1500;
 const MAX_CONTEXT_CHARS = 120;
 const ACTIVITY_MERGE_WINDOW_MS = 10_000;
 /**
@@ -45,6 +55,8 @@ const MERGEABLE_KINDS = new Set(['analyzed']);
 /** Prune expired merge keys once the map grows past this many files. */
 const MERGE_MEMORY_SOFT_LIMIT = 1000;
 const LEVELS = new Set(['trace', 'debug', 'info', 'warn', 'error', 'fatal']);
+/** webContents events after which the subscribed page no longer exists. */
+const DETACH_EVENTS = ['destroyed', 'render-process-gone', 'did-navigate'];
 
 /**
  * @typedef {import('../../shared/logger').LiveLogRecord} LiveLogRecord
@@ -52,11 +64,17 @@ const LEVELS = new Set(['trace', 'debug', 'info', 'warn', 'error', 'fatal']);
  * @typedef {{ id: number, time: string, level: string, context: string, msg: string, dataText: string, activity: LiveActivity | null }} LiveLogEntry
  * @typedef {{ entries: LiveLogEntry[], dropped: number }} LiveLogBatch
  * @typedef {(record: LiveLogRecord) => void} RecordListener
+ * @typedef {(...args: unknown[]) => void} EventHandler
+ * @typedef {object} FeedWebContents The part of Electron's WebContents the feed uses.
+ * @property {(channel: string, ...args: unknown[]) => void} send
+ * @property {() => boolean} [isDestroyed]
+ * @property {(event: string, listener: EventHandler) => unknown} [on]
+ * @property {(event: string, listener: EventHandler) => unknown} [removeListener]
  * @typedef {object} LiveLogFeedDeps
  * @property {(listener: RecordListener) => void} [addListener]
  * @property {(listener: RecordListener) => void} [removeListener]
  * @property {(record: LiveLogRecord) => (LiveActivity | null)} [classify]
- * @property {(webContents: any, payload: LiveLogBatch) => unknown} [send]
+ * @property {(webContents: FeedWebContents, payload: LiveLogBatch) => unknown} [send]
  * @property {() => number} [now] Clock for the activity merge window (ms).
  */
 
@@ -68,26 +86,81 @@ const LEVELS = new Set(['trace', 'debug', 'info', 'warn', 'error', 'fatal']);
 let delivering = false;
 
 /**
+ * Cut `value` to at most `max` characters, ending in "…" when cut. Never
+ * leaves half of a surrogate pair at the cut.
  * @param {string} value
  * @param {number} max
  */
 function truncate(value, max) {
-  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+  if (value.length <= max) return value;
+  let end = Math.max(max - 1, 0);
+  const last = value.charCodeAt(end - 1);
+  if (end > 0 && last >= 0xd800 && last <= 0xdbff) end -= 1;
+  return `${value.slice(0, end)}…`;
 }
 
-/** @param {unknown} data */
+/**
+ * Compact JSON for the Raw tab, bounded by MAX_DATA_TEXT_CHARS. The replacer
+ * keeps an approximate running length and stops descending once it is over
+ * budget: long strings are cut before they are escaped, arrays are sliced to
+ * what could still fit, and everything after the budget is spent is omitted.
+ * @param {unknown} data
+ */
 function stringifyData(data) {
   if (data === undefined || data === null) return '';
+  let budget = MAX_DATA_TEXT_CHARS;
+  let cut = false;
+  /**
+   * @this {unknown}
+   * @param {string} key
+   * @param {unknown} value
+   * @returns {unknown}
+   */
+  function budgeted(key, value) {
+    if (budget <= 0) {
+      cut = true;
+      return undefined;
+    }
+    budget -= Array.isArray(this) ? 1 : key.length + 4;
+    if (typeof value === 'string') {
+      if (value.length > budget) {
+        cut = true;
+        const kept = truncate(value, Math.max(budget, 1));
+        budget -= kept.length + 2;
+        return kept;
+      }
+      budget -= value.length + 2;
+      return value;
+    }
+    if (Array.isArray(value)) {
+      budget -= 2;
+      const room = Math.max(Math.ceil(budget / 2), 0);
+      if (value.length > room) {
+        cut = true;
+        return value.slice(0, room);
+      }
+      return value;
+    }
+    budget -= value !== null && typeof value === 'object' ? 2 : 6;
+    return value;
+  }
   try {
-    const serialized = JSON.stringify(data);
-    return typeof serialized === 'string' ? truncate(serialized, MAX_DATA_TEXT_CHARS) : '';
+    const serialized = JSON.stringify(data, budgeted);
+    if (typeof serialized !== 'string') return '';
+    if (serialized.length > MAX_DATA_TEXT_CHARS) return truncate(serialized, MAX_DATA_TEXT_CHARS);
+    return cut && !serialized.endsWith('…') ? `${serialized}…` : serialized;
   } catch {
     return '[unserializable]';
   }
 }
 
+/** @param {LiveLogEntry} entry */
+function entryChars(entry) {
+  return entry.msg.length + entry.dataText.length;
+}
+
 /**
- * @param {any} webContents
+ * @param {FeedWebContents} webContents
  * @param {LiveLogBatch} payload
  */
 function defaultSend(webContents, payload) {
@@ -96,7 +169,10 @@ function defaultSend(webContents, payload) {
   // TODO(live-activity Task 4): drop this cast once IPC_CHANNELS.SYSTEM
   // declares LIVE_LOG_BATCH; until then nothing subscribes, so it never runs.
   const channels = /** @type {Record<string, string>} */ (IPC_CHANNELS.SYSTEM);
-  return safeSend(webContents, channels.LIVE_LOG_BATCH, payload);
+  const target = /** @type {import('electron').WebContents} */ (
+    /** @type {unknown} */ (webContents)
+  );
+  return safeSend(target, channels.LIVE_LOG_BATCH, payload);
 }
 
 /**
@@ -107,24 +183,25 @@ function createLiveLogFeed(deps = {}) {
   const removeListener = typeof deps.removeListener === 'function' ? deps.removeListener : () => {};
   const classify = typeof deps.classify === 'function' ? deps.classify : activityFromLogRecord;
   const send = typeof deps.send === 'function' ? deps.send : defaultSend;
-  const now = typeof deps.now === 'function' ? deps.now : Date.now;
+  const now = typeof deps.now === 'function' ? deps.now : () => Date.now();
 
-  /** @type {Map<any, () => void>} */
+  /** Subscribed webContents -> the handler registered for DETACH_EVENTS. @type {Map<FeedWebContents, EventHandler>} */
   const subscribers = new Map();
   /** @type {LiveLogEntry[]} */
   let ring = [];
   /** @type {LiveLogEntry[]} */
   let pending = [];
+  let pendingChars = 0;
   let dropped = 0;
   let seq = 0;
   let listening = false;
   /**
    * Last shown activity per kind + file: when it was buffered and its entry
-   * id (still in the backlog while id >= ring[0].id).
+   * id (still in the backlog while id >= the oldest surviving id).
    * @type {Map<string, { at: number, id: number }>}
    */
   let shownActivities = new Map();
-  /** @type {any} */
+  /** @type {ReturnType<typeof setTimeout> | null} */
   let timer = null;
 
   /**
@@ -152,7 +229,7 @@ function createLiveLogFeed(deps = {}) {
     if (activity && isMergedDuplicate(activity, id)) activity = null;
     return {
       id,
-      time: typeof record.time === 'string' ? record.time : new Date().toISOString(),
+      time: typeof record.time === 'string' ? record.time : new Date(now()).toISOString(),
       level,
       context,
       msg,
@@ -163,7 +240,8 @@ function createLiveLogFeed(deps = {}) {
 
   /**
    * True when this is a mergeable kind and the same kind + file was shown
-   * within the merge window by an entry still in the backlog. Otherwise records this activity as shown.
+   * within the merge window by an entry that survives this entry's push into
+   * the backlog. Otherwise records this activity as shown.
    * @param {LiveActivity} activity
    * @param {number} id
    */
@@ -173,7 +251,9 @@ function createLiveLogFeed(deps = {}) {
     const key = `${activity.kind}\u0000${activity.file}`;
     const at = now();
     const previous = shownActivities.get(key);
-    const oldestId = ring.length > 0 ? ring[0].id : Infinity;
+    // Pushing this entry into a full ring evicts ring[0].
+    const oldest = ring.length >= RING_CAPACITY ? ring[1] : ring[0];
+    const oldestId = oldest ? oldest.id : id;
     if (previous && at - previous.at <= ACTIVITY_MERGE_WINDOW_MS && previous.id >= oldestId) {
       return true;
     }
@@ -193,22 +273,32 @@ function createLiveLogFeed(deps = {}) {
     ring.push(entry);
     if (ring.length > RING_CAPACITY) ring.shift();
     pending.push(entry);
-    if (pending.length > MAX_BATCH_ENTRIES) {
-      pending.shift();
+    pendingChars += entryChars(entry);
+    while (
+      pending.length > 1 &&
+      (pending.length > MAX_BATCH_ENTRIES || pendingChars > MAX_BATCH_CHARS)
+    ) {
+      const oldest = /** @type {LiveLogEntry} */ (pending.shift());
+      pendingChars -= entryChars(oldest);
       dropped += 1;
     }
     if (!timer) {
       timer = setTimeout(flush, FLUSH_INTERVAL_MS);
-      if (timer && typeof timer.unref === 'function') timer.unref();
+      const handle = /** @type {{ unref?: () => void }} */ (/** @type {unknown} */ (timer));
+      if (handle && typeof handle.unref === 'function') handle.unref();
     }
   }
 
   function flush() {
-    timer = null;
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
     if (pending.length === 0 && dropped === 0) return;
     /** @type {LiveLogBatch} */
     const payload = { entries: pending, dropped };
     pending = [];
+    pendingChars = 0;
     dropped = 0;
     // Restore rather than clear: a flush nested inside another feed's send
     // must not lift that outer delivery's guard.
@@ -231,34 +321,56 @@ function createLiveLogFeed(deps = {}) {
     }
   }
 
+  /** The newest backlog entries whose msg + dataText fit MAX_BATCH_CHARS. */
+  function backlog() {
+    let chars = 0;
+    let start = ring.length;
+    while (start > 0) {
+      const size = entryChars(ring[start - 1]);
+      if (chars + size > MAX_BATCH_CHARS && start < ring.length) break;
+      chars += size;
+      start -= 1;
+    }
+    return ring.slice(start);
+  }
+
   /**
-   * @param {any} webContents
+   * Subscribe a window. Returns the backlog (newest entries within the batch
+   * character budget). Entries buffered but not yet flushed appear both in
+   * this backlog and in the next batch, so consumers must dedupe by `id`.
+   * Subscribing an already subscribed window only returns the backlog.
+   * @param {FeedWebContents | null | undefined} webContents
    * @returns {{ entries: LiveLogEntry[] }}
    */
   function subscribe(webContents) {
     if (!webContents || typeof webContents.send !== 'function') return { entries: [] };
     if (!subscribers.has(webContents)) {
-      const onDestroyed = () => unsubscribe(webContents);
-      subscribers.set(webContents, onDestroyed);
-      if (typeof webContents.once === 'function') webContents.once('destroyed', onDestroyed);
+      const onDetach = () => unsubscribe(webContents);
+      subscribers.set(webContents, onDetach);
+      if (typeof webContents.on === 'function') {
+        for (const event of DETACH_EVENTS) webContents.on(event, onDetach);
+      }
     }
     if (!listening) {
       addListener(onRecord);
       listening = true;
     }
-    return { entries: ring.slice() };
+    return { entries: backlog() };
   }
 
-  /** @param {any} webContents */
+  /** @param {FeedWebContents | null | undefined} webContents */
   function unsubscribe(webContents) {
-    const onDestroyed = subscribers.get(webContents);
-    if (!onDestroyed) return;
+    if (!webContents) return;
+    const onDetach = subscribers.get(webContents);
+    if (!onDetach) return;
     subscribers.delete(webContents);
     if (typeof webContents.removeListener === 'function') {
-      try {
-        webContents.removeListener('destroyed', onDestroyed);
-      } catch {
-        // A webContents mid-teardown may refuse; the subscriber is gone either way.
+      for (const event of DETACH_EVENTS) {
+        try {
+          webContents.removeListener(event, onDetach);
+        } catch {
+          // A webContents mid-teardown may refuse; the subscriber is gone either way.
+        }
       }
     }
     if (subscribers.size === 0) {
@@ -272,6 +384,7 @@ function createLiveLogFeed(deps = {}) {
       }
       ring = [];
       pending = [];
+      pendingChars = 0;
       dropped = 0;
       shownActivities = new Map();
     }
@@ -311,8 +424,10 @@ module.exports = {
   RING_CAPACITY,
   FLUSH_INTERVAL_MS,
   MAX_BATCH_ENTRIES,
+  MAX_BATCH_CHARS,
   MAX_MSG_CHARS,
   MAX_DATA_TEXT_CHARS,
+  MAX_CONTEXT_CHARS,
   ACTIVITY_MERGE_WINDOW_MS,
   MERGEABLE_KINDS
 };

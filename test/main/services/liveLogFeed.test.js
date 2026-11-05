@@ -11,6 +11,9 @@ const {
   FLUSH_INTERVAL_MS,
   MAX_BATCH_ENTRIES,
   MAX_MSG_CHARS,
+  MAX_BATCH_CHARS,
+  MAX_DATA_TEXT_CHARS,
+  MAX_CONTEXT_CHARS,
   ACTIVITY_MERGE_WINDOW_MS,
   MERGEABLE_KINDS
 } = require('../../../src/main/services/liveLogFeed');
@@ -59,6 +62,8 @@ function makeFeed(overrides = {}) {
   });
   return { feed, registry, send, classify };
 }
+
+const DETACH_EVENTS = ['destroyed', 'render-process-gone', 'did-navigate'];
 
 const IDLE = { subscribers: 0, listening: false, buffered: 0, pending: 0, timerActive: false };
 
@@ -169,6 +174,42 @@ describe('liveLogFeed', () => {
     expect(payload.dropped).toBe(50);
   });
 
+  test('caps a batch at MAX_BATCH_CHARS (msg + dataText), dropping the oldest and counting them', () => {
+    const { feed, registry, send } = makeFeed();
+    feed.subscribe(makeWebContents());
+    const fit = Math.floor(MAX_BATCH_CHARS / MAX_MSG_CHARS);
+
+    for (let i = 1; i <= fit + 22; i += 1) {
+      registry.emit(record(i, { msg: `${i}`.padEnd(MAX_MSG_CHARS + 5, 'x') }));
+    }
+    jest.advanceTimersByTime(FLUSH_INTERVAL_MS);
+
+    const payload = send.mock.calls[0][1];
+    expect(payload.entries).toHaveLength(fit);
+    expect(payload.entries[0].id).toBe(23);
+    expect(payload.entries[fit - 1].id).toBe(fit + 22);
+    expect(payload.dropped).toBe(22);
+    const chars = payload.entries.reduce((n, e) => n + e.msg.length + e.dataText.length, 0);
+    expect(chars).toBeLessThanOrEqual(MAX_BATCH_CHARS);
+  });
+
+  test('the subscribe backlog keeps the newest entries within MAX_BATCH_CHARS', () => {
+    const { feed, registry } = makeFeed();
+    feed.subscribe(makeWebContents());
+    const fit = Math.floor(MAX_BATCH_CHARS / MAX_MSG_CHARS);
+
+    for (let i = 1; i <= fit + 10; i += 1) {
+      registry.emit(record(i, { msg: 'y'.repeat(MAX_MSG_CHARS) }));
+      jest.advanceTimersByTime(FLUSH_INTERVAL_MS);
+    }
+
+    const { entries } = feed.subscribe(makeWebContents());
+    expect(feed.getStats().buffered).toBe(fit + 10);
+    expect(entries).toHaveLength(fit);
+    expect(entries[0].id).toBe(11);
+    expect(entries[fit - 1].id).toBe(fit + 10);
+  });
+
   test('keeps only the last 500 entries for the backlog', () => {
     const { feed, registry } = makeFeed();
     feed.subscribe(makeWebContents());
@@ -199,6 +240,68 @@ describe('liveLogFeed', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  test.each([
+    ['render-process-gone', [{}, { reason: 'crashed', exitCode: 1 }]],
+    ['did-navigate', [{}, 'app://index.html', 200, 'OK']]
+  ])(
+    'drops a subscriber when %s fires (crash recovery / reload reuse the webContents)',
+    (event, args) => {
+      const { feed, registry, send } = makeFeed();
+      const wc = makeWebContents();
+      feed.subscribe(wc);
+      registry.emit(record(1));
+
+      wc.emit(event, ...args);
+
+      expect(feed.getStats()).toEqual(IDLE);
+      expect(registry.removeListener).toHaveBeenCalledTimes(1);
+      for (const name of DETACH_EVENTS) expect(wc.listenerCount(name)).toBe(0);
+      jest.advanceTimersByTime(FLUSH_INTERVAL_MS);
+      expect(send).not.toHaveBeenCalled();
+    }
+  );
+
+  test('the reloaded page can subscribe the same webContents again', () => {
+    const { feed, registry, send } = makeFeed();
+    const wc = makeWebContents();
+    feed.subscribe(wc);
+    wc.emit('did-navigate', {}, 'app://index.html');
+
+    expect(feed.subscribe(wc)).toEqual({ entries: [] });
+    expect(feed.getStats()).toMatchObject({ subscribers: 1, listening: true });
+    for (const name of DETACH_EVENTS) expect(wc.listenerCount(name)).toBe(1);
+
+    registry.emit(record(1));
+    jest.advanceTimersByTime(FLUSH_INTERVAL_MS);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0]).toBe(wc);
+  });
+
+  test('a crashed window leaves the other subscribers and the backlog alone', () => {
+    const { feed, registry } = makeFeed();
+    const a = makeWebContents();
+    const b = makeWebContents();
+    feed.subscribe(a);
+    feed.subscribe(b);
+    registry.emit(record(1));
+
+    a.emit('render-process-gone', {}, { reason: 'oom' });
+
+    expect(feed.getStats()).toMatchObject({ subscribers: 1, listening: true, buffered: 1 });
+    for (const name of DETACH_EVENTS) {
+      expect(a.listenerCount(name)).toBe(0);
+      expect(b.listenerCount(name)).toBe(1);
+    }
+  });
+
+  test('subscribing the same webContents twice registers its detach handlers once', () => {
+    const { feed } = makeFeed();
+    const wc = makeWebContents();
+    feed.subscribe(wc);
+    feed.subscribe(wc);
+    for (const name of DETACH_EVENTS) expect(wc.listenerCount(name)).toBe(1);
+  });
+
   test('removes the listener and clears buffers only on the last unsubscribe', () => {
     const { feed, registry } = makeFeed();
     const a = makeWebContents();
@@ -214,7 +317,7 @@ describe('liveLogFeed', () => {
     feed.unsubscribe(b);
     expect(registry.removeListener).toHaveBeenCalledTimes(1);
     expect(feed.getStats()).toEqual(IDLE);
-    expect(b.listenerCount('destroyed')).toBe(0);
+    for (const event of DETACH_EVENTS) expect(b.listenerCount(event)).toBe(0);
 
     expect(feed.subscribe(makeWebContents()).entries).toEqual([]);
   });
@@ -301,6 +404,105 @@ describe('liveLogFeed', () => {
     expect(entry.msg.endsWith('…')).toBe(true);
     expect(entry.dataText).toBe('[unserializable]');
     expect(entry.activity).toBeNull();
+  });
+
+  describe('per-line bounds', () => {
+    function onlyEntry(overrides) {
+      const { feed, registry } = makeFeed();
+      feed.subscribe(makeWebContents());
+      registry.emit(record(1, overrides));
+      return feed.subscribe(makeWebContents()).entries[0];
+    }
+
+    test('a huge string in data is cut before serialization', () => {
+      const entry = onlyEntry({ data: { big: 'y'.repeat(5_000_000), after: 1 } });
+      expect(entry.dataText.length).toBeLessThanOrEqual(MAX_DATA_TEXT_CHARS);
+      expect(entry.dataText.startsWith('{"big":"yyy')).toBe(true);
+      expect(entry.dataText.endsWith('…')).toBe(true);
+    });
+
+    test('a huge array is not walked past the budget', () => {
+      const items = Array.from({ length: 10_000 }, (_, i) => ({ toJSON: jest.fn(() => i) }));
+      const entry = onlyEntry({ data: { items } });
+
+      const visited = items.filter((item) => item.toJSON.mock.calls.length > 0).length;
+      expect(visited).toBeLessThanOrEqual(MAX_DATA_TEXT_CHARS);
+      expect(visited).toBeGreaterThan(0);
+      expect(entry.dataText.length).toBeLessThanOrEqual(MAX_DATA_TEXT_CHARS);
+      expect(entry.dataText.startsWith('{"items":[0,1,2')).toBe(true);
+      expect(entry.dataText.endsWith('…')).toBe(true);
+    });
+
+    test('many keys: the ones past the budget are omitted and the cut is marked', () => {
+      const data = {};
+      for (let i = 0; i < 2000; i += 1) data[`key${i}`] = i;
+      const entry = onlyEntry({ data });
+      expect(entry.dataText.length).toBeLessThanOrEqual(MAX_DATA_TEXT_CHARS);
+      expect(entry.dataText.startsWith('{"key0":0,"key1":1')).toBe(true);
+      expect(entry.dataText.endsWith('…')).toBe(true);
+    });
+
+    test('small data is serialized exactly, with no cut marker', () => {
+      const data = { fileName: 'a.pdf', count: 3, ok: true, tags: ['x', 'y'], nested: { n: null } };
+      expect(onlyEntry({ data }).dataText).toBe(JSON.stringify(data));
+    });
+
+    test('context is capped at MAX_CONTEXT_CHARS', () => {
+      const entry = onlyEntry({ context: 'C'.repeat(MAX_CONTEXT_CHARS + 30) });
+      expect(entry.context).toHaveLength(MAX_CONTEXT_CHARS);
+      expect(entry.context.endsWith('…')).toBe(true);
+      expect(onlyEntry({ context: undefined }).context).toBe('');
+    });
+
+    test('a non-string msg is stringified; a missing msg becomes empty', () => {
+      expect(onlyEntry({ msg: 42 }).msg).toBe('42');
+      expect(onlyEntry({ msg: undefined }).msg).toBe('');
+    });
+
+    test('a missing time falls back to the current clock', () => {
+      jest.setSystemTime(new Date('2026-01-02T03:04:05.000Z'));
+      expect(onlyEntry({ time: undefined }).time).toBe('2026-01-02T03:04:05.000Z');
+    });
+
+    test('truncation never splits a surrogate pair', () => {
+      const msg = `${'x'.repeat(MAX_MSG_CHARS - 2)}\u{1F600}tail`;
+      const entry = onlyEntry({ msg });
+      expect(entry.msg).toBe(`${'x'.repeat(MAX_MSG_CHARS - 2)}…`);
+      expect(entry.msg).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+
+      const intact = onlyEntry({ msg: `${'x'.repeat(MAX_MSG_CHARS - 3)}\u{1F600}tail` });
+      expect(intact.msg).toBe(`${'x'.repeat(MAX_MSG_CHARS - 3)}\u{1F600}…`);
+    });
+  });
+
+  test('the flush timer is unref-ed so it never keeps the process alive', () => {
+    const fakeSetTimeout = global.setTimeout;
+    const unref = jest.fn();
+    const spy = jest.spyOn(global, 'setTimeout').mockImplementation((fn, ms) => {
+      // jsdom timer ids are numbers; hand back a Node-style handle instead.
+      // The real (fake) timer is still scheduled and cleared in afterEach.
+      fakeSetTimeout(fn, ms);
+      return { unref };
+    });
+    try {
+      const { feed, registry } = makeFeed();
+      feed.subscribe(makeWebContents());
+      registry.emit(record(1));
+      expect(unref).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('a manual flush cancels the pending timer, so the batch is not sent twice', () => {
+    const { feed, registry, send } = makeFeed();
+    feed.subscribe(makeWebContents());
+    registry.emit(record(1));
+
+    feed.flush();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(feed.getStats().timerActive).toBe(false);
+    expect(jest.getTimerCount()).toBe(0);
   });
 
   test('uses the real activity classifier by default', () => {
@@ -607,6 +809,22 @@ describe('liveLogFeed', () => {
 
       const [entry] = feed.subscribe(makeWebContents()).entries;
       expect(entry.activity).toMatchObject({ kind: 'analyzed', file: 'report.pdf' });
+    });
+
+    test.each([
+      [RING_CAPACITY - 2, 'stays in the full ring', null],
+      [RING_CAPACITY - 1, 'is evicted by the duplicate itself', 'report.pdf']
+    ])('boundary: original + %i other lines, the original %s', (others, _label, expectedFile) => {
+      const { feed, registry } = makeFeed({ classify: mergeClassify });
+      feed.subscribe(makeWebContents());
+      registry.emit(record(0, { msg: 'analyzed report.pdf' }));
+      for (let i = 0; i < others; i += 1) registry.emit(record(0, { msg: 'tick' }));
+      registry.emit(record(0, { msg: 'analyzed report.pdf' }));
+
+      const entries = feed.subscribe(makeWebContents()).entries;
+      const last = entries[entries.length - 1];
+      expect(last.msg).toBe('analyzed report.pdf');
+      expect(last.activity && last.activity.file).toBe(expectedFile);
     });
 
     test('an original evicted from the backlog no longer suppresses a duplicate', () => {
