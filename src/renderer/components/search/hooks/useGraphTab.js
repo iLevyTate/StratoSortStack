@@ -36,6 +36,7 @@ import { useGraphState } from '../../../hooks';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
 import { openSettings, setPhase, setGraphInsightsSection } from '../../../store/slices/uiSlice';
 import { clearActiveEdgePin } from '../useEdgeInteraction';
+import { useDuplicateBadgeScan } from './useDuplicateBadgeScan';
 import { resolveGraphMiniMapPalette, getGraphMiniMapNodeColor } from '../graphViewConstants';
 import { mapErrorToNotification } from '../../../utils/errorMapping';
 import { edgeStrengthScore } from '../../../utils/graphUtils';
@@ -2509,58 +2510,16 @@ export function useGraphTab(
     return typeof offFn === 'function' ? offFn : undefined;
   }, [isOpen, graphViewEnabled, activeTab]);
 
-  // Pre-compute near-duplicate insight counts for graph landing card.
-  // Deferred until cluster loading completes to avoid saturating IPC during startup.
-  useEffect(() => {
-    let cancelled = false;
-    if (!graphViewEnabled || !isOpen || activeTab !== 'graph') return undefined;
-    if (isComputingClusters) return undefined;
-    if (!stats?.files || stats.files < 2) {
-      lastDuplicateFileCountRef.current = null;
-      setDuplicateSummary((prev) => ({
-        ...prev,
-        loading: false,
-        groupCount: 0,
-        totalDuplicates: 0
-      }));
-      return undefined;
-    }
-
-    // Skip if file count hasn't changed since last scan
-    if (lastDuplicateFileCountRef.current === stats.files) return undefined;
-
-    const run = async () => {
-      setDuplicateSummary((prev) => ({ ...prev, loading: true }));
-      try {
-        const result = await window.electronAPI?.embeddings?.findDuplicates?.({
-          threshold: 0.9,
-          maxResults: 20
-        });
-        if (cancelled) return;
-        lastDuplicateFileCountRef.current = stats.files;
-        if (result?.success) {
-          setDuplicateSummary(
-            /** @type {any} */ ({
-              loading: false,
-              groupCount: Array.isArray(result.groups) ? result.groups.length : 0,
-              totalDuplicates: Number.isFinite(result.totalDuplicates) ? result.totalDuplicates : 0
-            })
-          );
-          return;
-        }
-      } catch {
-        // Non-critical insight card enrichment failure.
-      }
-      if (!cancelled) {
-        setDuplicateSummary((prev) => ({ ...prev, loading: false }));
-      }
-    };
-
-    run();
-    return () => {
-      cancelled = true;
-    };
-  }, [graphViewEnabled, isOpen, activeTab, stats?.files, isComputingClusters]);
+  // Pre-compute near-duplicate insight counts for graph landing card. The
+  // hook waits for the file count to settle before rescanning, so a batch
+  // that moves the count every refresh does not rerun the full scan.
+  useDuplicateBadgeScan({
+    enabled: Boolean(graphViewEnabled && isOpen && activeTab === 'graph'),
+    fileCount: stats?.files,
+    isComputingClusters,
+    setDuplicateSummary,
+    lastDuplicateFileCountRef
+  });
 
   // Refresh cluster presentation when mode/filters change (no recompute needed).
   useEffect(() => {

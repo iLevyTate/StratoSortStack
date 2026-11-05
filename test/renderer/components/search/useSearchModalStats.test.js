@@ -25,11 +25,19 @@ jest.mock('../../../../src/renderer/services/ipc', () => ({
   }
 }));
 
+// Settings come from the Redux ui slice (loaded at startup, kept current on
+// save); the hook must not ask the main process for them on every refresh.
+let mockUiSettings = null;
+jest.mock('../../../../src/renderer/store/hooks', () => ({
+  useAppSelector: (selector) => selector({ ui: { settings: mockUiSettings } })
+}));
+
 import { useSearchModalStats } from '../../../../src/renderer/components/search/hooks/useSearchModalStats';
 
 describe('useSearchModalStats', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockUiSettings = { embeddingTiming: 'manual' };
     global.window.electronAPI = {
       settings: { get: jest.fn().mockResolvedValue({ embeddingTiming: 'manual' }) },
       embeddings: {
@@ -115,5 +123,30 @@ describe('useSearchModalStats', () => {
     expect(onFileOperation).toHaveBeenCalledWith(expect.objectContaining({ operation: 'move' }));
     expect(mockInvalidateStatsCache).toHaveBeenCalled();
     await waitFor(() => expect(mockGetStatsCached).toHaveBeenCalled());
+  });
+
+  test('stats refreshes read embedding settings from the store, not over IPC', async () => {
+    mockUiSettings = { embeddingTiming: 'after_organize', defaultEmbeddingPolicy: 'skip' };
+    const { result } = mount();
+    await waitFor(() => expect(result.current.hasLoadedStats).toBe(true));
+
+    await act(async () => {
+      await result.current.refreshStats(true);
+    });
+
+    expect(window.electronAPI.settings.get).not.toHaveBeenCalled();
+    expect(result.current.embeddingConfig).toEqual({ timing: 'after_organize', policy: 'skip' });
+  });
+
+  test('a settings change in the store shows up without another stats refresh', async () => {
+    const { result, rerender } = mount();
+    await waitFor(() => expect(result.current.hasLoadedStats).toBe(true));
+    expect(result.current.embeddingConfig).toMatchObject({ timing: 'manual' });
+    const statsCalls = mockGetStatsCached.mock.calls.length;
+
+    mockUiSettings = { embeddingTiming: 'during_analysis' };
+    rerender({});
+    expect(result.current.embeddingConfig).toMatchObject({ timing: 'during_analysis' });
+    expect(mockGetStatsCached.mock.calls.length).toBe(statsCalls);
   });
 });

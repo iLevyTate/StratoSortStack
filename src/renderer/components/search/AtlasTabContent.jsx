@@ -14,6 +14,7 @@ import {
 import { useAppSelector } from '../../store/hooks';
 import { joinPath } from '../../utils/platform';
 import { useMoveFilesToFolder } from './hooks/useMoveFilesToFolder';
+import { useAtlasRebuildPoll } from './hooks/useAtlasRebuildPoll';
 import {
   pickNextPointInDirection,
   ARROW_DIRECTIONS,
@@ -37,9 +38,6 @@ import { buildEmbeddingData, nearestPointIndex, indicesInLasso } from './atlasEm
  */
 
 const PAGE_LIMIT = 5000;
-// Re-poll cadence while the embedding index reports rebuildInProgress — the
-// rebuild emits no completion signal of its own, so the tab must ask again.
-const REBUILD_POLL_MS = 3000;
 const META_BATCH_LIMIT = 100;
 const SIMILAR_TOP_K = 10;
 const MAX_FOLDER_LABELS = 10;
@@ -625,16 +623,12 @@ function AtlasTabContent({ isActive, openFile, revealFile, setError, simpleMode 
   // 'rebuilding' is transient (the embedding-index rebuild owns it) but no
   // completion signal is ever pushed, so without a re-poll the overlay's
   // "the map will refresh shortly" promise was a dead end — the state only
-  // cleared on tab switch or a needless manual full Rebuild. Each poll
-  // flips status rebuilding->loading->..., so the effect re-arms per cycle;
-  // the interval also survives a status answer that stays 'rebuilding'.
+  // cleared on tab switch or a needless manual full Rebuild. The hook backs
+  // off (3 s doubling to 1 min) and pauses while the window is hidden.
   // 'empty' is deliberately NOT polled: it changes via analysis activity,
   // which raises its own degraded-flag/organize signals.
-  useEffect(() => {
-    if (!isActive || status !== 'rebuilding') return undefined;
-    const timer = setInterval(() => loadProjection(false), REBUILD_POLL_MS);
-    return () => clearInterval(timer);
-  }, [isActive, status, loadProjection]);
+  const reloadProjection = useCallback(() => loadProjection(false), [loadProjection]);
+  useAtlasRebuildPoll({ active: isActive, status, reload: reloadProjection });
 
   // Push data whenever the projection, colour mode, or emphasis changes
   // (emphasis lives in the doubled bright/dim palette).

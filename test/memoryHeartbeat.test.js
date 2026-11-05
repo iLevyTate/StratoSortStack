@@ -11,19 +11,31 @@ describe('createMemoryPressureSampler', () => {
   function createHarness() {
     const logger = { info: jest.fn(), warn: jest.fn() };
     let freePct = 100;
+    let rssMB = 70;
+    let clock = 0;
     const sampler = createMemoryPressureSampler({
       logger,
-      processApi: { memoryUsage: () => ({ rss: 70 * 1024 * 1024, heapUsed: 45 * 1024 * 1024 }) },
+      processApi: {
+        memoryUsage: () => ({ rss: rssMB * 1024 * 1024, heapUsed: 45 * 1024 * 1024 })
+      },
       osApi: {
         totalmem: () => 16000 * 1024 * 1024,
         freemem: () => Math.round(16000 * 1024 * 1024 * (freePct / 100))
-      }
+      },
+      now: () => clock
     });
     return {
       logger,
       sampleAtUsedPct(usedPct) {
+        clock += 15000;
         freePct = 100 - usedPct;
         sampler();
+      },
+      setRssMB(value) {
+        rssMB = value;
+      },
+      lineCount() {
+        return logger.info.mock.calls.length + logger.warn.mock.calls.length;
       }
     };
   }
@@ -56,16 +68,15 @@ describe('createMemoryPressureSampler', () => {
     expect(warns).toHaveLength(2);
   });
 
-  test('every sample logs exactly one line with the memory fields', () => {
-    const { logger, sampleAtUsedPct } = createHarness();
+  test('pressure transitions always log, with the memory fields', () => {
+    const { logger, sampleAtUsedPct, lineCount } = createHarness();
 
-    sampleAtUsedPct(84);
-    sampleAtUsedPct(90);
-    sampleAtUsedPct(92);
-    sampleAtUsedPct(75);
+    sampleAtUsedPct(84); // first sample
+    sampleAtUsedPct(90); // warn
+    sampleAtUsedPct(92); // still high, barely moved -> quiet
+    sampleAtUsedPct(75); // recovery
 
-    const totalLines = logger.info.mock.calls.length + logger.warn.mock.calls.length;
-    expect(totalLines).toBe(4);
+    expect(lineCount()).toBe(3);
 
     const [, fields] = logger.warn.mock.calls[0];
     expect(fields).toMatchObject({
@@ -93,5 +104,37 @@ describe('createMemoryPressureSampler', () => {
       expect.stringContaining('sample failed'),
       expect.objectContaining({ error: 'boom' })
     );
+  });
+
+  test('a steady session writes one line, then one every five minutes', () => {
+    const { sampleAtUsedPct, lineCount } = createHarness();
+
+    sampleAtUsedPct(50);
+    expect(lineCount()).toBe(1);
+
+    // 19 more samples at 15 s = 4m45s: nothing moved, nothing logged.
+    for (let i = 0; i < 19; i++) sampleAtUsedPct(51);
+    expect(lineCount()).toBe(1);
+
+    sampleAtUsedPct(51); // 5 minutes since the last line
+    expect(lineCount()).toBe(2);
+  });
+
+  test('a move in system memory or in RSS logs straight away', () => {
+    const { logger, sampleAtUsedPct, setRssMB, lineCount } = createHarness();
+
+    sampleAtUsedPct(50);
+    sampleAtUsedPct(54); // 4 points: quiet
+    expect(lineCount()).toBe(1);
+    sampleAtUsedPct(55); // 5 points from the last line
+    expect(lineCount()).toBe(2);
+
+    setRssMB(76); // under 10% of 70
+    sampleAtUsedPct(55);
+    expect(lineCount()).toBe(2);
+    setRssMB(77); // 10% of 70
+    sampleAtUsedPct(55);
+    expect(lineCount()).toBe(3);
+    expect(logger.info.mock.calls.at(-1)[1]).toMatchObject({ rssMB: 77, sysUsedPct: 55 });
   });
 });

@@ -1728,16 +1728,18 @@ app
 
           // PERFORMANCE FIX: Increased interval from 10s to 30s to reduce overhead
           // Renderer component polls directly, so main process doesn't need to poll as frequently
-          metricsInterval = trackInterval(async () => {
-            try {
-              const win = BrowserWindow.getAllWindows()[0];
-              if (!win || win.isDestroyed()) return;
-              const metrics = await systemAnalytics.collectMetrics();
-              safeSend(win.webContents, IPC_EVENTS.SYSTEM_METRICS, metrics);
-            } catch (error) {
-              logger.error('[METRICS] Failed to collect or send metrics:', error);
-            }
-          }, TIMEOUTS.METRICS_BROADCAST);
+          // The tick is skipped while the window is minimized or hidden.
+          const { createMetricsBroadcastTick } = require('./core/metricsBroadcast');
+          metricsInterval = trackInterval(
+            createMetricsBroadcastTick({
+              getWindow: () => BrowserWindow.getAllWindows()[0],
+              collectMetrics: () => systemAnalytics.collectMetrics(),
+              send: (webContents, metrics) =>
+                safeSend(webContents, IPC_EVENTS.SYSTEM_METRICS, metrics),
+              logger
+            }),
+            TIMEOUTS.METRICS_BROADCAST
+          );
           try {
             metricsInterval.unref();
           } catch (error) {

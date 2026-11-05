@@ -303,4 +303,135 @@ describe('repairKnowledge', () => {
     expect(result.passages).toBe(1);
     expect(result.deferred).toBe(1);
   });
+
+  test('a launch where every row is healthy never checks the disk or calls the embedder', async () => {
+    const paths = ['/docs/a.pdf', '/docs/b.pdf', '/docs/c.pdf'];
+    const deps = makeDeps({
+      docs: Object.fromEntries(
+        paths.map((p) => [`file:${p}`, { id: `file:${p}`, isOrphaned: false, hasVector: true }])
+      ),
+      existing: new Set(paths)
+    });
+    const repairPassages = jest.fn(async () => ({ action: 'repaired' }));
+    const result = await repairKnowledge({
+      entries: Object.fromEntries(paths.map((p, i) => [`e${i}`, entry(p)])),
+      ...deps,
+      repairPassages
+    });
+
+    expect(deps.fileExists).not.toHaveBeenCalled();
+    expect(deps.embedEntry).not.toHaveBeenCalled();
+    expect(repairPassages).not.toHaveBeenCalled();
+    expect(deps.vectorDb.restoreOrphanedEmbeddings).not.toHaveBeenCalled();
+    expect(result).toEqual(expect.objectContaining({ checked: 3, healthy: 3, skippedMissing: 0 }));
+  });
+
+  test('only the rows that need work are checked on disk, and a missing one is left alone', async () => {
+    const deps = makeDeps({
+      docs: {
+        'file:/docs/ok.pdf': { id: 'file:/docs/ok.pdf', isOrphaned: false, hasVector: true },
+        'file:/gone/orphan.pdf': { id: 'file:/gone/orphan.pdf', isOrphaned: true, hasVector: true }
+      },
+      existing: new Set(['/docs/ok.pdf', '/docs/new.pdf'])
+    });
+    const result = await repairKnowledge({
+      entries: {
+        ok: entry('/docs/ok.pdf'),
+        orphan: entry('/gone/orphan.pdf'),
+        unembedded: entry('/docs/new.pdf'),
+        unembeddedGone: entry('/gone/x.pdf')
+      },
+      ...deps
+    });
+
+    expect(deps.fileExists.mock.calls.map(([p]) => p).sort()).toEqual([
+      '/docs/new.pdf',
+      '/gone/orphan.pdf',
+      '/gone/x.pdf'
+    ]);
+    expect(deps.embedEntry).toHaveBeenCalledTimes(1);
+    expect(deps.embedEntry.mock.calls[0][0].filePath).toBe('/docs/new.pdf');
+    expect(deps.vectorDb.restoreOrphanedEmbeddings).not.toHaveBeenCalled();
+    expect(result).toEqual(
+      expect.objectContaining({ healthy: 1, embedded: 1, skippedMissing: 2, checked: 2 })
+    );
+  });
+});
+
+describe('scheduleStartupKnowledgeRepair', () => {
+  const mockResolveServices = jest.fn(() => ({
+    vectorDbService: null,
+    analysisHistoryService: null,
+    folderMatchingService: null,
+    learningFeedbackService: null
+  }));
+  const mockEmbedHistoryEntry = jest.fn(async () => ({ action: 'enqueued' }));
+
+  beforeAll(() => {
+    jest.doMock('../src/main/ipc/files/embeddingSync', () => ({
+      resolveServices: mockResolveServices,
+      embedHistoryEntry: mockEmbedHistoryEntry,
+      getSmartFolderForPath: jest.fn(() => null)
+    }));
+    jest.doMock('../src/main/services/SettingsService', () => ({
+      getInstance: () => ({ load: async () => ({}) })
+    }));
+  });
+
+  afterAll(() => {
+    jest.dontMock('../src/main/ipc/files/embeddingSync');
+    jest.dontMock('../src/main/services/SettingsService');
+  });
+
+  beforeEach(() => {
+    mockResolveServices.mockClear();
+    mockEmbedHistoryEntry.mockClear();
+  });
+
+  function schedule(docs, entries) {
+    const {
+      scheduleStartupKnowledgeRepair
+    } = require('../src/main/services/embedding/knowledgeRepair');
+    const vectorDb = {
+      getFile: jest.fn(async (id) => docs[id] || null),
+      hasUsableVector: jest.fn(async (id) => Boolean(docs[id]?.hasVector)),
+      restoreOrphanedEmbeddings: jest.fn(async () => ({ restored: 0 }))
+    };
+    return scheduleStartupKnowledgeRepair({
+      vectorDb,
+      analysisHistory: { analysisHistory: { entries } },
+      delayMs: 0
+    });
+  }
+
+  test('a healthy index does not stat files or wire up the embedder', async () => {
+    const statSpy = jest.spyOn(require('fs').promises, 'stat');
+    try {
+      const summary = await schedule(
+        { 'file:/docs/a.pdf': { id: 'file:/docs/a.pdf', hasVector: true } },
+        { e1: entry('/docs/a.pdf') }
+      );
+      expect(summary).toEqual(expect.objectContaining({ healthy: 1, embedded: 0 }));
+      expect(statSpy).not.toHaveBeenCalled();
+      expect(mockResolveServices).not.toHaveBeenCalled();
+      expect(mockEmbedHistoryEntry).not.toHaveBeenCalled();
+    } finally {
+      statSpy.mockRestore();
+    }
+  });
+
+  test('a row with no vector still gets the embedder', async () => {
+    const statSpy = jest
+      .spyOn(require('fs').promises, 'stat')
+      .mockResolvedValue({ isDirectory: () => false });
+    try {
+      const summary = await schedule({}, { e1: entry('/docs/a.pdf') });
+      expect(statSpy).toHaveBeenCalledWith('/docs/a.pdf');
+      expect(mockResolveServices).toHaveBeenCalled();
+      expect(mockEmbedHistoryEntry).toHaveBeenCalledTimes(1);
+      expect(summary.embedded).toBe(1);
+    } finally {
+      statSpy.mockRestore();
+    }
+  });
 });

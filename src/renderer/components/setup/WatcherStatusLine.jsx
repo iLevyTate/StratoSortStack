@@ -23,8 +23,12 @@ function WatcherStatusLine({ folderCount, intervalMs = DEFAULT_INTERVAL_MS }) {
     }
     let cancelled = false;
     let timer = null;
+    const isHidden = () => typeof document !== 'undefined' && document.hidden;
 
     const poll = async () => {
+      // No one can see the line while the window is hidden; the visibility
+      // listener below refreshes it the moment the window is shown again.
+      if (isHidden()) return;
       const api = typeof window !== 'undefined' ? window.electronAPI?.smartFolders : null;
       if (!api || typeof api.watcherStatus !== 'function') {
         if (!cancelled) setStatus(null);
@@ -39,11 +43,17 @@ function WatcherStatusLine({ folderCount, intervalMs = DEFAULT_INTERVAL_MS }) {
       }
     };
 
+    const onVisibilityChange = () => {
+      if (!cancelled && !isHidden()) poll();
+    };
+
     poll();
     timer = setInterval(poll, Math.max(1000, intervalMs));
+    document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
       cancelled = true;
       if (timer) clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, [folderCount, intervalMs]);
 
