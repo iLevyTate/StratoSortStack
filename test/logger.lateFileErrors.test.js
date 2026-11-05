@@ -1,6 +1,8 @@
 /**
- * Logging shuts down cleanly: no file stream outlives it, and a stream error
- * that arrives afterwards is not written to the console.
+ * A file-stream error that arrives after logging has shut down is not written
+ * to the console. (Streams themselves stay open until the process exits: the
+ * app keeps logging during quit, and ending them early made pino's exit-time
+ * flush throw and hung Electron's exit.)
  *
  * CI failed on otherwise green runs (Windows and macOS, all suites passing,
  * exit code 1) with "Cannot log after tests are done ... [Logger] File log
@@ -44,7 +46,7 @@ describe('logger shutdown and late file-stream errors', () => {
   const lateStreamErrors = () =>
     errorSpy.mock.calls.filter((call) => String(call[0]).includes('File log stream error'));
 
-  test('a destination still opening at shutdown is opened and closed before shutdown returns', async () => {
+  test('a destination whose open fails after shutdown (its folder removed) stays quiet', async () => {
     const statSyncSpy = jest.spyOn(fs, 'statSync').mockImplementation(() => ({ size: 8 * 1024 }));
     logger.configureFileLogging(path.join(tmpDir, 'session.log'), {
       enableConsole: false,
