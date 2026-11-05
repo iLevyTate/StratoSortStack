@@ -11,7 +11,8 @@ const {
   FLUSH_INTERVAL_MS,
   MAX_BATCH_ENTRIES,
   MAX_MSG_CHARS,
-  ACTIVITY_MERGE_WINDOW_MS
+  ACTIVITY_MERGE_WINDOW_MS,
+  MERGEABLE_KINDS
 } = require('../../../src/main/services/liveLogFeed');
 
 function makeRegistry() {
@@ -441,7 +442,7 @@ describe('liveLogFeed', () => {
     expect(inner.getStats()).toMatchObject({ buffered: 1, pending: 0 });
   });
 
-  describe('activity merge (same kind and file within the merge window)', () => {
+  describe('activity merge (repeated completion lines within the merge window)', () => {
     /** "<kind> <file>" -> an activity; a message without a space has no file. */
     function mergeClassify(r) {
       const space = r.msg.indexOf(' ');
@@ -512,11 +513,82 @@ describe('liveLogFeed', () => {
       expect(backlog().every((e) => e.activity !== null)).toBe(true);
     });
 
+    test('only completion lines are mergeable', () => {
+      expect([...MERGEABLE_KINDS]).toEqual(['analyzed']);
+    });
+
+    test('two problems about the same file inside the window both keep their activity', () => {
+      const { emit, backlog } = setup();
+
+      emit('problem report.pdf');
+      jest.advanceTimersByTime(1000);
+      emit('problem report.pdf');
+
+      expect(backlog().map((e) => e.activity && e.activity.kind)).toEqual(['problem', 'problem']);
+    });
+
+    test('progress lines for the same file are never merged', () => {
+      const { emit, backlog } = setup();
+
+      emit('analyze report.pdf');
+      emit('analyze report.pdf');
+      emit('organize report.pdf');
+      emit('organize report.pdf');
+
+      expect(backlog().every((e) => e.activity !== null)).toBe(true);
+    });
+
+    test('with the real classifier: Queued then Analyzing X both show, the two Analyzed X merge', () => {
+      const registry = makeRegistry();
+      const feed = createLiveLogFeed({
+        addListener: registry.addListener,
+        removeListener: registry.removeListener,
+        send: jest.fn()
+      });
+      feed.subscribe(makeWebContents());
+
+      registry.emit(
+        record(0, {
+          context: 'SmartFolderWatcher',
+          msg: '[SMART-FOLDER-WATCHER] Queued for analysis:',
+          data: { filePath: '[REDACTED_PATH]\\lease.docx', eventType: 'add' }
+        })
+      );
+      registry.emit(
+        record(0, {
+          context: 'DocumentAnalysis',
+          msg: 'Analyzing document file',
+          data: { path: '[REDACTED_PATH]\\lease.docx' }
+        })
+      );
+      registry.emit(
+        record(0, {
+          context: 'DocumentAnalysis',
+          msg: '[AI-ANALYSIS-SUCCESS] Document analyzed',
+          data: { fileName: 'lease.docx', category: 'Housing' }
+        })
+      );
+      registry.emit(
+        record(0, {
+          context: 'SmartFolderWatcher',
+          msg: '[SMART-FOLDER-WATCHER] Analysis complete: [REDACTED_PATH]\\lease.docx'
+        })
+      );
+
+      const entries = feed.subscribe(makeWebContents()).entries;
+      expect(entries.map((e) => e.activity && e.activity.text)).toEqual([
+        'Queued lease.docx for analysis',
+        'Analyzing lease.docx',
+        'Analyzed lease.docx → Housing',
+        null
+      ]);
+    });
+
     test('activities without a file (missing or empty) are never merged', () => {
       const { emit, backlog } = setup();
 
-      emit('indexed');
-      emit('indexed');
+      emit('analyzed');
+      emit('analyzed');
       emit('analyzed ');
       emit('analyzed ');
 

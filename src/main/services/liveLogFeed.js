@@ -14,11 +14,14 @@
  *   safeSend's validation / failure logs) are ignored, so a failing send
  *   cannot feed itself. The guard is module-wide: no feed buffers what any
  *   feed's delivery logs.
- * - Activity merge: an entry whose activity has the same kind and non-empty
- *   file as an activity still in the backlog from the last
- *   ACTIVITY_MERGE_WINDOW_MS keeps its raw record but gets `activity: null`
- *   (e.g. the analyzer's "Analyzed X -> Finance" and the watcher's later
- *   "Analyzed X" show as one Activity line; the Raw tab keeps both).
+ * - Activity merge (repeated completion lines only): an entry whose activity
+ *   kind is in MERGEABLE_KINDS and whose kind + non-empty file match an
+ *   activity still in the backlog from the last ACTIVITY_MERGE_WINDOW_MS
+ *   keeps its raw record but gets `activity: null` (the analyzer's "Analyzed
+ *   X -> Finance" and the watcher's later "Analyzed X" show as one Activity
+ *   line; the Raw tab keeps both). Every other kind is never merged: a second
+ *   distinct problem about a file, or "Queued X" then "Analyzing X", is real
+ *   news.
  * - The logger listener only classifies and buffers; it never sends. IPC
  *   happens on the flush timer.
  * - Nothing here logs: this code runs inside the logger's listener path.
@@ -33,6 +36,12 @@ const MAX_MSG_CHARS = 2000;
 const MAX_DATA_TEXT_CHARS = 4000;
 const MAX_CONTEXT_CHARS = 120;
 const ACTIVITY_MERGE_WINDOW_MS = 10_000;
+/**
+ * Activity kinds whose repeats for the same file are one event announced
+ * twice (analyzer success + watcher completion). Problems and progress
+ * ('problem', 'analyze', ...) are never merged.
+ */
+const MERGEABLE_KINDS = new Set(['analyzed']);
 /** Prune expired merge keys once the map grows past this many files. */
 const MERGE_MEMORY_SOFT_LIMIT = 1000;
 const LEVELS = new Set(['trace', 'debug', 'info', 'warn', 'error', 'fatal']);
@@ -153,12 +162,13 @@ function createLiveLogFeed(deps = {}) {
   }
 
   /**
-   * True when the same kind + file was shown within the merge window by an
-   * entry still in the backlog. Otherwise records this activity as shown.
+   * True when this is a mergeable kind and the same kind + file was shown
+   * within the merge window by an entry still in the backlog. Otherwise records this activity as shown.
    * @param {LiveActivity} activity
    * @param {number} id
    */
   function isMergedDuplicate(activity, id) {
+    if (!MERGEABLE_KINDS.has(activity.kind)) return false;
     if (typeof activity.file !== 'string' || activity.file === '') return false;
     const key = `${activity.kind}\u0000${activity.file}`;
     const at = now();
@@ -303,5 +313,6 @@ module.exports = {
   MAX_BATCH_ENTRIES,
   MAX_MSG_CHARS,
   MAX_DATA_TEXT_CHARS,
-  ACTIVITY_MERGE_WINDOW_MS
+  ACTIVITY_MERGE_WINDOW_MS,
+  MERGEABLE_KINDS
 };
