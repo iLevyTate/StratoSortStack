@@ -104,4 +104,53 @@ describe('per-file analysis cache (document)', () => {
 
     await fs.unlink(tmp);
   });
+
+  test('a cache hit does not claim the vectors this earlier run queued and chunked', async () => {
+    // The folder matcher's hand-off says what ONE run wrote to the index. A
+    // hit returns the stored object without queueing or chunking anything,
+    // so if the stored copy kept the flags the watcher would skip a file
+    // whose vectors may since have been removed.
+    const { applySemanticFolderMatching } = require('../src/main/analysis/semanticFolderMatcher');
+    applySemanticFolderMatching.mockImplementation(async ({ analysis, filePath }) => {
+      analysis._embeddingForPersistence = {
+        vector: [0.1, 0.2],
+        model: 'embed-model',
+        meta: { path: filePath },
+        wasEnqueued: true,
+        chunksEmbedded: true
+      };
+      return analysis;
+    });
+    const documentLlm = require('../src/main/analysis/documentLlm');
+    documentLlm.analyzeTextWithLlama.mockImplementation(async () => ({
+      purpose: 'Handoff purpose',
+      category: 'document',
+      keywords: ['k1', 'k2'],
+      confidence: 90,
+      suggestedName: 'handoff_doc'
+    }));
+    const { analyzeDocumentFile } = require('../src/main/analysis/documentAnalysis');
+
+    const tmp = path.posix.join(os.tmpdir(), `doc-cache-handoff-${Date.now()}.rtf`);
+    await fs.writeFile(tmp, '{\\rtf1 Sample document contents}');
+    try {
+      const first = await analyzeDocumentFile(tmp, []);
+      const second = await analyzeDocumentFile(tmp, []);
+
+      expect(documentLlm.analyzeTextWithLlama).toHaveBeenCalledTimes(1);
+      expect(first._embeddingForPersistence).toMatchObject({
+        wasEnqueued: true,
+        chunksEmbedded: true
+      });
+      // The vector stays, so a hit can still be upserted directly.
+      expect(second._embeddingForPersistence).toMatchObject({
+        vector: [0.1, 0.2],
+        wasEnqueued: false,
+        chunksEmbedded: false
+      });
+    } finally {
+      applySemanticFolderMatching.mockImplementation(async () => {});
+      await fs.unlink(tmp);
+    }
+  });
 });

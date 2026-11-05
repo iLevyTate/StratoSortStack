@@ -775,6 +775,7 @@ async function applySemanticFolderMatching(params) {
         isInSmartFolder: !!resolvedSmartFolder,
         analysis
       });
+      let chunksEmbedded = false;
       // Surface effective embedding behavior in analysis payload so renderer/UI
       // can explain search readiness per file.
       analysis.embeddingPolicy = gate.policy;
@@ -832,7 +833,7 @@ async function applySemanticFolderMatching(params) {
         // Rebuild. The queue persists the file vector; chunks go straight to
         // the store because the queue has no chunk stage.
         if (!isAborted()) {
-          await embedFileChunks({
+          const chunkResult = await embedFileChunks({
             fileId,
             filePath,
             extractedText,
@@ -840,6 +841,10 @@ async function applySemanticFolderMatching(params) {
             vectorDb,
             signal
           });
+          // Only a pass that actually wrote passages counts. A skip (short
+          // text, chunking off, no store, abort, error) leaves the watcher
+          // free to try again with its own copy of the text.
+          chunksEmbedded = chunkResult?.skipped === null && Number(chunkResult?.persisted) > 0;
         }
       } else {
         logger.debug('[FolderMatcher] Embedding skipped by policy/timing gate', {
@@ -848,12 +853,15 @@ async function applySemanticFolderMatching(params) {
           filePath
         });
       }
-      // Attach precomputed embedding so SmartFolderWatcher can reuse instead of re-embedding
+      // Attach precomputed embedding so SmartFolderWatcher can reuse instead of re-embedding.
+      // chunksEmbedded tells it the passages are already written, so it does
+      // not rebuild them from the shorter stored copy of the text.
       analysis._embeddingForPersistence = {
         vector,
         model,
         meta: baseMeta,
-        wasEnqueued: gate.shouldEmbed
+        wasEnqueued: gate.shouldEmbed,
+        chunksEmbedded
       };
     } else {
       // Images handle their own embedding in the image analysis pipeline

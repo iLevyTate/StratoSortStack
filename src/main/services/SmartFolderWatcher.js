@@ -43,6 +43,7 @@ const { deriveWatcherConfidencePercent } = require('./confidence/watcherConfiden
 const { normalizeThresholdPercent } = require('../../shared/confidencePercent');
 const { recordAnalysisResult } = require('../ipc/analysisUtils');
 const { embedFileChunks } = require('../analysis/chunkEmbedding');
+const { getEmbeddingHandoff } = require('../analysis/embeddingHandoff');
 const { buildEmbeddingSummary } = require('../analysis/embeddingSummary');
 const {
   TIMEOUTS,
@@ -2906,31 +2907,43 @@ class SmartFolderWatcher {
       // For other stat errors, continue and let embedding logic handle it
     }
 
-    // Documents: applyUnifiedFolderMatching already embeds and either enqueues or attaches vector.
-    // Images: have a different embedding path (image analysis block), so we skip reuse for them.
-    const precomputed =
-      analysisResult._embeddingForPersistence || analysisResult.analysis?._embeddingForPersistence;
-    if (precomputed && !isImagePath(filePath)) {
-      const { vector, model, meta, wasEnqueued } = precomputed;
-      if (vector && Array.isArray(vector) && vector.length > 0 && meta) {
-        if (wasEnqueued) {
-          // Document analysis enqueued to EmbeddingQueue; queue will persist the file-level vector.
-          // We still handle chunk embeddings here so they are never skipped.
-          logger.debug('[SMART-FOLDER-WATCHER] Reusing precomputed embedding (queued)', {
-            filePath
+    // The analysis pass usually indexed the file already: documents through
+    // applyUnifiedFolderMatching, images through the image analysis block.
+    // Its hand-off (embeddingHandoff.js) says what it did, for this run only.
+    const precomputed = getEmbeddingHandoff(analysisResult);
+    const isImageFile = isImagePath(filePath);
+    if (precomputed?.wasEnqueued) {
+      // The embedding queue holds the file-level vector and will persist it.
+      // Embedding it again here would only write the same file twice.
+      logger.debug('[SMART-FOLDER-WATCHER] Reusing precomputed embedding (queued)', {
+        filePath
+      });
+      try {
+        // The queue may already have flushed this vector and written 'done'
+        // (its batch flush often lands as analysis finishes). 'pending' here
+        // would then overwrite it and leave a finished file looking unfinished.
+        const current = await this.analysisHistoryService?.getAnalysisByPath?.(filePath);
+        if (current?.embedding?.status !== 'done') {
+          await this.analysisHistoryService?.updateEmbeddingStateByPath?.(filePath, {
+            status: 'pending',
+            model: precomputed.model || null
           });
-          try {
-            await this.analysisHistoryService?.updateEmbeddingStateByPath?.(filePath, {
-              status: 'pending',
-              model: model || null
-            });
-          } catch {
-            // Non-fatal
-          }
-          const fileId = getCanonicalFileId(filePath, false);
-          await this._embedChunksForFile(fileId, filePath, analysisResult);
-          return;
         }
+      } catch {
+        // Non-fatal
+      }
+      // Passages still get built unless this same run already wrote them.
+      // Rebuilding would delete and rewrite every chunk row, from the capped
+      // stored copy of the text, so it could replace a full set with fewer.
+      if (!precomputed.chunksEmbedded) {
+        const fileId = getCanonicalFileId(filePath, isImageFile);
+        await this._embedChunksForFile(fileId, filePath, analysisResult);
+      }
+      return;
+    }
+    if (precomputed && !isImageFile) {
+      const { vector, model, meta } = precomputed;
+      if (vector && Array.isArray(vector) && vector.length > 0 && meta) {
         // wasEnqueued: false — policy skipped enqueue but we have the vector; use it for direct upsert
         const fileId = getCanonicalFileId(filePath, false);
         try {
