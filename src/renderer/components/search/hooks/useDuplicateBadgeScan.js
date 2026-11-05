@@ -9,9 +9,37 @@
  *
  * Now the first scan for an open graph tab still runs at once, but a rescan
  * waits until the file count has held still for RESCAN_SETTLE_MS, and never
- * starts sooner than RESCAN_MIN_GAP_MS after the previous one.
+ * starts sooner than RESCAN_MIN_GAP_MS after the previous one. A first scan
+ * whose result was dropped because the count moved under it counts as a scan
+ * here too, so a batch cannot set off one full scan per stats refresh.
+ *
+ * Sets the user chose to "Keep all" in the duplicate dialog are not counted.
  */
 import { useEffect, useRef } from 'react';
+import { loadDismissed, signatureForScannedGroup } from '../../organize/duplicateDismissals';
+
+/**
+ * The badge numbers for a scan result, leaving out the kept sets.
+ * @param {any} result
+ * @returns {{ groupCount: number, totalDuplicates: number }}
+ */
+function countUnkeptDuplicates(result) {
+  const groups = Array.isArray(result?.groups) ? result.groups : [];
+  const reported = Number.isFinite(result?.totalDuplicates) ? result.totalDuplicates : 0;
+  const dismissed = loadDismissed();
+  if (dismissed.size === 0) return { groupCount: groups.length, totalDuplicates: reported };
+  let groupCount = 0;
+  let keptMembers = 0;
+  for (const group of groups) {
+    if (dismissed.has(signatureForScannedGroup(group))) {
+      const members = Array.isArray(group?.members) ? group.members.length : 0;
+      keptMembers += Number.isFinite(group?.memberCount) ? group.memberCount : members;
+    } else {
+      groupCount += 1;
+    }
+  }
+  return { groupCount, totalDuplicates: Math.max(0, reported - keptMembers) };
+}
 
 /** The file count must hold still this long before a rescan. */
 export const RESCAN_SETTLE_MS = 5000;
@@ -67,11 +95,7 @@ export function useDuplicateBadgeScan({
         if (cancelled) return;
         lastDuplicateFileCountRef.current = fileCount;
         if (result?.success) {
-          setDuplicateSummary({
-            loading: false,
-            groupCount: Array.isArray(result.groups) ? result.groups.length : 0,
-            totalDuplicates: Number.isFinite(result.totalDuplicates) ? result.totalDuplicates : 0
-          });
+          setDuplicateSummary({ loading: false, ...countUnkeptDuplicates(result) });
           return;
         }
       } catch {
@@ -82,8 +106,10 @@ export function useDuplicateBadgeScan({
       }
     };
 
-    // Nothing shown yet for this tab: answer straight away.
-    if (lastDuplicateFileCountRef.current === null) {
+    // Nothing shown yet for this tab and no scan started: answer straight
+    // away. Once a scan has started (even one whose result was dropped
+    // because the count moved), later changes take the settle path below.
+    if (lastDuplicateFileCountRef.current === null && lastScanStartedAtRef.current === 0) {
       run();
       return () => {
         cancelled = true;

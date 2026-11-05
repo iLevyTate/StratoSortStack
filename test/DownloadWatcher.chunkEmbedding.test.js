@@ -156,6 +156,26 @@ describe('DownloadWatcher passage vectors', () => {
       );
     });
 
+    test("a file the queue already finished keeps 'done' instead of going back to 'pending'", async () => {
+      const { watcher } = makeWatcher();
+      const filePath = '/custom/docs/report.pdf';
+      watcher.analysisHistoryService = {
+        // The queue flush landed before the watcher got here.
+        getAnalysisByPath: jest.fn().mockResolvedValue({ embedding: { status: 'done' } }),
+        updateEmbeddingStateByPath: jest.fn().mockResolvedValue(undefined)
+      };
+
+      await watcher._embedAnalyzedFile(filePath, {
+        summary: 'A report',
+        subject: 'Report',
+        extractedText: longText,
+        _embeddingForPersistence: handoffFor(filePath)
+      });
+
+      expect(watcher.analysisHistoryService.getAnalysisByPath).toHaveBeenCalledWith(filePath);
+      expect(watcher.analysisHistoryService.updateEmbeddingStateByPath).not.toHaveBeenCalled();
+    });
+
     test('an image the image pipeline queued is not embedded a second time', async () => {
       const { watcher, folderMatcher, vectorDbService } = makeWatcher();
       const filePath = '/custom/docs/photo.jpg';

@@ -41,6 +41,7 @@ import { resolveGraphMiniMapPalette, getGraphMiniMapNodeColor } from '../graphVi
 import { mapErrorToNotification } from '../../../utils/errorMapping';
 import { edgeStrengthScore } from '../../../utils/graphUtils';
 import { getFileCategory } from '../../ui/FileIcon';
+import { buildTrashDuplicatesRequest } from './duplicateTrashRequest';
 import {
   getErrorMessage,
   getMetadataPath,
@@ -4315,23 +4316,15 @@ export function useGraphTab(
   const handleResolveDuplicates = useCallback(
     async (/** @type {any} */ resolutions) => {
       try {
-        const filesToDelete = resolutions.flatMap((/** @type {any} */ r) =>
-          r.delete.map((/** @type {any} */ f) => f.path || f.id).filter(Boolean)
-        );
+        // Exact-tier sets also name their kept copy so main re-reads the
+        // bytes and leaves any copy that changed since it was indexed.
+        const request = buildTrashDuplicatesRequest(resolutions);
+        const filesToDelete = request.paths;
         if (filesToDelete.length === 0) return;
-
-        const tiers = new Set(resolutions.map((/** @type {any} */ r) => r.tier).filter(Boolean));
-        const summary = {
-          label: 'Delete duplicates',
-          tier: tiers.size === 1 ? [...tiers][0] : 'mixed'
-        };
 
         // Route through the new tiered trash handler: shell.trashItem + one
         // batched undo entry, rather than per-file fs.unlink.
-        const result = await window.electronAPI.embeddings.trashDuplicates({
-          paths: filesToDelete,
-          summary
-        });
+        const result = await window.electronAPI.embeddings.trashDuplicates(request);
 
         if (!result) {
           setError('Failed to resolve duplicates: no response from main process');
@@ -4339,6 +4332,14 @@ export function useGraphTab(
         }
 
         const trashedPaths = (result.trashed || []).map((/** @type {any} */ t) => t.path);
+        if (result.skipped?.length) {
+          const n = result.skipped.length;
+          // Changed since indexing, or the kept copy could not be read.
+          setError(
+            `Left ${n} ${n === 1 ? 'file' : 'files'} where ${n === 1 ? 'it was' : 'they were'}: ` +
+              'could not confirm a byte-for-byte match with the copy you kept.'
+          );
+        }
         if (result.failed?.length) {
           logger.warn('Some duplicates could not be trashed', {
             failed: result.failed

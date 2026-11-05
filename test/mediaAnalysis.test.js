@@ -380,6 +380,38 @@ describe('analyzeMediaFile — audio path', () => {
     expect(result.category).toBe('audio');
     expect(result.confidence).toBe(60);
   });
+
+  // A refused model load and a user cancel are not results. Stored as the
+  // confidence-60 stub, the file counted as analyzed and was never retried.
+  test.each([
+    [
+      'memory budget refusal',
+      () =>
+        Object.assign(new Error('Model memory budget exceeded'), {
+          code: 'MODEL_MEMORY_BUDGET_EXCEEDED'
+        }),
+      'MODEL_MEMORY_BUDGET_EXCEEDED'
+    ],
+    [
+      'user cancel',
+      () => Object.assign(new Error('cancelled'), { code: ERROR_CODES.OPERATION_CANCELLED }),
+      ERROR_CODES.OPERATION_CANCELLED
+    ]
+  ])('a %s from the transcript LLM is rethrown, not stored as a stub', async (_l, make, code) => {
+    const whisperService = fakeWhisper({
+      text: 'a podcast episode',
+      segments: [{ start: 0, end: 1, text: 'a podcast episode' }],
+      language: 'en',
+      durationSeconds: 1.0
+    });
+    const analyzeTextWithLlama = jest.fn(async () => {
+      throw make();
+    });
+
+    await expect(
+      analyzeMediaFile('/mock/podcast.mp3', { whisperService, analyzeTextWithLlama })
+    ).rejects.toMatchObject({ code });
+  });
 });
 
 describe('analyzeMediaFile — video path', () => {

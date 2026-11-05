@@ -100,4 +100,52 @@ describe('DiagnosticsSnapshotSection stats refresh', () => {
     expect(mockGetStatsCached).toHaveBeenCalledTimes(3);
     expect(mockGetStatsCached).toHaveBeenLastCalledWith({ forceRefresh: true });
   });
+
+  test('the live tick does not disable Copy', async () => {
+    render(<DiagnosticsSnapshotSection />);
+    await flush();
+    const copy = screen.getByRole('button', { name: /copy/i });
+    expect(copy).not.toBeDisabled();
+
+    // The tick's stats read is still running.
+    let finishTick;
+    mockGetStatsCached.mockImplementationOnce(
+      () => new Promise((resolve) => (finishTick = () => resolve({ success: true, files: 3 })))
+    );
+    await act(async () => {
+      jest.advanceTimersByTime(15000);
+    });
+    await flush();
+    expect(mockGetStatsCached).toHaveBeenCalledTimes(2);
+    expect(copy).not.toBeDisabled();
+    finishTick();
+    await flush();
+  });
+
+  test('the live tick is skipped while a Refresh is still running', async () => {
+    render(<DiagnosticsSnapshotSection />);
+    await flush();
+    expect(mockGetStatsCached).toHaveBeenCalledTimes(1);
+
+    // A slow Refresh (a cold engine probe, say) is still running at the tick.
+    let finishRefresh;
+    mockGetStatsCached.mockImplementationOnce(
+      () => new Promise((resolve) => (finishRefresh = () => resolve({ success: true, files: 4 })))
+    );
+    fireEvent.click(screen.getByRole('button', { name: /refresh/i }));
+    await flush();
+    expect(mockGetStatsCached).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      jest.advanceTimersByTime(15000);
+    });
+    await flush();
+    // No overlapping tick: it would have ended the Refresh spinner early.
+    expect(mockGetStatsCached).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('button', { name: /copy/i })).toBeDisabled();
+
+    finishRefresh();
+    await flush();
+    expect(screen.getByRole('button', { name: /copy/i })).not.toBeDisabled();
+  });
 });

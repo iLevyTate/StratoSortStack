@@ -479,6 +479,26 @@ describe('AutoOrganize File Processor', () => {
       expect(result).toBeNull();
     });
 
+    test('a memory-budget refusal is rethrown so the caller can retry, and the lock is released', async () => {
+      const { analyzeDocumentFile } = require('../src/main/analysis/documentAnalysis');
+      const busy = Object.assign(new Error('Model memory budget exceeded'), {
+        code: 'MODEL_MEMORY_BUDGET_EXCEEDED'
+      });
+      analyzeDocumentFile.mockRejectedValueOnce(busy);
+      const options = { autoOrganizeEnabled: true, confidenceThreshold: 0.8 };
+
+      await expect(
+        processNewFile('/path/to/busy.pdf', [], options, mockSuggestionService, mockUndoRedo)
+      ).rejects.toBe(busy);
+
+      // The retry must not find the file still locked by the failed attempt.
+      analyzeDocumentFile.mockResolvedValueOnce({ error: 'Analysis failed' });
+      await expect(
+        processNewFile('/path/to/busy.pdf', [], options, mockSuggestionService, mockUndoRedo)
+      ).resolves.toBeNull();
+      expect(analyzeDocumentFile).toHaveBeenCalledTimes(2);
+    });
+
     test('handles image files', async () => {
       // analyzeImageFile is in imageAnalysis
       const { analyzeImageFile } = require('../src/main/analysis/imageAnalysis');

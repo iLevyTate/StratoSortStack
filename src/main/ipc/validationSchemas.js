@@ -1248,6 +1248,25 @@ if (!z) {
         label: z.string().max(200).optional(),
         tier: z.enum(['exact', 'nearIdentical', 'related', 'mixed']).optional()
       })
+      .optional(),
+    // Byte-identical sets: each copy is re-hashed against the kept file before
+    // it is trashed, so a file edited since indexing is never thrown away.
+    verifyIdentical: z
+      .array(
+        z.object({
+          keep: z
+            .string()
+            .min(1)
+            .max(2048)
+            .refine(isSafeAbsoluteFsPath, SAFE_ABSOLUTE_PATH_MESSAGE),
+          paths: z
+            .array(
+              z.string().min(1).max(2048).refine(isSafeAbsoluteFsPath, SAFE_ABSOLUTE_PATH_MESSAGE)
+            )
+            .max(1000)
+        })
+      )
+      .max(1000)
       .optional()
   });
 

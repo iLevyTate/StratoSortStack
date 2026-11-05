@@ -566,4 +566,24 @@ describe('AnthropicProvider output truncation', () => {
       partialText: '{"category":"Fin'
     });
   });
+
+  test('analyze() passes the caller cancel signal to the request', async () => {
+    // Callers (cloud video frames, document routing) pass signal in options.
+    // Before, analyze() dropped it and a cancelled upload ran to the timeout.
+    let requestSignal = null;
+    const okFetch = mockFetchOk({
+      content: [{ type: 'text', text: 'ok' }],
+      usage: { input_tokens: 1, output_tokens: 1 }
+    });
+    const fetchFn = jest.fn(async (url, init) => {
+      requestSignal = init.signal;
+      return okFetch(url, init);
+    });
+    const p = new AnthropicProvider({ getKey: () => 'sk-x', model: 'claude-opus-4-7', fetchFn });
+    const ac = new AbortController();
+    ac.abort();
+    await p.analyze('hi', { signal: ac.signal }).catch(() => {});
+    expect(requestSignal).not.toBeNull();
+    expect(requestSignal.aborted).toBe(true);
+  });
 });

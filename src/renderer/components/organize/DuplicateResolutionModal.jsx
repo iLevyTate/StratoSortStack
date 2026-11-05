@@ -13,44 +13,15 @@ import { formatDisplayFileName, formatDisplayPath } from '../../utils/pathDispla
 import { normalizeDuplicateMember, safeBasename } from '../../../shared/memberPathUtils';
 import { formatBytes } from '../../utils/format';
 import { createLogger } from '../../../shared/logger';
+import { duplicateGroupSignature, loadDismissed, saveDismissed } from './duplicateDismissals';
 
 const logger = createLogger('DuplicateResolutionModal');
+// "Keep all" choices are stored by duplicateDismissals.js so the graph tab's
+// badge reads the same list.
 
-// Groups the user chose to keep as they are. Stored per machine; a group whose
-// membership changes (a new copy appears) has a new signature and shows again.
-const DISMISSED_STORAGE_KEY = 'stratosort_dismissed_duplicate_groups';
-const MAX_DISMISSED = 500;
 // The related slider's range; groups below RELATED_MIN are never returned.
 const RELATED_MIN = 0.9;
 const RELATED_MAX = 0.97;
-
-/** @param {{ members: Array<{ path?: string, id?: string }> }} group */
-export function duplicateGroupSignature(group) {
-  return group.members
-    .map((member) => String(member.path || member.id || ''))
-    .sort()
-    .join('\u0000');
-}
-
-function loadDismissed() {
-  try {
-    const raw = window.localStorage.getItem(DISMISSED_STORAGE_KEY);
-    const list = raw ? JSON.parse(raw) : [];
-    return new Set(Array.isArray(list) ? list.filter((v) => typeof v === 'string') : []);
-  } catch {
-    return new Set();
-  }
-}
-
-/** @param {Set<string>} dismissed */
-function saveDismissed(dismissed) {
-  try {
-    const list = [...dismissed].slice(-MAX_DISMISSED);
-    window.localStorage.setItem(DISMISSED_STORAGE_KEY, JSON.stringify(list));
-  } catch {
-    // Storage unavailable: the choice holds for this session only.
-  }
-}
 
 const TIER_CONFIG = {
   exact: {
@@ -173,6 +144,10 @@ const VirtualizedGroupRow = React.memo(function VirtualizedGroupRow({ index, sty
   if (!group) return null;
 
   const tierCfg = TIER_CONFIG[group.tier] || TIER_CONFIG.related;
+  // A kept set ("Keep all") shown through "Show N kept" is read-only: nothing
+  // in it is marked for Trash and no keeper can be picked until it is restored.
+  const isDismissed = Boolean(dismissedSignatures?.has(group.signature));
+  const keptPath = isDismissed ? null : selections[groupIndex];
 
   return (
     <div style={style} className="pr-2 pb-6">
@@ -202,12 +177,12 @@ const VirtualizedGroupRow = React.memo(function VirtualizedGroupRow({ index, sty
                 variant="ghost"
                 onClick={() => onToggleDismissed(group)}
                 title={
-                  dismissedSignatures?.has(group.signature)
-                    ? 'Show this set again next time'
+                  isDismissed
+                    ? 'List this set again; choose which file to keep before anything is trashed'
                     : 'Keep every file in this set and stop listing it'
                 }
               >
-                {dismissedSignatures?.has(group.signature) ? 'Restore' : 'Keep all'}
+                {isDismissed ? 'Restore' : 'Keep all'}
               </Button>
             )}
           </div>
@@ -216,7 +191,7 @@ const VirtualizedGroupRow = React.memo(function VirtualizedGroupRow({ index, sty
         <div className="space-y-2 flex-1 overflow-y-auto">
           {group.members.map((file) => {
             const path = file.path || file.id;
-            const isKept = selections[groupIndex] === path;
+            const isKept = keptPath != null && keptPath === path;
             const rawLabel = file.name || safeBasename(path);
             const displayLabel = formatDisplayFileName(rawLabel, { redact: redactPaths });
             const displayPathLine = formatDisplayPath(String(path || ''), {
@@ -234,7 +209,7 @@ const VirtualizedGroupRow = React.memo(function VirtualizedGroupRow({ index, sty
                   ${
                     isKept
                       ? 'bg-system-gray-100 border-stratosort-blue ring-1 ring-stratosort-blue shadow-sm z-10'
-                      : selections[groupIndex] == null
+                      : keptPath == null
                         ? 'bg-system-gray-100/40 border-system-gray-200 hover:border-system-gray-300'
                         : 'bg-system-gray-100/60 border-system-gray-200 hover:border-system-gray-300 opacity-70 hover:opacity-100'
                   }
@@ -245,6 +220,7 @@ const VirtualizedGroupRow = React.memo(function VirtualizedGroupRow({ index, sty
                     type="radio"
                     name={`group-${groupIndex}`}
                     checked={isKept}
+                    disabled={isDismissed}
                     onChange={() => handleSelectKeep(groupIndex, path)}
                     aria-label={`Keep ${displayLabel}`}
                     className="text-stratosort-blue focus:ring-stratosort-blue"
@@ -254,6 +230,7 @@ const VirtualizedGroupRow = React.memo(function VirtualizedGroupRow({ index, sty
                 <button
                   type="button"
                   onClick={() => handleSelectKeep(groupIndex, path)}
+                  disabled={isDismissed}
                   aria-pressed={isKept}
                   className="flex min-w-0 flex-1 items-center gap-cozy text-left"
                 >
@@ -280,7 +257,7 @@ const VirtualizedGroupRow = React.memo(function VirtualizedGroupRow({ index, sty
                           Keep
                         </Text>
                       )}
-                      {!isKept && selections[groupIndex] != null && (
+                      {!isKept && keptPath != null && (
                         <Text
                           as="span"
                           variant="tiny"
@@ -596,15 +573,29 @@ export default function DuplicateResolutionModal({
     if (dismissedCount === 0 && showDismissed) setShowDismissed(false);
   }, [dismissedCount, showDismissed]);
 
-  const handleToggleDismissed = useCallback((group) => {
-    setDismissedSignatures((prev) => {
-      const next = new Set(prev);
-      if (next.has(group.signature)) next.delete(group.signature);
-      else next.add(group.signature);
-      saveDismissed(next);
-      return next;
-    });
-  }, []);
+  const handleToggleDismissed = useCallback(
+    (group) => {
+      const restoring = dismissedSignatures.has(group.signature);
+      setDismissedSignatures((prev) => {
+        const next = new Set(prev);
+        if (next.has(group.signature)) next.delete(group.signature);
+        else next.add(group.signature);
+        saveDismissed(next);
+        return next;
+      });
+      // A restored set comes back with no keeper. Its pre-picked keeper would
+      // otherwise put its other files straight into "Send to Trash" without
+      // the user having looked at them in this session.
+      if (restoring) {
+        setSelections((prev) => {
+          const next = { ...prev };
+          delete next[group.flatIndex];
+          return next;
+        });
+      }
+    },
+    [dismissedSignatures]
+  );
 
   const relatedHiddenByThreshold = useMemo(
     () =>

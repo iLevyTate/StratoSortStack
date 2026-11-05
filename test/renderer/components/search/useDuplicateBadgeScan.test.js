@@ -145,4 +145,87 @@ describe('useDuplicateBadgeScan', () => {
     const reset = setDuplicateSummary.mock.calls.at(-1)[0]({ loading: true, groupCount: 3 });
     expect(reset).toMatchObject({ loading: false, groupCount: 0, totalDuplicates: 0 });
   });
+
+  test('a count that moves while the first scan is still running does not start back-to-back scans', async () => {
+    // The first scan takes longer than a stats refresh.
+    let finishFirst;
+    findDuplicates.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishFirst = () => resolve({ success: true, groups: [], totalDuplicates: 0 });
+        })
+    );
+    const { rerender } = mount({ fileCount: 10 });
+    await flush();
+    expect(findDuplicates).toHaveBeenCalledTimes(1);
+
+    for (let n = 11; n <= 20; n++) {
+      rerender({ fileCount: n });
+      await act(async () => {
+        jest.advanceTimersByTime(1500);
+      });
+      await flush();
+    }
+    finishFirst();
+    await flush();
+    // Before, each change re-ran the "first scan" at once: 11 scans here.
+    expect(findDuplicates).toHaveBeenCalledTimes(1);
+
+    // Once the count holds still, one scan fills the badge.
+    await act(async () => {
+      jest.advanceTimersByTime(RESCAN_MIN_GAP_MS);
+    });
+    await flush();
+    expect(findDuplicates).toHaveBeenCalledTimes(2);
+  });
+
+  test('sets the user chose to keep are not counted in the badge', async () => {
+    const kept = {
+      id: 'g1',
+      memberCount: 2,
+      members: [{ path: '/a/x.pdf' }, { path: '/b/x.pdf' }]
+    };
+    const open = {
+      id: 'g2',
+      memberCount: 3,
+      members: [{ path: '/a/y.pdf' }, { path: '/b/y.pdf' }, { path: '/c/y.pdf' }]
+    };
+    findDuplicates.mockResolvedValue({ success: true, groups: [kept, open], totalDuplicates: 5 });
+    const {
+      signatureForScannedGroup,
+      DISMISSED_STORAGE_KEY
+    } = require('../../../../src/renderer/components/organize/duplicateDismissals');
+    window.localStorage.setItem(
+      DISMISSED_STORAGE_KEY,
+      JSON.stringify([signatureForScannedGroup(kept)])
+    );
+    try {
+      const { setDuplicateSummary } = mount({ fileCount: 10 });
+      await flush();
+      expect(setDuplicateSummary).toHaveBeenLastCalledWith({
+        loading: false,
+        groupCount: 1,
+        totalDuplicates: 3
+      });
+    } finally {
+      window.localStorage.clear();
+    }
+  });
+
+  test('the badge and the dialog agree on which set was kept', () => {
+    const {
+      signatureForScannedGroup,
+      duplicateGroupSignature
+    } = require('../../../../src/renderer/components/organize/duplicateDismissals');
+    const group = {
+      id: 'g1',
+      members: [
+        { id: 'b', path: '/b/x.pdf' },
+        { id: 'a', path: '/a/x.pdf' }
+      ]
+    };
+    expect(signatureForScannedGroup(group)).toBe(
+      duplicateGroupSignature({ members: [{ path: '/a/x.pdf' }, { path: '/b/x.pdf' }] })
+    );
+  });
 });

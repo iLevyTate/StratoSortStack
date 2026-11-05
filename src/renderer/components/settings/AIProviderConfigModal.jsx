@@ -29,6 +29,18 @@ const ANTHROPIC_MODELS = [
   { value: 'claude-haiku-5-5', label: 'Claude Haiku 5.5 — fastest (~$0.10/M input)' }
 ];
 
+/**
+ * The picker's options, plus the saved model when it is not one of them. A
+ * setting saved before the list moved on (for example `claude-opus-4-7`)
+ * still drives every request and every charge, so the picker shows it as it
+ * is instead of falling back to displaying the first option.
+ */
+function anthropicModelOptions(current) {
+  const saved = String(current ?? '').trim();
+  if (!saved || ANTHROPIC_MODELS.some((m) => m.value === saved)) return ANTHROPIC_MODELS;
+  return [{ value: saved, label: `${saved} — older model, currently in use` }, ...ANTHROPIC_MODELS];
+}
+
 // Mirrors the Zod ceiling on spendCapMonthlyUsd (ipc/validationSchemas.js).
 const SPEND_CAP_MAX_USD = 10000;
 
@@ -522,7 +534,7 @@ function AIProviderConfigModal({ provider, onClose, addNotification }) {
                 }}
                 aria-label="Model"
               >
-                {ANTHROPIC_MODELS.map((m) => (
+                {anthropicModelOptions(model).map((m) => (
                   <option key={m.value} value={m.value}>
                     {m.label}
                   </option>

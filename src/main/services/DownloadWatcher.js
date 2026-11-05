@@ -49,6 +49,7 @@ const { delay } = require('../../shared/promiseUtils');
 const { shouldEmbed } = require('./embedding/embeddingGate');
 const { embedFileChunks } = require('../analysis/chunkEmbedding');
 const { getEmbeddingHandoff } = require('../analysis/embeddingHandoff');
+const { isMemoryBudgetExceeded } = require('../../shared/analysisProvenance');
 const { buildEmbeddingSummary } = require('../analysis/embeddingSummary');
 const { resolveEmbeddingModelOptions } = require('../analysis/embeddingModelOptions');
 const { computeFileChecksum, handleDuplicateMove } = require('../utils/fileDedup');
@@ -58,6 +59,10 @@ const logger = typeof createLogger === 'function' ? createLogger('DownloadWatche
 
 // How often held work looks again while the disk is full (see DegradedStateTracker.isStorageFull).
 const STORAGE_FULL_RECHECK_MS = 60_000;
+// A download whose model load was refused for memory is tried again on this
+// interval, a few times, before it is left for the user to analyze by hand.
+const MEMORY_BUSY_RETRY_MS = 60_000;
+const MEMORY_BUSY_MAX_RETRIES = 5;
 if (typeof createLogger !== 'function' && logger?.setContext) {
   logger.setContext('DownloadWatcher');
 }
@@ -129,6 +134,8 @@ class DownloadWatcher {
     this.lastError = null;
     this.processingFiles = new Set(); // Track files being processed to avoid duplicates
     this.debounceTimers = new Map(); // Debounce timers for each file
+    /** @type {Map<string, number>} Retries so far per download whose model load was refused for memory */
+    this._memoryBusyRetries = new Map();
     // Events that arrived for a file while its pipeline was running. The
     // finally block re-debounces these once, so updated content is never
     // dropped — without a polling reschedule loop (a single analysis can
@@ -1264,6 +1271,14 @@ class DownloadWatcher {
       }
       return { handled: true, shouldFallback: false };
     } catch (e) {
+      // The analysis model could not load because another model holds the
+      // memory (a long vision batch, say). The fallback would hit the same
+      // wall, and the watcher never sees this file again on its own, so try
+      // the whole download again later instead.
+      if (isMemoryBudgetExceeded(e)) {
+        this._retryWhenMemoryFrees(filePath);
+        return { handled: true, shouldFallback: false };
+      }
       // Log with appropriate detail based on error type
       logger.warn(
         '[DOWNLOAD-WATCHER] Auto-organize service failed, falling back:',
@@ -1272,6 +1287,40 @@ class DownloadWatcher {
       // Fall through to fallback logic
       return { handled: false, shouldFallback: true };
     }
+  }
+
+  /**
+   * Run a download through the pipeline again after the model memory is
+   * busy, a bounded number of times. The last refusal is logged as an error
+   * so the file is not dropped without a trace.
+   * @param {string} filePath
+   */
+  _retryWhenMemoryFrees(filePath) {
+    const attempt = (this._memoryBusyRetries.get(filePath) || 0) + 1;
+    if (attempt > MEMORY_BUSY_MAX_RETRIES) {
+      this._memoryBusyRetries.delete(filePath);
+      logger.error('[DOWNLOAD-WATCHER] Model memory stayed busy; download left unanalyzed', {
+        filePath,
+        attempts: attempt - 1
+      });
+      return;
+    }
+    this._memoryBusyRetries.set(filePath, attempt);
+    logger.warn('[DOWNLOAD-WATCHER] Model memory busy; analyzing this download again later', {
+      filePath,
+      attempt
+    });
+    const timer = setTimeout(() => {
+      if (this._stopped) return;
+      void Promise.resolve(this.handleFile(filePath)).finally(() => {
+        // A later success or a different failure ends this file's retries;
+        // a further refusal has already re-armed the count above.
+        if (this._memoryBusyRetries?.get(filePath) === attempt) {
+          this._memoryBusyRetries.delete(filePath);
+        }
+      });
+    }, MEMORY_BUSY_RETRY_MS);
+    if (typeof timer?.unref === 'function') timer.unref();
   }
 
   /**
@@ -1630,10 +1679,16 @@ class DownloadWatcher {
       ) {
         logger.debug('[DOWNLOAD-WATCHER] Already indexed by analysis, not re-embedding:', filePath);
         try {
-          await this.analysisHistoryService?.updateEmbeddingStateByPath?.(filePath, {
-            status: 'pending',
-            model: handoff.model || null
-          });
+          // The queue may already have flushed this vector and written
+          // 'done' (SmartFolderWatcher has the same guard). 'pending' over
+          // it would leave a finished file counted as still indexing.
+          const current = await this.analysisHistoryService?.getAnalysisByPath?.(filePath);
+          if (current?.embedding?.status !== 'done') {
+            await this.analysisHistoryService?.updateEmbeddingStateByPath?.(filePath, {
+              status: 'pending',
+              model: handoff.model || null
+            });
+          }
         } catch {
           // Non-fatal
         }

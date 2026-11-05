@@ -418,7 +418,44 @@ describe('documentLlm – extended', () => {
 
     const result = await analyzeTextWithLlama('Text', 'doc.pdf', []);
 
-    expect(result).toBe(cachedResult);
+    // A copy, not the stored object: callers stamp the result with this
+    // run's index hand-off, which must never reach the cache.
+    expect(result).toEqual(cachedResult);
+    expect(result).not.toBe(cachedResult);
     expect(mockLlamaService.generateText).not.toHaveBeenCalled();
+  });
+
+  test('a caller stamping its own hand-off on a cache hit does not change the stored result', async () => {
+    const stored = { category: 'cached', keywords: ['kw'], confidence: 90 };
+    mockCacheService.get.mockReturnValue(stored);
+
+    const first = await analyzeTextWithLlama('Text', 'report.pdf', []);
+    // documentAnalysis -> applySemanticFolderMatching writes this onto the result.
+    first._embeddingForPersistence = {
+      meta: { path: '/a/report.pdf' },
+      wasEnqueued: true,
+      chunksEmbedded: true
+    };
+    first.keywords.push('stamped');
+
+    const second = await analyzeTextWithLlama('Text', 'report.pdf', []);
+    expect(second._embeddingForPersistence).toBeUndefined();
+    expect(second.keywords).toEqual(['kw']);
+    expect(stored._embeddingForPersistence).toBeUndefined();
+  });
+
+  test('the cache stores a copy, not the object handed back to the caller', async () => {
+    mockCacheService.get.mockReturnValue(null);
+    mockLlamaService.generateText.mockResolvedValue({
+      response: JSON.stringify({ category: 'Finance', keywords: ['a', 'b'], confidence: 80 })
+    });
+
+    const result = await analyzeTextWithLlama('Some invoice text', 'invoice.pdf', []);
+    const storedCall = mockCacheService.set.mock.calls.at(-1);
+    expect(storedCall).toBeDefined();
+    const storedValue = storedCall[1];
+    expect(storedValue).not.toBe(result);
+    result._embeddingForPersistence = { wasEnqueued: true, chunksEmbedded: true };
+    expect(storedValue._embeddingForPersistence).toBeUndefined();
   });
 });
