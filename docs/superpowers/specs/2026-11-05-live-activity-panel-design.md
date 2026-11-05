@@ -51,9 +51,10 @@ the main window that shows a friendly **Activity** feed by default and the real 
 ### Main process
 
 1. **Logger hook** (`src/shared/logger.js`): an opt-in listener API — `addLiveRecordListener(fn)` /
-   `removeLiveRecordListener(fn)` — called from `Logger._safeWrite` right after the message and data
-   are sanitized, and only when `this.pino.isLevelEnabled(level)` (so the feed shows exactly what
-   the log would contain), as `{ time, level, context, msg, data }`. Zero cost when no listener is
+   `removeLiveRecordListener(fn)` — called from `Logger._safeWrite` after the record is written
+   (pino or the console fallback; a write that throws announces nothing), with the already-sanitized
+   message and data, and only when `this.pino.isLevelEnabled(level)` (so the feed shows exactly what
+   the log contains), as `{ time, level, context, msg, data }`. Zero cost when no listener is
    registered. Listener errors are swallowed (never break logging). Renderer messages the app
    already forwards into the main-process log appear too, with no extra work.
 2. **`liveLogFeed`** (`src/main/services/liveLogFeed.js`):

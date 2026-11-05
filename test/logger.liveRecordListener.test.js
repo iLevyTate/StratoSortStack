@@ -131,4 +131,97 @@ describe('logger live record listeners', () => {
     expect(() => log.info('fine')).not.toThrow();
     expect(instance.isLevelEnabled).not.toHaveBeenCalled();
   });
+
+  test('a listener that logs is not re-entered, and both lines are still written', () => {
+    const log = createLogger('LiveTest');
+    const listener = listen(
+      jest.fn(() => {
+        log.info('logged from inside the listener');
+      })
+    );
+
+    expect(() => log.info('outer line')).not.toThrow();
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith(expect.objectContaining({ msg: 'outer line' }));
+    expect(instance.info.mock.calls.map((call) => call[call.length - 1])).toEqual([
+      'outer line',
+      'logged from inside the listener'
+    ]);
+
+    // The guard resets: the next outer call is announced again.
+    log.info('next line');
+    expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  test('the record is announced only after pino has written it', () => {
+    const order = [];
+    instance.info.mockImplementationOnce(() => order.push('pino'));
+    listen(jest.fn(() => order.push('listener')));
+    const log = createLogger('LiveTest');
+
+    log.info('written first');
+
+    expect(order).toEqual(['pino', 'listener']);
+  });
+
+  test('a listener cannot alter the data pino serializes', () => {
+    let written;
+    instance.info.mockImplementationOnce((obj) => {
+      written = JSON.stringify(obj);
+    });
+    listen(
+      jest.fn((record) => {
+        record.data.count = 'tampered';
+      })
+    );
+    const log = createLogger('LiveTest');
+
+    log.info('counted', { count: 3 });
+
+    expect(JSON.parse(written)).toEqual({ count: 3 });
+  });
+
+  test('a write that throws a non-transport error announces nothing', () => {
+    instance.error.mockImplementationOnce(() => {
+      throw new Error('serializer exploded');
+    });
+    const listener = listen();
+    const log = createLogger('LiveTest');
+
+    expect(() => log.error('never written')).toThrow('serializer exploded');
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  test('a non-string message is sanitized before it reaches a listener', () => {
+    const listener = listen();
+    const log = createLogger('LiveTest');
+
+    log.error(new Error("ENOENT: open 'C:\\Users\\bob\\tax.pdf'"));
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    const { msg } = listener.mock.calls[0][0];
+    expect(msg).not.toContain('C:\\Users\\bob');
+    expect(msg).toContain('[REDACTED_PATH]');
+  });
+
+  // Last: the transport-dead path flips module state for later loggers.
+  test('a record written through the console fallback is still announced', () => {
+    const consoleWarn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    instance.warn.mockImplementationOnce(() => {
+      throw new Error('the worker is ending');
+    });
+    const listener = listen();
+    const log = createLogger('LiveTest');
+
+    try {
+      expect(() => log.warn('via console')).not.toThrow();
+      expect(consoleWarn).toHaveBeenCalledWith('[LiveTest] via console', '');
+      expect(listener).toHaveBeenCalledWith(
+        expect.objectContaining({ level: 'warn', msg: 'via console' })
+      );
+    } finally {
+      consoleWarn.mockRestore();
+    }
+  });
 });

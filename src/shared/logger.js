@@ -673,6 +673,13 @@ function normalizeBrowserTransmit(messages = []) {
  */
 const _liveRecordListeners = new Set();
 
+/**
+ * True while listeners are being handed a record. A listener that logs
+ * synchronously would otherwise recurse (log -> listener -> log -> ...) until
+ * the stack overflows; its own line is still written, just not re-announced.
+ */
+let _emittingLiveRecord = false;
+
 /** @param {(record: LiveLogRecord) => void} listener */
 function addLiveRecordListener(listener) {
   if (typeof listener === 'function') _liveRecordListeners.add(listener);
@@ -919,9 +926,6 @@ class Logger {
       // Keep object shape: pino treats a string first arg as the message.
       sanitized = { data: '[UNSERIALIZABLE_LOG_DATA]' };
     }
-    if (_liveRecordListeners.size > 0) {
-      this._emitLiveRecord(level, sanitizedMessage, sanitized);
-    }
     try {
       const _pino = /** @type {any} */ (this.pino);
       if (sanitized) _pino[level](sanitized, sanitizedMessage);
@@ -943,17 +947,25 @@ class Logger {
         throw err; // Re-throw non-transport errors
       }
     }
+    // Announce only records that were actually written (pino or the console
+    // fallback), and only after the write, so a listener can never alter what
+    // pino serializes.
+    if (_liveRecordListeners.size > 0) {
+      this._emitLiveRecord(level, sanitizedMessage, sanitized);
+    }
   }
 
   /**
    * Hand one sanitized record to the live listeners, only at levels this
    * logger would write. Never throws: a broken listener must not break the
-   * log call it is observing.
+   * log call it is observing, and a listener that logs is not re-entered.
    * @param {string} level
    * @param {any} message
    * @param {any} data
    */
   _emitLiveRecord(level, message, data) {
+    if (_emittingLiveRecord) return;
+    _emittingLiveRecord = true;
     try {
       const _pino = /** @type {any} */ (this.pino);
       if (_pino && typeof _pino.isLevelEnabled === 'function' && !_pino.isLevelEnabled(level)) {
@@ -964,7 +976,9 @@ class Logger {
         time: new Date().toISOString(),
         level,
         context: this.context || '',
-        msg: typeof message === 'string' ? message : String(message),
+        // A non-string message (e.g. logger.error(err)) reaches here
+        // unsanitized; redact its string form before it leaves the logger.
+        msg: typeof message === 'string' ? message : sanitizeLogData(String(message)),
         data
       };
       for (const listener of _liveRecordListeners) {
@@ -976,6 +990,8 @@ class Logger {
       }
     } catch {
       // The live feed is best-effort; logging continues regardless.
+    } finally {
+      _emittingLiveRecord = false;
     }
   }
 
