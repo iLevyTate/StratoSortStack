@@ -152,6 +152,17 @@ class DegradedStateTracker extends EventEmitter {
     return false;
   }
 
+  /**
+   * True when the flag is raised, dismissed or not. Dismissing hides the
+   * banner; it does not make the condition go away, so work gated on a flag
+   * reads this rather than hasActive().
+   * @param {string} code
+   * @returns {boolean}
+   */
+  isRaised(code) {
+    return this._flags.has(code);
+  }
+
   /** Reset — intended for tests. */
   _reset() {
     this._flags.clear();
@@ -166,7 +177,25 @@ function getInstance() {
   return _instance;
 }
 
+/**
+ * Raised while the disk is too full for the vector store to save. Background
+ * analysis holds until it clears, so new results are not computed into a
+ * store that cannot keep them.
+ */
+const STORAGE_FULL_CODE = 'storage.full';
+
+/** @returns {boolean} */
+function isStorageFull() {
+  try {
+    return getInstance().isRaised(STORAGE_FULL_CODE);
+  } catch {
+    return false;
+  }
+}
+
 module.exports = {
   DegradedStateTracker,
-  getInstance
+  getInstance,
+  STORAGE_FULL_CODE,
+  isStorageFull
 };

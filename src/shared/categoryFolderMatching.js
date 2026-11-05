@@ -70,6 +70,23 @@ function stripCategorySubjectSuffix(label) {
 }
 
 /**
+ * True when a model's "category" reads like a document title, not a folder
+ * name: long, more than four words, or punctuated like a heading
+ * ("Mystery Bin Declutter: 2-5-10 Method"). Such a value still goes through
+ * folder matching; it is only never offered as a new-folder suggestion.
+ *
+ * @param {string} label
+ * @returns {boolean}
+ */
+function isTitleLikeCategory(label) {
+  const text = String(label || '').trim();
+  if (!text) return false;
+  if (text.length > 40) return true;
+  if (/[:;!?]/.test(text)) return true;
+  return text.split(/\s+/).length > 4;
+}
+
+/**
  * Score folder names when collapsing equivalent duplicates. Higher wins.
  * Penalizes category-subject suffix artifacts so `Nature` beats `Nature_<id>`.
  *
@@ -669,6 +686,7 @@ module.exports = {
   isDefaultCategoryName,
   getSelectableSmartFolders,
   stripCategorySubjectSuffix,
+  isTitleLikeCategory,
   scoreFolderNameForDedup,
   scoreLabelAgainstFolderSemantics,
   findBestSemanticFolder,

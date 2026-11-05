@@ -35,6 +35,7 @@ const { withTimeout } = require('../../shared/promiseUtils');
 const { shouldEmbed } = require('../services/embedding/embeddingGate');
 const {
   stripCategorySubjectSuffix,
+  isTitleLikeCategory,
   findSmartFolderForLabel,
   isDefaultCategoryName
 } = require('../../shared/categoryFolderMatching');
@@ -638,7 +639,8 @@ async function applySemanticFolderMatching(params) {
           !categoryIsGeneric &&
           typeof analysis.category === 'string' &&
           analysis.category.trim() &&
-          analysis.category.trim().toLowerCase() !== 'uncategorized'
+          analysis.category.trim().toLowerCase() !== 'uncategorized' &&
+          !isTitleLikeCategory(analysis.category)
         ) {
           analysis.suggestedNewFolder = stripCategorySubjectSuffix(analysis.category.trim());
           logger.info('[FolderMatcher] Surfacing unmatched LLM category as new-folder suggestion', {
