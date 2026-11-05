@@ -407,6 +407,45 @@ describe('DownloadWatcher', () => {
       expect(result.shouldFallback).toBe(true);
     });
 
+    test('a memory-budget refusal schedules the download again instead of dropping it', async () => {
+      jest.useFakeTimers();
+      try {
+        mockDependencies.autoOrganizeService.processNewFile.mockRejectedValueOnce(
+          Object.assign(new Error('Model memory budget exceeded'), {
+            code: 'MODEL_MEMORY_BUDGET_EXCEEDED'
+          })
+        );
+        const handleFileSpy = jest.spyOn(watcher, 'handleFile').mockResolvedValue();
+        const fallbackSpy = jest.spyOn(watcher, '_fallbackOrganize');
+
+        const result = await watcher._attemptAutoOrganize('/downloads/busy.pdf');
+
+        // The fallback would analyze again and hit the same refusal.
+        expect(result).toEqual({ handled: true, shouldFallback: false });
+        expect(fallbackSpy).not.toHaveBeenCalled();
+        expect(handleFileSpy).not.toHaveBeenCalled();
+        jest.advanceTimersByTime(60_000);
+        expect(handleFileSpy).toHaveBeenCalledWith('/downloads/busy.pdf');
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    test('a download refused for memory is retried a bounded number of times', () => {
+      jest.useFakeTimers();
+      try {
+        const handleFileSpy = jest.spyOn(watcher, 'handleFile').mockImplementation(async (p) => {
+          // Every retry is refused again.
+          watcher._retryWhenMemoryFrees(p);
+        });
+        watcher._retryWhenMemoryFrees('/downloads/busy.pdf');
+        for (let i = 0; i < 10; i += 1) jest.advanceTimersByTime(60_000);
+        expect(handleFileSpy).toHaveBeenCalledTimes(5);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     test('handles low confidence results', async () => {
       mockDependencies.autoOrganizeService.processNewFile.mockResolvedValueOnce({
         destination: null,

@@ -125,6 +125,9 @@ describe('DuplicateResolutionModal: Keep all and visible-only resolve', () => {
     fireEvent.click(screen.getByText('Restore'));
     expect(screen.queryByText('Hide kept sets')).not.toBeInTheDocument();
     expect(screen.getByText('Duplicate set 1')).toBeInTheDocument();
+    // Restored with no keeper: nothing is armed for Trash until one is picked.
+    expect(screen.getByText(/Send\s+to Trash/)).toBeDisabled();
+    fireEvent.click(screen.getAllByLabelText('Keep one.pdf')[0]);
     expect(screen.getByText(/Send 1 to Trash/)).toBeInTheDocument();
 
     // Keeping it again hides it again: the show toggle did not stick.
@@ -161,5 +164,22 @@ describe('DuplicateResolutionModal: Keep all and visible-only resolve', () => {
     const resolutions = onResolve.mock.calls[0][0];
     expect(resolutions).toHaveLength(1);
     expect(resolutions[0].tier).toBe('exact');
+  });
+
+  test('a kept set shown through "Show N kept" marks nothing for Trash and cannot be edited', () => {
+    const first = renderModal([exactGroup]);
+    fireEvent.click(screen.getByText('Keep all'));
+    first.unmount();
+
+    renderModal([exactGroup]);
+    fireEvent.click(screen.getByText('Show 1 kept'));
+
+    expect(screen.getByText('Duplicate set 1')).toBeInTheDocument();
+    expect(screen.queryByText('Delete')).not.toBeInTheDocument();
+    expect(screen.queryByText('Keep')).not.toBeInTheDocument();
+    for (const radio of screen.getAllByRole('radio')) {
+      expect(radio).toBeDisabled();
+      expect(radio).not.toBeChecked();
+    }
   });
 });

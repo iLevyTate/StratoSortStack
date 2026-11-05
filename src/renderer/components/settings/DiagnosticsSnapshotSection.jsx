@@ -164,10 +164,20 @@ function DiagnosticsSnapshotSection({ addNotification }) {
     };
   }, []);
 
+  // Fetches still running, and the id of the newest one. The live tick waits
+  // its turn behind a running fetch, and an older fetch that finishes after a
+  // newer one neither overwrites its snapshot nor stops its spinner.
+  const inFlightRef = React.useRef(0);
+  const latestRequestRef = React.useRef(0);
+
   const fetchAll = React.useCallback(
-    async ({ silent = false, probeLlama = true, forceStats = true } = {}) => {
+    async ({ silent = false, probeLlama = true, forceStats = true, live = false } = {}) => {
+      const requestId = ++latestRequestRef.current;
+      inFlightRef.current += 1;
       if (!silent) setLoading(true);
-      setRefreshing(true);
+      // The background tick is not a refresh the user asked for: it does not
+      // spin the Refresh button or disable Copy.
+      if (!live) setRefreshing(true);
       try {
         const [metrics, degraded, llamaConfig, llamaHealth, vectorStats] = await Promise.all([
           safeFetch('system metrics', () => systemIpc.getMetrics()),
@@ -197,6 +207,7 @@ function DiagnosticsSnapshotSection({ addNotification }) {
           })
         ]);
         if (!mountedRef.current) return;
+        if (requestId !== latestRequestRef.current) return;
         setSnapshot((prev) => ({
           metrics: {
             ok: metrics.ok,
@@ -239,7 +250,8 @@ function DiagnosticsSnapshotSection({ addNotification }) {
         }));
         setLastRefreshedAt(new Date());
       } finally {
-        if (mountedRef.current) {
+        inFlightRef.current -= 1;
+        if (mountedRef.current && requestId === latestRequestRef.current) {
           setLoading(false);
           setRefreshing(false);
         }
@@ -258,7 +270,9 @@ function DiagnosticsSnapshotSection({ addNotification }) {
   React.useEffect(() => {
     const id = setInterval(() => {
       if (typeof document !== 'undefined' && document.hidden) return;
-      fetchAll({ silent: true, probeLlama: false, forceStats: false });
+      // A Refresh (or the first load) is still running; it is fresher.
+      if (inFlightRef.current > 0) return;
+      fetchAll({ silent: true, probeLlama: false, forceStats: false, live: true });
     }, LIVE_REFRESH_MS);
     return () => clearInterval(id);
   }, [fetchAll]);

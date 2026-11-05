@@ -29,6 +29,7 @@ const { createLogger } = require('../../shared/logger');
 const { ERROR_CODES } = require('../../shared/errorCodes');
 const { attachErrorCode } = require('../../shared/errorHandlingUtils');
 const { normalizeAnalysisResult } = require('./utils');
+const { isMemoryBudgetExceeded } = require('../../shared/analysisProvenance');
 const { analyzeVideoWithCloud, resolveCloudFrameProvider } = require('./cloudMedia');
 
 const logger = createLogger('MediaAnalysis');
@@ -561,7 +562,8 @@ async function analyzeMediaFile(filePath, dependencies = {}, options = {}) {
         transcript: transcriptOnlyForLlm,
         frames: framesForCloud,
         smartFolders,
-        signal
+        signal,
+        bypassCache
       });
     }
 
@@ -629,6 +631,17 @@ async function analyzeMediaFile(filePath, dependencies = {}, options = {}) {
           fileType: kind
         });
       } catch (err) {
+        // A cancel, or a model load refused while another model holds the
+        // memory, is not a result. Storing the confidence-60 stub below would
+        // mark the file done for good; rethrown, the batch and the watchers
+        // retry it (memory) or report it cancelled.
+        if (
+          err?.code === ERROR_CODES.OPERATION_CANCELLED ||
+          err?.name === 'AbortError' ||
+          isMemoryBudgetExceeded(err)
+        ) {
+          throw err;
+        }
         logger.warn('[Media] LLM transcript analysis failed', {
           file: fileName,
           error: err?.message

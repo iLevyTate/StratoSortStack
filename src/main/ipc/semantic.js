@@ -647,19 +647,91 @@ async function handleReindexFileHashes(
 }
 
 /**
+ * Re-read the files of each "identical" set before any of them goes to the
+ * Trash. The exact tier is grouped on the fingerprint stored at index time,
+ * and a file edited while nothing was watching keeps its old fingerprint, so
+ * the dialog can call two files identical that no longer are. Each copy is
+ * hashed again from disk and compared with the copy being kept; a copy that
+ * differs, or a set whose kept copy cannot be read, stays where it is and is
+ * reported back instead of trashed.
+ *
+ * @param {string[]} paths every path the user asked to trash
+ * @param {Array<{ keep: string, paths: string[] }>} verifyIdentical the exact-tier sets
+ * @param {{ checksum?: (filePath: string) => Promise<string> }} [options]
+ * @returns {Promise<{ paths: string[], skipped: Array<{ path: string, reason: string }> }>}
+ */
+async function confirmIdenticalBeforeTrash(paths, verifyIdentical, options = {}) {
+  const checksum =
+    options.checksum ||
+    ((/** @type {string} */ filePath) => {
+      const { computeFileChecksum } = require('../utils/fileDedup');
+      const { getHashCache } = require('../utils/hashCache');
+      // fresh: never trust a cached digest here; the point is to read the bytes now.
+      return computeFileChecksum(filePath, { cache: getHashCache(), fresh: true });
+    });
+  /** @param {string} filePath */
+  const hashOrNull = async (filePath) => {
+    try {
+      return await checksum(filePath);
+    } catch {
+      return null;
+    }
+  };
+
+  /** @type {Map<string, string>} */
+  const rejected = new Map();
+  for (const set of verifyIdentical) {
+    const copies = Array.isArray(set?.paths) ? set.paths : [];
+    if (copies.length === 0) continue;
+    const keptHash = set?.keep ? await hashOrNull(set.keep) : null;
+    for (const copy of copies) {
+      if (!keptHash) {
+        // Without a readable kept copy, trashing the others could leave none.
+        rejected.set(copy, 'kept-copy-unreadable');
+        continue;
+      }
+      const copyHash = await hashOrNull(copy);
+      if (copyHash !== keptHash) rejected.set(copy, 'no-longer-identical');
+    }
+  }
+
+  return {
+    paths: paths.filter((p) => !rejected.has(p)),
+    skipped: [...rejected].map(([filePath, reason]) => ({ path: filePath, reason }))
+  };
+}
+
+/**
  * @param {SemanticHandlerDeps} deps
  * @param {IpcMainInvokeEvent} event
- * @param {{ paths?: string[], summary?: Record<string, any> }} [payload]
+ * @param {{ paths?: string[], summary?: Record<string, any>, verifyIdentical?: Array<{ keep: string, paths: string[] }> }} [payload]
  */
-async function handleTrashDuplicates({ logger }, event, { paths, summary } = {}) {
+async function handleTrashDuplicates({ logger }, event, { paths, summary, verifyIdentical } = {}) {
   try {
     if (!Array.isArray(paths) || paths.length === 0) {
       return { success: false, error: 'No paths provided' };
     }
 
+    // Byte-identical sets are checked against the disk again first; anything
+    // that has changed since it was indexed is left alone and reported.
+    /** @type {Array<{ path: string, reason: string }>} */
+    let skipped = [];
+    let toTrash = paths;
+    if (Array.isArray(verifyIdentical) && verifyIdentical.length > 0) {
+      ({ paths: toTrash, skipped } = await confirmIdenticalBeforeTrash(paths, verifyIdentical));
+      if (skipped.length > 0) {
+        logger.warn('[EMBEDDINGS] Skipped duplicates that are no longer identical', {
+          count: skipped.length
+        });
+      }
+    }
+    if (toTrash.length === 0) {
+      return { success: true, trashed: [], failed: [], skipped, totalBytes: 0 };
+    }
+
     const { TrashService } = require('../services/TrashService');
     const trasher = new TrashService();
-    const result = await trasher.trashBatch(paths);
+    const result = await trasher.trashBatch(toTrash);
 
     if (result.trashed.length > 0) {
       const undo = getUndoRedoService();
@@ -716,6 +788,7 @@ async function handleTrashDuplicates({ logger }, event, { paths, summary } = {})
       success: result.failed.length === 0,
       trashed: result.trashed,
       failed: result.failed,
+      skipped,
       totalBytes: result.totalBytes
     };
   } catch (e) {
@@ -4524,6 +4597,8 @@ module.exports = registerEmbeddingsIpc;
 module.exports.getSearchServiceInstance = getSearchServiceInstance;
 module.exports.getClusteringServiceInstance = getClusteringServiceInstance;
 module.exports.enrichDuplicateMemberSizes = enrichDuplicateMemberSizes;
+module.exports.handleTrashDuplicates = handleTrashDuplicates;
+module.exports.confirmIdenticalBeforeTrash = confirmIdenticalBeforeTrash;
 // Exported for unit tests (lock semantics are safety-critical for rebuilds).
 module.exports.acquireRebuildLock = acquireRebuildLock;
 module.exports.touchRebuildLock = touchRebuildLock;

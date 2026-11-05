@@ -1,13 +1,10 @@
 // @ts-check
-const path = require('path');
 const { getInstance: getLlamaService } = require('../services/LlamaService');
 const { ensureTextModelReadyForAnalysis } = require('../llamaUtils');
 const { globalDeduplicator } = require('../utils/llmOptimization');
 const { extractAndParseJSON } = require('../utils/jsonRepair');
 const { attemptJsonRepairWithLlama } = require('../utils/llmJsonRepair');
 const { AI_DEFAULTS } = require('../../shared/constants');
-const { isPlausibleContentDate } = require('../../shared/contentDateSanity');
-const { sanitizeSuggestedBaseName } = require('../../shared/pathSanitization');
 const { withAbortableTimeout } = require('../../shared/promiseUtils');
 const { TIMEOUTS, CONTENT_SELECTION } = require('../../shared/performanceConstants');
 const { createLogger } = require('../../shared/logger');
@@ -16,6 +13,8 @@ const { selectRepresentativeContent, extractDocumentOutline } = require('./conte
 const FolderMatchingService = require('../services/FolderMatchingService');
 const { getInstance: getAnalysisCache } = require('../services/AnalysisCacheService');
 const { ANALYSIS_SCHEMA_PROMPT } = require('../../shared/analysisSchema');
+const { buildAnalysisFromModelJson } = require('./modelAnalysisResult');
+const { forAnalysisCache } = require('./embeddingHandoff');
 const {
   getOrganizationGuidance,
   formatOrganizationGuidanceBlock
@@ -77,6 +76,23 @@ function _getRouterInferenceBackend(smartFolderId = null, forceLocal = false) {
 }
 
 const logger = createLogger('DocumentLLM');
+
+/**
+ * A private copy of a result for this cache, on the way in and on the way
+ * out. Callers stamp the result they get back with this run's provider and
+ * index hand-off (applySemanticFolderMatching writes "already queued" and
+ * "passages written" onto it). Handing out the stored object let a later run
+ * read an earlier run's hand-off and skip indexing a file that was never
+ * indexed at its new path.
+ * @param {Record<string, any>} value
+ * @returns {Record<string, any>}
+ */
+function cachedAnalysisCopy(value) {
+  return forAnalysisCache({
+    ...value,
+    keywords: Array.isArray(value.keywords) ? [...value.keywords] : value.keywords
+  });
+}
 const AppConfig = {
   ai: {
     textAnalysis: {
@@ -222,6 +238,7 @@ async function summarizeChunks(text, llamaService, options = {}) {
  * @param {string | null} [fileDate]
  * @param {any[]} [namingContext]
  * @param {{ bypassCache?: boolean, signal?: AbortSignal, smartFolderId?: string | null, forceLocal?: boolean }} [options]
+ * @returns {Promise<any>} the analysis, or an `{ error }` shape the caller treats as a failed analysis
  */
 async function analyzeTextWithLlama(
   textContent,
@@ -354,7 +371,7 @@ async function analyzeTextWithLlama(
           suggestedName: cachedResult.suggestedName,
           confidence: cachedResult.confidence
         });
-        return cachedResult;
+        return cachedAnalysisCopy(cachedResult);
       }
     }
 
@@ -743,160 +760,17 @@ ${truncated}
             };
           }
 
-          // Validate and sanitize date field
-          if (parsedJson.date) {
-            try {
-              const dateObj = new Date(parsedJson.date);
-              if (isNaN(dateObj.getTime())) {
-                delete parsedJson.date;
-              } else {
-                parsedJson.date = dateObj.toISOString().split('T')[0];
-                // A parseable-but-implausible year (hallucinated "2103",
-                // OCR-misread "0201") would pin the timeline sort and poison
-                // the stats card's year range — drop to the fileDate fallback.
-                if (!isPlausibleContentDate(parsedJson.date)) {
-                  delete parsedJson.date;
-                }
-              }
-            } catch {
-              delete parsedJson.date;
-            }
-          }
-
-          // Use file date if LLM returned no date or invalid date
-          if (!parsedJson.date && fileDate) {
-            parsedJson.date = fileDate;
-          }
-
-          // Validate keywords array
-          const finalKeywords = Array.isArray(parsedJson.keywords)
-            ? parsedJson.keywords.filter((kw) => typeof kw === 'string' && kw.length > 0)
-            : [];
-
-          // Validate confidence: accept any model-provided value in 0-100.
-          // Only recalculate when the value is missing or not a finite number —
-          // never override a legitimate low-confidence score (e.g. 40 for an
-          // ambiguous document) with an inflated field-completeness estimate.
-          const rawConfidence = parsedJson.confidence;
-          const hasValidConfidence =
-            typeof rawConfidence === 'number' &&
-            Number.isFinite(rawConfidence) &&
-            rawConfidence >= 0 &&
-            rawConfidence <= 100;
-
-          if (!hasValidConfidence) {
-            // Model did not return a usable confidence value — estimate from
-            // field completeness as a reasonable proxy.
-            let calculatedConfidence = 70; // Base confidence
-            if (
-              parsedJson.category &&
-              typeof parsedJson.category === 'string' &&
-              parsedJson.category.length > 0
-            ) {
-              calculatedConfidence += 5;
-            }
-            if (
-              parsedJson.purpose &&
-              typeof parsedJson.purpose === 'string' &&
-              parsedJson.purpose.length > 0
-            ) {
-              calculatedConfidence += 5;
-            }
-            if (finalKeywords.length >= 3) {
-              calculatedConfidence += 5;
-            }
-            if (
-              parsedJson.project &&
-              typeof parsedJson.project === 'string' &&
-              parsedJson.project.length > 0
-            ) {
-              calculatedConfidence += 5;
-            }
-            if (
-              parsedJson.suggestedName &&
-              typeof parsedJson.suggestedName === 'string' &&
-              parsedJson.suggestedName.length > 0
-            ) {
-              calculatedConfidence += 5;
-            }
-            parsedJson.confidence = Math.min(95, calculatedConfidence);
-          } else {
-            parsedJson.confidence = Math.round(rawConfidence);
-          }
-
-          // Build validated result object
-          // Include summary, entity, type for rich semantic folder matching
-          const rawLlmCategory =
-            typeof parsedJson.category === 'string' ? parsedJson.category : 'document';
-          // Use the rich variant so we can surface a "create new folder?" hint when
-          // the LLM's category was meaningful (e.g. "marketing", "Labcorp") but
-          // didn't match any existing smart folder. Without this, the theme is
-          // silently lost when the category normalizes to "Uncategorized".
-          const categoryMatch = FolderMatchingService.matchCategoryToFolderWithSuggestion(
-            rawLlmCategory,
-            smartFolders
-          );
-          if (categoryMatch.suggestedNewFolder) {
-            logger.info('[DocumentLLM] Surfaced new-folder suggestion', {
-              fileName: originalFileName,
-              rawLlmCategory,
-              suggestedNewFolder: categoryMatch.suggestedNewFolder
-            });
-          }
-          const result = {
-            rawText: textContent.substring(0, 2000),
-            date: parsedJson.date || undefined,
-            // Semantic fields for folder matching - these drive organization decisions
-            summary: typeof parsedJson.summary === 'string' ? parsedJson.summary : undefined,
-            reasoning: typeof parsedJson.reasoning === 'string' ? parsedJson.reasoning : undefined,
-            entity: typeof parsedJson.entity === 'string' ? parsedJson.entity : undefined,
-            type: typeof parsedJson.type === 'string' ? parsedJson.type : undefined,
-            project: typeof parsedJson.project === 'string' ? parsedJson.project : undefined,
-            purpose: typeof parsedJson.purpose === 'string' ? parsedJson.purpose : undefined,
-            category: categoryMatch.folder,
-            suggestedNewFolder: categoryMatch.suggestedNewFolder || undefined,
-            suggestedName: (() => {
-              if (typeof parsedJson.suggestedName !== 'string') return undefined;
-              // Sanitize: reject path traversal characters in suggestedName
-              if (
-                /[/\\]/.test(parsedJson.suggestedName) ||
-                parsedJson.suggestedName.includes('..')
-              ) {
-                logger.warn(
-                  '[documentLlm] suggestedName contains path traversal characters, rejecting',
-                  {
-                    suggestedName: parsedJson.suggestedName,
-                    fileName: originalFileName
-                  }
-                );
-                return undefined;
-              }
-              // Always strip any LLM-added extension and restore the original.
-              // The prompt says "no extension", but some models add one anyway —
-              // if a wrong extension slips through (e.g. .docx for a .pdf file)
-              // the renamed file becomes unopenable.
-              const originalExt = path.extname(originalFileName);
-              const llmExt = path.extname(parsedJson.suggestedName);
-              const rawBase = llmExt
-                ? parsedJson.suggestedName.slice(0, -llmExt.length)
-                : parsedJson.suggestedName;
-              // Separators are rejected above; this covers the rest of the
-              // Windows-illegal set (`<>:"|?*`, control chars), trailing dots
-              // and reserved device names that would break the later rename.
-              const baseName = sanitizeSuggestedBaseName(rawBase);
-              if (!baseName) {
-                logger.warn('[documentLlm] suggestedName has no usable characters, rejecting', {
-                  suggestedName: parsedJson.suggestedName,
-                  fileName: originalFileName
-                });
-                return undefined;
-              }
-              return originalExt ? baseName + originalExt : baseName;
-            })(),
-            keywords: finalKeywords,
-            confidence: parsedJson.confidence,
-            provider: inferenceProviderId
-          };
+          // Field allowlist, folder match and name cleanup live in one place
+          // so the cloud video route applies exactly the same checks.
+          const result = buildAnalysisFromModelJson(parsedJson, {
+            originalFileName,
+            smartFolders,
+            textContent,
+            fileDate,
+            provider: inferenceProviderId,
+            logger,
+            source: 'documentLlm'
+          });
 
           // Shape only, never substance: purpose, entity, project, keywords
           // and reasoning paraphrase the document, and PRIVACY.md promises
@@ -916,7 +790,7 @@ ${truncated}
             }
           });
 
-          cacheService.set(cacheKey, result);
+          cacheService.set(cacheKey, cachedAnalysisCopy(result));
           return result;
         } catch (e) {
           logger.error('[documentLlm] Unexpected error processing response:', e.message);

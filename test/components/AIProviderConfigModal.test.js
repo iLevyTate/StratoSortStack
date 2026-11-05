@@ -740,4 +740,46 @@ describe('AIProviderConfigModal', () => {
       )
     );
   });
+
+  test('a saved older Claude model is shown as itself, not as the first listed model', () => {
+    const store = configureStore({
+      reducer: { aiProvider: aiProviderReducer },
+      preloadedState: {
+        aiProvider: {
+          loaded: true,
+          isWorking: false,
+          lastError: null,
+          settings: {
+            providers: {
+              anthropic: { enabled: true, model: 'claude-opus-4-7' }
+            },
+            routing: { default: 'local', perFolder: {} },
+            consent: {}
+          },
+          status: { providers: [], routing: { default: 'local', perFolder: {} } },
+          keyStatus: { anthropic: { hasKey: true, lastFour: '1234' } },
+          testResults: {}
+        }
+      }
+    });
+
+    render(
+      <Provider store={store}>
+        <AIProviderConfigModal
+          provider="anthropic"
+          onClose={jest.fn()}
+          addNotification={jest.fn()}
+        />
+      </Provider>
+    );
+
+    const picker = screen.getByLabelText('Model');
+    // Requests and billing still use 4-7, so the picker has to say so.
+    expect(picker).toHaveValue('claude-opus-4-7');
+    expect(
+      screen.getByRole('option', { name: /claude-opus-4-7.*older model/i })
+    ).toBeInTheDocument();
+    // The newer models stay available to switch to.
+    expect(screen.getByRole('option', { name: /Claude Opus 5\.5/ })).toBeInTheDocument();
+  });
 });

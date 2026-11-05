@@ -114,7 +114,7 @@ describe('cloud video frames', () => {
     const result = await analyzeMediaFile(
       '/mock/meeting.mp4',
       { whisperService: fakeWhisper(), analyzeTextWithLlama, extractKeyframes, captionImage: null },
-      { captionKeyframes: true }
+      { captionKeyframes: true, smartFolders: [{ name: 'Work', path: '/folders/Work' }] }
     );
 
     expect(mockRouter.provider.analyze).toHaveBeenCalledTimes(1);

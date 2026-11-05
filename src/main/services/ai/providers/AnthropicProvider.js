@@ -109,8 +109,11 @@ class AnthropicProvider {
       });
   }
 
-  async analyze(/** @type {any} */ prompt, options = {}) {
-    return this._messages({ prompt, options, stream: false });
+  async analyze(/** @type {any} */ prompt, /** @type {Record<string, any>} */ options = {}) {
+    // Callers pass their cancel signal in options; the request reads it from
+    // the top level, so it is lifted here. Without it a cancelled analysis
+    // kept uploading and billing until the request timed out.
+    return this._messages({ prompt, options, signal: options.signal, stream: false });
   }
 
   async suggest(/** @type {any} */ prompt, options = {}) {

@@ -11,6 +11,7 @@ const path = require('path');
 const fs = require('fs').promises;
 const { createLogger } = require('../../../shared/logger');
 const { SUPPORTED_IMAGE_EXTENSIONS } = require('../../../shared/constants');
+const { isMemoryBudgetExceeded } = require('../../../shared/analysisProvenance');
 const { crossPlatformBasename } = require('../../../shared/crossPlatformUtils');
 const { sanitizeFile } = require('./fileTypeUtils');
 const { generateSuggestedNameFromAnalysis } = require('./namingUtils');
@@ -430,6 +431,11 @@ async function processNewFile(filePath, smartFolders, options, suggestionService
       suggestedFolder
     };
   } catch (error) {
+    // A model load refused while another model holds the memory is not a
+    // verdict on the file. Returning null here read as "not organized" and
+    // the download was left unanalyzed for good; rethrown, the caller can
+    // try it again once the memory frees.
+    if (isMemoryBudgetExceeded(error)) throw error;
     logger.error('[AutoOrganize] Error processing new file:', {
       file: filePath,
       error: error.message

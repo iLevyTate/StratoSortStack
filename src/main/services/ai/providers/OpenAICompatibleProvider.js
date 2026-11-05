@@ -121,8 +121,11 @@ class OpenAICompatibleProvider {
       });
   }
 
-  async analyze(/** @type {any} */ prompt, options = {}) {
-    return this._chatCompletions({ prompt, options, stream: false });
+  async analyze(/** @type {any} */ prompt, /** @type {Record<string, any>} */ options = {}) {
+    // Callers pass their cancel signal in options; the request reads it from
+    // the top level, so it is lifted here. Without it a cancelled analysis
+    // kept uploading and billing until the request timed out.
+    return this._chatCompletions({ prompt, options, signal: options.signal, stream: false });
   }
 
   async suggest(/** @type {any} */ prompt, options = {}) {
