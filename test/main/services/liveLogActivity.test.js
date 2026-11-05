@@ -3,28 +3,15 @@
  * the real log line as it reaches the logger listener: after util.format and
  * sanitizeLogData, so absolute paths look like `[REDACTED_PATH]\name.ext`.
  */
+// The suite-wide fs mock is an in-memory volume; the contract checks read real source.
+const fs = jest.requireActual('fs');
+const path = require('path');
 const {
   activityFromLogRecord,
   ACTIVITY_RULE_IDS
 } = require('../../../src/main/services/liveLogActivity');
 
 const CASES = [
-  {
-    rule: 'watcher-analyzing',
-    record: {
-      level: 'info',
-      context: 'SmartFolderWatcher',
-      msg: '[SMART-FOLDER-WATCHER] Analyzing file: [REDACTED_PATH]\\receipt-0412.jpg',
-      data: { applyNaming: true, isContentUpdate: false }
-    },
-    expected: {
-      kind: 'analyze',
-      icon: 'analyze',
-      tone: 'info',
-      text: 'Analyzing receipt-0412.jpg',
-      file: 'receipt-0412.jpg'
-    }
-  },
   {
     rule: 'watcher-queued',
     record: {
@@ -46,14 +33,29 @@ const CASES = [
     record: {
       level: 'info',
       context: 'SmartFolderWatcher',
-      msg: '[SMART-FOLDER-WATCHER] Analysis complete: [REDACTED_PATH]/notes.txt'
+      msg: '[SMART-FOLDER-WATCHER] Analysis complete: [REDACTED_PATH]/voice-memo.m4a'
     },
     expected: {
       kind: 'analyzed',
       icon: 'check',
       tone: 'success',
-      text: 'Analyzed notes.txt',
-      file: 'notes.txt'
+      text: 'Analyzed voice-memo.m4a',
+      file: 'voice-memo.m4a'
+    }
+  },
+  {
+    rule: 'watcher-complete',
+    record: {
+      level: 'info',
+      context: 'SmartFolderWatcher',
+      msg: '[SMART-FOLDER-WATCHER] Analysis complete: [REDACTED_PATH]\\layout.unknownext'
+    },
+    expected: {
+      kind: 'analyzed',
+      icon: 'check',
+      tone: 'success',
+      text: 'Analyzed layout.unknownext',
+      file: 'layout.unknownext'
     }
   },
   {
@@ -314,19 +316,48 @@ const CASES = [
     }
   },
   {
+    rule: 'embeddings-flushed',
+    record: {
+      level: 'info',
+      context: 'EmbeddingQueue',
+      msg: '[EmbeddingQueue] Successfully flushed batch',
+      data: { success: 0, failed: 3, processed: 3, remaining: 0, duration: '70ms' }
+    },
+    expected: {
+      kind: 'embeddings',
+      icon: 'database',
+      tone: 'warn',
+      text: '3 search embeddings failed to save'
+    }
+  },
+  {
     rule: 'index-saved',
     record: {
-      level: 'debug',
+      level: 'info',
       context: 'OramaVectorService',
       msg: '[OramaVectorService] Persisted databases',
-      data: { collections: ['files', 'chunks'], full: false, durationMs: 18 }
+      data: {
+        collections: ['files', 'fileChunks', 'feedback', 'learningPatterns', 'folders', 'mystery'],
+        full: true,
+        durationMs: 18
+      }
     },
     expected: {
       kind: 'index-saved',
       icon: 'save',
       tone: 'success',
-      text: 'Saved search index (files, chunks)'
+      text: 'Saved search index (files, passages, learning, folders)'
     }
+  },
+  {
+    rule: 'index-saved',
+    record: {
+      level: 'info',
+      context: 'OramaVectorService',
+      msg: '[OramaVectorService] Persisted databases',
+      data: { collections: ['mystery'], full: false, durationMs: 3 }
+    },
+    expected: { kind: 'index-saved', icon: 'save', tone: 'success', text: 'Saved search index' }
   },
   {
     rule: 'storage-full',
@@ -428,6 +459,26 @@ const CASES = [
       tone: 'success',
       text: 'Filed receipt-0412.jpg → Financial',
       file: 'receipt-0412.jpg'
+    }
+  },
+  {
+    rule: 'organize-skipped',
+    record: {
+      level: 'info',
+      context: 'IPC:Files:BatchOrganize',
+      msg: '[FILE-OPS] Move skipped (duplicate)',
+      data: {
+        batchId: 'b1',
+        source: '[REDACTED_PATH]\\scan.pdf',
+        destination: '[REDACTED_PATH]\\scan.pdf'
+      }
+    },
+    expected: {
+      kind: 'organize',
+      icon: 'folder',
+      tone: 'info',
+      text: 'Skipped scan.pdf (already in place)',
+      file: 'scan.pdf'
     }
   },
   {
@@ -624,8 +675,277 @@ const CASES = [
       tone: 'success',
       text: 'Knowledge repair: 3 restored, 7 embedded, 2 passages'
     }
+  },
+  {
+    rule: 'knowledge-repair',
+    record: {
+      level: 'info',
+      context: 'KnowledgeRepair',
+      msg: 'Startup knowledge repair complete',
+      data: { restored: 0, embedded: 4, passages: 0, failed: 1, deferred: 9 }
+    },
+    expected: {
+      kind: 'knowledge-repair',
+      icon: 'wrench',
+      tone: 'warn',
+      text: 'Knowledge repair: 0 restored, 4 embedded, 0 passages, 1 failed, 9 deferred'
+    }
   }
 ];
+
+/**
+ * Where each rule's log line lives. `literals` are copied from the source
+ * (quotes included, so a reworded or extended message fails); `context` is
+ * the createLogger name the rule trusts, or null where the caller injects
+ * its logger. A rule whose line was reworded would silently never fire, so
+ * this map turns that into a failing test.
+ */
+const SOURCES = {
+  'watcher-queued': {
+    file: 'src/main/services/SmartFolderWatcher.js',
+    literals: ["'[SMART-FOLDER-WATCHER] Queued for analysis:'"],
+    context: 'SmartFolderWatcher'
+  },
+  'watcher-complete': {
+    file: 'src/main/services/SmartFolderWatcher.js',
+    literals: ["'[SMART-FOLDER-WATCHER] Analysis complete:'"],
+    context: 'SmartFolderWatcher'
+  },
+  'document-analyzing': {
+    file: 'src/main/analysis/documentAnalysis.js',
+    literals: ["'Analyzing document file'"],
+    context: 'DocumentAnalysis'
+  },
+  'image-analyzing': {
+    file: 'src/main/analysis/imageAnalysis.js',
+    literals: ['`Analyzing image file`'],
+    context: 'ImageAnalysis'
+  },
+  'document-analyzed': {
+    file: 'src/main/analysis/documentAnalysis.js',
+    literals: ['`[AI-ANALYSIS-SUCCESS] Document analyzed`'],
+    context: 'DocumentAnalysis'
+  },
+  'image-analyzed': {
+    file: 'src/main/analysis/imageAnalysis.js',
+    literals: ["'[AI-ANALYSIS-SUCCESS] Image analyzed'"],
+    context: 'ImageAnalysis'
+  },
+  'image-folder-suggestion': {
+    file: 'src/main/analysis/imageAnalysis.js',
+    literals: ["'[ImageAnalysis] Surfaced new-folder suggestion'"],
+    context: 'ImageAnalysis'
+  },
+  'document-folder-suggestion': {
+    file: 'src/main/analysis/modelAnalysisResult.js',
+    literals: ["'[DocumentLLM] Surfaced new-folder suggestion'"],
+    context: null
+  },
+  'matcher-folder-suggestion': {
+    file: 'src/main/analysis/semanticFolderMatcher.js',
+    literals: ["'[FolderMatcher] Surfacing unmatched LLM category as new-folder suggestion'"],
+    context: 'SemanticFolderMatcher'
+  },
+  'folder-fallback': {
+    file: 'src/main/services/FolderMatchingService.js',
+    literals: [
+      "'[FolderMatching] No match across exact/canonical/levenshtein/prefix/token/description; using fallback'"
+    ],
+    context: 'FolderMatchingService'
+  },
+  'vision-starting': {
+    file: 'src/main/services/VisionService.js',
+    literals: ["'[VisionService] Starting vision runtime'"],
+    context: 'VisionService'
+  },
+  'vision-ready': {
+    file: 'src/main/services/VisionService.js',
+    literals: ["'[VisionService] Vision runtime ready'"],
+    context: 'VisionService'
+  },
+  'vision-stopping': {
+    file: 'src/main/services/VisionService.js',
+    literals: ["'[VisionService] Shutting down vision runtime'"],
+    context: 'VisionService'
+  },
+  'vision-batch-entered': {
+    file: 'src/main/services/LlamaService.js',
+    literals: ["'[LlamaService] Entered vision batch mode'"],
+    context: 'LlamaService'
+  },
+  'vision-batch-exited': {
+    file: 'src/main/services/LlamaService.js',
+    literals: ["'[LlamaService] Exited vision batch mode'"],
+    context: 'LlamaService'
+  },
+  'model-loading': {
+    file: 'src/main/services/LlamaService.js',
+    literals: ['`[LlamaService] Loading $' + '{type} model: $' + '{modelName}`'],
+    context: 'LlamaService'
+  },
+  'model-loaded': {
+    file: 'src/main/services/ModelMemoryManager.js',
+    literals: ["'[Memory] Model loaded'"],
+    context: 'ModelMemoryManager'
+  },
+  'model-unloading': {
+    file: 'src/main/services/ModelMemoryManager.js',
+    literals: ["'[Memory] Unloading model'"],
+    context: 'ModelMemoryManager'
+  },
+  'embedding-unloaded-for-vision': {
+    file: 'src/main/services/LlamaService.js',
+    literals: ["'[LlamaService] Unloaded the CPU embedding model from the vision batch'"],
+    context: 'LlamaService'
+  },
+  'embeddings-flushed': {
+    file: 'src/main/analysis/embeddingQueue/EmbeddingQueueCore.js',
+    literals: ["'[EmbeddingQueue] Successfully flushed batch'"],
+    context: 'EmbeddingQueue'
+  },
+  'index-saved': {
+    file: 'src/main/services/OramaVectorService.js',
+    literals: ["'[OramaVectorService] Persisted databases'"],
+    context: 'OramaVectorService'
+  },
+  'storage-full': {
+    file: 'src/main/services/DegradedStateTracker.js',
+    literals: ["'[DegradedState] flag raised'"],
+    context: 'DegradedStateTracker'
+  },
+  'degraded-raised': {
+    file: 'src/main/services/DegradedStateTracker.js',
+    literals: ["'[DegradedState] flag raised'"],
+    context: 'DegradedStateTracker'
+  },
+  'storage-cleared': {
+    file: 'src/main/services/DegradedStateTracker.js',
+    literals: ["'[DegradedState] flag cleared'"],
+    context: 'DegradedStateTracker'
+  },
+  'organize-batch-start': {
+    file: 'src/main/ipc/files/batchOrganizeHandler.js',
+    literals: [
+      '`[FILE-OPS] Starting batch operation $' + '{batchId} with $' + '{totalOperations} files`'
+    ],
+    context: null
+  },
+  'organize-move': {
+    file: 'src/main/ipc/files/batchOrganizeHandler.js',
+    literals: ["'[FILE-OPS] Move completed'"],
+    context: null
+  },
+  'organize-skipped': {
+    file: 'src/main/ipc/files/batchOrganizeHandler.js',
+    literals: ["'[FILE-OPS] Move skipped (duplicate)'"],
+    context: null
+  },
+  'organize-paused': {
+    file: 'src/main/ipc/files/batchOrganizeHandler.js',
+    literals: ["'[FILE-OPS] Batch paused by user'"],
+    context: null
+  },
+  'auto-organize-file': {
+    file: 'src/main/services/autoOrganize/fileProcessor.js',
+    literals: ["'[AutoOrganize] Auto-organizing new file'"],
+    context: 'AutoOrganize-FileProcessor'
+  },
+  'auto-organize-held': {
+    file: 'src/main/services/autoOrganize/fileProcessor.js',
+    literals: ["'[AutoOrganize] Holding file for review (not moved)'"],
+    context: 'AutoOrganize-FileProcessor'
+  },
+  'auto-organize-complete': {
+    file: 'src/main/services/autoOrganize/AutoOrganizeServiceCore.js',
+    literals: ["'[AutoOrganize] Organization complete'"],
+    context: 'AutoOrganizeService'
+  },
+  'undo-restore': {
+    file: 'src/main/services/UndoRedoService.js',
+    literals: ["'[UndoRedoService] Restoring file from backup'"],
+    context: 'UndoRedoService'
+  },
+  'download-organized': {
+    file: 'src/main/services/DownloadWatcher.js',
+    literals: [
+      "'[DOWNLOAD-WATCHER] Auto-organized with'",
+      '`$' + '{displayConfidencePercent}% confidence:`'
+    ],
+    context: 'DownloadWatcher'
+  },
+  'download-renamed': {
+    file: 'src/main/services/DownloadWatcher.js',
+    literals: ["'[DOWNLOAD-WATCHER] Moved (fallback, renamed due to conflict)'"],
+    context: 'DownloadWatcher'
+  },
+  'download-left': {
+    file: 'src/main/services/DownloadWatcher.js',
+    literals: ["'[DOWNLOAD-WATCHER] File not auto-organized (low confidence or disabled)'"],
+    context: 'DownloadWatcher'
+  },
+  'download-held': {
+    file: 'src/main/services/DownloadWatcher.js',
+    literals: ["'[DOWNLOAD-WATCHER] Disk full; holding new download'"],
+    context: 'DownloadWatcher'
+  },
+  'download-resumed': {
+    file: 'src/main/services/DownloadWatcher.js',
+    literals: ["'[DOWNLOAD-WATCHER] Disk has room again; processing held downloads'"],
+    context: 'DownloadWatcher'
+  },
+  'search-building': {
+    file: 'src/main/services/SearchService.js',
+    literals: ["'[SearchService] Building BM25 index...'"],
+    context: 'SearchService'
+  },
+  'search-built': {
+    file: 'src/main/services/SearchService.js',
+    literals: ['`[SearchService] BM25 index built with $' + '{this.documentMap.size} documents`'],
+    context: 'SearchService'
+  },
+  'knowledge-repair': {
+    file: 'src/main/services/embedding/knowledgeRepair.js',
+    literals: ["'Startup knowledge repair complete'"],
+    context: 'KnowledgeRepair'
+  }
+};
+
+describe('every rule is tied to a real log line', () => {
+  const REPO_ROOT = path.join(__dirname, '..', '..', '..');
+  /** @type {Map<string, string>} */
+  const sourceText = new Map();
+  const read = (file) => {
+    if (!sourceText.has(file)) {
+      sourceText.set(file, fs.readFileSync(path.join(REPO_ROOT, file), 'utf8'));
+    }
+    return sourceText.get(file);
+  };
+
+  test('every rule id has a source entry, and no entry names a missing rule', () => {
+    expect(Object.keys(SOURCES).sort()).toEqual([...ACTIVITY_RULE_IDS].sort());
+  });
+
+  test.each(Object.entries(SOURCES))('%s: the source still writes this line', (_id, source) => {
+    const text = read(source.file);
+    for (const literal of source.literals) {
+      expect(text).toContain(literal);
+    }
+  });
+
+  test.each(Object.entries(SOURCES).filter(([, source]) => source.context))(
+    '%s: the source file logs under the trusted context',
+    (_id, source) => {
+      expect(read(source.file)).toContain(`createLogger('${source.context}')`);
+    }
+  );
+
+  test('table cases use the context their source logs under', () => {
+    for (const { rule, record } of CASES) {
+      const { context } = SOURCES[rule];
+      if (context) expect({ rule, context: record.context }).toEqual({ rule, context });
+    }
+  });
+});
 
 describe('activityFromLogRecord', () => {
   test.each(CASES)('$rule → "$expected.text"', ({ record, expected }) => {
@@ -636,14 +956,38 @@ describe('activityFromLogRecord', () => {
     expect(new Set(CASES.map((c) => c.rule))).toEqual(new Set(ACTIVITY_RULE_IDS));
   });
 
+  test('the rule id list cannot be changed by a caller', () => {
+    expect(Object.isFrozen(ACTIVITY_RULE_IDS)).toBe(true);
+  });
+
   test('a known message from the wrong logger context is not trusted', () => {
     expect(
       activityFromLogRecord({
         level: 'info',
         context: 'SomethingElse',
-        msg: '[SMART-FOLDER-WATCHER] Analyzing file: [REDACTED_PATH]\\x.pdf'
+        msg: '[SMART-FOLDER-WATCHER] Queued for analysis:',
+        data: { filePath: '[REDACTED_PATH]\\x.pdf' }
       })
     ).toBeNull();
+  });
+
+  test('a watched document or image reads one "Analyzing" and one "Analyzed" line', () => {
+    // The analyzers announce these files themselves ("Analyzing X",
+    // "Analyzed X → Category"); the watcher's own lines would repeat them.
+    const watcher = (msg) =>
+      activityFromLogRecord({ level: 'info', context: 'SmartFolderWatcher', msg });
+    expect(watcher('[SMART-FOLDER-WATCHER] Analyzing file: [REDACTED_PATH]\\lease.pdf')).toBeNull();
+    for (const name of ['lease.pdf', 'notes.txt', 'receipt-0412.jpg', 'IMG_2041.HEIC']) {
+      expect(
+        watcher(`[SMART-FOLDER-WATCHER] Analysis complete: [REDACTED_PATH]\\${name}`)
+      ).toBeNull();
+    }
+    // Audio and video have no analyzer success line, so the watcher's stays.
+    expect(watcher('[SMART-FOLDER-WATCHER] Analysis complete: [REDACTED_PATH]/clip.MP4')).toEqual(
+      expect.objectContaining({ text: 'Analyzed clip.MP4', file: 'clip.MP4' })
+    );
+    // No usable name: nothing to say.
+    expect(watcher('[SMART-FOLDER-WATCHER] Analysis complete: [REDACTED_PATH]')).toBeNull();
   });
 
   test('a file field without a usable name reads "a file"', () => {
@@ -694,6 +1038,79 @@ describe('activityFromLogRecord', () => {
     expect(
       activityFromLogRecord({ level: 'fatal', context: 'App', msg: 'Renderer crashed' })
     ).toEqual({ kind: 'problem', icon: 'alert', tone: 'error', text: 'Problem: Renderer crashed' });
+  });
+
+  test('a Problem line with nothing left after its [TAG] reads "Something went wrong"', () => {
+    for (const msg of ['[OramaVectorService]', '[X]   ', '   ', '']) {
+      expect(activityFromLogRecord({ level: 'error', context: 'X', msg })).toEqual({
+        kind: 'problem',
+        icon: 'alert',
+        tone: 'error',
+        text: 'Problem: Something went wrong'
+      });
+    }
+  });
+
+  test('a Problem line shows file names without the redacted-path token and names the file', () => {
+    expect(
+      activityFromLogRecord({
+        level: 'warn',
+        context: 'DownloadWatcher',
+        msg: '[DOWNLOAD-WATCHER] Could not move [REDACTED_PATH]\\statement.pdf: EBUSY'
+      })
+    ).toEqual({
+      kind: 'problem',
+      icon: 'alert',
+      tone: 'warn',
+      text: 'Problem: Could not move statement.pdf: EBUSY',
+      file: 'statement.pdf'
+    });
+    expect(
+      activityFromLogRecord({
+        level: 'error',
+        context: 'X',
+        msg: 'Copy [REDACTED_PATH]/a.txt => [REDACTED_PATH]/b.txt failed'
+      })
+    ).toEqual({
+      kind: 'problem',
+      icon: 'alert',
+      tone: 'error',
+      text: 'Problem: Copy a.txt => b.txt failed',
+      file: 'a.txt'
+    });
+  });
+
+  test('a leading redacted path is part of the message, not a [TAG] to strip', () => {
+    expect(
+      activityFromLogRecord({
+        level: 'warn',
+        context: 'X',
+        msg: '[REDACTED_PATH]\\scan.pdf could not be read'
+      })
+    ).toEqual({
+      kind: 'problem',
+      icon: 'alert',
+      tone: 'warn',
+      text: 'Problem: scan.pdf could not be read',
+      file: 'scan.pdf'
+    });
+  });
+
+  test('a degraded-state message gets the same redacted-path cleanup', () => {
+    expect(
+      activityFromLogRecord({
+        level: 'warn',
+        context: 'DegradedStateTracker',
+        msg: '[DegradedState] flag raised',
+        data: { code: 'x.y', severity: 'error', message: 'Cannot open [REDACTED_PATH]/index.db' }
+      })
+    ).toEqual({
+      kind: 'problem',
+      icon: 'alert',
+      tone: 'error',
+      text: 'Problem: Cannot open index.db',
+      file: 'index.db'
+    });
   });
 
   test('a cleared flag other than storage.full is not an activity', () => {

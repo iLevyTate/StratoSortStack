@@ -92,7 +92,6 @@ const VERIFY_MAX_DELAY_MS = RETRY?.FILE_OPERATION?.maxDelay ?? 5000;
 
 const MAX_RESULTS_PER_CHUNK = 100; // Max results per IPC message chunk
 const YIELD_EVERY_N_OPS = 10; // Yield to event loop every N operations
-const ENABLE_BATCH_TRACE_LOGS = process.env.NODE_ENV === 'development';
 
 // Cap for the dry-run preview's check-then-walk collision search. Lower than
 // MAX_NUMERIC_RETRIES (5000) because the preview enumerates serially via
@@ -790,13 +789,14 @@ async function handleBatchOrganize(params) {
                 reason: moveResult.reason
               });
 
-              if (ENABLE_BATCH_TRACE_LOGS) {
-                log.info('[FILE-OPS] Move skipped (duplicate)', {
-                  batchId,
-                  source: op.source,
-                  destination: resolvedDestination
-                });
-              }
+              // One info line per skipped file in every build: the Live
+              // Activity feed shows "Skipped <name> (already in place)". Paths
+              // only, never file content; the logger redacts absolute paths.
+              log.info('[FILE-OPS] Move skipped (duplicate)', {
+                batchId,
+                source: op.source,
+                destination: resolvedDestination
+              });
 
               // Verify state is consistent (dest exists, source gone)
               await verifyMoveCompletion(op.source, resolvedDestination, log);
@@ -846,7 +846,7 @@ async function handleBatchOrganize(params) {
 
             // One info line per moved file in every build (not trace-only):
             // the Live Activity feed turns it into "Filed <name>". Paths only,
-            // never file content; the logger redacts them to their basename.
+            // never file content; the logger redacts absolute paths.
             log.info('[FILE-OPS] Move completed', {
               batchId,
               index: i,

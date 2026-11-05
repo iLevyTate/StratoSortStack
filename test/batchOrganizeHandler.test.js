@@ -256,6 +256,36 @@ describe('Batch Organize Handler', () => {
     }
   });
 
+  test('logs one "Move skipped (duplicate)" info line per skipped file outside development', async () => {
+    // The Live Activity feed reads this line; it used to be dev-trace only.
+    expect(process.env.NODE_ENV).not.toBe('development');
+    fileDedup.handleDuplicateMove.mockImplementation(async ({ sourcePath }) =>
+      sourcePath === '/src/doc1.pdf'
+        ? { skipped: true, destination: '/dest/doc1.pdf', reason: 'duplicate' }
+        : null
+    );
+    try {
+      await handleBatchOrganize(params);
+    } finally {
+      fileDedup.handleDuplicateMove.mockReset().mockResolvedValue(null);
+    }
+
+    const skipLines = mockLogger.info.mock.calls.filter(
+      ([msg]) => msg === '[FILE-OPS] Move skipped (duplicate)'
+    );
+    expect(skipLines).toHaveLength(1);
+    // Paths only: no file content rides along.
+    expect(skipLines[0][1]).toEqual({
+      batchId: expect.any(String),
+      source: '/src/doc1.pdf',
+      destination: '/dest/doc1.pdf'
+    });
+    const moveLines = mockLogger.info.mock.calls.filter(
+      ([msg]) => msg === '[FILE-OPS] Move completed'
+    );
+    expect(moveLines.map(([, data]) => data.source)).toEqual(['/src/doc2.pdf']);
+  });
+
   test('decides every landing folder once, before the lock, and moves nothing into a refused one', async () => {
     const policy = require('../src/main/ipc/files/destinationPolicy');
     policy.authorizeDestinations.mockResolvedValueOnce(new Map());

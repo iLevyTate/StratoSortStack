@@ -24,10 +24,33 @@
  * @typedef {{ id: string, contexts: string[] | null, pattern: RegExp, build: ActivityBuilder }} ActivityRule
  */
 
+const path = require('path');
+const {
+  ANALYSIS_SUPPORTED_EXTENSIONS,
+  SUPPORTED_AUDIO_EXTENSIONS,
+  SUPPORTED_VIDEO_EXTENSIONS
+} = require('../../shared/constants');
+
 const MAX_TEXT_CHARS = 300;
 const MAX_FILE_CHARS = 120;
 const REDACTED_PATH = '[REDACTED_PATH]';
 const PROBLEM_LEVELS = new Set(['warn', 'error', 'fatal']);
+const PROBLEM_FALLBACK_TEXT = 'Something went wrong';
+/** Extensions SmartFolderWatcher sends to an analyzer (else: metadata fallback). */
+const ANALYZED_EXTENSIONS = new Set(ANALYSIS_SUPPORTED_EXTENSIONS);
+const MEDIA_EXTENSIONS = new Set([...SUPPORTED_AUDIO_EXTENSIONS, ...SUPPORTED_VIDEO_EXTENSIONS]);
+/** Orama collection names as the user knows them; unknown names are left out. */
+const COLLECTION_WORDS = Object.freeze({
+  files: 'files',
+  fileChunks: 'passages',
+  folders: 'folders',
+  feedback: 'learning',
+  learningPatterns: 'learning'
+});
+/** `[REDACTED_PATH]\name` / `[REDACTED_PATH]/name`: the logger's redacted path. */
+const REDACTED_PATH_TOKEN = /\[REDACTED_PATH\][\\/]/g;
+/** The file name right after the first redacted-path token. */
+const REDACTED_PATH_FILE = /\[REDACTED_PATH\][\\/]([^\s\\/:*?"<>|]+)/;
 
 /** @param {string} value */
 function escapeRegExp(value) {
@@ -123,9 +146,31 @@ function activity(kind, icon, tone, line, file) {
   return result;
 }
 
-/** @param {string} msg */
+/**
+ * Drop a leading `[TAG]` (e.g. `[DOWNLOAD-WATCHER]`), but never the logger's
+ * `[REDACTED_PATH]` token: that is part of the message, not a tag.
+ * @param {string} msg
+ */
 function stripLeadingTag(msg) {
-  return msg.replace(/^\[[^\]]+\]\s*/, '').trim() || msg;
+  const trimmed = msg.trim();
+  if (trimmed.startsWith(REDACTED_PATH)) return trimmed;
+  return trimmed.replace(/^\[[^\]]+\]\s*/, '').trim();
+}
+
+/**
+ * A "Problem: …" line. Redacted-path tokens are dropped from the text (the
+ * file name stays) and the first such name becomes `file`, so the panel's
+ * redact mode can hide it.
+ * @param {string} message
+ * @param {ActivityTone} tone
+ * @returns {LiveActivity}
+ */
+function problem(message, tone) {
+  const fileMatch = message.match(REDACTED_PATH_FILE);
+  const rawFile = fileMatch ? fileMatch[1].replace(/[.,;)'"]+$/, '') : '';
+  const file = rawFile ? baseName(rawFile) : undefined;
+  const shown = message.replace(REDACTED_PATH_TOKEN, '').trim();
+  return activity('problem', 'alert', tone, `Problem: ${shown || PROBLEM_FALLBACK_TEXT}`, file);
 }
 
 /**
@@ -177,9 +222,21 @@ const folderSuggestion = (input) => {
   );
 };
 
-/** @param {unknown} path */
-const analyzingFromPath = (path) => {
-  const file = baseName(path);
+/**
+ * True when the watcher's "Analysis complete" is the only success line a file
+ * gets: audio/video (the media analyzer logs no success line) and types with
+ * no analyzer at all (the watcher's metadata fallback). Documents and images
+ * already read "Analyzed <file> → <category>" from their analyzer.
+ * @param {string} file
+ */
+function watcherIsOnlySuccessLine(file) {
+  const ext = path.extname(file).toLowerCase();
+  return MEDIA_EXTENSIONS.has(ext) || !ANALYZED_EXTENSIONS.has(ext);
+}
+
+/** @param {unknown} filePath */
+const analyzingFromPath = (filePath) => {
+  const file = baseName(filePath);
   return activity('analyze', 'analyze', 'info', `Analyzing ${orAFile(file)}`, file);
 };
 
@@ -198,16 +255,16 @@ const ANY = null;
 
 /** @type {ActivityRule[]} */
 const RULES = [
-  prefixRule('watcher-analyzing', WATCHER, '[SMART-FOLDER-WATCHER] Analyzing file:', (_i, m) =>
-    analyzingFromPath(m[1])
-  ),
+  // The watcher's own "Analyzing file:" line is not a rule: the document and
+  // image analyzers already announce the same file.
   prefixRule('watcher-queued', WATCHER, '[SMART-FOLDER-WATCHER] Queued for analysis:', (input) => {
     const file = baseName(input.data?.filePath);
     return activity('analyze', 'analyze', 'info', `Queued ${orAFile(file)} for analysis`, file);
   }),
   prefixRule('watcher-complete', WATCHER, '[SMART-FOLDER-WATCHER] Analysis complete:', (_i, m) => {
     const file = baseName(m[1]);
-    return activity('analyzed', 'check', 'success', `Analyzed ${orAFile(file)}`, file);
+    if (!file || !watcherIsOnlySuccessLine(file)) return null;
+    return activity('analyzed', 'check', 'success', `Analyzed ${file}`, file);
   }),
   prefixRule('document-analyzing', DOCUMENT, 'Analyzing document file', (input) =>
     analyzingFromPath(input.data?.path)
@@ -307,6 +364,14 @@ const RULES = [
     (input) => {
       const saved = count(input.data?.success);
       const failed = count(input.data?.failed);
+      if (saved === 0 && failed > 0) {
+        return activity(
+          'embeddings',
+          'database',
+          'warn',
+          `${plural(failed, 'search embedding')} failed to save`
+        );
+      }
       return failed > 0
         ? activity(
             'embeddings',
@@ -328,16 +393,22 @@ const RULES = [
     '[OramaVectorService] Persisted databases',
     (input) => {
       const raw = input.data?.collections;
-      const collections = Array.isArray(raw)
-        ? raw.filter((/** @type {unknown} */ name) => typeof name === 'string')
-        : [];
+      /** @type {Set<string>} */
+      const words = new Set();
+      if (Array.isArray(raw)) {
+        for (const name of raw) {
+          const word =
+            typeof name === 'string' && Object.hasOwn(COLLECTION_WORDS, name)
+              ? COLLECTION_WORDS[/** @type {keyof typeof COLLECTION_WORDS} */ (name)]
+              : undefined;
+          if (word) words.add(word);
+        }
+      }
       return activity(
         'index-saved',
         'save',
         'success',
-        collections.length > 0
-          ? `Saved search index (${collections.join(', ')})`
-          : 'Saved search index'
+        words.size > 0 ? `Saved search index (${[...words].join(', ')})` : 'Saved search index'
       );
     }
   ),
@@ -351,12 +422,7 @@ const RULES = [
       text(input.data?.message) ||
       text(input.data?.code) ||
       'A part of the app is not working normally';
-    return activity(
-      'problem',
-      'alert',
-      input.data?.severity === 'error' ? 'error' : 'warn',
-      `Problem: ${message}`
-    );
+    return problem(message, input.data?.severity === 'error' ? 'error' : 'warn');
   }),
   prefixRule('storage-cleared', DEGRADED, '[DegradedState] flag cleared', (input) =>
     input.data?.code === 'storage.full'
@@ -377,6 +443,16 @@ const RULES = [
       'folder',
       'success',
       folder ? `Filed ${orAFile(file)} → ${folder}` : `Filed ${orAFile(file)}`,
+      file
+    );
+  }),
+  prefixRule('organize-skipped', ANY, '[FILE-OPS] Move skipped (duplicate)', (input) => {
+    const file = baseName(input.data?.source) || baseName(input.data?.destination);
+    return activity(
+      'organize',
+      'folder',
+      'info',
+      `Skipped ${orAFile(file)} (already in place)`,
       file
     );
   }),
@@ -529,9 +605,10 @@ const RULES = [
       const embedded = count(input.data?.embedded);
       const passages = count(input.data?.passages);
       const failed = count(input.data?.failed);
+      const deferred = count(input.data?.deferred);
       const line = `Knowledge repair: ${restored} restored, ${embedded} embedded, ${passages} passages${
         failed > 0 ? `, ${failed} failed` : ''
-      }`;
+      }${deferred > 0 ? `, ${deferred} deferred` : ''}`;
       return activity('knowledge-repair', 'wrench', failed > 0 ? 'warn' : 'success', line);
     }
   )
@@ -559,16 +636,11 @@ function activityFromLogRecord(record) {
     if (result) return result;
   }
   if (PROBLEM_LEVELS.has(record.level)) {
-    return activity(
-      'problem',
-      'alert',
-      record.level === 'warn' ? 'warn' : 'error',
-      `Problem: ${stripLeadingTag(record.msg)}`
-    );
+    return problem(stripLeadingTag(record.msg), record.level === 'warn' ? 'warn' : 'error');
   }
   return null;
 }
 
-const ACTIVITY_RULE_IDS = RULES.map((rule) => rule.id);
+const ACTIVITY_RULE_IDS = Object.freeze(RULES.map((rule) => rule.id));
 
 module.exports = { activityFromLogRecord, ACTIVITY_RULE_IDS };
