@@ -470,6 +470,47 @@ const schemas = z
         // exactly what caused the `consent` desync this comment documents.
         .passthrough();
 
+      /**
+       * Live Activity panel batch (src/main/services/liveLogFeed.js).
+       * safeSend BLOCKS a batch that fails this schema, which would blank the
+       * panel, so every bound is at least the feed's own cap. The numbers are
+       * duplicated, not imported: this module is bundled into the renderer
+       * and must not pull in main-process code. test/ipcEventSchemas.liveLog
+       * .test.js pins each bound to the feed's exported constant
+       * (MAX_BATCH_ENTRIES 200, MAX_MSG_CHARS 2000, MAX_DATA_TEXT_CHARS 1500,
+       * MAX_CONTEXT_CHARS 120, MAX_TIME_CHARS 40) and runs real feed output
+       * through it. An activity's text and file are bounded by the message
+       * cap: a "Problem:" line and its file name are cut from the message.
+       */
+      const LIVE_LOG_MAX_ENTRIES = 200;
+      const LIVE_LOG_MAX_MSG_CHARS = 2000;
+      const LIVE_LOG_MAX_DATA_TEXT_CHARS = 1500;
+      const LIVE_LOG_MAX_CONTEXT_CHARS = 120;
+      const LIVE_LOG_MAX_TIME_CHARS = 40;
+
+      const liveLogActivitySchema = z.object({
+        kind: z.string().max(64),
+        icon: z.string().max(32),
+        text: z.string().max(LIVE_LOG_MAX_MSG_CHARS),
+        file: z.string().max(LIVE_LOG_MAX_MSG_CHARS).optional(),
+        tone: z.enum(['info', 'success', 'warn', 'error'])
+      });
+
+      const liveLogEntrySchema = z.object({
+        id: z.number().int().nonnegative(),
+        time: z.string().max(LIVE_LOG_MAX_TIME_CHARS),
+        level: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']),
+        context: z.string().max(LIVE_LOG_MAX_CONTEXT_CHARS),
+        msg: z.string().max(LIVE_LOG_MAX_MSG_CHARS),
+        dataText: z.string().max(LIVE_LOG_MAX_DATA_TEXT_CHARS),
+        activity: liveLogActivitySchema.nullable()
+      });
+
+      const liveLogBatchSchema = z.object({
+        entries: z.array(liveLogEntrySchema).max(LIVE_LOG_MAX_ENTRIES),
+        dropped: z.number().int().nonnegative()
+      });
+
       return {
         operationProgressSchema,
         fileOperationCompleteSchema,
@@ -491,7 +532,8 @@ const schemas = z
         downloadsTriageScanProgressSchema,
         downloadsTriageSessionInvalidatedSchema,
         mcpStatusChangedSchema,
-        aiProviderStatusChangedSchema
+        aiProviderStatusChangedSchema,
+        liveLogBatchSchema
       };
     })()
   : {};
@@ -537,6 +579,9 @@ const EVENT_SCHEMAS = z
         ? {
             [IPC_CHANNELS.AI_PROVIDER.STATUS_CHANGED]: schemas.aiProviderStatusChangedSchema
           }
+        : {}),
+      ...(IPC_CHANNELS.SYSTEM?.LIVE_LOG_BATCH
+        ? { [IPC_CHANNELS.SYSTEM.LIVE_LOG_BATCH]: schemas.liveLogBatchSchema }
         : {})
     }
   : {};

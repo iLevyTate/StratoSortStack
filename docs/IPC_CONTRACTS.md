@@ -35,6 +35,26 @@ schema exists for a channel, an invalid payload is logged and **dropped** (not d
 without a schema pass through unvalidated. `npm run verify:ipc-event-schemas` (part of `ci`) fails
 when a push event sent from main has no schema.
 
+### Live Activity log channels
+
+The Live Activity panel streams sanitized log records from `src/main/services/liveLogFeed.js`.
+
+| Channel                       | Direction                     | Payload                                                      |
+| :---------------------------- | :---------------------------- | :----------------------------------------------------------- |
+| `system:live-log:subscribe`   | invoke (renderer -> main)     | No input. Returns `{ success: true, entries }` (backlog).    |
+| `system:live-log:unsubscribe` | invoke (renderer -> main)     | No input. Returns `{ success: true }`.                       |
+| `system:live-log:batch`       | event-only (main -> renderer) | `{ entries, dropped }`, pushed every 250 ms while subscribed |
+
+Both invoke channels act on the calling window (`event.sender`). Each entry is
+`{ id, time, level, context, msg, dataText, activity }`, where `activity` is
+`{ kind, icon, tone, text, file? }` or `null` and `tone` is `info | success | warn | error`. The
+batch schema (`liveLogBatchSchema`) bounds each field at the feed's own caps: at most 200 entries,
+`msg` 2000 characters, `dataText` 1500, `context` 120, `time` 40, and `dropped` a non-negative
+integer counting entries discarded since the previous batch. `safeSend` blocks a batch that fails
+the schema, so the bounds must never be tighter than the feed's;
+`test/ipcEventSchemas.liveLog.test.js` pins them to the feed's exported constants. Entries in the
+backlog may reappear in the next batch; consumers dedupe by `id`.
+
 ## Adding or Modifying a Contract
 
 1. Add/modify a schema in `src/main/ipc/validationSchemas.js` or `src/shared/ipcEventSchemas.js`.
