@@ -15,7 +15,8 @@ jest.mock('../src/main/analysis/embeddingQueue/queueManager', () => ({
 }));
 const mockShouldEmbed = jest.fn();
 jest.mock('../src/main/services/embedding/embeddingGate', () => ({
-  shouldEmbed: (...a) => mockShouldEmbed(...a)
+  shouldEmbed: (...a) => mockShouldEmbed(...a),
+  shouldEmbedForRepair: (...a) => mockShouldEmbed(...a)
 }));
 jest.mock('../src/main/analysis/embeddingModelOptions', () => ({
   resolveEmbeddingModelOptions: jest.fn().mockResolvedValue({ embeddingModel: 'test-embed' })

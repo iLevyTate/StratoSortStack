@@ -5279,38 +5279,128 @@ class OramaVectorService extends EventEmitter {
   }
 
   /**
+   * Whether one chunk row carries a usable passage vector. 'missing' means no
+   * vector of the right size is stored; 'placeholder' means it is all zeros.
+   * The single rule behind describeFileChunks and describeAllFileChunks, so
+   * the per-file and the whole-store answers cannot drift apart.
+   * @private
+   * @param {any} doc - chunk row as a search hit returns it
+   * @param {Map<string, number[]> | null} store - chunk vector sidecar
+   * @returns {'ok' | 'placeholder' | 'missing'}
+   */
+  _chunkVectorState(doc, store) {
+    const chunkId = typeof doc?.id === 'string' ? doc.id : null;
+    const stored = chunkId && store instanceof Map ? store.get(chunkId) : null;
+    const normalized = this._normalizeEmbeddingVector(stored || doc?.embedding, this._dimension);
+    const present = Array.isArray(normalized) && normalized.length === this._dimension;
+    if (!present) return 'missing';
+    if (normalized[0] === 0 && normalized.every((/** @type {any} */ value) => value === 0)) {
+      return 'placeholder';
+    }
+    return 'ok';
+  }
+
+  /**
    * Passage-vector health for one file. `count` is every chunk row.
    * `placeholderCount` is all-zero vectors. `missingVectorCount` is rows
    * whose embedding was never stored. A file whose text should have been
    * split and comes back with count 0 was never given passages.
+   *
+   * With `includeUnusable`, `unusable` also lists the placeholder and
+   * missing rows with their own text and offsets, so a repair can re-embed
+   * exactly those rows in place instead of rebuilding the whole set.
+   *
+   * One file only: this pages through the chunk collection (Orama's string
+   * filter is not exact), so a caller that checks many files should use
+   * describeAllFileChunks instead.
    * @param {string} fileId
-   * @returns {Promise<{ count: number, placeholderCount: number, missingVectorCount: number } | null>}
+   * @param {{ includeUnusable?: boolean }} [options]
+   * @returns {Promise<{ count: number, placeholderCount: number, missingVectorCount: number,
+   *   unusable?: Array<{ id: string, fileId: string, chunkIndex: number, content: string,
+   *     startOffset: number, endOffset: number }> } | null>}
    */
-  async describeFileChunks(fileId) {
-    if (!fileId) return { count: 0, placeholderCount: 0, missingVectorCount: 0 };
+  async describeFileChunks(fileId, options = {}) {
+    const includeUnusable = options?.includeUnusable === true;
+    if (!fileId) {
+      return includeUnusable
+        ? { count: 0, placeholderCount: 0, missingVectorCount: 0, unusable: [] }
+        : { count: 0, placeholderCount: 0, missingVectorCount: 0 };
+    }
     await this.initialize();
     try {
       const hits = await this._collectExactFileChunkHits(fileId, 'describe-file-chunks');
       const store = this._chunkVectorStore();
       let placeholderCount = 0;
       let missingVectorCount = 0;
+      /** @type {Array<{ id: string, fileId: string, chunkIndex: number, content: string, startOffset: number, endOffset: number }>} */
+      const unusable = [];
       for (const hit of hits) {
         const doc = hit?.document || {};
-        const chunkId = typeof doc.id === 'string' ? doc.id : null;
-        const stored = chunkId && store instanceof Map ? store.get(chunkId) : null;
-        const normalized = this._normalizeEmbeddingVector(stored || doc.embedding, this._dimension);
-        const present = Array.isArray(normalized) && normalized.length === this._dimension;
-        if (!present) {
-          missingVectorCount++;
-          continue;
-        }
-        if (normalized[0] === 0 && normalized.every((/** @type {any} */ value) => value === 0)) {
-          placeholderCount++;
+        const state = this._chunkVectorState(doc, store);
+        if (state === 'ok') continue;
+        if (state === 'missing') missingVectorCount++;
+        else placeholderCount++;
+        if (includeUnusable && typeof doc.id === 'string') {
+          unusable.push({
+            id: doc.id,
+            fileId: doc.fileId,
+            chunkIndex: Number(doc.chunkIndex) || 0,
+            content: typeof doc.content === 'string' ? doc.content : '',
+            startOffset: Number(doc.startOffset) || 0,
+            endOffset: Number(doc.endOffset) || 0
+          });
         }
       }
-      return { count: hits.length, placeholderCount, missingVectorCount };
+      const described = { count: hits.length, placeholderCount, missingVectorCount };
+      return includeUnusable ? { ...described, unusable } : described;
     } catch (error) {
       logger.debug('[OramaVectorService] describeFileChunks failed:', error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Passage-vector health for every file that has chunk rows, from ONE pass
+   * over the chunk collection. Same counts as describeFileChunks(fileId) for
+   * each file; a file that is not in the map has no chunk rows (count 0).
+   *
+   * The startup repair checks every analysed file. Calling describeFileChunks
+   * per file paged through the whole collection each time (the string filter
+   * matches other files' chunks too), so a launch cost files x chunks.
+   * @returns {Promise<Map<string, { count: number, placeholderCount: number, missingVectorCount: number }> | null>}
+   *   null when the collection could not be read
+   */
+  async describeAllFileChunks() {
+    await this.initialize();
+    /** @type {Map<string, { count: number, placeholderCount: number, missingVectorCount: number }>} */
+    const byFile = new Map();
+    if (!this._databases?.fileChunks) return byFile;
+    try {
+      const store = this._chunkVectorStore();
+      await this._paginatedSearch(
+        this._databases.fileChunks,
+        { term: '' },
+        {
+          label: 'describe-all-file-chunks',
+          onHit: (/** @type {any} */ hit) => {
+            const doc = hit?.document;
+            const fileId = doc?.fileId;
+            if (typeof fileId !== 'string' || !fileId) return;
+            let health = byFile.get(fileId);
+            if (!health) {
+              health = { count: 0, placeholderCount: 0, missingVectorCount: 0 };
+              byFile.set(fileId, health);
+            }
+            health.count++;
+            const state = this._chunkVectorState(doc, store);
+            if (state === 'missing') health.missingVectorCount++;
+            else if (state === 'placeholder') health.placeholderCount++;
+          }
+        }
+      );
+      return byFile;
+    } catch (error) {
+      logger.debug('[OramaVectorService] describeAllFileChunks failed:', error.message);
       return null;
     }
   }
