@@ -659,6 +659,30 @@ function normalizeBrowserTransmit(messages = []) {
   };
 }
 
+/**
+ * One sanitized log record as the Live Activity feed sees it.
+ * @typedef {{ time: string, level: string, context: string, msg: string, data?: any }} LiveLogRecord
+ */
+
+/**
+ * Opt-in observers of every record this process writes. Only the main
+ * process registers here (src/main/services/liveLogFeed.js, while a window
+ * is subscribed to the Live Activity panel). Empty by default, so logging
+ * pays nothing for the feature until someone listens.
+ * @type {Set<(record: LiveLogRecord) => void>}
+ */
+const _liveRecordListeners = new Set();
+
+/** @param {(record: LiveLogRecord) => void} listener */
+function addLiveRecordListener(listener) {
+  if (typeof listener === 'function') _liveRecordListeners.add(listener);
+}
+
+/** @param {(record: LiveLogRecord) => void} listener */
+function removeLiveRecordListener(listener) {
+  _liveRecordListeners.delete(listener);
+}
+
 class Logger {
   /**
    * @param {string} [context]
@@ -895,6 +919,9 @@ class Logger {
       // Keep object shape: pino treats a string first arg as the message.
       sanitized = { data: '[UNSERIALIZABLE_LOG_DATA]' };
     }
+    if (_liveRecordListeners.size > 0) {
+      this._emitLiveRecord(level, sanitizedMessage, sanitized);
+    }
     try {
       const _pino = /** @type {any} */ (this.pino);
       if (sanitized) _pino[level](sanitized, sanitizedMessage);
@@ -915,6 +942,40 @@ class Logger {
       } else {
         throw err; // Re-throw non-transport errors
       }
+    }
+  }
+
+  /**
+   * Hand one sanitized record to the live listeners, only at levels this
+   * logger would write. Never throws: a broken listener must not break the
+   * log call it is observing.
+   * @param {string} level
+   * @param {any} message
+   * @param {any} data
+   */
+  _emitLiveRecord(level, message, data) {
+    try {
+      const _pino = /** @type {any} */ (this.pino);
+      if (_pino && typeof _pino.isLevelEnabled === 'function' && !_pino.isLevelEnabled(level)) {
+        return;
+      }
+      /** @type {LiveLogRecord} */
+      const record = {
+        time: new Date().toISOString(),
+        level,
+        context: this.context || '',
+        msg: typeof message === 'string' ? message : String(message),
+        data
+      };
+      for (const listener of _liveRecordListeners) {
+        try {
+          listener(record);
+        } catch {
+          // A listener failure never reaches the caller of the log method.
+        }
+      }
+    } catch {
+      // The live feed is best-effort; logging continues regardless.
     }
   }
 
@@ -1250,6 +1311,8 @@ module.exports = {
   createSafeLogger,
   sanitizeLogData,
   stripLogControlChars,
+  addLiveRecordListener,
+  removeLiveRecordListener,
   _normalizeLogCall: normalizeLogCall,
   _normalizeBrowserTransmit: normalizeBrowserTransmit,
   configureFileLogging,
