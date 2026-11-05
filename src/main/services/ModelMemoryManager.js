@@ -621,12 +621,14 @@ class ModelMemoryManager {
 
   /**
    * Unload a specific model (public helper).
-   * Waits for active references to drain before unloading (max 5s).
+   * Waits for active references to drain before unloading (max `waitMs`,
+   * 5s by default). `waitMs: 0` gives up at once when the model is in use,
+   * for callers that will simply try again on their next load.
    *
    * @param {string} modelType
-   * @param {{ allowedRefs?: number }} [options]
+   * @param {{ allowedRefs?: number, waitMs?: number }} [options]
    */
-  async unloadModel(modelType, { allowedRefs = 0 } = {}) {
+  async unloadModel(modelType, { allowedRefs = 0, waitMs = 5000 } = {}) {
     const refs = this._activeRefs.get(modelType) || 0;
     if (refs > allowedRefs) {
       logger.info('[Memory] Waiting for active refs before unload', {
@@ -634,7 +636,7 @@ class ModelMemoryManager {
         refs,
         allowedRefs
       });
-      const deadline = Date.now() + 5000;
+      const deadline = Date.now() + Math.max(0, waitMs);
       while ((this._activeRefs.get(modelType) || 0) > allowedRefs && Date.now() < deadline) {
         await delay(100);
       }

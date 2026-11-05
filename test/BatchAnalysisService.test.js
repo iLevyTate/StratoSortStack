@@ -417,6 +417,53 @@ describe('BatchAnalysisService', () => {
       expect(mockLlamaService.exitVisionBatchMode).toHaveBeenCalledTimes(1);
     });
 
+    test("runs the image section as the vision batch's own work", async () => {
+      // An image's text fallback inside the batch must not wait for the
+      // batch to end; LlamaService knows it is batch work by this scope.
+      let inBatchScope = false;
+      const scopeAtAnalysis = [];
+      mockLlamaService.runAsVisionBatchMember = jest.fn(async (fn) => {
+        inBatchScope = true;
+        try {
+          return await fn();
+        } finally {
+          inBatchScope = false;
+        }
+      });
+      analyzeImageFile.mockImplementation(async () => {
+        scopeAtAnalysis.push(inBatchScope);
+        return { category: 'photo', confidence: 90 };
+      });
+      try {
+        await service.analyzeFiles(['/path/to/image.jpg', '/path/to/image2.png'], [], {
+          enableVisionBatchMode: true,
+          disableAdaptiveConcurrency: true,
+          concurrency: 1
+        });
+        expect(mockLlamaService.runAsVisionBatchMember).toHaveBeenCalledTimes(1);
+        expect(scopeAtAnalysis).toEqual([true, true]);
+      } finally {
+        delete mockLlamaService.runAsVisionBatchMember;
+      }
+    });
+
+    test('does not run the section as batch work, or exit, when entering failed', async () => {
+      mockLlamaService.runAsVisionBatchMember = jest.fn((fn) => fn());
+      mockLlamaService.enterVisionBatchMode.mockRejectedValueOnce(new Error('no room'));
+      try {
+        await service.analyzeFiles(['/path/to/image.jpg', '/path/to/image2.png'], [], {
+          enableVisionBatchMode: true,
+          disableAdaptiveConcurrency: true,
+          concurrency: 1
+        });
+        expect(mockLlamaService.runAsVisionBatchMember).not.toHaveBeenCalled();
+        expect(mockLlamaService.exitVisionBatchMode).not.toHaveBeenCalled();
+        expect(analyzeImageFile).toHaveBeenCalledTimes(2);
+      } finally {
+        delete mockLlamaService.runAsVisionBatchMember;
+      }
+    });
+
     test('subscribes to embedding progress when callback provided', async () => {
       const onEmbeddingProgress = jest.fn();
       const files = ['/path/to/doc.pdf'];

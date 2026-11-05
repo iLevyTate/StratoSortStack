@@ -374,6 +374,53 @@ describe('LlamaService – inference methods', () => {
       }
     });
 
+    describe('in vision batch mode', () => {
+      // A text load inside the batch can evict the runtime and leave the text
+      // model resident. Respawning vision on top of it raced into held VRAM.
+      function batchImageService({ textResident, visionAlive }) {
+        const service = createTestService();
+        service._coordinator = { withModel: jest.fn((_, fn) => fn()) };
+        service._visionProjectorStatus = { required: false, available: true, projectorPath: null };
+        service._resolveGpuLayersForVisionServer = jest.fn().mockResolvedValue(999);
+        service._releaseMemoryForVisionRuntime = jest.fn().mockResolvedValue(undefined);
+        service._visionBatchMode = true;
+        mockModelMemoryManager.getLoadedContext = jest.fn((type) =>
+          type === 'text' && textResident ? mockContext : null
+        );
+        mockVisionService.isAlive = jest.fn(() => visionAlive);
+        return service;
+      }
+
+      beforeEach(() => {
+        const { withLlamaResilience } = require('../src/main/services/LlamaResilience');
+        withLlamaResilience.mockImplementation(async (fn) => fn({}));
+        jest.spyOn(fs, 'access').mockResolvedValue(undefined);
+      });
+
+      afterEach(() => {
+        delete mockModelMemoryManager.getLoadedContext;
+        delete mockVisionService.isAlive;
+      });
+
+      test('frees the text model a batch text load left behind before respawning vision', async () => {
+        const service = batchImageService({ textResident: true, visionAlive: false });
+        await service.analyzeImage({ imagePath: '/test.jpg', prompt: 'describe' });
+        expect(service._releaseMemoryForVisionRuntime).toHaveBeenCalledWith('batch');
+      });
+
+      test('leaves memory alone while the batch runtime is still up', async () => {
+        const service = batchImageService({ textResident: true, visionAlive: true });
+        await service.analyzeImage({ imagePath: '/test.jpg', prompt: 'describe' });
+        expect(service._releaseMemoryForVisionRuntime).not.toHaveBeenCalled();
+      });
+
+      test('leaves memory alone when no text model is resident', async () => {
+        const service = batchImageService({ textResident: false, visionAlive: false });
+        await service.analyzeImage({ imagePath: '/test.jpg', prompt: 'describe' });
+        expect(service._releaseMemoryForVisionRuntime).not.toHaveBeenCalled();
+      });
+    });
+
     test('uses unique vision operation IDs across same-millisecond calls', async () => {
       const service = createTestService();
       const capturedOptions = [];

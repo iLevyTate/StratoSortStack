@@ -1614,13 +1614,16 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
       // Anthropic/OpenAI would violate the privacy-first guarantee. This is
       // a regression introduced by the AIRouter (commit 27f94626) and the
       // forceLocal option restores the v2.0.9 invariant.
+      //
+      // The caller's abort signal makes a cancelled batch stop this text
+      // request too, including any wait for the text model.
       const textAnalysis = await analyzeTextWithLlama(
         ocrText,
         fileName,
         smartFolders,
         fileDateForText,
         namingContext,
-        { bypassCache, forceLocal: true }
+        { bypassCache, forceLocal: true, signal: options?.abortSignal || options?.signal }
       );
       if (textAnalysis && !textAnalysis.error) {
         const result = {

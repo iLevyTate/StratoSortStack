@@ -12,6 +12,7 @@
 const path = require('path');
 const fs = require('fs').promises;
 const os = require('os');
+const { AsyncLocalStorage } = require('async_hooks');
 const { app } = require('electron');
 const { EventEmitter } = require('events');
 const { createLogger } = require('../../shared/logger');
@@ -58,6 +59,19 @@ const MODEL_LANE_POLL_MS = 250;
 // VisionService.VISION_RUNTIME_MEMORY_TYPE, which is required lazily here to
 // avoid a load cycle.
 const VISION_RUNTIME_MEMORY_TYPE = 'vision-runtime';
+
+// Marks work a vision batch runs for its own items (see
+// runAsVisionBatchMember). A text load made from inside it — an image's OCR
+// text fallback, a JSON repair — must not wait for the batch to end, because
+// the batch cannot end until that item finishes.
+/** @type {AsyncLocalStorage<boolean>} */
+const visionBatchMemberScope = new AsyncLocalStorage();
+
+function createAbortError() {
+  const abortError = new Error('Operation aborted');
+  abortError.name = 'AbortError';
+  return abortError;
+}
 
 function getSystemAnalyticsSafe() {
   try {
@@ -285,6 +299,17 @@ class LlamaService extends EventEmitter {
     // Text loads in flight. Vision batch entry waits for this to hit zero
     // so it does not unload a document that is mid-inference.
     this._textLoadDepth = 0;
+    // enterVisionBatchMode() calls still on their way in. A speculative text
+    // preload gives way to them instead of loading a model the batch unloads.
+    this._visionBatchEntriesPending = 0;
+    // The batch's pin on the vision runtime, and how many text loads have
+    // asked it to stand aside (see _yieldVisionBatchPin). The memory manager
+    // holds the ref only while pinned and nothing is yielding.
+    this._visionRuntimePinned = false;
+    this._visionPinYields = 0;
+    // An embedding model loaded CPU-only beside a batch's vision runtime.
+    // Cleared only once that model has actually been unloaded.
+    this._embeddingCpuForBatch = false;
     this._visionBatchIdleWaitMs = VISION_BATCH_IDLE_WAIT_MS;
     this._textLaneIdleWaitMs = TEXT_LANE_IDLE_WAIT_MS;
     this._lanePollMs = MODEL_LANE_POLL_MS;
@@ -1494,13 +1519,19 @@ class LlamaService extends EventEmitter {
    * Note: ParallelEmbeddingService uses pinModel()/unpinModel() instead of
    * acquireModelLoadLock() to avoid deadlock with this non-reentrant lock.
    *
+   * Text-load options: `forInference` marks a load that a text request is
+   * about to use (generateText / generateTextStreaming). Any other text load
+   * (warm-up, preload after a batch) is skipped while a vision batch holds
+   * the memory. `speculative` marks the post-batch preload: it does not hold
+   * the text lane, so it never delays the next batch.
+   *
    * @param {string} modelType
-   * @param {any} [options]
+   * @param {any} [options] - { selfRef, forInference, speculative, _textLaneHeld }
    * @returns {Promise<any>}
    */
   async _ensureModelLoaded(modelType, /** @type {any} */ options = {}) {
     const selfRef = options.selfRef === true;
-    if (modelType === 'text' && options._textLaneHeld !== true) {
+    if (modelType === 'text' && options._textLaneHeld !== true && options.speculative !== true) {
       this._textLoadDepth += 1;
       try {
         return await this._ensureModelLoaded(modelType, {
@@ -1519,9 +1550,11 @@ class LlamaService extends EventEmitter {
     // (e.g., a keep-alive timer hasn't fired yet) and we're loading a
     // different model type, the vision process is holding ~4 GB of VRAM
     // out-of-process — ModelMemoryManager can't see or evict that. Without
-    // tearing it down we race into busy VRAM and the load fails. A text load
-    // waits for vision batch mode to end first (the batch owns the server),
-    // then tears it down. Embedding and vision loads do not.
+    // tearing it down we race into busy VRAM and the load fails. During vision
+    // batch mode the batch owns the server and it is not torn down here: a
+    // text request has already waited out the batch once
+    // (_waitOutVisionBatchForText), and the batch's pin stands aside for its
+    // load below. Embedding and vision loads never tear it down.
     //
     // We probe twice: once before the load lock (so a queued caller starts
     // shutdown early and CUDA has more time to release VRAM while we wait
@@ -1562,6 +1595,23 @@ class LlamaService extends EventEmitter {
       // here, and ours is the load that will actually consume VRAM.
       await this._releaseVisionForLoad(modelType, 'post-lock');
 
+      // A warm-up or post-batch preload is a guess that text comes next. While
+      // a vision batch holds the memory (or is about to), the guess is wrong:
+      // the batch would only unload the model again.
+      if (
+        modelType === 'text' &&
+        options.forInference !== true &&
+        (this._visionBatchMode ||
+          (options.speculative === true && this._visionBatchEntriesPending > 0))
+      ) {
+        logger.debug('[LlamaService] Speculative text load skipped; a vision batch holds memory');
+        return null;
+      }
+
+      if (modelType === 'embedding') {
+        await this._returnEmbeddingToGpuAfterBatch(selfRef);
+      }
+
       // Stale-swap: a config change selected a different model for this type
       // while the old one was pinned by in-flight inference. We hold the
       // load lock now, so swap it out (unloadModel still waits for OTHER
@@ -1587,10 +1637,23 @@ class LlamaService extends EventEmitter {
         }
       }
 
-      return await this._modelMemoryManager.ensureModelLoaded(
-        modelType,
-        this._loadOptionsBesideVisionBatch(modelType)
-      );
+      const loadOptions = this._loadOptionsBesideVisionBatch(modelType);
+      // A text request that reaches here during a vision batch is either the
+      // batch's own work or one that already waited out the batch once. Let
+      // the memory manager evict the runtime between images if the text model
+      // does not fit beside it; the batch respawns it for the next image.
+      const restorePin =
+        modelType === 'text' && this._visionBatchMode ? this._yieldVisionBatchPin() : null;
+      try {
+        const context = await this._modelMemoryManager.ensureModelLoaded(modelType, loadOptions);
+        // Set after the load, too: a batch that ended while this load was in
+        // flight could not unload a model that was not registered yet, so the
+        // next embedding load must still move it back to the GPU.
+        if (loadOptions?.cpuByDesign) this._embeddingCpuForBatch = true;
+        return context;
+      } finally {
+        restorePin?.();
+      }
     } catch (error) {
       // Handle degradation (e.g., model file corruption, OOM, disk full)
       const resolution = await this._degradationManager.handleError(error, { modelType });
@@ -1629,23 +1692,82 @@ class LlamaService extends EventEmitter {
   }
 
   /**
-   * Poll until `predicate` is true, the timeout elapses, or shutdown starts.
-   * A non-positive timeout returns the current predicate result immediately.
+   * Poll until `predicate` is true, the timeout elapses, shutdown starts, or
+   * the caller's `signal` aborts. A non-positive timeout returns the current
+   * predicate result immediately.
    * @param {() => boolean} predicate
    * @param {number} timeoutMs
+   * @param {AbortSignal | null} [signal]
    * @returns {Promise<boolean>}
    * @private
    */
-  async _waitUntil(predicate, timeoutMs) {
+  async _waitUntil(predicate, timeoutMs, signal = null) {
     if (predicate()) return true;
     if (!(timeoutMs > 0)) return false;
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      if (this._shutdownAbort?.signal?.aborted) return predicate();
+      if (this._shutdownAbort?.signal?.aborted || signal?.aborted) return predicate();
       await delay(this._lanePollMs);
       if (predicate()) return true;
     }
     return predicate();
+  }
+
+  /**
+   * Run a vision batch's own per-item work. Text requests made inside `fn`
+   * (an image's OCR text fallback, a JSON repair, a folder suggestion) belong
+   * to the batch, so they skip the wait for the batch to end — the batch
+   * cannot end until they finish. Call only after enterVisionBatchMode()
+   * succeeded.
+   * @template T
+   * @param {() => Promise<T>} fn
+   * @returns {Promise<T>}
+   */
+  runAsVisionBatchMember(fn) {
+    return visionBatchMemberScope.run(true, fn);
+  }
+
+  /** @returns {boolean} */
+  _isVisionBatchMember() {
+    return visionBatchMemberScope.getStore() === true;
+  }
+
+  /**
+   * A text request from outside the running vision batch waits for it to
+   * end, once, before it queues for the text inference slot. Waiting inside
+   * the slot would hold it against the batch's own text fallback. While we
+   * wait, the request counts as a text load so a new batch cannot start.
+   *
+   * If the batch is still running when the wait runs out, the request goes
+   * ahead: its load asks the batch's pin to stand aside (see
+   * _ensureModelLoaded), so it gets the memory at the next image boundary
+   * instead of waiting a second time and then failing on the budget.
+   *
+   * @param {AbortSignal | null | undefined} signal - cancel or timeout of the
+   *   request; aborting ends the wait at once.
+   * @param {boolean} member - the request is the batch's own work.
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _waitOutVisionBatchForText(signal, member) {
+    if (member || !this._visionBatchMode) return;
+    if (signal?.aborted) throw createAbortError();
+    this._textLoadDepth += 1;
+    try {
+      const ended = await this._waitUntil(
+        () => !this._visionBatchMode,
+        this._visionBatchIdleWaitMs,
+        signal
+      );
+      if (signal?.aborted) throw createAbortError();
+      if (!ended) {
+        logger.info(
+          '[LlamaService] Vision batch still active after the wait; text load takes memory at the next image boundary'
+        );
+      }
+    } finally {
+      this._textLoadDepth = Math.max(0, this._textLoadDepth - 1);
+    }
   }
 
   /**
@@ -1660,9 +1782,11 @@ class LlamaService extends EventEmitter {
    * respawn). Genuine VRAM exhaustion on the embedding path is absorbed by
    * its GPU→auto→CPU load fallback tiers.
    *
-   * A text load that arrives during vision batch mode waits for the batch
-   * to finish, then tears the server down. Giving up while the batch is
-   * still running is what stored unread documents as finished analyses.
+   * During vision batch mode the batch owns the server, so this leaves it
+   * up. Waiting for the batch happens once, before the text request queues
+   * (_waitOutVisionBatchForText); waiting here, under the load lock and
+   * possibly from the batch's own work, held the lock past its timeout and
+   * stalled the batch on itself.
    *
    * @param {string} modelType
    * @param {'pre-lock' | 'post-lock'} phase  for log breadcrumbs
@@ -1671,17 +1795,11 @@ class LlamaService extends EventEmitter {
   async _releaseVisionForLoad(modelType, phase) {
     if (modelType === 'vision' || modelType === 'embedding') return;
     if (this._visionBatchMode) {
-      // The batch owns the vision server. Waiting here (the text lane is
-      // already held) lets the batch finish and blocks a new one from
-      // starting, then the teardown below frees VRAM for the text model.
-      await this._waitUntil(() => !this._visionBatchMode, this._visionBatchIdleWaitMs);
-      if (this._visionBatchMode) {
-        logger.info(
-          '[LlamaService] Vision batch still active after wait; leaving server for the text load',
-          { modelType, phase }
-        );
-        return;
-      }
+      logger.debug('[LlamaService] Vision batch mode active; leaving server for the batch', {
+        modelType,
+        phase
+      });
+      return;
     }
 
     let visionService;
@@ -3400,6 +3518,9 @@ class LlamaService extends EventEmitter {
       });
     }
     const operationId = this._generateOperationId('text-stream');
+    // Read before the inference queue: a queued job runs in whichever
+    // async context drains the queue, not necessarily its caller's.
+    await this._waitOutVisionBatchForText(signal, this._isVisionBatchMember());
     await this._awaitModelReady('text');
 
     return this._coordinator.withModel(
@@ -3428,7 +3549,10 @@ class LlamaService extends EventEmitter {
                 }
 
                 // selfRef: this runOnce executes inside acquireRef('text').
-                const context = await this._ensureModelLoaded('text', { selfRef: true });
+                const context = await this._ensureModelLoaded('text', {
+                  selfRef: true,
+                  forInference: true
+                });
 
                 // node-llama-cpp reclaims disposed sequence IDs asynchronously
                 // (via withLock). After a previous session.dispose(), the slot
@@ -3585,6 +3709,9 @@ class LlamaService extends EventEmitter {
       });
     }
     const operationId = this._generateOperationId('text');
+    // Read before the inference queue: a queued job runs in whichever
+    // async context drains the queue, not necessarily its caller's.
+    await this._waitOutVisionBatchForText(signal, this._isVisionBatchMember());
     await this._awaitModelReady('text');
 
     return this._coordinator.withModel(
@@ -3613,7 +3740,10 @@ class LlamaService extends EventEmitter {
                 }
 
                 // selfRef: this runOnce executes inside acquireRef('text').
-                const context = await this._ensureModelLoaded('text', { selfRef: true });
+                const context = await this._ensureModelLoaded('text', {
+                  selfRef: true,
+                  forInference: true
+                });
 
                 // node-llama-cpp reclaims disposed sequence IDs asynchronously
                 // (via withLock). After a previous session.dispose(), the slot
@@ -3773,6 +3903,16 @@ class LlamaService extends EventEmitter {
    * when the batch is done.
    */
   async enterVisionBatchMode() {
+    this._visionBatchEntriesPending += 1;
+    try {
+      await this._enterVisionBatchModeOnce();
+    } finally {
+      this._visionBatchEntriesPending = Math.max(0, this._visionBatchEntriesPending - 1);
+    }
+  }
+
+  /** @private */
+  async _enterVisionBatchModeOnce() {
     const deadline = Date.now() + Math.max(0, this._textLaneIdleWaitMs);
     for (;;) {
       while (this._textLoadDepth > 0 && Date.now() < deadline) {
@@ -3862,29 +4002,104 @@ class LlamaService extends EventEmitter {
    */
   _pinVisionRuntimeForBatch() {
     if (this._visionRuntimePinned || !this._modelMemoryManager?.acquireRef) return;
-    this._modelMemoryManager.acquireRef(VISION_RUNTIME_MEMORY_TYPE);
     this._visionRuntimePinned = true;
+    if (this._visionPinYields === 0) {
+      this._modelMemoryManager.acquireRef(VISION_RUNTIME_MEMORY_TYPE);
+    }
+  }
+
+  /**
+   * Let a text load evict the batch's vision runtime if the text model does
+   * not fit beside it. The pin's ref is dropped until the returned function
+   * is called; a request in flight on the runtime still holds its own ref, so
+   * the runtime is only evicted between images. Safe to call when unpinned.
+   * @returns {() => void} restores the pin; idempotent
+   * @private
+   */
+  _yieldVisionBatchPin() {
+    if (!this._visionRuntimePinned) return () => {};
+    this._visionPinYields += 1;
+    if (this._visionPinYields === 1) {
+      this._modelMemoryManager?.releaseRef?.(VISION_RUNTIME_MEMORY_TYPE);
+    }
+    let restored = false;
+    return () => {
+      if (restored) return;
+      restored = true;
+      this._visionPinYields = Math.max(0, this._visionPinYields - 1);
+      if (this._visionPinYields === 0 && this._visionRuntimePinned) {
+        this._modelMemoryManager?.acquireRef?.(VISION_RUNTIME_MEMORY_TYPE);
+      }
+    };
   }
 
   /**
    * Release the batch pin, and unload an embedding model that was loaded
    * CPU-only for the batch so the next embedding loads on the GPU again.
+   * If that unload cannot happen yet (an embedding batch still holds the
+   * model), the flag stays set and the next embedding load retries it.
    * @private
    */
   async _unpinVisionRuntimeForBatch() {
     if (this._visionRuntimePinned) {
       this._visionRuntimePinned = false;
-      this._modelMemoryManager?.releaseRef?.(VISION_RUNTIME_MEMORY_TYPE);
+      if (this._visionPinYields === 0) {
+        this._modelMemoryManager?.releaseRef?.(VISION_RUNTIME_MEMORY_TYPE);
+      }
     }
     if (this._embeddingCpuForBatch) {
-      this._embeddingCpuForBatch = false;
       try {
-        await this._modelMemoryManager?.unloadModel?.('embedding');
+        const unloaded = await this._modelMemoryManager?.unloadModel?.('embedding');
+        if (unloaded !== false) this._embeddingCpuForBatch = false;
       } catch (error) {
         logger.debug('[LlamaService] Could not unload the batch CPU embedding model', {
           error: /** @type {any} */ (error)?.message
         });
       }
+    }
+  }
+
+  /**
+   * After a vision batch, put an embedding model that was loaded CPU-only for
+   * it back on the GPU. Runs under the embedding load lock. Never waits for
+   * other holders: if an embedding batch still uses the CPU model, this call
+   * is served by it and the next load tries again.
+   * @param {boolean} selfRef - our caller holds one ref on 'embedding'
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _returnEmbeddingToGpuAfterBatch(selfRef) {
+    if (!this._embeddingCpuForBatch || this._visionRuntimePinned) return;
+    try {
+      const unloaded = await this._modelMemoryManager?.unloadModel?.('embedding', {
+        allowedRefs: selfRef ? 1 : 0,
+        waitMs: 0
+      });
+      if (unloaded === false) return;
+      this._embeddingCpuForBatch = false;
+      logger.info('[LlamaService] Unloaded the CPU embedding model from the vision batch');
+    } catch (error) {
+      logger.debug('[LlamaService] Could not unload the batch CPU embedding model', {
+        error: /** @type {any} */ (error)?.message
+      });
+    }
+  }
+
+  /**
+   * True during a vision batch when the runtime is gone and the text model
+   * sits in memory instead: a text load from inside the batch evicted the
+   * runtime. The next image must free that memory before respawning it.
+   * @returns {boolean}
+   * @private
+   */
+  _textResidentWhileVisionDown() {
+    if (!this._visionBatchMode || !this._modelMemoryManager?.getLoadedContext?.('text')) {
+      return false;
+    }
+    try {
+      return !getVisionService()?.isAlive?.();
+    } catch {
+      return true;
     }
   }
 
@@ -3920,11 +4135,16 @@ class LlamaService extends EventEmitter {
    * @private
    */
   async _preloadTextAfterVisionRelease(circuitsToReset) {
-    // Rapid exit -> enter: batch mode was re-entered before we even start.
-    if (this._visionBatchMode) return;
+    // Rapid exit -> enter: batch mode was re-entered, or another batch is on
+    // its way in, before we even start.
+    if (this._visionBatchMode || this._visionBatchEntriesPending > 0) return;
     let loaded;
     try {
-      loaded = await this._ensureModelLoaded('text');
+      // speculative: this load does not hold the text lane, so the next
+      // enterVisionBatchMode() does not wait for a model it would unload at
+      // once. It is skipped if a batch is entering by the time it holds the
+      // load lock, and undone below if a batch entered during the load.
+      loaded = await this._ensureModelLoaded('text', { speculative: true });
     } catch (err) {
       logger.warn(
         '[LlamaService] Text model preload after vision release failed:',
@@ -4019,9 +4239,13 @@ class LlamaService extends EventEmitter {
                 }
 
                 // Free VRAM for vision server (it runs out-of-process, no shared memory)
-                // In batch mode, enterVisionBatchMode() already handled this
+                // In batch mode, enterVisionBatchMode() already handled this —
+                // unless a text load inside the batch has since evicted the
+                // runtime and left the text model resident in its place.
                 if (!this._visionBatchMode && this._modelMemoryManager) {
                   await this._releaseMemoryForVisionRuntime('single');
+                } else if (this._textResidentWhileVisionDown()) {
+                  await this._releaseMemoryForVisionRuntime('batch');
                 }
 
                 const visionService = getVisionService();
