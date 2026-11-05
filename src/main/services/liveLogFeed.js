@@ -12,12 +12,22 @@
  *   oldest entries beyond either cap are dropped and counted in `dropped`.
  *   The backlog handed to a new subscriber keeps the newest entries within
  *   the same character budget.
+ * - A batch a subscriber's send refuses (safeSend returns false, e.g. it
+ *   failed the event schema) or that throws is counted, entries plus its own
+ *   `dropped`, in that subscriber's next `dropped`. The carry is per
+ *   subscriber; the others got the batch.
  * - Each line is bounded: msg MAX_MSG_CHARS, context MAX_CONTEXT_CHARS,
  *   time MAX_TIME_CHARS, and `dataText` (at most MAX_DATA_TEXT_CHARS) comes
  *   from a budgeted serializer: long strings are cut before escaping, arrays
  *   are sliced and objects copied down to what could still fit, and nothing
  *   is descended into once the budget is spent. The walk is bounded by the
  *   budget, but a payload still costs whatever the logger spent building it.
+ * - The classifier's activity is clamped to the batch schema's bounds
+ *   (src/shared/ipcEventSchemas.js liveLogBatchSchema): kind, icon, text and
+ *   file are cut, an unknown tone becomes 'info', unknown fields are dropped,
+ *   and anything that is not an object with a string kind and text becomes
+ *   null. No single log line can make the schema reject (and safeSend block)
+ *   a whole batch.
  * - A subscriber is dropped when its webContents is destroyed, its renderer
  *   process goes away, or its main frame navigates (a reload or crash
  *   recovery reuses the same webContents; the new page subscribes again).
@@ -48,6 +58,12 @@ const MAX_MSG_CHARS = 2000;
 const MAX_DATA_TEXT_CHARS = 1500;
 const MAX_CONTEXT_CHARS = 120;
 const MAX_TIME_CHARS = 40;
+const MAX_ACTIVITY_KIND_CHARS = 64;
+const MAX_ACTIVITY_ICON_CHARS = 32;
+const MAX_ACTIVITY_TEXT_CHARS = MAX_MSG_CHARS;
+const MAX_ACTIVITY_FILE_CHARS = MAX_MSG_CHARS;
+/** @type {Set<string>} */
+const ACTIVITY_TONES = new Set(['info', 'success', 'warn', 'error']);
 /** Placeholder for an object or array the data budget has no room left for. */
 const DATA_CUT_PLACEHOLDER = '…';
 /** Below this much remaining budget an object or array is not descended into. */
@@ -72,6 +88,9 @@ const DETACH_EVENTS = ['destroyed', 'render-process-gone', 'did-navigate'];
  * @typedef {{ entries: LiveLogEntry[], dropped: number }} LiveLogBatch
  * @typedef {(record: LiveLogRecord) => void} RecordListener
  * @typedef {(...args: unknown[]) => void} EventHandler
+ * @typedef {{ onDetach: EventHandler, carried: number }} Subscriber The detach
+ *   handler registered for DETACH_EVENTS, and the entries + dropped count of
+ *   batches this subscriber's send refused, reported in its next `dropped`.
  * @typedef {object} FeedWebContents The part of Electron's WebContents the feed uses.
  * @property {(channel: string, ...args: unknown[]) => void} send
  * @property {() => boolean} [isDestroyed]
@@ -198,6 +217,31 @@ function stringifyData(data) {
   }
 }
 
+/**
+ * The classifier's result clamped to the batch schema's activity bounds, or
+ * null when it is not an object with a string kind and text.
+ * @param {unknown} value
+ * @returns {LiveActivity | null}
+ */
+function clampActivity(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const source = /** @type {Record<string, unknown>} */ (value);
+  if (typeof source.kind !== 'string' || typeof source.text !== 'string') return null;
+  const tone =
+    typeof source.tone === 'string' && ACTIVITY_TONES.has(source.tone) ? source.tone : 'info';
+  /** @type {LiveActivity} */
+  const activity = {
+    kind: truncate(source.kind, MAX_ACTIVITY_KIND_CHARS),
+    icon: typeof source.icon === 'string' ? truncate(source.icon, MAX_ACTIVITY_ICON_CHARS) : '',
+    tone: /** @type {LiveActivity['tone']} */ (tone),
+    text: truncate(source.text, MAX_ACTIVITY_TEXT_CHARS)
+  };
+  if (typeof source.file === 'string' && source.file !== '') {
+    activity.file = truncate(source.file, MAX_ACTIVITY_FILE_CHARS);
+  }
+  return activity;
+}
+
 /** @param {LiveLogEntry} entry */
 function entryChars(entry) {
   return entry.msg.length + entry.dataText.length;
@@ -226,7 +270,7 @@ function createLiveLogFeed(deps = {}) {
   const send = typeof deps.send === 'function' ? deps.send : defaultSend;
   const now = typeof deps.now === 'function' ? deps.now : () => Date.now();
 
-  /** Subscribed webContents -> the handler registered for DETACH_EVENTS. @type {Map<FeedWebContents, EventHandler>} */
+  /** @type {Map<FeedWebContents, Subscriber>} */
   const subscribers = new Map();
   /** @type {LiveLogEntry[]} */
   let ring = [];
@@ -262,7 +306,7 @@ function createLiveLogFeed(deps = {}) {
     /** @type {LiveActivity | null} */
     let activity;
     try {
-      activity = classify({ ...record, level, msg, context }) || null;
+      activity = clampActivity(classify({ ...record, level, msg, context }));
     } catch {
       activity = null;
     }
@@ -338,9 +382,10 @@ function createLiveLogFeed(deps = {}) {
       clearTimeout(timer);
       timer = null;
     }
-    if (pending.length === 0 && dropped === 0) return;
+    const anyCarried = [...subscribers.values()].some((s) => s.carried > 0);
+    if (pending.length === 0 && dropped === 0 && !anyCarried) return;
     /** @type {LiveLogBatch} */
-    const payload = { entries: pending, dropped };
+    const shared = { entries: pending, dropped };
     pending = [];
     pendingChars = 0;
     dropped = 0;
@@ -349,16 +394,24 @@ function createLiveLogFeed(deps = {}) {
     const wasDelivering = delivering;
     delivering = true;
     try {
-      for (const webContents of [...subscribers.keys()]) {
+      for (const [webContents, subscriber] of [...subscribers]) {
         if (typeof webContents.isDestroyed === 'function' && webContents.isDestroyed()) {
           unsubscribe(webContents);
           continue;
         }
+        const payload =
+          subscriber.carried > 0
+            ? { entries: shared.entries, dropped: shared.dropped + subscriber.carried }
+            : shared;
+        if (payload.entries.length === 0 && payload.dropped === 0) continue;
+        let delivered;
         try {
-          send(webContents, payload);
+          delivered = send(webContents, payload) !== false;
         } catch {
           // A failed send never affects logging or the other subscribers.
+          delivered = false;
         }
+        subscriber.carried = delivered ? 0 : payload.entries.length + payload.dropped;
       }
     } finally {
       delivering = wasDelivering;
@@ -390,7 +443,7 @@ function createLiveLogFeed(deps = {}) {
     if (!webContents || typeof webContents.send !== 'function') return { entries: [] };
     if (!subscribers.has(webContents)) {
       const onDetach = () => unsubscribe(webContents);
-      subscribers.set(webContents, onDetach);
+      subscribers.set(webContents, { onDetach, carried: 0 });
       if (typeof webContents.on === 'function') {
         for (const event of DETACH_EVENTS) webContents.on(event, onDetach);
       }
@@ -405,8 +458,9 @@ function createLiveLogFeed(deps = {}) {
   /** @param {FeedWebContents | null | undefined} webContents */
   function unsubscribe(webContents) {
     if (!webContents) return;
-    const onDetach = subscribers.get(webContents);
-    if (!onDetach) return;
+    const subscriber = subscribers.get(webContents);
+    if (!subscriber) return;
+    const { onDetach } = subscriber;
     subscribers.delete(webContents);
     if (typeof webContents.removeListener === 'function') {
       for (const event of DETACH_EVENTS) {
@@ -473,6 +527,10 @@ module.exports = {
   MAX_DATA_TEXT_CHARS,
   MAX_CONTEXT_CHARS,
   MAX_TIME_CHARS,
+  MAX_ACTIVITY_KIND_CHARS,
+  MAX_ACTIVITY_ICON_CHARS,
+  MAX_ACTIVITY_TEXT_CHARS,
+  MAX_ACTIVITY_FILE_CHARS,
   ACTIVITY_MERGE_WINDOW_MS,
   MERGEABLE_KINDS
 };

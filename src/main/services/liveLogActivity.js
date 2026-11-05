@@ -26,6 +26,13 @@
 
 const MAX_TEXT_CHARS = 300;
 const MAX_FILE_CHARS = 120;
+/**
+ * A message from a record's data (not its msg, which the feed has already cut
+ * to its 2000-character message cap) is cut to the same length before it
+ * becomes a Problem line, so the file name taken from it stays within the
+ * batch schema's activity bounds.
+ */
+const MAX_PROBLEM_MESSAGE_CHARS = 2000;
 const REDACTED_PATH = '[REDACTED_PATH]';
 const PROBLEM_LEVELS = new Set(['warn', 'error', 'fatal']);
 const PROBLEM_FALLBACK_TEXT = 'Something went wrong';
@@ -139,6 +146,20 @@ function activity(kind, icon, tone, line, file) {
   };
   if (file) result.file = file;
   return result;
+}
+
+/**
+ * Cut `value` to at most `max` characters, ending in "…" when cut, without
+ * leaving half of a surrogate pair at the cut.
+ * @param {string} value
+ * @param {number} max
+ */
+function clip(value, max) {
+  if (value.length <= max) return value;
+  let end = max - 1;
+  const last = value.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  return `${value.slice(0, end)}…`;
 }
 
 /**
@@ -413,7 +434,10 @@ const RULES = [
       text(input.data?.message) ||
       text(input.data?.code) ||
       'A part of the app is not working normally';
-    return problem(message, input.data?.severity === 'error' ? 'error' : 'warn');
+    return problem(
+      clip(message, MAX_PROBLEM_MESSAGE_CHARS),
+      input.data?.severity === 'error' ? 'error' : 'warn'
+    );
   }),
   prefixRule('storage-cleared', DEGRADED, '[DegradedState] flag cleared', (input) =>
     input.data?.code === 'storage.full'

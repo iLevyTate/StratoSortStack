@@ -10,6 +10,31 @@ const {
   activityFromLogRecord,
   ACTIVITY_RULE_IDS
 } = require('../../../src/main/services/liveLogActivity');
+const { IPC_CHANNELS } = require('../../../src/shared/constants');
+const { validateEventPayload } = require('../../../src/shared/ipcEventSchemas');
+
+/**
+ * Wrap one activity in a one-entry live-log batch and validate it, so a rule
+ * whose kind, icon, tone, text or file outgrows the batch schema fails here.
+ * @param {object | null} activity
+ */
+function batchSchemaIssues(activity) {
+  const result = validateEventPayload(IPC_CHANNELS.SYSTEM.LIVE_LOG_BATCH, {
+    entries: [
+      {
+        id: 1,
+        time: '2026-11-05T09:00:00.000Z',
+        level: 'info',
+        context: 'Test',
+        msg: 'm',
+        dataText: '',
+        activity
+      }
+    ],
+    dropped: 0
+  });
+  return result.valid ? [] : result.error.issues;
+}
 
 const CASES = [
   {
@@ -952,6 +977,12 @@ describe('activityFromLogRecord', () => {
     expect(activityFromLogRecord(record)).toEqual(expected);
   });
 
+  test.each(CASES)('$rule: the activity fits the live-log batch schema', ({ record }) => {
+    const activity = activityFromLogRecord(record);
+    expect(activity).not.toBeNull();
+    expect(batchSchemaIssues(activity)).toEqual([]);
+  });
+
   test('the table covers every rule id', () => {
     expect(new Set(CASES.map((c) => c.rule))).toEqual(new Set(ACTIVITY_RULE_IDS));
   });
@@ -1209,6 +1240,19 @@ describe('activityFromLogRecord', () => {
       text: 'Problem: Cannot open index.db',
       file: 'index.db'
     });
+  });
+
+  test('a degraded-state message is cut to the message cap before it becomes a Problem line', () => {
+    const result = activityFromLogRecord({
+      level: 'warn',
+      context: 'DegradedStateTracker',
+      msg: '[DegradedState] flag raised',
+      data: { code: 'x.y', message: `Cannot open [REDACTED_PATH]\\${'d'.repeat(3000)}` }
+    });
+    expect(result.kind).toBe('problem');
+    expect(result.file.length).toBeGreaterThan(1000);
+    expect(result.file.length).toBeLessThanOrEqual(2000);
+    expect(batchSchemaIssues(result)).toEqual([]);
   });
 
   test('a cleared flag other than storage.full is not an activity', () => {

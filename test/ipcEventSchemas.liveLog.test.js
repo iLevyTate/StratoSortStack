@@ -12,7 +12,11 @@ const {
   MAX_MSG_CHARS,
   MAX_DATA_TEXT_CHARS,
   MAX_CONTEXT_CHARS,
-  MAX_TIME_CHARS
+  MAX_TIME_CHARS,
+  MAX_ACTIVITY_KIND_CHARS,
+  MAX_ACTIVITY_ICON_CHARS,
+  MAX_ACTIVITY_TEXT_CHARS,
+  MAX_ACTIVITY_FILE_CHARS
 } = require('../src/main/services/liveLogFeed');
 
 const CHANNEL = IPC_CHANNELS.SYSTEM.LIVE_LOG_BATCH;
@@ -114,7 +118,6 @@ describe('system:live-log:batch event schema', () => {
     });
 
     test('dataText: MAX_DATA_TEXT_CHARS', () => {
-      expect(MAX_DATA_TEXT_CHARS).toBe(1500);
       expect(oneEntryValid({ dataText: 'x'.repeat(MAX_DATA_TEXT_CHARS) })).toBe(true);
       expect(oneEntryValid({ dataText: 'x'.repeat(MAX_DATA_TEXT_CHARS + 1) })).toBe(false);
     });
@@ -129,16 +132,21 @@ describe('system:live-log:batch event schema', () => {
       expect(oneEntryValid({ time: 't'.repeat(MAX_TIME_CHARS + 1) })).toBe(false);
     });
 
-    test('activity text and file: up to MAX_MSG_CHARS (a problem line is cut from msg)', () => {
-      const long = (n) => ({
+    test.each([
+      ['kind', () => MAX_ACTIVITY_KIND_CHARS],
+      ['icon', () => MAX_ACTIVITY_ICON_CHARS],
+      ['text', () => MAX_ACTIVITY_TEXT_CHARS],
+      ['file', () => MAX_ACTIVITY_FILE_CHARS]
+    ])('activity %s: the feed clamp bound', (field, max) => {
+      const activity = (n) => ({
         kind: 'problem',
         icon: 'alert',
         tone: 'warn',
-        text: 'p'.repeat(n),
-        file: 'f'.repeat(n)
+        text: 'Problem',
+        [field]: 'a'.repeat(n)
       });
-      expect(oneEntryValid({ activity: long(MAX_MSG_CHARS) })).toBe(true);
-      expect(oneEntryValid({ activity: long(MAX_MSG_CHARS + 1) })).toBe(false);
+      expect(oneEntryValid({ activity: activity(max()) })).toBe(true);
+      expect(oneEntryValid({ activity: activity(max() + 1) })).toBe(false);
     });
   });
 
@@ -212,6 +220,13 @@ describe('system:live-log:batch event schema', () => {
         },
         {
           time: '2026-11-05T09:00:00.000Z',
+          level: 'warn',
+          context: 'DegradedStateTracker',
+          msg: '[DegradedState] flag raised',
+          data: { code: 'x.y', message: `Lost [REDACTED_PATH]\\${'q'.repeat(3000)}` }
+        },
+        {
+          time: '2026-11-05T09:00:00.000Z',
           level: 'trace',
           context: 'X',
           msg: '',
@@ -232,6 +247,9 @@ describe('system:live-log:batch event schema', () => {
         .filter((a) => a && a.kind === 'problem' && typeof a.file === 'string')
         .reduce((max, a) => Math.max(max, a.file.length), 0);
       expect(longProblemFile).toBeGreaterThan(1000);
+      const degraded = entries.find((e) => e.context === 'DegradedStateTracker');
+      expect(degraded.activity.kind).toBe('problem');
+      expect(degraded.activity.file.length).toBeGreaterThan(1000);
     });
 
     test('a flood beyond the batch caps ships a bounded batch with a dropped count', () => {

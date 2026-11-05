@@ -472,27 +472,32 @@ const schemas = z
 
       /**
        * Live Activity panel batch (src/main/services/liveLogFeed.js).
-       * safeSend BLOCKS a batch that fails this schema, which would blank the
-       * panel, so every bound is at least the feed's own cap. The numbers are
+       * Validated only in main, by safeSend, which BLOCKS a batch that fails
+       * (the renderer does not re-check it). The feed clamps every field,
+       * activity included, to exactly these bounds before it sends, so a
+       * single log line cannot get a whole batch blocked. The numbers are
        * duplicated, not imported: this module is bundled into the renderer
-       * and must not pull in main-process code. test/ipcEventSchemas.liveLog
-       * .test.js pins each bound to the feed's exported constant
-       * (MAX_BATCH_ENTRIES 200, MAX_MSG_CHARS 2000, MAX_DATA_TEXT_CHARS 1500,
-       * MAX_CONTEXT_CHARS 120, MAX_TIME_CHARS 40) and runs real feed output
-       * through it. An activity's text and file are bounded by the message
-       * cap: a "Problem:" line and its file name are cut from the message.
+       * and must not pull in main-process code. The test file
+       * test/ipcEventSchemas.liveLog.test.js pins each bound to the feed's
+       * exported constant (MAX_BATCH_ENTRIES, MAX_MSG_CHARS,
+       * MAX_DATA_TEXT_CHARS, MAX_CONTEXT_CHARS, MAX_TIME_CHARS and the
+       * MAX_ACTIVITY_* caps) and runs real feed output through it.
        */
       const LIVE_LOG_MAX_ENTRIES = 200;
       const LIVE_LOG_MAX_MSG_CHARS = 2000;
       const LIVE_LOG_MAX_DATA_TEXT_CHARS = 1500;
       const LIVE_LOG_MAX_CONTEXT_CHARS = 120;
       const LIVE_LOG_MAX_TIME_CHARS = 40;
+      const LIVE_LOG_MAX_ACTIVITY_KIND_CHARS = 64;
+      const LIVE_LOG_MAX_ACTIVITY_ICON_CHARS = 32;
+      const LIVE_LOG_MAX_ACTIVITY_TEXT_CHARS = 2000;
+      const LIVE_LOG_MAX_ACTIVITY_FILE_CHARS = 2000;
 
       const liveLogActivitySchema = z.object({
-        kind: z.string().max(64),
-        icon: z.string().max(32),
-        text: z.string().max(LIVE_LOG_MAX_MSG_CHARS),
-        file: z.string().max(LIVE_LOG_MAX_MSG_CHARS).optional(),
+        kind: z.string().max(LIVE_LOG_MAX_ACTIVITY_KIND_CHARS),
+        icon: z.string().max(LIVE_LOG_MAX_ACTIVITY_ICON_CHARS),
+        text: z.string().max(LIVE_LOG_MAX_ACTIVITY_TEXT_CHARS),
+        file: z.string().max(LIVE_LOG_MAX_ACTIVITY_FILE_CHARS).optional(),
         tone: z.enum(['info', 'success', 'warn', 'error'])
       });
 

@@ -16,8 +16,14 @@ const {
   MAX_CONTEXT_CHARS,
   MAX_TIME_CHARS,
   ACTIVITY_MERGE_WINDOW_MS,
-  MERGEABLE_KINDS
+  MERGEABLE_KINDS,
+  MAX_ACTIVITY_KIND_CHARS,
+  MAX_ACTIVITY_ICON_CHARS,
+  MAX_ACTIVITY_TEXT_CHARS,
+  MAX_ACTIVITY_FILE_CHARS
 } = require('../../../src/main/services/liveLogFeed');
+const { IPC_CHANNELS } = require('../../../src/shared/constants');
+const { validateEventPayload } = require('../../../src/shared/ipcEventSchemas');
 
 function makeRegistry() {
   const listeners = new Set();
@@ -910,6 +916,204 @@ describe('liveLogFeed', () => {
 
       const entries = feed.subscribe(makeWebContents()).entries;
       expect(entries[entries.length - 1].activity).toMatchObject({ file: 'report.pdf' });
+    });
+  });
+
+  describe('activity clamp (no classifier result can make the batch schema reject)', () => {
+    /** @param {unknown} activity */
+    function activityOf(activity) {
+      const { feed, registry } = makeFeed({ classify: () => activity });
+      feed.subscribe(makeWebContents());
+      registry.emit(record(1));
+      return feed.subscribe(makeWebContents()).entries[0].activity;
+    }
+
+    test('oversize kind, icon, text and file are cut to the schema bounds', () => {
+      const result = activityOf({
+        kind: 'k'.repeat(500),
+        icon: 'i'.repeat(500),
+        tone: 'warn',
+        text: 't'.repeat(5000),
+        file: 'f'.repeat(5000)
+      });
+      expect(result.kind).toHaveLength(MAX_ACTIVITY_KIND_CHARS);
+      expect(result.icon).toHaveLength(MAX_ACTIVITY_ICON_CHARS);
+      expect(result.text).toHaveLength(MAX_ACTIVITY_TEXT_CHARS);
+      expect(result.file).toHaveLength(MAX_ACTIVITY_FILE_CHARS);
+      expect(result.text.endsWith('…')).toBe(true);
+      expect(result.tone).toBe('warn');
+    });
+
+    test('a cut never leaves half of a surrogate pair', () => {
+      const result = activityOf({
+        kind: 'problem',
+        icon: 'alert',
+        tone: 'error',
+        text: '😀'.repeat(MAX_ACTIVITY_TEXT_CHARS),
+        file: 'a.pdf'
+      });
+      expect(result.text.length).toBeLessThanOrEqual(MAX_ACTIVITY_TEXT_CHARS);
+      expect(result.text).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+    });
+
+    test('an unknown tone becomes info and a non-string icon becomes empty', () => {
+      expect(activityOf({ kind: 'x', icon: 7, tone: 'loud', text: 'y' })).toEqual({
+        kind: 'x',
+        icon: '',
+        tone: 'info',
+        text: 'y'
+      });
+    });
+
+    test('only the known fields are kept, and an empty or non-string file is left out', () => {
+      expect(
+        activityOf({ kind: 'x', icon: 'y', tone: 'success', text: 'z', file: '', extra: 1 })
+      ).toEqual({ kind: 'x', icon: 'y', tone: 'success', text: 'z' });
+      expect(activityOf({ kind: 'x', icon: 'y', tone: 'info', text: 'z', file: 5 })).toEqual({
+        kind: 'x',
+        icon: 'y',
+        tone: 'info',
+        text: 'z'
+      });
+    });
+
+    test.each([
+      ['a string', 'Analyzed a.pdf'],
+      ['an array', [{ kind: 'x', text: 'y' }]],
+      ['a missing kind', { icon: 'y', tone: 'info', text: 'z' }],
+      ['a non-string text', { kind: 'x', icon: 'y', tone: 'info', text: 42 }],
+      ['a number', 3]
+    ])('%s is not an activity', (_label, value) => {
+      expect(activityOf(value)).toBeNull();
+    });
+
+    test('a degraded flag with a 3000-character message still ships a batch the schema accepts', () => {
+      const registry = makeRegistry();
+      const send = jest.fn();
+      const feed = createLiveLogFeed({
+        addListener: registry.addListener,
+        removeListener: registry.removeListener,
+        send
+      });
+      feed.subscribe(makeWebContents());
+      registry.emit(
+        record(1, {
+          level: 'warn',
+          context: 'DegradedStateTracker',
+          msg: '[DegradedState] flag raised',
+          data: {
+            code: 'x.y',
+            severity: 'warn',
+            message: `Cannot open [REDACTED_PATH]\\${'d'.repeat(3000)}`
+          }
+        })
+      );
+      jest.advanceTimersByTime(FLUSH_INTERVAL_MS);
+
+      const payload = send.mock.calls[0][1];
+      const [entry] = payload.entries;
+      expect(entry.activity.kind).toBe('problem');
+      expect(entry.activity.file.length).toBeGreaterThan(1000);
+      expect(validateEventPayload(IPC_CHANNELS.SYSTEM.LIVE_LOG_BATCH, payload).valid).toBe(true);
+    });
+  });
+
+  describe('a batch the send refused (safeSend returned false)', () => {
+    test("counts that batch's entries in that subscriber's next dropped, and only theirs", () => {
+      let refuse = true;
+      const send = jest.fn((wc) => (wc.tag === 'blocked' && refuse ? false : true));
+      const { feed, registry } = makeFeed({ send });
+      const blocked = makeWebContents();
+      blocked.tag = 'blocked';
+      const ok = makeWebContents();
+      feed.subscribe(blocked);
+      feed.subscribe(ok);
+
+      registry.emit(record(1));
+      registry.emit(record(2));
+      registry.emit(record(3));
+      jest.advanceTimersByTime(FLUSH_INTERVAL_MS);
+
+      refuse = false;
+      registry.emit(record(4));
+      jest.advanceTimersByTime(FLUSH_INTERVAL_MS);
+
+      const toBlocked = send.mock.calls.filter(([wc]) => wc === blocked).map(([, p]) => p);
+      const toOk = send.mock.calls.filter(([wc]) => wc === ok).map(([, p]) => p);
+      expect(toBlocked[1]).toEqual({ entries: [expect.objectContaining({ id: 4 })], dropped: 3 });
+      expect(toOk.map((p) => p.dropped)).toEqual([0, 0]);
+    });
+
+    test('carries the refused batch dropped count too, and clears the carry once delivered', () => {
+      let refuse = true;
+      const send = jest.fn(() => (refuse ? false : undefined));
+      const { feed, registry } = makeFeed({ send });
+      feed.subscribe(makeWebContents());
+
+      for (let i = 1; i <= MAX_BATCH_ENTRIES + 5; i += 1) registry.emit(record(i));
+      jest.advanceTimersByTime(FLUSH_INTERVAL_MS);
+      expect(send.mock.calls[0][1].dropped).toBe(5);
+
+      refuse = false;
+      registry.emit(record(1000));
+      jest.advanceTimersByTime(FLUSH_INTERVAL_MS);
+      expect(send.mock.calls[1][1].dropped).toBe(MAX_BATCH_ENTRIES + 5);
+
+      registry.emit(record(1001));
+      jest.advanceTimersByTime(FLUSH_INTERVAL_MS);
+      expect(send.mock.calls[2][1].dropped).toBe(0);
+    });
+
+    test('a send that throws counts as refused', () => {
+      let fail = true;
+      const send = jest.fn(() => {
+        if (fail) throw new Error('boom');
+      });
+      const { feed, registry } = makeFeed({ send });
+      feed.subscribe(makeWebContents());
+
+      registry.emit(record(1));
+      registry.emit(record(2));
+      jest.advanceTimersByTime(FLUSH_INTERVAL_MS);
+      fail = false;
+      registry.emit(record(3));
+      jest.advanceTimersByTime(FLUSH_INTERVAL_MS);
+
+      expect(send.mock.calls[1][1].dropped).toBe(2);
+    });
+
+    test('a manual flush reports a carried count even with nothing new to send', () => {
+      let refuse = true;
+      const send = jest.fn(() => !refuse);
+      const { feed, registry } = makeFeed({ send });
+      const a = makeWebContents();
+      feed.subscribe(a);
+      registry.emit(record(1));
+      jest.advanceTimersByTime(FLUSH_INTERVAL_MS);
+
+      refuse = false;
+      feed.flush();
+      expect(send).toHaveBeenCalledTimes(2);
+      expect(send.mock.calls[1][1]).toEqual({ entries: [], dropped: 1 });
+
+      feed.flush();
+      expect(send).toHaveBeenCalledTimes(2);
+    });
+
+    test('unsubscribing forgets the carry', () => {
+      const send = jest.fn(() => false);
+      const { feed, registry } = makeFeed({ send });
+      const a = makeWebContents();
+      feed.subscribe(a);
+      registry.emit(record(1));
+      jest.advanceTimersByTime(FLUSH_INTERVAL_MS);
+      feed.unsubscribe(a);
+
+      send.mockImplementation(() => true);
+      feed.subscribe(a);
+      registry.emit(record(2));
+      jest.advanceTimersByTime(FLUSH_INTERVAL_MS);
+      expect(send.mock.calls[1][1].dropped).toBe(0);
     });
   });
 });
