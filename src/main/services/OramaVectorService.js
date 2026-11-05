@@ -12,7 +12,44 @@ const path = require('path');
 const fs = require('fs').promises;
 const { app } = require('electron');
 const { EventEmitter } = require('events');
-const { create, insert, search, remove, update, count, getByID } = require('@orama/orama');
+const {
+  create,
+  insert: oramaInsert,
+  search,
+  remove: oramaRemove,
+  update: oramaUpdate,
+  count,
+  getByID
+} = require('@orama/orama');
+
+// Collections written since their last save. Every write to an Orama database
+// in this file goes through insert/update/remove, so marking here covers all
+// twenty-odd write paths without each one naming the collection it touched.
+// A save then writes only these (plus any collection object that was replaced
+// by a rebuild, see _collectionNeedsSave), instead of every collection.
+/** @type {WeakSet<object>} */
+const changedDatabases = new WeakSet();
+/** @type {typeof oramaInsert} */
+const insert = /** @type {any} */ (
+  (/** @type {any} */ db, /** @type {any[]} */ ...args) => {
+    changedDatabases.add(db);
+    return /** @type {any} */ (oramaInsert)(db, ...args);
+  }
+);
+/** @type {typeof oramaUpdate} */
+const update = /** @type {any} */ (
+  (/** @type {any} */ db, /** @type {any[]} */ ...args) => {
+    changedDatabases.add(db);
+    return /** @type {any} */ (oramaUpdate)(db, ...args);
+  }
+);
+/** @type {typeof oramaRemove} */
+const remove = /** @type {any} */ (
+  (/** @type {any} */ db, /** @type {any[]} */ ...args) => {
+    changedDatabases.add(db);
+    return /** @type {any} */ (oramaRemove)(db, ...args);
+  }
+);
 // @ts-expect-error @orama/stemmers/english lacks a named export in its declaration; runtime shape is `{ english }`
 const { english } = require('@orama/stemmers/english');
 const ORAMA_TOKENIZER_CONFIG = { stemmer: english, stemming: true };
@@ -120,6 +157,20 @@ const DEFAULT_EMBEDDING_DIMENSION = AI_DEFAULTS.EMBEDDING?.DIMENSIONS || 384;
 // Persistence settings
 const PERSIST_DEBOUNCE_MS = 5000; // Debounce persistence writes
 const MAX_PERSIST_WAIT_MS = 30000; // Max wait before forcing persistence
+// A save of a large library (a 290 MB passage index) takes seconds and
+// rewrites hundreds of MB. The gap between saves grows with how long the last
+// one took, from PERSIST_DEBOUNCE_MS up to MAX_PERSIST_GAP_MS, so a small
+// library still saves within seconds and a large one does not save every few.
+const PERSIST_GAP_PER_SAVE_MS = 20;
+const MAX_PERSIST_GAP_MS = 2 * 60 * 1000;
+// Every collection is written in full on the first save of a session and at
+// least this often after that, as a backstop for any change the write
+// tracking above could not see.
+const FULL_PERSIST_INTERVAL_MS = 30 * 60 * 1000;
+// The .bak copy of a collection is refreshed at most this often. It is a
+// recent known-good copy; the write itself is already temp-file-then-rename,
+// so it does not need refreshing on every save (that doubled the bytes).
+const BAK_ROTATE_INTERVAL_MS = 30 * 60 * 1000;
 const DEFAULT_BATCH_UPSERT_CONCURRENCY = 3;
 const MAX_BATCH_UPSERT_CONCURRENCY = 6;
 const VECTOR_PRIMARY_VALIDATION_INTERVAL_MS = 60000;
@@ -242,6 +293,15 @@ class OramaVectorService extends EventEmitter {
 
     // Persistence state
     this._persistTimer = null;
+    /** @type {Map<string, any>} collection object as of its last save */
+    this._savedDatabases = new Map();
+    /** @type {Map<string, number>} embedding sidecar size as of its last save */
+    this._savedSidecarSizes = new Map();
+    /** @type {Map<string, number>} when each collection's .bak was last refreshed */
+    this._bakRotatedAt = new Map();
+    this._lastFullPersistAt = 0;
+    this._forceFullPersist = false;
+    this._lastPersistDurationMs = 0;
     this._persistPending = false;
     this._isPersisting = false;
     this._currentPersistPromise = null;
@@ -2130,6 +2190,37 @@ class OramaVectorService extends EventEmitter {
    * @private
    */
   /**
+   * Whether a collection has anything a save would change on disk: a write
+   * since its last save, a collection object that replaced the saved one
+   * (rebuild, wipe, reset), or an embedding sidecar that changed size.
+   * @private
+   * @param {string} name
+   * @returns {boolean}
+   */
+  _collectionNeedsSave(name) {
+    const db = this._databases[name];
+    if (!db) return false;
+    if (changedDatabases.has(db)) return true;
+    if (this._savedDatabases.get(name) !== db) return true;
+    const sidecarSize = this._embeddingStore?.[name]?.size ?? 0;
+    return this._savedSidecarSizes.get(name) !== sidecarSize;
+  }
+
+  /**
+   * Debounce, and minimum time between saves: proportional to how long the
+   * last save took, from PERSIST_DEBOUNCE_MS up to MAX_PERSIST_GAP_MS.
+   * @private
+   * @returns {number}
+   */
+  _persistGapMs() {
+    const lastDuration = Number(this._lastPersistDurationMs) || 0;
+    return Math.min(
+      MAX_PERSIST_GAP_MS,
+      Math.max(PERSIST_DEBOUNCE_MS, lastDuration * PERSIST_GAP_PER_SAVE_MS)
+    );
+  }
+
+  /**
    * Raise the storage-full flag: the banner tells the user why saving stopped,
    * and background analysis holds until it clears.
    * @private
@@ -2197,7 +2288,7 @@ class OramaVectorService extends EventEmitter {
     const now = Date.now();
 
     // Force persist if max wait exceeded
-    if (now - this._lastPersist > MAX_PERSIST_WAIT_MS) {
+    if (now - this._lastPersist > Math.max(MAX_PERSIST_WAIT_MS, this._persistGapMs())) {
       if (this._persistTimer) {
         clearTimeout(this._persistTimer);
         this._persistTimer = null;
@@ -2223,7 +2314,7 @@ class OramaVectorService extends EventEmitter {
       if (!this._isPersisting) {
         this._currentPersistPromise = this._doPersist();
       }
-    }, PERSIST_DEBOUNCE_MS);
+    }, this._persistGapMs());
     // Prevent persist timer from keeping Node.js/Electron alive on shutdown
     if (typeof this._persistTimer?.unref === 'function') this._persistTimer.unref();
   }
@@ -2245,10 +2336,22 @@ class OramaVectorService extends EventEmitter {
       this._persistTimer = null;
     }
 
+    const saveStartedAt = Date.now();
+    const fullSave =
+      this._forceFullPersist ||
+      !this._lastFullPersistAt ||
+      saveStartedAt - this._lastFullPersistAt >= FULL_PERSIST_INTERVAL_MS;
+    const toSave = Object.keys(this._databases).filter(
+      (name) => fullSave || this._collectionNeedsSave(name)
+    );
+    // Unmark before serializing: a write that lands while this save runs marks
+    // its collection again, so the next save picks it up.
+    for (const name of toSave) changedDatabases.delete(this._databases[name]);
+
     try {
       // Persist embedding sidecar maps before Orama JSON blobs so we always
       // have a recoverable vector source even if persistence is interrupted.
-      for (const name of Object.keys(this._databases)) {
+      for (const name of toSave) {
         try {
           const embMap = this._embeddingStore?.[name];
           const sidecarPath = path.join(this._dataPath, `${name}.sidecar.json`);
@@ -2288,7 +2391,8 @@ class OramaVectorService extends EventEmitter {
         }
       }
 
-      for (const [name, db] of Object.entries(this._databases)) {
+      for (const name of toSave) {
+        const db = this._databases[name];
         const persistPath = path.join(this._dataPath, `${name}.json`);
         const compressedPath = `${persistPath}.lz4`;
         const data = /** @type {any} */ (await persist(db, 'json'));
@@ -2303,45 +2407,50 @@ class OramaVectorService extends EventEmitter {
         // still intact and consistent. After writeFileAtomic replaces active,
         // the .bak still holds the previous good version.
         const activePath = PERSIST_COMPRESSION_ENABLED ? compressedPath : persistPath;
-        try {
-          // Atomic .bak rotation via copy → fsync → rename. fs.copyFile alone
-          // is NOT atomic at the destination on Windows: CopyFileW opens dest
-          // with CREATE_ALWAYS and writes in chunks, so a concurrent reader
-          // can observe a partial .bak. Write to a tmp sibling first, fsync
-          // it durably, then rename onto .bak (rename is atomic on the same
-          // volume on every supported OS).
-          const bakPath = `${activePath}.bak`;
-          // PID alone is not enough: a debounced save and a final-shutdown
-          // save can fire near-simultaneously for the same collection (same
-          // activePath) within one process. They would race on the same
-          // tmp file — one truncates while the other is mid-fsync, and
-          // rename(tmpBakPath, bakPath) may move the wrong content.
-          // Mirror the durableWriteJson tmp-naming pattern.
-          const tmpBakPath =
-            `${activePath}.bak.tmp.${process.pid}.${Date.now()}.` +
-            `${require('crypto').randomBytes(4).toString('hex')}`;
+        const bakDue =
+          saveStartedAt - (this._bakRotatedAt.get(name) || 0) >= BAK_ROTATE_INTERVAL_MS;
+        if (bakDue) {
           try {
-            await fs.copyFile(activePath, tmpBakPath);
-            const fh = await fs.open(tmpBakPath, 'r+');
+            // Atomic .bak rotation via copy → fsync → rename. fs.copyFile alone
+            // is NOT atomic at the destination on Windows: CopyFileW opens dest
+            // with CREATE_ALWAYS and writes in chunks, so a concurrent reader
+            // can observe a partial .bak. Write to a tmp sibling first, fsync
+            // it durably, then rename onto .bak (rename is atomic on the same
+            // volume on every supported OS).
+            const bakPath = `${activePath}.bak`;
+            // PID alone is not enough: a debounced save and a final-shutdown
+            // save can fire near-simultaneously for the same collection (same
+            // activePath) within one process. They would race on the same
+            // tmp file — one truncates while the other is mid-fsync, and
+            // rename(tmpBakPath, bakPath) may move the wrong content.
+            // Mirror the durableWriteJson tmp-naming pattern.
+            const tmpBakPath =
+              `${activePath}.bak.tmp.${process.pid}.${Date.now()}.` +
+              `${require('crypto').randomBytes(4).toString('hex')}`;
             try {
-              await fh.sync();
-            } finally {
-              await fh.close();
+              await fs.copyFile(activePath, tmpBakPath);
+              const fh = await fs.open(tmpBakPath, 'r+');
+              try {
+                await fh.sync();
+              } finally {
+                await fh.close();
+              }
+              await fs.rename(tmpBakPath, bakPath);
+              this._bakRotatedAt.set(name, saveStartedAt);
+            } catch (innerErr) {
+              // Best-effort cleanup of the tmp file on failure.
+              await swallow(fs.unlink(tmpBakPath), logger, 'cleanup:orama.tmpBakPath');
+              throw innerErr;
             }
-            await fs.rename(tmpBakPath, bakPath);
-          } catch (innerErr) {
-            // Best-effort cleanup of the tmp file on failure.
-            await swallow(fs.unlink(tmpBakPath), logger, 'cleanup:orama.tmpBakPath');
-            throw innerErr;
-          }
-        } catch (bakError) {
-          // ENOENT on first persist (active doesn't exist yet) is expected.
-          if (bakError?.code !== 'ENOENT') {
-            logger.debug('[OramaVectorService] Failed to rotate persistence .bak', {
-              collection: name,
-              path: activePath,
-              error: bakError.message
-            });
+          } catch (bakError) {
+            // ENOENT on first persist (active doesn't exist yet) is expected.
+            if (bakError?.code !== 'ENOENT') {
+              logger.debug('[OramaVectorService] Failed to rotate persistence .bak', {
+                collection: name,
+                path: activePath,
+                error: bakError.message
+              });
+            }
           }
         }
         if (PERSIST_COMPRESSION_ENABLED) {
@@ -2359,9 +2468,26 @@ class OramaVectorService extends EventEmitter {
         }
       }
 
-      logger.debug('[OramaVectorService] Persisted all databases');
+      for (const name of toSave) {
+        this._savedDatabases.set(name, this._databases[name]);
+        this._savedSidecarSizes.set(name, this._embeddingStore?.[name]?.size ?? 0);
+      }
+      if (fullSave) {
+        this._lastFullPersistAt = saveStartedAt;
+        this._forceFullPersist = false;
+      }
+      this._lastPersistDurationMs = Date.now() - saveStartedAt;
+      logger.debug('[OramaVectorService] Persisted databases', {
+        collections: toSave,
+        full: fullSave,
+        durationMs: this._lastPersistDurationMs
+      });
       this._clearStorageFull();
     } catch (error) {
+      // Nothing from this round reached disk for certain: mark it all again.
+      for (const name of toSave) {
+        if (this._databases[name]) changedDatabases.add(this._databases[name]);
+      }
       this._persistRetryCount = (this._persistRetryCount || 0) + 1;
       const maxRetries = 5;
       const storageFull = STORAGE_FULL_ERRNOS.has(/** @type {any} */ (error)?.code);
@@ -2392,7 +2518,7 @@ class OramaVectorService extends EventEmitter {
           if (!this._isPersisting) {
             this._currentPersistPromise = this._doPersist();
           }
-        }, PERSIST_DEBOUNCE_MS);
+        }, this._persistGapMs());
         if (typeof this._persistTimer?.unref === 'function') this._persistTimer.unref();
       }
       // Reset retry counter on successful persist
@@ -2426,6 +2552,8 @@ class OramaVectorService extends EventEmitter {
       }
     }
     this._persistPending = true;
+    // "All" means every collection, not only the ones marked changed.
+    this._forceFullPersist = true;
     const myPromise = this._doPersist();
     this._currentPersistPromise = myPromise;
     await myPromise;
