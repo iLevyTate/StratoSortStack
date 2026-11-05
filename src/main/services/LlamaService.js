@@ -54,6 +54,10 @@ const NEGATIVE_VISION_SUPPORT_TTL_MS = 15_000;
 const VISION_BATCH_IDLE_WAIT_MS = 10 * 60 * 1000;
 const TEXT_LANE_IDLE_WAIT_MS = 10 * 60 * 1000;
 const MODEL_LANE_POLL_MS = 250;
+// The memory-manager type the vision runtime registers under. Same value as
+// VisionService.VISION_RUNTIME_MEMORY_TYPE, which is required lazily here to
+// avoid a load cycle.
+const VISION_RUNTIME_MEMORY_TYPE = 'vision-runtime';
 
 function getSystemAnalyticsSafe() {
   try {
@@ -1583,7 +1587,10 @@ class LlamaService extends EventEmitter {
         }
       }
 
-      return await this._modelMemoryManager.ensureModelLoaded(modelType);
+      return await this._modelMemoryManager.ensureModelLoaded(
+        modelType,
+        this._loadOptionsBesideVisionBatch(modelType)
+      );
     } catch (error) {
       // Handle degradation (e.g., model file corruption, OOM, disk full)
       const resolution = await this._degradationManager.handleError(error, { modelType });
@@ -2719,8 +2726,11 @@ class LlamaService extends EventEmitter {
       // read back from llama.cpp afterwards, so a divergence between that
       // plan and what llama.cpp ends up doing stays invisible here.
       const realizedGpuLayers = typeof model.gpuLayers === 'number' ? model.gpuLayers : null;
+      // A CPU-only load the app chose on purpose (embedding beside a vision
+      // batch) is not a fallback either.
       const cpuByUserChoice =
-        typeof options.gpuLayersOverride !== 'number' && this._config.gpuLayers === 0;
+        (typeof options.gpuLayersOverride !== 'number' && this._config.gpuLayers === 0) ||
+        options.cpuByDesign === true;
       if (this._gpuBackend === 'cpu') {
         // Nothing is running on a GPU backend, so a per-type record here
         // would have the badge claim "<type> on CPU" alongside an active GPU
@@ -2742,7 +2752,7 @@ class LlamaService extends EventEmitter {
         else this._cpuFallbackTypes.add(type);
       } else if (realizedGpuLayers > 0) {
         this._cpuFallbackTypes.delete(type);
-      } else if (gpuLayers === 0 && options.gpuLayersOverride === 0) {
+      } else if (gpuLayers === 0 && options.gpuLayersOverride === 0 && !options.cpuByDesign) {
         // The binding reported no layer count at all. The one thing we know
         // is that this load asked for CPU-only, so record it; on any other
         // request an unconfirmed value must not clear an existing record.
@@ -3797,6 +3807,7 @@ class LlamaService extends EventEmitter {
           throw error;
         }
 
+        this._pinVisionRuntimeForBatch();
         logger.info('[LlamaService] Entered vision batch mode', {
           refs: this._visionBatchModeRefs
         });
@@ -3828,6 +3839,7 @@ class LlamaService extends EventEmitter {
       }
 
       this._visionBatchMode = false;
+      await this._unpinVisionRuntimeForBatch();
       try {
         const visionService = getVisionService();
         await visionService.shutdown();
@@ -3839,6 +3851,55 @@ class LlamaService extends EventEmitter {
       this._bgWork.track(this._preloadTextAfterVisionRelease(['embedding']));
       logger.info('[LlamaService] Exited vision batch mode');
     });
+  }
+
+  /**
+   * Hold the vision runtime for the whole batch. Between two images it has no
+   * request in flight, so without a pin the memory manager treated it as idle
+   * and evicted it for the embedding load that folder matching and the
+   * embedding queue make after each image.
+   * @private
+   */
+  _pinVisionRuntimeForBatch() {
+    if (this._visionRuntimePinned || !this._modelMemoryManager?.acquireRef) return;
+    this._modelMemoryManager.acquireRef(VISION_RUNTIME_MEMORY_TYPE);
+    this._visionRuntimePinned = true;
+  }
+
+  /**
+   * Release the batch pin, and unload an embedding model that was loaded
+   * CPU-only for the batch so the next embedding loads on the GPU again.
+   * @private
+   */
+  async _unpinVisionRuntimeForBatch() {
+    if (this._visionRuntimePinned) {
+      this._visionRuntimePinned = false;
+      this._modelMemoryManager?.releaseRef?.(VISION_RUNTIME_MEMORY_TYPE);
+    }
+    if (this._embeddingCpuForBatch) {
+      this._embeddingCpuForBatch = false;
+      try {
+        await this._modelMemoryManager?.unloadModel?.('embedding');
+      } catch (error) {
+        logger.debug('[LlamaService] Could not unload the batch CPU embedding model', {
+          error: /** @type {any} */ (error)?.message
+        });
+      }
+    }
+  }
+
+  /**
+   * Load options for a model while a vision batch holds the runtime: the
+   * embedding model runs on the CPU beside it instead of evicting it.
+   * @private
+   * @param {string} modelType
+   * @returns {Record<string, any> | undefined}
+   */
+  _loadOptionsBesideVisionBatch(modelType) {
+    if (modelType !== 'embedding' || !this._visionRuntimePinned) return undefined;
+    if (this._modelMemoryManager?.getLoadedContext?.('embedding')) return undefined;
+    this._embeddingCpuForBatch = true;
+    return { gpuLayersOverride: 0, besideResident: VISION_RUNTIME_MEMORY_TYPE, cpuByDesign: true };
   }
 
   /**
