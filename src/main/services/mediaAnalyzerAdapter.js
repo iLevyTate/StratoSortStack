@@ -119,7 +119,9 @@ function isCancelledToSignal(/** @type {any} */ isCancelled) {
  * in-flight shutdown still propagates.
  */
 /**
- * Whether to caption video keyframes for this analysis. An explicit boolean
+ * Whether to caption video keyframes for this analysis. The same switch
+ * decides whether frames are extracted at all, so with it off no frame can
+ * reach a cloud Analysis provider either. An explicit boolean
  * from the constructor wins (tests, special dispatchers); otherwise the
  * user's Settings toggle decides at call time, so flipping it applies to the
  * next video without a restart. Off when settings cannot be read.

@@ -4,9 +4,10 @@
 /**
  * The three kinds of text work the AI router places. Each can be sent to its
  * own provider (ai.routing.perOperation[id]); an operation with no entry
- * follows ai.routing.default. Embeddings, search and speech-to-text stay on
- * the machine. Video frames follow Analysis. `sends` is
- * the plain-language statement of what leaves the machine when the operation
+ * follows ai.routing.default. Embeddings, search, speech-to-text and the
+ * pixels of still images stay on the machine. Video frames follow Analysis,
+ * and only when "Describe video keyframes" is on. `sends` is the
+ * plain-language statement of what leaves the machine when the operation
  * resolves to a cloud provider.
  * @type {ReadonlyArray<{ id: 'analyze' | 'chat' | 'suggest', label: string, sends: string }>}
  */
@@ -15,13 +16,13 @@ const AI_ROUTED_OPERATIONS = Object.freeze([
     id: 'analyze',
     label: 'Analysis and reanalysis',
     sends:
-      'each document, each audio transcript, and up to four video frames plus the transcript, on first analysis and on reanalysis'
+      'each document and audio transcript, and up to four frames of each video with its transcript when "Describe video keyframes" is on, on first analysis and on reanalysis'
   }),
   Object.freeze({
     id: 'chat',
     label: 'Chat',
     sends:
-      'every Knowledge OS chat question, with the matching passages, summaries and paths of up to five files'
+      'every Knowledge OS chat question, with the matching passages, summaries and paths of up to five files (twelve in Deep mode), including text read from images'
   }),
   Object.freeze({
     id: 'suggest',
@@ -33,17 +34,41 @@ const AI_ROUTED_OPERATIONS = Object.freeze([
 const CLOUD_PROVIDER_IDS = Object.freeze(['anthropic', 'openaiCompatible']);
 
 /**
+ * Version of the cloud-AI consent text. Stored as ai.consent.version when the
+ * user accepts. Bump it whenever cloud AI starts sending something the older
+ * text did not mention, so those users are asked again before it is sent.
+ *   1 (or no version): file text, chat passages and suggestions.
+ *   2: also up to four frames of each video, sent with its transcript.
+ */
+const CLOUD_CONSENT_VERSION = 2;
+
+/**
+ * The consent version a stored consent record covers: 0 when there is none,
+ * 1 for a record saved before versions existed.
+ * @param {any} consent ai.consent ({ acknowledgedCloudAt, version })
+ * @returns {number}
+ */
+function consentVersionOf(consent) {
+  if (!consent || typeof consent.acknowledgedCloudAt !== 'string' || !consent.acknowledgedCloudAt) {
+    return 0;
+  }
+  const version = consent.version;
+  return typeof version === 'number' && Number.isInteger(version) && version > 0 ? version : 1;
+}
+
+/**
  * Human-readable scope for settings UI and the header Cloud AI badge.
  * Embeddings always use the local embedding model. Speech-to-text stays
  * local because the cloud APIs used here do not accept audio. Video frames
- * are sent with the transcript when Analysis is a cloud provider. Still
- * images stay on the local vision model.
+ * are sent with the transcript when Analysis is a cloud provider and
+ * "Describe video keyframes" is on. Still images are analyzed by the local
+ * vision model, but the text read from them travels with chat.
  */
 const AI_CLOUD_ROUTING_SCOPE_DETAIL =
-  'The default covers analysis and reanalysis, every Knowledge OS chat question, and organization suggestions. Each of the three can be sent to a different provider below. Analysis sends documents, audio transcripts, and up to four video frames with the transcript. Speech-to-text, embeddings, search and still images stay on your machine.';
+  'The default covers analysis and reanalysis, every Knowledge OS chat question, and organization suggestions. Each of the three can be sent to a different provider below. Analysis sends documents, audio transcripts and, when "Describe video keyframes" is on, up to four video frames with the transcript. Chat sends the matching passages, summaries and paths, including text read from images. Speech-to-text, embeddings, search and the pixels of still images stay on your machine.';
 
 const AI_CLOUD_ROUTING_SCOPE_SHORT =
-  'Folder override for analysis and reanalysis of files in this folder. Chat and suggestions follow the per-operation choices in Settings → AI Provider. Speech-to-text, embeddings, search and still images stay on-device.';
+  'Folder override for analysis and reanalysis of files in this folder, including up to four video frames when "Describe video keyframes" is on. Chat and suggestions follow the per-operation choices in Settings → AI Provider. Speech-to-text, embeddings, search and the pixels of still images stay on-device.';
 
 /**
  * @param {string} providerId
@@ -116,6 +141,8 @@ module.exports = {
   AI_ROUTED_OPERATIONS,
   AI_CLOUD_ROUTING_SCOPE_DETAIL,
   AI_CLOUD_ROUTING_SCOPE_SHORT,
+  CLOUD_CONSENT_VERSION,
+  consentVersionOf,
   isCloudProviderId,
   resolveOperationProviderId,
   isProviderReady,

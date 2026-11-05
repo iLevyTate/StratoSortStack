@@ -6,21 +6,29 @@ import { useDialogFocusTrap } from '../../hooks';
 import { acknowledgeCloud } from '../../store/slices/aiProviderSlice';
 import Button from '../ui/Button';
 import { Heading } from '../ui/Typography';
+import { CLOUD_CONSENT_VERSION, consentVersionOf } from '../../../shared/aiProviderRouting';
 
-export const CLOUD_AI_CONSENT_FLAG = 'stratosort.cloudAI.consentAcknowledged.v1';
+// The key carries the consent version, so a flag left by an older consent
+// text does not count as agreement to the current one.
+export const CLOUD_AI_CONSENT_FLAG = `stratosort.cloudAI.consentAcknowledged.v${CLOUD_CONSENT_VERSION}`;
 
 const PROVIDER_LABELS = {
   anthropic: 'Anthropic Claude',
   openaiCompatible: 'OpenAI / Custom'
 };
 
-// Returns true if the main process has recorded consent. The localStorage
-// flag is a fast-path UX hint only — the source of truth lives in the
-// persisted AI settings file. Without this, a user who acknowledged in one
-// install would have their consent re-blocked on every restart because the
-// renderer set localStorage but never told the main process.
+// Returns true if the main process has recorded consent to the CURRENT
+// consent text. Consent given to an older text (before video frames could be
+// sent) returns false, so the next cloud choice shows this dialog again. The
+// localStorage flag is a fast-path UX hint only — the source of truth lives
+// in the persisted AI settings file. Without this, a user who acknowledged in
+// one install would have their consent re-blocked on every restart because
+// the renderer set localStorage but never told the main process.
 export function hasAcknowledgedCloudAI(state) {
-  if (state?.aiProvider?.settings?.consent?.acknowledgedCloudAt) return true;
+  const consent = state?.aiProvider?.settings?.consent;
+  if (consent?.acknowledgedCloudAt) {
+    return consentVersionOf(consent) >= CLOUD_CONSENT_VERSION;
+  }
   try {
     // localStorage fallback only useful before fetchAiConfig completes.
     return window.localStorage.getItem(CLOUD_AI_CONSENT_FLAG) === '1';
@@ -48,7 +56,9 @@ function persistLocalAcknowledgment() {
  *    the parent should revert routing.default to `local`.
  *  - Accept persists once and is scoped per-installation. Switching between
  *    different cloud providers later does not re-prompt; the user already
- *    knows the trust model applies to any cloud provider.
+ *    knows the trust model applies to any cloud provider. A new consent
+ *    version (CLOUD_CONSENT_VERSION) does re-prompt, because it covers data
+ *    the earlier text did not.
  */
 function CloudAIConsentModal({ provider, onAccept, onDecline }) {
   const dispatch = useAppDispatch();
@@ -125,14 +135,21 @@ function CloudAIConsentModal({ provider, onAccept, onDecline }) {
             never leaves your machine.
           </p>
           <p>
-            This choice covers any cloud provider or OpenAI-compatible endpoint you configure later;
-            switching providers will not ask again.
+            Videos: when &ldquo;Describe video keyframes&rdquo; is on, video analysis also sends up
+            to four frames of each video, with its transcript. With it off, no video frames are
+            sent.
           </p>
           <p>
-            Embeddings are always computed locally and never sent to the cloud, and image pixels
-            stay here (only their extracted text can travel). Your API key is stored on this device
-            using your operating system&apos;s secure key storage where available; if it is
-            unavailable, you will be asked to confirm before saving the key unencrypted.
+            This choice covers any cloud provider or OpenAI-compatible endpoint you configure later;
+            switching providers will not ask again. If cloud AI later needs to send something this
+            text does not cover, you will be asked again.
+          </p>
+          <p>
+            Embeddings are always computed locally and never sent to the cloud. The pixels of still
+            images stay here; text read from them and their saved descriptions can travel with chat
+            and suggestions. Your API key is stored on this device using your operating
+            system&apos;s secure key storage where available; if it is unavailable, you will be
+            asked to confirm before saving the key unencrypted.
           </p>
           <p>
             Analysis, chat and suggestions can each be kept on Local Llama under Settings → AI

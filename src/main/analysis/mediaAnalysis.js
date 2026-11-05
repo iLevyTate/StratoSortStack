@@ -29,7 +29,7 @@ const { createLogger } = require('../../shared/logger');
 const { ERROR_CODES } = require('../../shared/errorCodes');
 const { attachErrorCode } = require('../../shared/errorHandlingUtils');
 const { normalizeAnalysisResult } = require('./utils');
-const { analyzeVideoWithCloud, resolveCloudAnalyzeProvider } = require('./cloudMedia');
+const { analyzeVideoWithCloud, resolveCloudFrameProvider } = require('./cloudMedia');
 
 const logger = createLogger('MediaAnalysis');
 
@@ -373,7 +373,9 @@ function resolveDefaultCaptionFn() {
  *   and extracting them for every video (ffmpeg scene detection, up to 12
  *   frames) while never captioning them cost time and produced a result
  *   that claimed visual analysis had happened (audit row MI-04). Pass
- *   `false` to skip extraction even when captioning is on.
+ *   `false` to skip extraction even when captioning is on. Also gates the
+ *   cloud frame call: with it off, no frame is extracted or sent to a cloud
+ *   Analysis provider.
  * @param {number} [options.maxKeyframes=12] - Cap on keyframes for video.
  * @param {boolean} [options.captionKeyframes=false] - Run each extracted
  *   keyframe through the vision LLM and merge captions into the transcript
@@ -512,19 +514,18 @@ async function analyzeMediaFile(filePath, dependencies = {}, options = {}) {
     });
 
     // Cloud analysis (Settings → AI Provider → Analysis) can see video
-    // frames. Speech itself stays on Whisper: the cloud API has no audio
-    // input. Frames are extracted for that call even when local captioning
-    // is off.
-    const cloudProvider = await resolveCloudAnalyzeProvider(smartFolderId);
-    const sendFramesToCloud = kind === 'video' && Boolean(cloudProvider);
+    // frames, but only when the user turned on "Describe video keyframes"
+    // (extractVideoKeyframes follows it) and accepted the consent text that
+    // names frames. With the setting off no frame is extracted or sent.
+    // Speech itself stays on Whisper: the cloud API has no audio input.
+    const framesAllowed = kind === 'video' && extractVideoKeyframes === true;
+    const cloudProvider = framesAllowed ? await resolveCloudFrameProvider(smartFolderId) : null;
+    const sendFramesToCloud = framesAllowed && Boolean(cloudProvider);
 
-    // 2. Keyframes for video. Local captioning extracts only when it will
-    // caption. Cloud analysis extracts so the frames can be sent with the
-    // transcript. Failures are non-fatal.
-    if (
-      kind === 'video' &&
-      ((extractVideoKeyframes && shouldCaptionKeyframes) || sendFramesToCloud)
-    ) {
+    // 2. Keyframes for video. Extracted for local captioning or for the
+    // cloud frame call; never when the setting is off. Failures are
+    // non-fatal.
+    if (framesAllowed && (shouldCaptionKeyframes || sendFramesToCloud)) {
       try {
         keyframeDir = await createKeyframeWorkspace(filePath);
         keyframes = await extractKeyframesFn(filePath, keyframeDir, {

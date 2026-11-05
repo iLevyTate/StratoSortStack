@@ -22,7 +22,7 @@ function renderField(statusProviders, override = '') {
         settings: {
           providers: { local: { enabled: true } },
           routing: { default: 'local', perFolder: { 'folder-1': override } },
-          consent: { acknowledgedCloudAt: '2026-01-01T00:00:00.000Z' }
+          consent: { acknowledgedCloudAt: '2026-01-01T00:00:00.000Z', version: 2 }
         },
         status: { providers: statusProviders, routing: { default: 'local', perFolder: {} } },
         keyStatus: {},

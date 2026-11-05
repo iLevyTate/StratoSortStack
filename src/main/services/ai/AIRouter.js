@@ -2,7 +2,7 @@
 'use strict';
 const { EventEmitter } = require('node:events');
 const { AIProviderError } = require('./errors');
-const { CLOUD_PROVIDERS, hasCloudConsent } = require('./schemas');
+const { CLOUD_PROVIDERS, hasCloudConsent, hasCloudFrameConsent } = require('./schemas');
 
 class AIRouter extends EventEmitter {
   /** @param {{ providers: Record<string, any>, getSettings: (...args: any[]) => any, logger?: any }} deps */
@@ -134,6 +134,20 @@ class AIRouter extends EventEmitter {
       'NO_PROVIDER_READY',
       'No AI provider is ready. Configure a provider in Settings → AI.'
     );
+  }
+
+  /**
+   * True when the user's stored consent covers sending video frames to a
+   * cloud provider. Read fresh on every call, so accepting the current
+   * consent text applies to the next video.
+   * @returns {boolean}
+   */
+  hasFrameConsent() {
+    try {
+      return hasCloudFrameConsent(this._getSettings());
+    } catch {
+      return false;
+    }
   }
 
   _isAvailable(/** @type {any} */ provider, /** @type {any} */ settings, /** @type {any} */ name) {

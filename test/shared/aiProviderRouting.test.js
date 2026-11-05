@@ -3,6 +3,7 @@
 const {
   AI_ROUTED_OPERATIONS,
   AI_CLOUD_ROUTING_SCOPE_DETAIL,
+  AI_CLOUD_ROUTING_SCOPE_SHORT,
   resolveOperationProviderId,
   describeOperationRouting,
   isCloudRoutingActive
@@ -12,6 +13,28 @@ describe('aiProviderRouting', () => {
   test('scope detail mentions embeddings and images', () => {
     expect(AI_CLOUD_ROUTING_SCOPE_DETAIL).toMatch(/embeddings/i);
     expect(AI_CLOUD_ROUTING_SCOPE_DETAIL).toMatch(/image/i);
+  });
+
+  test('chat discloses that text read from images is sent', () => {
+    const chat = AI_ROUTED_OPERATIONS.find((op) => op.id === 'chat');
+    expect(chat.sends).toMatch(/including text read from images/);
+    expect(chat.sends).toMatch(/twelve in Deep mode/);
+    expect(AI_CLOUD_ROUTING_SCOPE_DETAIL).toMatch(/Chat sends .*including text read from images/);
+  });
+
+  test('scope copy says image pixels stay local and frames need "Describe video keyframes"', () => {
+    for (const text of [AI_CLOUD_ROUTING_SCOPE_DETAIL, AI_CLOUD_ROUTING_SCOPE_SHORT]) {
+      expect(text).toMatch(/pixels of still images stay/);
+      // "still images stay" alone read as covering their OCR text too.
+      expect(text).not.toMatch(/search and still images stay/);
+      expect(text).toMatch(
+        /up to four video frames when "Describe video keyframes" is on|when "Describe video keyframes" is on, up to four video frames/
+      );
+    }
+    const analyze = AI_ROUTED_OPERATIONS.find((op) => op.id === 'analyze');
+    expect(analyze.sends).toMatch(
+      /up to four frames of each video .*"Describe video keyframes" is on/
+    );
   });
 
   test('the routed operations are the three the router is asked to place', () => {

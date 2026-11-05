@@ -250,6 +250,29 @@ describe('AI provider IPC handlers', () => {
     expect(options.cancelId).toBe(1);
   });
 
+  test('ACKNOWLEDGE_CLOUD records the current consent version and the dialog names what is sent', async () => {
+    const { dialog } = require('electron');
+    // A user who accepted before consent versions existed.
+    settingsCache.ai = { consent: { acknowledgedCloudAt: '2024-01-01T00:00:00.000Z' } };
+    const before = await handlers['ai-provider:get-config']({}, {});
+    expect(before.status.consent.version).toBeNull();
+
+    dialog.showMessageBox.mockResolvedValueOnce({ response: 0 });
+    const accepted = await handlers['ai-provider:acknowledge-cloud']({}, {});
+    expect(accepted.success).toBe(true);
+    expect(settingsCache.ai.consent.version).toBe(2);
+    // The status the renderer merges into its consent state carries it too,
+    // so the renderer stops asking again after the user accepts.
+    expect(accepted.status.consent.version).toBe(2);
+
+    const options = dialog.showMessageBox.mock.calls.at(-1).at(-1);
+    expect(options.detail).toMatch(/up to four frames of each video with its transcript/);
+    expect(options.detail).toMatch(/Describe video keyframes/);
+    expect(options.detail).toMatch(/text read from images/);
+    expect(options.detail).toMatch(/pixels of still images stay on this computer/);
+    expect(options.detail).not.toMatch(/and image pixels stay/);
+  });
+
   test('ACKNOWLEDGE_CLOUD fails closed when no dialog can confirm it, and when the dialog throws', async () => {
     const { dialog } = require('electron');
     settingsCache.ai = undefined;

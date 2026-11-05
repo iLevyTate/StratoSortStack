@@ -26,14 +26,17 @@ const CLOUD_PROVIDERS = new Set(['anthropic', 'openaiCompatible']);
  * tool when scoped to this folder. It does NOT fire for **initial drag-drop
  * classification** because the destination folder is the *output* of analysis,
  * not the input — at first-classification time, the system doesn't yet know
- * which folder a file belongs to. **Image analysis** and **embeddings**
+ * which folder a file belongs to. **Still-image analysis** and **embeddings**
  * always stay on-device regardless of this override or the Settings default.
+ * Video analysis does follow it: with "Describe video keyframes" on and the
+ * current consent accepted, up to four frames go to the chosen cloud provider.
  *
  * Disabled providers stay visible but unselectable — silently allowing a user
  * to pick a provider that isn't configured would create the impression that
  * cloud routing is active when it would actually fall through to local.
  *
- * Cloud overrides require global cloud consent (acknowledgedCloudAt). If the
+ * Cloud overrides require global cloud consent (acknowledgedCloudAt, at the
+ * current consent version). If the
  * user hasn't accepted yet, picking a cloud provider opens the consent modal;
  * accepting then retries the routing change. Without this, the dropdown would
  * appear to accept the change while the main process silently rejected it.

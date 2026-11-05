@@ -25,17 +25,24 @@ const CLOUD_MEDIA_FALLBACK_CODES = new Set([
 ]);
 
 /**
- * The analyze provider when it is a cloud provider. Local, and a router that
- * is not up yet, return null so media keeps the existing text route.
+ * The cloud provider that may receive this video's frames, or null. Null when
+ * Analysis is local, when the router is not up yet, or when the user's cloud
+ * consent predates video frames (they accepted a text-only consent and have
+ * not seen the current one). Null keeps media on the existing text route.
  * Lazy-required: this module loads in unit tests that have no IPC tree.
  * @param {string | null | undefined} smartFolderId
  * @returns {Promise<any | null>}
  */
-async function resolveCloudAnalyzeProvider(smartFolderId) {
+async function resolveCloudFrameProvider(smartFolderId) {
   try {
     const { getActiveAiRouter } = require('../ipc/aiProvider');
     const router = typeof getActiveAiRouter === 'function' ? getActiveAiRouter() : null;
     if (!router || typeof router.choose !== 'function') return null;
+    // Frames are sent only under a consent that names them. Checked here, in
+    // the main process, so no renderer state can widen what is sent.
+    if (typeof router.hasFrameConsent !== 'function' || router.hasFrameConsent() !== true) {
+      return null;
+    }
     const provider = router.choose({
       operation: 'analyze',
       smartFolderId: smartFolderId || null,
@@ -156,5 +163,5 @@ async function analyzeVideoWithCloud({
 module.exports = {
   analyzeVideoWithCloud,
   buildVideoPrompt,
-  resolveCloudAnalyzeProvider
+  resolveCloudFrameProvider
 };

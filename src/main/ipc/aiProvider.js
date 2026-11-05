@@ -12,6 +12,7 @@ const { container, ServiceIds } = require('../services/ServiceContainer');
 const { createLogger } = require('../../shared/logger');
 const {
   CLOUD_PROVIDERS,
+  CLOUD_CONSENT_VERSION,
   hasCloudConsent,
   settingsRequireCloudConsent
 } = require('../services/ai/schemas');
@@ -112,6 +113,13 @@ function _fail(err) {
 }
 
 /**
+ * What the native consent dialog says is sent. Kept in step with the
+ * renderer's CloudAIConsentModal; accepting records CLOUD_CONSENT_VERSION.
+ */
+const CLOUD_CONSENT_DIALOG_DETAIL =
+  'Document analysis, chat and organization suggestions can each be sent to that provider. Chat sends the matching passages, including text read from images. When "Describe video keyframes" is on, video analysis also sends up to four frames of each video with its transcript. Embeddings, search and the pixels of still images stay on this computer. You can switch any of them back to local in Settings → AI Provider.';
+
+/**
  * Native confirmation for cloud consent; true when the user confirms. The
  * renderer's consent modal explains the trust model, but the record itself is
  * written only after this dialog, so a renderer alone cannot turn cloud
@@ -139,8 +147,7 @@ async function _confirmCloudConsentInMain(getMainWindow, logger) {
     noLink: true,
     title: 'Enable cloud AI?',
     message: 'Send file text to the cloud AI provider you configure?',
-    detail:
-      'Document analysis, chat and organization suggestions can each be sent to that provider. Embeddings, search and image pixels stay on this computer. You can switch any of them back to local in Settings → AI Provider.'
+    detail: CLOUD_CONSENT_DIALOG_DETAIL
   };
   try {
     const win = typeof getMainWindow === 'function' ? getMainWindow() : null;
@@ -412,7 +419,10 @@ function registerAiProviderIpc(servicesOrParams) {
     return {
       providers: router.listProviders(),
       routing: settings.routing,
-      consent: { acknowledgedCloudAt: settings.consent?.acknowledgedCloudAt || null }
+      consent: {
+        acknowledgedCloudAt: settings.consent?.acknowledgedCloudAt || null,
+        version: settings.consent?.version ?? null
+      }
     };
   };
 
@@ -733,7 +743,13 @@ function registerAiProviderIpc(servicesOrParams) {
           const cur = getAiSettings();
           const next = {
             ...cur,
-            consent: { ...cur.consent, acknowledgedCloudAt: new Date().toISOString() }
+            // version records which consent text was accepted, so a later
+            // text that covers more (video frames) asks again.
+            consent: {
+              ...cur.consent,
+              acknowledgedCloudAt: new Date().toISOString(),
+              version: CLOUD_CONSENT_VERSION
+            }
           };
           await setAiSettings(next);
           const status = await _notifyRouterStatusChanged();

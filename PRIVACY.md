@@ -102,9 +102,12 @@ StratoSort is designed to operate without network access after first run.
   analysis, every chat question (which sends the matching passages, summaries and file paths,
   including text read from images by OCR) and organization suggestions each follow the default
   provider unless you route that one operation elsewhere in Settings → AI Provider; per-folder
-  overrides apply to analysis. Embeddings — the data structure that powers search — and image pixels
-  always stay local regardless of provider configuration. See `docs/AI_PROVIDERS.md` for the full
-  configuration surface.
+  overrides apply to analysis. Video analysis sends up to four frames of each video with its
+  transcript, but only when "Describe video keyframes" is on and you have accepted the consent text
+  that mentions video frames; with that setting off, no frames are extracted or sent. Embeddings —
+  the data structure that powers search — and the pixels of still images always stay local
+  regardless of provider configuration (text read from images can still be sent by chat, as above).
+  See `docs/AI_PROVIDERS.md` for the full configuration surface.
 - **Optional MCP server.** If you enable the Model Context Protocol server in Settings, the
   application listens on `127.0.0.1` (loopback only) for local MCP clients on your machine.
   Connections from the public internet are not accepted. The server is bearer-token authenticated
