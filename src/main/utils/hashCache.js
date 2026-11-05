@@ -9,7 +9,12 @@ const { normalizePathForIndex } = require('../../shared/pathSanitization');
 const logger = createLogger('HashCache');
 
 const DEFAULT_FILE_NAME = 'hash-cache.json';
-const SAVE_DEBOUNCE_MS = 500;
+// Every save rewrites the whole cache file (up to MAX_ENTRIES rows), so a
+// hashing pass must not save twice a second. Save once hashing has been quiet
+// for SAVE_DEBOUNCE_MS, and at least every SAVE_MAX_WAIT_MS while it keeps
+// going. Losing the tail on a crash only costs re-hashing those files.
+const SAVE_DEBOUNCE_MS = 5000;
+const SAVE_MAX_WAIT_MS = 30000;
 const MAX_ENTRIES = 50000;
 
 // Cache keyed by absolute normalized path; value is { size, mtimeMs, sha256 }.
@@ -28,6 +33,8 @@ class HashCache {
     this._dirty = false;
     /** @type {NodeJS.Timeout | null} */
     this._saveTimer = null;
+    // When the oldest unsaved change was made (0 = nothing unsaved).
+    this._firstUnsavedAt = 0;
   }
 
   /** @param {string} filePath */
@@ -66,26 +73,42 @@ class HashCache {
   }
 
   _scheduleSave() {
-    if (this._saveTimer) return;
-    this._saveTimer = setTimeout(() => {
-      this._saveTimer = null;
-      this._save().catch((/** @type {any} */ err) =>
-        logger.warn('[HashCache] save failed', { error: err?.message })
-      );
-    }, SAVE_DEBOUNCE_MS);
+    const now = Date.now();
+    if (!this._firstUnsavedAt) this._firstUnsavedAt = now;
+    if (this._saveTimer) clearTimeout(this._saveTimer);
+    const delay = Math.min(SAVE_DEBOUNCE_MS, this._firstUnsavedAt + SAVE_MAX_WAIT_MS - now);
+    this._saveTimer = setTimeout(
+      () => {
+        this._saveTimer = null;
+        this._save().catch((/** @type {any} */ err) =>
+          logger.warn('[HashCache] save failed', { error: err?.message })
+        );
+      },
+      Math.max(0, delay)
+    );
+    // A pending cache write must not hold the process open; quit flushes it.
+    if (typeof this._saveTimer?.unref === 'function') this._saveTimer.unref();
   }
 
   async _save() {
     if (!this._dirty) return;
     this._dirty = false;
+    this._firstUnsavedAt = 0;
     const payload = {
       version: 1,
       entries: Object.fromEntries(this._entries)
     };
     const tmp = `${this._filePath}.tmp`;
-    await fs.mkdir(path.dirname(this._filePath), { recursive: true });
-    await fs.writeFile(tmp, JSON.stringify(payload), 'utf8');
-    await fs.rename(tmp, this._filePath);
+    try {
+      await fs.mkdir(path.dirname(this._filePath), { recursive: true });
+      await fs.writeFile(tmp, JSON.stringify(payload), 'utf8');
+      await fs.rename(tmp, this._filePath);
+    } catch (err) {
+      // Keep the changes marked unsaved so the next change or flush retries.
+      this._dirty = true;
+      if (!this._firstUnsavedAt) this._firstUnsavedAt = Date.now();
+      throw err;
+    }
   }
 
   /**
@@ -108,7 +131,18 @@ class HashCache {
   async set(filePath, { size, mtimeMs, sha256 }) {
     await this._load();
     const k = this._key(filePath);
-    if (this._entries.size >= MAX_ENTRIES && !this._entries.has(k)) {
+    const existing = this._entries.get(k);
+    // Re-hashing an unchanged file sets the same value again; that is not a
+    // change worth rewriting the whole cache file for.
+    if (
+      existing &&
+      existing.size === size &&
+      existing.mtimeMs === mtimeMs &&
+      existing.sha256 === sha256
+    ) {
+      return;
+    }
+    if (this._entries.size >= MAX_ENTRIES && !existing) {
       // Evict oldest-inserted entry (Map preserves insertion order).
       const oldestKey = this._entries.keys().next().value;
       if (oldestKey) this._entries.delete(oldestKey);
@@ -155,7 +189,17 @@ function getHashCache() {
   return _instance;
 }
 
+/**
+ * Write the shared cache's pending changes, if it was ever used. Called on
+ * quit: the save is debounced by seconds, so without this the last hashes of
+ * a session were simply dropped. Never creates the singleton.
+ */
+async function flushHashCache() {
+  if (_instance) await _instance.flush();
+}
+
 module.exports = {
   HashCache,
-  getHashCache
+  getHashCache,
+  flushHashCache
 };

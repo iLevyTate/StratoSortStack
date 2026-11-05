@@ -11,6 +11,13 @@ import {
 
 const SAVE_DEBOUNCE_MS = DEFAULT_SETTINGS.saveDebounceMs || 1000;
 const MAX_DEBOUNCE_WAIT_MS = 5000;
+// While a batch analysis runs, every finished file replaces analysis.results
+// (and fileStates), and each save re-stringifies up to 200 results. On the
+// normal 1 s / 5 s cadence that rewrote the whole blob every few seconds for
+// the entire run. During a run that churn is saved at most this often (crash
+// safety), and once more as soon as the run ends. Other changes keep the
+// normal cadence.
+const ANALYSIS_RUN_SAVE_INTERVAL_MS = 30000;
 const MAX_LOCALSTORAGE_BYTES = 4 * 1024 * 1024;
 /** @type {NodeJS.Timeout | null} */
 let saveTimeout = null;
@@ -356,6 +363,45 @@ function buildStateSnapshot(freshState, options = {}) {
   return stateToSave;
 }
 
+/**
+ * Compare the live state with what was last saved, split by kind of change.
+ * `analysisChurn` covers the slices a running analysis rewrites per file;
+ * `other` is everything else the snapshot persists.
+ * @param {any} state
+ * @returns {{ other: boolean, analysisChurn: boolean }}
+ */
+function detectUnsavedChanges(state) {
+  const other =
+    state.ui.graphTourDismissed !== lastSavedGraphTourDismissed ||
+    state.ui.graphInsightsSection !== lastSavedGraphInsightsSection ||
+    state.ui.graphLegendHintDismissed !== lastSavedGraphLegendHintDismissed ||
+    state.ui.graphInsightsDockCollapsed !== lastSavedGraphInsightsDockCollapsed ||
+    state.ui.viewMode !== lastSavedViewMode ||
+    state.ui.selectedTheme !== lastSavedSelectedTheme ||
+    state.ui.settings !== lastSavedSettingsRef ||
+    state.ui.currentPhase !== lastSavedPhase ||
+    state.ui.sidebarOpen !== lastSavedSidebarOpen ||
+    state.files.organizedFiles !== lastSavedOrganizedFilesRef ||
+    state.files.organizedPathIndex !== lastSavedOrganizedPathIndexRef ||
+    state.files.smartFolders !== lastSavedSmartFoldersRef ||
+    state.files.namingConvention !== lastSavedNamingConventionRef;
+  const analysisChurn =
+    state.analysis.results !== lastSavedResultsRef ||
+    state.files.fileStates !== lastSavedFileStatesRef ||
+    state.files.selectedFiles !== lastSavedSelectedFilesRef;
+  return { other, analysisChurn };
+}
+
+/**
+ * True when the only unsaved changes are the per-file churn of a running
+ * analysis, which is saved on the slow ANALYSIS_RUN_SAVE_INTERVAL_MS cadence.
+ * @param {any} state
+ * @param {{ other: boolean, analysisChurn: boolean }} changes
+ */
+function isAnalysisRunChurnOnly(state, changes) {
+  return Boolean(state.analysis?.isAnalyzing) && changes.analysisChurn && !changes.other;
+}
+
 const persistenceMiddleware = (/** @type {any} */ store) => {
   // Always update the module-scoped current-store ref so the unload handler
   // flushes the live store, not the first one we ever saw. (The handler is
@@ -422,40 +468,10 @@ const persistenceMiddleware = (/** @type {any} */ store) => {
     // (e.g. 'analysis/setLoadingState') would silently be excluded from
     // persistence. Compare the fully-qualified type instead.
     if (action.type !== 'ui/setLoading') {
-      const { currentPhase, sidebarOpen } = state.ui;
+      const changes = detectUnsavedChanges(state);
 
-      const graphTourChanged = state.ui.graphTourDismissed !== lastSavedGraphTourDismissed;
-      const graphInsightsChanged = state.ui.graphInsightsSection !== lastSavedGraphInsightsSection;
-      const graphLegendHintChanged =
-        state.ui.graphLegendHintDismissed !== lastSavedGraphLegendHintDismissed;
-      const graphInsightsDockChanged =
-        state.ui.graphInsightsDockCollapsed !== lastSavedGraphInsightsDockCollapsed;
-      const viewModeChanged = state.ui.viewMode !== lastSavedViewMode;
-      const selectedThemeChanged = state.ui.selectedTheme !== lastSavedSelectedTheme;
-      const hasRelevantChange =
-        graphTourChanged ||
-        graphInsightsChanged ||
-        graphLegendHintChanged ||
-        graphInsightsDockChanged ||
-        viewModeChanged ||
-        selectedThemeChanged ||
-        state.ui.settings !== lastSavedSettingsRef ||
-        currentPhase !== lastSavedPhase ||
-        sidebarOpen !== lastSavedSidebarOpen ||
-        state.files.selectedFiles !== lastSavedSelectedFilesRef ||
-        state.files.organizedFiles !== lastSavedOrganizedFilesRef ||
-        state.files.organizedPathIndex !== lastSavedOrganizedPathIndexRef ||
-        state.files.smartFolders !== lastSavedSmartFoldersRef ||
-        state.files.fileStates !== lastSavedFileStatesRef ||
-        state.files.namingConvention !== lastSavedNamingConventionRef ||
-        state.analysis.results !== lastSavedResultsRef;
-
-      if (!hasRelevantChange) {
+      if (!changes.other && !changes.analysisChurn) {
         return result;
-      }
-
-      if (saveTimeout) {
-        clearTimeout(saveTimeout);
       }
 
       const now = Date.now();
@@ -478,6 +494,9 @@ const persistenceMiddleware = (/** @type {any} */ store) => {
           : SAVE_DEBOUNCE_MS;
 
       const runSave = () => {
+        // The timer that called this has fired; forget its id so "a save is
+        // pending" checks (the analysis-run lane, cleanupPersistence) stay true.
+        saveTimeout = null;
         // Double-check: another timeout may have set this flag if clearTimeout raced
         if (isSaving) return;
         isSaving = true;
@@ -591,35 +610,44 @@ const persistenceMiddleware = (/** @type {any} */ store) => {
           // no-retry behavior for failed saves (no hot loop).
           if (saveSucceeded) {
             const liveState = store.getState();
-            const persistedSliceChanged =
-              liveState.ui.currentPhase !== lastSavedPhase ||
-              liveState.ui.sidebarOpen !== lastSavedSidebarOpen ||
-              liveState.ui.graphTourDismissed !== lastSavedGraphTourDismissed ||
-              liveState.ui.graphInsightsSection !== lastSavedGraphInsightsSection ||
-              liveState.ui.graphLegendHintDismissed !== lastSavedGraphLegendHintDismissed ||
-              liveState.ui.graphInsightsDockCollapsed !== lastSavedGraphInsightsDockCollapsed ||
-              liveState.ui.viewMode !== lastSavedViewMode ||
-              liveState.ui.selectedTheme !== lastSavedSelectedTheme ||
-              liveState.ui.settings !== lastSavedSettingsRef ||
-              liveState.files.selectedFiles !== lastSavedSelectedFilesRef ||
-              liveState.files.organizedFiles !== lastSavedOrganizedFilesRef ||
-              liveState.files.organizedPathIndex !== lastSavedOrganizedPathIndexRef ||
-              liveState.files.smartFolders !== lastSavedSmartFoldersRef ||
-              liveState.files.fileStates !== lastSavedFileStatesRef ||
-              liveState.files.namingConvention !== lastSavedNamingConventionRef ||
-              liveState.analysis.results !== lastSavedResultsRef;
-            if (persistedSliceChanged) {
+            const liveChanges = detectUnsavedChanges(liveState);
+            if (liveChanges.other || liveChanges.analysisChurn) {
               // Restore the invariant `saveTimeout != null ⇒
               // firstPendingRequestTime > 0` that cleanupPersistence relies
               // on for its forced unload flush — otherwise a window close
               // while this follow-up is pending silently drops exactly the
               // changes the follow-up exists to protect.
               firstPendingRequestTime = Date.now();
-              saveTimeout = setTimeout(runSave, effectiveDebounce);
+              saveTimeout = setTimeout(
+                runSave,
+                isAnalysisRunChurnOnly(liveState, liveChanges)
+                  ? ANALYSIS_RUN_SAVE_INTERVAL_MS
+                  : effectiveDebounce
+              );
             }
           }
         }
       };
+
+      if (isAnalysisRunChurnOnly(state, changes)) {
+        // Mid-run churn: leave any pending save alone (a pending one is due
+        // no later than this would be) and otherwise save at most once per
+        // ANALYSIS_RUN_SAVE_INTERVAL_MS. Not debounced, so a steady stream of
+        // finished files cannot push the save back forever. The action that
+        // ends the run sees the unsaved results with isAnalyzing false and
+        // takes the normal path below, which saves within the 5 s ceiling.
+        if (!saveTimeout) {
+          saveTimeout = setTimeout(
+            runSave,
+            Math.max(0, firstPendingRequestTime + ANALYSIS_RUN_SAVE_INTERVAL_MS - now)
+          );
+        }
+        return result;
+      }
+
+      if (saveTimeout) {
+        clearTimeout(saveTimeout);
+      }
 
       if (shouldForceImmediate) {
         // The 5s max-wait ceiling has been exceeded. Run the save synchronously

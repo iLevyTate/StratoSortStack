@@ -956,4 +956,126 @@ describe('persistenceMiddleware', () => {
       );
     });
   });
+
+  // Each save re-stringifies up to 200 results. A running batch replaces
+  // analysis.results (and fileStates) per finished file, which used to rewrite
+  // the whole blob every few seconds for the whole run.
+  describe('during a batch analysis', () => {
+    const stateWith = ({ results, isAnalyzing, currentPhase = 'discover' }) => ({
+      ui: { currentPhase, sidebarOpen: true, showSettings: false },
+      files: {
+        selectedFiles: [],
+        organizedFiles: [],
+        smartFolders: [],
+        fileStates: {},
+        namingConvention: 'default'
+      },
+      analysis: {
+        results,
+        isAnalyzing,
+        analysisProgress: { current: results.length, total: 20 },
+        currentAnalysisFile: ''
+      }
+    });
+    // Shared refs so only the fields a test changes look changed.
+    let baseState;
+
+    const savedResultCounts = () =>
+      mockLocalStorage.setItem.mock.calls.map(
+        ([, json]) => JSON.parse(json).analysis.results.length
+      );
+
+    test('per-file results are saved at most every 30 s while the run lasts, then once at the end', () => {
+      const middleware = persistenceMiddleware(mockStore);
+      const nextHandler = middleware(mockNext);
+      baseState = stateWith({ results: [], isAnalyzing: true });
+      mockStore.getState.mockReturnValue(baseState);
+      nextHandler({ type: 'analysis/startAnalysis' });
+      jest.advanceTimersByTime(30000);
+      mockLocalStorage.setItem.mockClear();
+
+      // One file finishes every 2 s for 40 s.
+      let results = [];
+      for (let i = 0; i < 20; i += 1) {
+        results = [...results, { path: `/f${i}` }];
+        mockStore.getState.mockReturnValue({
+          ...baseState,
+          analysis: { ...baseState.analysis, results }
+        });
+        nextHandler({ type: 'analysis/mergeAnalysisResults' });
+        jest.advanceTimersByTime(2000);
+      }
+      // The old 1 s debounce / 5 s ceiling wrote ~8 times over these 40 s.
+      expect(mockLocalStorage.setItem.mock.calls.length).toBeLessThanOrEqual(2);
+      mockLocalStorage.setItem.mockClear();
+
+      // The run ends: the final results are saved promptly.
+      mockStore.getState.mockReturnValue({
+        ...baseState,
+        analysis: { ...baseState.analysis, results, isAnalyzing: false }
+      });
+      nextHandler({ type: 'analysis/stopAnalysis' });
+      jest.advanceTimersByTime(5000);
+      expect(savedResultCounts()).toEqual([20]);
+    });
+
+    test('mid-run churn is still saved within 30 s for crash safety', () => {
+      const middleware = persistenceMiddleware(mockStore);
+      const nextHandler = middleware(mockNext);
+      baseState = stateWith({ results: [], isAnalyzing: true });
+      mockStore.getState.mockReturnValue(baseState);
+      nextHandler({ type: 'analysis/startAnalysis' });
+      jest.advanceTimersByTime(30000);
+      mockLocalStorage.setItem.mockClear();
+
+      mockStore.getState.mockReturnValue({
+        ...baseState,
+        analysis: { ...baseState.analysis, results: [{ path: '/one' }] }
+      });
+      nextHandler({ type: 'analysis/mergeAnalysisResults' });
+
+      jest.advanceTimersByTime(5000);
+      expect(mockLocalStorage.setItem).not.toHaveBeenCalled();
+      jest.advanceTimersByTime(25000);
+      expect(savedResultCounts()).toEqual([1]);
+    });
+
+    test('a non-analysis change during a run keeps the normal cadence', () => {
+      const middleware = persistenceMiddleware(mockStore);
+      const nextHandler = middleware(mockNext);
+      baseState = stateWith({ results: [], isAnalyzing: true });
+      mockStore.getState.mockReturnValue(baseState);
+      nextHandler({ type: 'analysis/startAnalysis' });
+      jest.advanceTimersByTime(30000);
+      mockLocalStorage.setItem.mockClear();
+
+      mockStore.getState.mockReturnValue({
+        ...baseState,
+        ui: { ...baseState.ui, currentPhase: 'organize' }
+      });
+      nextHandler({ type: 'ui/setPhase' });
+      jest.advanceTimersByTime(1000);
+
+      expect(mockLocalStorage.setItem).toHaveBeenCalledTimes(1);
+    });
+
+    test('the unload flush still writes churn held back during a run', () => {
+      const middleware = persistenceMiddleware(mockStore);
+      const nextHandler = middleware(mockNext);
+      baseState = stateWith({ results: [], isAnalyzing: true });
+      mockStore.getState.mockReturnValue(baseState);
+      nextHandler({ type: 'analysis/startAnalysis' });
+      jest.advanceTimersByTime(30000);
+      mockLocalStorage.setItem.mockClear();
+
+      mockStore.getState.mockReturnValue({
+        ...baseState,
+        analysis: { ...baseState.analysis, results: [{ path: '/a' }, { path: '/b' }] }
+      });
+      nextHandler({ type: 'analysis/mergeAnalysisResults' });
+      cleanupPersistence(mockStore);
+
+      expect(savedResultCounts()).toEqual([2]);
+    });
+  });
 });

@@ -116,6 +116,28 @@ class AnalysisHistoryServiceCore {
     this.WRITE_BUFFER_MS = 100;
     this.MAX_PENDING_WRITES = LIMITS.MAX_QUEUE_SIZE;
 
+    // Coalesced disk save. Every save rewrites the WHOLE history and index
+    // (one SQLite row, or one JSON file), so saving after each analyzed file
+    // rewrote megabytes per file and grew the WAL without bound. Analysis
+    // runs at seconds per file, so a short quiet window alone never merges
+    // anything; the minimum spacing is what bounds writes during a batch.
+    // A change is written once things have been quiet for 2 s, at most one
+    // save per 10 s, and never more than ~10 s after it was made (the
+    // worst-case loss on a crash). Shutdown and the explicit
+    // flushPendingSaves() write immediately.
+    this.HISTORY_SAVE_QUIET_MS = 2000;
+    this.HISTORY_SAVE_MAX_WAIT_MS = 10000;
+    this.HISTORY_SAVE_MIN_INTERVAL_MS = 10000;
+    /** @type {ReturnType<typeof setTimeout>|null} */
+    this._historySaveTimer = null;
+    // Change counters: memory is ahead of disk while _historyChangeSeq is
+    // greater than _historySavedSeq.
+    this._historyChangeSeq = 0;
+    this._historySavedSeq = 0;
+    this._historyFirstUnsavedAt = 0;
+    this._historyLastChangeAt = 0;
+    this._historyLastSaveAt = 0;
+
     // Circuit Breaker for file system operations
     this.circuitBreaker = new CircuitBreaker('AnalysisHistoryService', {
       failureThreshold: 8,
@@ -371,6 +393,202 @@ class AnalysisHistoryServiceCore {
     await this.circuitBreaker.execute(() => saveIndexFile(this.indexPath, this.analysisIndex));
   }
 
+  /** @returns {boolean} Whether memory holds changes that are not on disk yet. */
+  hasUnsavedChanges() {
+    return this._historyChangeSeq > this._historySavedSeq;
+  }
+
+  /**
+   * Record that history/index changed in memory and schedule the coalesced
+   * save. Callers must hold the write lock (every mutation does).
+   */
+  _markHistoryDirty() {
+    const now = Date.now();
+    if (!this.hasUnsavedChanges()) this._historyFirstUnsavedAt = now;
+    this._historyChangeSeq += 1;
+    this._historyLastChangeAt = now;
+    this._scheduleHistorySave();
+  }
+
+  _scheduleHistorySave() {
+    if (this._historySaveTimer) clearTimeout(this._historySaveTimer);
+    this._historySaveTimer = null;
+    if (!this.hasUnsavedChanges() || this._isShutdown) return;
+    // Save once things go quiet, but no later than the max wait since the
+    // oldest unsaved change; then hold the minimum spacing since the last
+    // save so a busy batch (or a failing disk) writes every ~10 s at most.
+    const quietDue = this._historyLastChangeAt + this.HISTORY_SAVE_QUIET_MS;
+    const maxWaitDue = this._historyFirstUnsavedAt + this.HISTORY_SAVE_MAX_WAIT_MS;
+    const spacingDue = this._historyLastSaveAt + this.HISTORY_SAVE_MIN_INTERVAL_MS;
+    const due = Math.max(Math.min(quietDue, maxWaitDue), spacingDue);
+    const delay = Math.max(0, due - Date.now());
+    this._historySaveTimer = setTimeout(() => {
+      this._historySaveTimer = null;
+      this._bgWork.track(
+        this._persistUnsavedHistory('timer').catch((err) => {
+          logger.error('[AnalysisHistoryService] Coalesced save failed:', err?.message);
+        })
+      );
+    }, delay);
+    // A pending save must not keep the process alive; shutdown flushes it.
+    if (typeof this._historySaveTimer?.unref === 'function') this._historySaveTimer.unref();
+  }
+
+  /**
+   * Write history + index now and update the unsaved-change bookkeeping.
+   * Callers must hold the write lock so the snapshot written is the one the
+   * change counter describes.
+   * @returns {Promise<PromiseSettledResult<void>[]>}
+   */
+  async _saveHistoryAndIndexNow() {
+    const seq = this._historyChangeSeq;
+    this._historyLastSaveAt = Date.now();
+    const results = await Promise.allSettled([this.saveHistory(), this.saveIndex()]);
+    if (results.every((r) => r.status === 'fulfilled')) {
+      this._historySavedSeq = Math.max(this._historySavedSeq, seq);
+      if (!this.hasUnsavedChanges()) {
+        this._historyFirstUnsavedAt = 0;
+        if (this._historySaveTimer) clearTimeout(this._historySaveTimer);
+        this._historySaveTimer = null;
+      }
+    }
+    return results;
+  }
+
+  /**
+   * Write any unsaved history now. Used by the coalescing timer, shutdown and
+   * flushPendingSaves(). On failure the changes stay in memory and a retry is
+   * scheduled; nothing is rolled back, because the in-memory state is the
+   * correct one and the disk is merely behind.
+   * @param {string} reason
+   * @returns {Promise<boolean>} true when disk is up to date afterwards
+   */
+  async _persistUnsavedHistory(reason) {
+    if (this._historySaveTimer) clearTimeout(this._historySaveTimer);
+    this._historySaveTimer = null;
+    if (!this.hasUnsavedChanges()) return true;
+    // A forced reload is pending (or init failed): memory is not the state to
+    // write. Read-only mode means the on-disk data must be preserved as-is.
+    if (!this.initialized || this._readOnly) return false;
+
+    let releaseLock;
+    try {
+      releaseLock = await this._acquireWriteLock(`persistUnsavedHistory:${reason}`);
+    } catch (error) {
+      logger.warn('[AnalysisHistoryService] Coalesced save could not get the write lock', {
+        reason,
+        error: error?.message
+      });
+      this._scheduleHistorySave();
+      return false;
+    }
+    try {
+      if (!this.hasUnsavedChanges()) return true;
+      if (!this.initialized || this._readOnly) return false;
+      const results = await this._saveHistoryAndIndexNow();
+      const failures = results.filter((r) => r.status === 'rejected');
+      if (failures.length > 0) {
+        logger.error('[AnalysisHistoryService] Saving analysis history failed; will retry', {
+          reason,
+          unsavedChanges: this._historyChangeSeq - this._historySavedSeq,
+          errors: failures.map((r) => /** @type {any} */ (r).reason?.message).join('; ')
+        });
+        // A full disk used to show up on the analysis result; with saves
+        // coalesced it would only be logged. Raise the same banner the vector
+        // store raises, so the user sees it and background analysis holds.
+        const diskFull = failures.some((r) =>
+          ['ENOSPC', 'EDQUOT'].includes(/** @type {any} */ (r).reason?.code)
+        );
+        if (diskFull) this._raiseStorageFull();
+        this._scheduleHistorySave();
+        return false;
+      }
+      this._clearStorageFull();
+      return true;
+    } finally {
+      if (typeof releaseLock === 'function') releaseLock();
+    }
+  }
+
+  /** @private */
+  _raiseStorageFull() {
+    try {
+      const { getInstance, STORAGE_FULL_CODE } = require('../DegradedStateTracker');
+      getInstance().raise({
+        code: STORAGE_FULL_CODE,
+        subsystem: 'storage',
+        severity: 'error',
+        message:
+          'Your disk is full, so StratoSort cannot save its analysis history. New files are not analyzed until there is free space; it will resume on its own.',
+        detail: { source: 'analysis-history' }
+      });
+      this._storageFullRaised = true;
+    } catch {
+      // Tracker unavailable: the failure is still logged above.
+    }
+  }
+
+  /** @private */
+  _clearStorageFull() {
+    if (!this._storageFullRaised) return;
+    this._storageFullRaised = false;
+    try {
+      const { getInstance, STORAGE_FULL_CODE } = require('../DegradedStateTracker');
+      getInstance().clear(STORAGE_FULL_CODE);
+    } catch {
+      // Non-fatal
+    }
+  }
+
+  /**
+   * Write any changes still waiting for the coalesced save. Resolves true when
+   * the disk is up to date; false when the write failed (it is retried).
+   * @returns {Promise<boolean>}
+   */
+  async flushPendingSaves() {
+    // Buffered recordAnalysis calls are not in memory yet; land them first.
+    if (this._pendingWrites.length > 0) {
+      if (this._writeBufferTimer) clearTimeout(this._writeBufferTimer);
+      this._writeBufferTimer = null;
+      await this._flushWrites();
+    }
+    return this._persistUnsavedHistory('flush');
+  }
+
+  /**
+   * Force the next operation to reload history from disk, discarding memory.
+   * Changes waiting for the coalesced save are lost with it, so say so: this
+   * only happens after a save just failed, i.e. the disk is already refusing.
+   * @param {string} operation
+   */
+  _forceReloadFromDisk(operation) {
+    const unsaved = this._historyChangeSeq - this._historySavedSeq;
+    if (unsaved > 0) {
+      logger.warn('[AnalysisHistoryService] Reloading from disk drops unsaved history changes', {
+        operation,
+        unsavedChanges: unsaved
+      });
+    }
+    if (this._historySaveTimer) clearTimeout(this._historySaveTimer);
+    this._historySaveTimer = null;
+    this._historySavedSeq = this._historyChangeSeq;
+    this._historyFirstUnsavedAt = 0;
+    this.initialized = false;
+  }
+
+  /**
+   * Queue an analysis result for the history.
+   *
+   * Resolves with the new entry id once the entry is in memory (searchable,
+   * counted, indexed) — NOT once it is on disk. The disk write is coalesced
+   * (see HISTORY_SAVE_* above) and a failed write is logged and retried
+   * rather than rejecting here. The only caller (analysisUtils
+   * recordAnalysisResult) uses a rejection solely to log and report
+   * `persisted: false`, and no caller rolls anything back on it, so tying
+   * every analyzed file to a full-history disk write bought nothing but
+   * write volume. Rejections that remain: shutting down, read-only, buffer
+   * full, write-lock timeout, init failure, and a malformed entry.
+   */
   async recordAnalysis(/** @type {any} */ fileInfo, /** @type {any} */ analysisResults) {
     if (this._isShutdown) {
       const err = /** @type {Error & { code?: string }} */ (
@@ -558,16 +776,7 @@ class AnalysisHistoryServiceCore {
       // entry id is also unique.
       const batchTimestamp = new Date().toISOString();
       let hasChanges = false;
-      const _originalHistorySnapshot = {
-        totalAnalyzed: this.analysisHistory.totalAnalyzed,
-        totalSize: this.analysisHistory.totalSize,
-        totalEntries: this.analysisHistory.metadata.totalEntries,
-        updatedAt: this.analysisHistory.updatedAt
-      };
-      const _originalIndexUpdatedAt = this.analysisIndex.updatedAt;
       const addedEntries = [];
-      /** @type {any[]} Prior rows replaced by a re-analysis of the same path (F-208). */
-      const replacedEntries = [];
       const pendingEntryResolutions = [];
 
       for (const { fileInfo, analysisResults, resolve, reject } of batch) {
@@ -686,8 +895,7 @@ class AnalysisHistoryServiceCore {
 
           // One row per path (F-208 / K-09): a re-analysis REPLACES the prior
           // entry for the same path instead of adding a fresh UUID row and only
-          // re-pointing the index. Usage history carries over; the replaced
-          // row is kept aside so a failed persist can put it back.
+          // re-pointing the index. Usage history carries over.
           const priorEntry = /** @type {any} */ (
             getAnalysisByPathHelper(this.analysisHistory, this.analysisIndex, fileInfo.path)
           );
@@ -718,7 +926,6 @@ class AnalysisHistoryServiceCore {
                 error: /** @type {any} */ (dedupeErr)?.message
               });
             }
-            replacedEntries.push(priorEntry);
           }
 
           // Store the entry
@@ -742,58 +949,10 @@ class AnalysisHistoryServiceCore {
       if (hasChanges) {
         this.analysisHistory.updatedAt = batchTimestamp;
 
-        // Save to disk
-        const saveResults = await Promise.allSettled([this.saveHistory(), this.saveIndex()]);
-        const saveFailures = saveResults.filter((result) => result.status === 'rejected');
-        if (saveFailures.length > 0) {
-          saveFailures.forEach((result, index) => {
-            logger.warn(
-              `[ANALYSIS-HISTORY] Save operation ${index} failed:`,
-              result.reason?.message
-            );
-          });
-
-          logger.error(
-            '[AnalysisHistoryService] Persistence failed, rolling back in-memory changes and forcing re-initialization'
-          );
-
-          // Roll back in-memory changes before forcing re-init
-          for (const entry of addedEntries) {
-            delete this.analysisHistory.entries[entry.id];
-            try {
-              removeFromIndexes(this.analysisIndex, entry);
-            } catch (indexError) {
-              logger.warn('[AnalysisHistoryService] Failed to rollback index entry', {
-                entryId: entry.id,
-                error: indexError?.message
-              });
-            }
-          }
-          // Put back rows a re-analysis replaced (F-208) so a failed persist
-          // never loses the previous knowledge of a path.
-          for (const prior of replacedEntries) {
-            this.analysisHistory.entries[prior.id] = prior;
-            try {
-              updateIndexes(this.analysisIndex, prior);
-            } catch (indexError) {
-              logger.warn('[AnalysisHistoryService] Failed to restore replaced entry index', {
-                entryId: prior.id,
-                error: /** @type {any} */ (indexError)?.message
-              });
-            }
-          }
-          this.analysisHistory.totalAnalyzed = _originalHistorySnapshot.totalAnalyzed;
-          this.analysisHistory.totalSize = _originalHistorySnapshot.totalSize;
-          this.analysisHistory.metadata.totalEntries = _originalHistorySnapshot.totalEntries;
-          this.analysisHistory.updatedAt = _originalHistorySnapshot.updatedAt;
-          this.analysisIndex.updatedAt = _originalIndexUpdatedAt;
-
-          this.initialized = false;
-
-          const error = new Error('Failed to persist analysis history');
-          pendingEntryResolutions.forEach(({ reject }) => reject(error));
-          return;
-        }
+        // The entries are committed in memory; the disk write is coalesced
+        // with the next few files' (see HISTORY_SAVE_*). A write failure is
+        // retried from memory instead of rolling these entries back.
+        this._markHistoryDirty();
 
         // Invalidate relevant caches (surgical invalidation, not full)
         invalidateCachesOnAdd(this._cache);
@@ -807,8 +966,9 @@ class AnalysisHistoryServiceCore {
           this._cache,
           this,
           this.config,
-          () => this.saveHistory(),
-          () => this.saveIndex(),
+          // Pruned entries ride the same coalesced save as the adds.
+          () => this._markHistoryDirty(),
+          () => this._markHistoryDirty(),
           { onEntriesRemoved: this._onEntriesRemovedCallback }
         );
       }
@@ -980,6 +1140,24 @@ class AnalysisHistoryServiceCore {
         break;
       }
     }
+    // Write whatever the coalesced save was still holding, then let any save
+    // the timer already started finish before the store is closed under it.
+    try {
+      const saved = await this._persistUnsavedHistory('shutdown');
+      if (!saved && this.hasUnsavedChanges()) {
+        logger.error('[AnalysisHistoryService] Unsaved history changes lost at shutdown', {
+          unsavedChanges: this._historyChangeSeq - this._historySavedSeq
+        });
+      }
+    } catch (err) {
+      logger.error(
+        '[AnalysisHistoryService] Final history save failed during shutdown:',
+        err?.message
+      );
+    }
+    if (this._historySaveTimer) clearTimeout(this._historySaveTimer);
+    this._historySaveTimer = null;
+    await this._bgWork.drain();
     this.clearCaches();
     closeHistorySqliteStore();
   }
@@ -1110,8 +1288,13 @@ class AnalysisHistoryServiceCore {
         const prevUpdatedAt = this.analysisHistory.updatedAt;
         this.analysisHistory.updatedAt = new Date().toISOString();
 
-        // Save both files atomically — if either fails, the on-disk state is inconsistent
-        const saveResults = await Promise.allSettled([this.saveHistory(), this.saveIndex()]);
+        // Saved immediately, NOT through the coalesced save: FilePathCoordinator
+        // relies on this call failing when the disk write fails so it can roll
+        // back the vector DB and queues (see below). Moves are per organize
+        // action, not per analyzed file, so this is not the hot path. The write
+        // also carries any changes the coalesced save was holding.
+        this._markHistoryDirty();
+        const saveResults = await this._saveHistoryAndIndexNow();
         const saveFailures = saveResults.filter((r) => r.status === 'rejected');
 
         if (saveFailures.length > 0) {
@@ -1127,7 +1310,8 @@ class AnalysisHistoryServiceCore {
             errors: errMsg
           });
           this.analysisHistory.updatedAt = prevUpdatedAt;
-          this.initialized = false; // Force re-init: reload disk state, dropping the unsaved update
+          // Force re-init: reload disk state, dropping the unsaved update
+          this._forceReloadFromDisk('updateEntryPaths');
           clearCachesHelper(this._cache, this);
           const persistError = /** @type {Error & { code?: string }} */ (
             new Error(`updateEntryPaths persistence failed: ${errMsg}`)
@@ -1197,7 +1381,11 @@ class AnalysisHistoryServiceCore {
 
       if (updated > 0) {
         this.analysisHistory.updatedAt = now;
-        await Promise.all([this.saveHistory(), this.saveIndex()]);
+        // A user edit: saved now, and a failure still rejects as before.
+        this._markHistoryDirty();
+        const saveResults = await this._saveHistoryAndIndexNow();
+        const failed = saveResults.find((r) => r.status === 'rejected');
+        if (failed) throw /** @type {PromiseRejectedResult} */ (failed).reason;
         clearCachesHelper(this._cache, this);
       }
 
@@ -1273,20 +1461,12 @@ class AnalysisHistoryServiceCore {
       }
 
       if (updated > 0) {
-        const prevUpdatedAt = this.analysisHistory.updatedAt;
         this.analysisHistory.updatedAt = now;
-
-        const saveResult = await Promise.allSettled([this.saveHistory()]);
-        const failures = saveResult.filter((r) => r.status === 'rejected');
-        if (failures.length > 0) {
-          // Keep behavior consistent with other update methods: log + force re-init.
-          logger.error('[AnalysisHistoryService] updateEmbeddingStateByPath persistence failed', {
-            error: failures.map((r) => r.reason?.message).join('; ')
-          });
-          this.analysisHistory.updatedAt = prevUpdatedAt;
-          this.initialized = false;
-        }
-
+        // Embedding status flips once or twice per analyzed file. It used to
+        // rewrite the whole history each time; it now joins the coalesced
+        // save. No caller acted on a failed write (the result was the same
+        // `{ updated }` either way), and a failed coalesced write is retried.
+        this._markHistoryDirty();
         clearCachesHelper(this._cache, this);
       }
 
@@ -1361,7 +1541,10 @@ class AnalysisHistoryServiceCore {
         const prevUpdatedAt = this.analysisHistory.updatedAt;
         this.analysisHistory.updatedAt = new Date().toISOString();
 
-        const saveResults = await Promise.allSettled([this.saveHistory(), this.saveIndex()]);
+        // Saved now: the caller reports removed:0 on a failed write, and the
+        // removal callback below tells the vector DB to orphan these rows.
+        this._markHistoryDirty();
+        const saveResults = await this._saveHistoryAndIndexNow();
         const saveFailures = saveResults.filter((r) => r.status === 'rejected');
         if (saveFailures.length > 0) {
           // Rollback in-memory mutations to match disk state
@@ -1382,7 +1565,7 @@ class AnalysisHistoryServiceCore {
             }
           }
           this.analysisHistory.updatedAt = prevUpdatedAt;
-          this.initialized = false;
+          this._forceReloadFromDisk('removeEntriesByPath');
           logger.error(
             '[AnalysisHistoryService] removeEntriesByPath persistence failed, rolled back',
             {
@@ -1496,7 +1679,11 @@ class AnalysisHistoryServiceCore {
       const prevUpdatedAt = this.analysisHistory.updatedAt;
       this.analysisHistory.updatedAt = new Date().toISOString();
 
-      const saveResults = await Promise.allSettled([this.saveHistory(), this.saveIndex()]);
+      // Saved now: a failed write is reported to the caller and rolled back.
+      // A rolled-back clone leaves the change counter ahead of disk, so the
+      // coalesced save may rewrite the (restored) state once more — harmless.
+      this._markHistoryDirty();
+      const saveResults = await this._saveHistoryAndIndexNow();
       const saveFailures = saveResults.filter((r) => r.status === 'rejected');
 
       if (saveFailures.length > 0) {

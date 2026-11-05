@@ -443,6 +443,15 @@ async function handleBeforeQuit(/** @type {any} */ event) {
       } catch (err) {
         logger.warn('[CLEANUP] Failed to shut down PDF buffer cache', { error: err?.message });
       }
+
+      // The hash cache saves seconds after hashing goes quiet; write what it
+      // is still holding now that every service that hashes has stopped.
+      try {
+        const { flushHashCache } = require('../utils/hashCache');
+        await flushHashCache();
+      } catch (err) {
+        logger.warn('[CLEANUP] Failed to flush hash cache', { error: err?.message });
+      }
     });
 
     // Phase 5: StartupManager cleanup is now mostly idempotent (LlamaService/Orama

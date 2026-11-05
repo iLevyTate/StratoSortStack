@@ -277,6 +277,33 @@ describe('lifecycle – handleBeforeQuit', () => {
     await handleBeforeQuit();
     expect(setShuttingDown.mock.calls.length).toBe(callCount1);
   });
+
+  // The hash cache saves seconds after hashing goes quiet; quit must write
+  // what it is still holding instead of dropping the session's last hashes.
+  test('flushes the hash cache during cleanup', async () => {
+    const flushHashCache = jest.fn().mockResolvedValue(undefined);
+    jest.doMock('../src/main/utils/hashCache', () => ({ flushHashCache }));
+    const lifecycle = require('../src/main/core/lifecycle');
+    lifecycle.initializeLifecycle({
+      setIsQuitting: jest.fn(),
+      getMetricsInterval: () => null,
+      setMetricsInterval: jest.fn(),
+      getDownloadWatcher: () => null,
+      setDownloadWatcher: jest.fn(),
+      getServiceIntegration: () => null,
+      getSettingsService: () => null,
+      getChildProcessListeners: () => [],
+      setChildProcessListeners: jest.fn(),
+      getGlobalProcessListeners: () => [],
+      setGlobalProcessListeners: jest.fn(),
+      getEventListeners: () => [],
+      setEventListeners: jest.fn()
+    });
+
+    await lifecycle.handleBeforeQuit();
+
+    expect(flushHashCache).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('lifecycle – handleBeforeQuit exit code vs pending update', () => {
