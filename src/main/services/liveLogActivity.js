@@ -155,7 +155,8 @@ function stripLeadingTag(msg) {
 /**
  * A "Problem: …" line. Redacted-path tokens are dropped from the text (the
  * file name stays) and the first such name becomes `file`, so the panel's
- * redact mode can hide it.
+ * redact mode can hide it. `file` is kept exactly as it appears in the text
+ * (no length cap, no `)` trimmed) so hiding it by substring hides all of it.
  * @param {string} message
  * @param {ActivityTone} tone
  * @returns {LiveActivity}
@@ -163,8 +164,7 @@ function stripLeadingTag(msg) {
 function problem(message, tone) {
   const fileMatch = message.match(REDACTED_PATH_FILE);
   const captured = fileMatch ? fileMatch[1] || fileMatch[2] || '' : '';
-  const rawFile = captured.replace(/[\s.,;)'"]+$/, '');
-  const file = rawFile ? baseName(rawFile) : undefined;
+  const file = captured.replace(/[\s.,;'"]+$/, '') || undefined;
   const shown = message.replace(REDACTED_PATH_TOKEN, '').trim();
   return activity('problem', 'alert', tone, `Problem: ${shown || PROBLEM_FALLBACK_TEXT}`, file);
 }

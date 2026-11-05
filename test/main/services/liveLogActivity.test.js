@@ -1148,6 +1148,22 @@ describe('activityFromLogRecord', () => {
     });
   });
 
+  test.each([
+    ['a name longer than 120 characters', `${'long-name-'.repeat(15)}.pdf`],
+    ['a name ending in a bracket', 'Report (final)'],
+    ['a name with spaces', 'My Invoice 2024.pdf']
+  ])('a Problem line names %s exactly as its text shows it', (_label, name) => {
+    // Redact mode hides `file` by substring: a shortened or trimmed name
+    // would leave the rest of it visible.
+    const result = activityFromLogRecord({
+      level: 'warn',
+      context: 'X',
+      msg: `Cannot read [REDACTED_PATH]\\${name}`
+    });
+    expect(result.file).toBe(name);
+    expect(result.text.includes(result.file)).toBe(true);
+  });
+
   test('a bare redacted-path token is removed from Problem text', () => {
     expect(
       activityFromLogRecord({ level: 'error', context: 'X', msg: 'Cannot open [REDACTED_PATH]' })
