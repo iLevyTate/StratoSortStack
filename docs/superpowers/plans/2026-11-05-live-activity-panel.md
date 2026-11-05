@@ -1,5 +1,7 @@
 # Live Activity Panel Implementation Plan
 
+<!-- prettier-ignore-start -->
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development
 > (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use
 > checkbox (`- [ ]`) syntax for tracking.
@@ -38,6 +40,8 @@ Jest 30 + @testing-library/react (jsdom).
   needs Node on PATH; if `git commit` cannot find it, run the commit as
   `fnm exec --using=24.22.1 -- git commit -m "..."`. Never pass `--no-verify`. No attribution lines.
 - Never use `git stash` to park work (long-lived user stashes exist).
+- Snippets after "replace:" / "with:" are exact text, indentation included. The plan body sits
+  inside `prettier-ignore` markers so formatting never dedents them; apply them verbatim.
 - Test files must end in `.test.js` (jest `testMatch` does not pick up `.test.jsx`).
 - `test/test-setup.js` globally mocks `../src/shared/logger` with `test/mocks/logger.js`; tests of
   the real logger call `jest.unmock('../src/shared/logger')`.
@@ -48,59 +52,59 @@ Created:
 
 | File                                                            | Responsibility                                                                                                                           |
 | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/main/services/liveLogActivity.js`                          | Pure classifier: one sanitized log record → `{ kind, icon, text, file?, tone }` or `null` (rule table keyed by context + message).       |
+| `src/main/services/liveLogActivity.js`                          | Pure classifier: one sanitized log record → `{ kind, icon, text, file?, tone }` or `null` (rule table keyed by context + message).      |
 | `src/main/services/liveLogFeed.js`                              | Subscriber registry, logger listener lifecycle, 500-entry ring buffer, 250 ms batching (≤200 + `dropped`), auto-unsubscribe, `safeSend`. |
 | `src/renderer/store/thunks/liveActivityThunks.js`               | `setShowLiveActivity(enabled)` / `toggleShowLiveActivity()`: optimistic Redux update + partial `settings.save`, rollback on failure.     |
-| `src/renderer/hooks/useDraggablePanel.js`                       | Panel geometry: pointer drag, bottom-right resize, arrow-key move / Shift+arrow resize, clamping to the window, commit callback.         |
+| `src/renderer/hooks/useDraggablePanel.js`                       | Panel geometry: pointer drag, bottom-right resize, arrow-key move / Shift+arrow resize, clamping to the window, commit callback.        |
 | `src/renderer/hooks/useLiveLogFeed.js`                          | Renderer subscription: backlog + batches (dedupe by id), 500-entry cap, pause buffering with count, dropped total, recent-activity flag. |
 | `src/renderer/components/diagnostics/liveActivityPanelState.js` | Per-machine panel UI state in `localStorage` (`stratosort_live_activity_panel`), every read/write in try/catch.                          |
-| `src/renderer/components/diagnostics/liveActivityFormat.js`     | Pure view helpers: level ranks/filters, time format, redaction of file names ("a file"), copy-line format.                               |
-| `src/renderer/components/diagnostics/LiveActivityPanel.jsx`     | The floating card + minimized pill, tabs, controls, virtualized rows, details box, a11y labels.                                          |
-| `test/logger.liveRecordListener.test.js`                        | Logger hook: sanitized record, level gate, throwing listener, removal, zero cost without listeners.                                      |
-| `test/main/services/liveLogActivity.test.js`                    | Table-driven classifier tests for every rule + problem mapping + unknown → null.                                                         |
-| `test/main/services/liveLogFeed.test.js`                        | Feed lifecycle, backlog, cadence, caps, dropped, destroyed webContents, feedback-loop guard, singleton.                                  |
-| `test/liveLogChannels.test.js`                                  | Channel constants, event-only membership, receive allowlist, generated preload block, verify-script list.                                |
-| `test/ipcEventSchemas.liveLog.test.js`                          | `system:live-log:batch` payload schema.                                                                                                  |
-| `test/systemIpc.liveLog.test.js`                                | Subscribe/unsubscribe invoke handlers in `system.js`.                                                                                    |
-| `test/ipcServices.liveLog.test.js`                              | Renderer `systemIpc` live-log methods.                                                                                                   |
-| `test/settings.showLiveActivity.test.js`                        | Setting registered in defaults, allowlist, validation rules and the `settings:save` Zod schema.                                          |
-| `test/liveActivityThunks.test.js`                               | Thunk optimistic update, partial save, rollback, toggle.                                                                                 |
-| `test/components/liveActivityPanelState.test.js`                | Storage load/save, defaults, garbage input, storage exceptions.                                                                          |
-| `test/components/liveActivityFormat.test.js`                    | View helpers incl. redaction cases.                                                                                                      |
-| `test/hooks/useDraggablePanel.test.js`                          | Clamp math, drag, resize min/max, keyboard, window shrink, unmount mid-drag.                                                             |
-| `test/hooks/useLiveLogFeed.test.js`                             | Subscription, early batches, dedupe, caps, pause/resume, clear, dropped, unmount, unavailable, pulse timer.                              |
-| `test/components/LiveActivityPanel.test.js`                     | Panel behavior end to end with a mocked feed hook.                                                                                       |
-| `test/components/DiagnosticsLogsSection.liveActivity.test.js`   | The Settings → Diagnostics "Show live activity" switch.                                                                                  |
+| `src/renderer/components/diagnostics/liveActivityFormat.js`     | Pure view helpers: level ranks/filters, time format, redaction of file names ("a file"), copy-line format.                              |
+| `src/renderer/components/diagnostics/LiveActivityPanel.jsx`     | The floating card + minimized pill, tabs, controls, virtualized rows, details box, a11y labels.                                         |
+| `test/logger.liveRecordListener.test.js`                        | Logger hook: sanitized record, level gate, throwing listener, removal, zero cost without listeners.                                    |
+| `test/main/services/liveLogActivity.test.js`                    | Table-driven classifier tests for every rule + problem mapping + unknown → null.                                                       |
+| `test/main/services/liveLogFeed.test.js`                        | Feed lifecycle, backlog, cadence, caps, dropped, destroyed webContents, feedback-loop guard, singleton.                                |
+| `test/liveLogChannels.test.js`                                  | Channel constants, event-only membership, receive allowlist, generated preload block, verify-script list.                              |
+| `test/ipcEventSchemas.liveLog.test.js`                          | `system:live-log:batch` payload schema.                                                                                                 |
+| `test/systemIpc.liveLog.test.js`                                | Subscribe/unsubscribe invoke handlers in `system.js`.                                                                                   |
+| `test/ipcServices.liveLog.test.js`                              | Renderer `systemIpc` live-log methods.                                                                                                  |
+| `test/settings.showLiveActivity.test.js`                        | Setting registered in defaults, allowlist, validation rules and the `settings:save` Zod schema.                                         |
+| `test/liveActivityThunks.test.js`                               | Thunk optimistic update, partial save, rollback, toggle.                                                                                |
+| `test/components/liveActivityPanelState.test.js`                | Storage load/save, defaults, garbage input, storage exceptions.                                                                        |
+| `test/components/liveActivityFormat.test.js`                    | View helpers incl. redaction cases.                                                                                                     |
+| `test/hooks/useDraggablePanel.test.js`                          | Clamp math, drag, resize min/max, keyboard, window shrink, unmount mid-drag.                                                            |
+| `test/hooks/useLiveLogFeed.test.js`                             | Subscription, early batches, dedupe, caps, pause/resume, clear, dropped, unmount, unavailable, pulse timer.                             |
+| `test/components/LiveActivityPanel.test.js`                     | Panel behavior end to end with a mocked feed hook.                                                                                      |
+| `test/components/DiagnosticsLogsSection.liveActivity.test.js`   | The Settings → Diagnostics "Show live activity" switch.                                                                                 |
 
 Modified:
 
-| File                                                            | Change                                                                                                           |
-| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `src/shared/logger.js`                                          | `addLiveRecordListener` / `removeLiveRecordListener`, `Logger#_emitLiveRecord`, call from `_safeWrite`, exports. |
-| `test/mocks/logger.js`                                          | Add the two listener functions as `jest.fn()` so code requiring them under the global mock works.                |
-| `src/shared/constants.js`                                       | `IPC_CHANNELS.SYSTEM.LIVE_LOG_SUBSCRIBE / LIVE_LOG_UNSUBSCRIBE / LIVE_LOG_BATCH`.                                |
-| `src/shared/ipcEnforcement.js`                                  | `'SYSTEM.LIVE_LOG_BATCH'` in `EVENT_ONLY_CHANNEL_REFS`.                                                          |
-| `src/shared/securityConfig.js`                                  | Batch channel in `ALLOWED_RECEIVE_CHANNELS`; `'showLiveActivity'` in `allowedKeys`.                              |
-| `scripts/verify-ipc-handlers.js`                                | `'SYSTEM.LIVE_LOG_BATCH'` in `KNOWN_EVENT_ONLY_CHANNELS`.                                                        |
-| `src/preload/preload.js`                                        | Regenerated channel block; `system.subscribeLiveLog / unsubscribeLiveLog / onLiveLogBatch` bridges.              |
-| `test/ipcEnforcement.test.js`                                   | Event-only count pin 8 → 9.                                                                                      |
-| `src/shared/ipcEventSchemas.js`                                 | `liveLogBatchSchema` + `EVENT_SCHEMAS` entry.                                                                    |
-| `src/main/ipc/system.js`                                        | Subscribe/unsubscribe handlers (sender-targeted).                                                                |
-| `test/preload.coverage.test.js`                                 | Live-log bridge test.                                                                                            |
-| `src/renderer/services/ipc/systemIpc.js`                        | `subscribeLiveLog`, `unsubscribeLiveLog`, `onLiveLogBatch`.                                                      |
-| `src/shared/defaultSettings.js`                                 | `showLiveActivity: false`.                                                                                       |
-| `src/shared/settingsValidation.js`                              | `showLiveActivity` boolean rule.                                                                                 |
-| `src/main/ipc/validationSchemas.js`                             | `showLiveActivity: z.boolean().nullish()` in `settingsSchema`.                                                   |
-| `src/renderer/styles.css`                                       | `--z-floating-panel: 300` + `@utility z-floating-panel`.                                                         |
-| `test/ux/zIndexLayering.test.js`                                | Pin the new layer and include it in the utility scan.                                                            |
-| `src/renderer/App.js`                                           | Lazy-mount `LiveActivityPanel` behind `ui.settings.showLiveActivity`.                                            |
-| `test/components/App.viewMode.test.js`                          | Mount/unmount tests for the panel.                                                                               |
-| `src/renderer/components/settings/DiagnosticsLogsSection.jsx`   | "Show live activity" switch row (via SettingsPanel's local settings updater).                                    |
-| `src/renderer/components/SettingsPanel.jsx`                     | Pass `settings` / `setSettings` to `DiagnosticsLogsSection` (~line 1789).                                        |
-| `src/renderer/hooks/useKeyboardShortcuts.js`                    | Ctrl/Cmd+Shift+L → `toggleShowLiveActivity()`.                                                                   |
-| `test/useKeyboardShortcuts.test.js`                             | Shortcut tests.                                                                                                  |
-| `docs/USER_GUIDE.md`, `docs/DEBUGGING_GUIDE.md`, `CHANGELOG.md` | Short user/dev entries; `[Unreleased]` → Added.                                                                  |
-| `scripts/verify-checkjs-ratchet.js`                             | `GLOBAL_DIRECTIVE_FLOOR` 475 → 482 (7 new `.js` files under `src/`).                                             |
+| File                                                          | Change                                                                                                            |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `src/shared/logger.js`                                        | `addLiveRecordListener` / `removeLiveRecordListener`, `Logger#_emitLiveRecord`, call from `_safeWrite`, exports.  |
+| `test/mocks/logger.js`                                        | Add the two listener functions as `jest.fn()` so code requiring them under the global mock works.                |
+| `src/shared/constants.js`                                     | `IPC_CHANNELS.SYSTEM.LIVE_LOG_SUBSCRIBE / LIVE_LOG_UNSUBSCRIBE / LIVE_LOG_BATCH`.                                |
+| `src/shared/ipcEnforcement.js`                                | `'SYSTEM.LIVE_LOG_BATCH'` in `EVENT_ONLY_CHANNEL_REFS`.                                                           |
+| `src/shared/securityConfig.js`                                | Batch channel in `ALLOWED_RECEIVE_CHANNELS`; `'showLiveActivity'` in `allowedKeys`.                              |
+| `scripts/verify-ipc-handlers.js`                              | `'SYSTEM.LIVE_LOG_BATCH'` in `KNOWN_EVENT_ONLY_CHANNELS`.                                                         |
+| `src/preload/preload.js`                                      | Regenerated channel block; `system.subscribeLiveLog / unsubscribeLiveLog / onLiveLogBatch` bridges.              |
+| `test/ipcEnforcement.test.js`                                 | Event-only count pin 8 → 9.                                                                                       |
+| `src/shared/ipcEventSchemas.js`                               | `liveLogBatchSchema` + `EVENT_SCHEMAS` entry.                                                                     |
+| `src/main/ipc/system.js`                                      | Subscribe/unsubscribe handlers (sender-targeted).                                                                 |
+| `test/preload.coverage.test.js`                               | Live-log bridge test.                                                                                             |
+| `src/renderer/services/ipc/systemIpc.js`                      | `subscribeLiveLog`, `unsubscribeLiveLog`, `onLiveLogBatch`.                                                       |
+| `src/shared/defaultSettings.js`                               | `showLiveActivity: false`.                                                                                        |
+| `src/shared/settingsValidation.js`                            | `showLiveActivity` boolean rule.                                                                                  |
+| `src/main/ipc/validationSchemas.js`                           | `showLiveActivity: z.boolean().nullish()` in `settingsSchema`.                                                    |
+| `src/renderer/styles.css`                                     | `--z-floating-panel: 300` + `@utility z-floating-panel`.                                                          |
+| `test/ux/zIndexLayering.test.js`                              | Pin the new layer and include it in the utility scan.                                                            |
+| `src/renderer/App.js`                                         | Lazy-mount `LiveActivityPanel` behind `ui.settings.showLiveActivity`.                                             |
+| `test/components/App.viewMode.test.js`                        | Mount/unmount tests for the panel.                                                                                |
+| `src/renderer/components/settings/DiagnosticsLogsSection.jsx` | "Show live activity" switch row (via SettingsPanel's local settings updater).                                    |
+| `src/renderer/components/SettingsPanel.jsx`                   | Pass `settings` / `setSettings` to `DiagnosticsLogsSection` (~line 1789).                                         |
+| `src/renderer/hooks/useKeyboardShortcuts.js`                  | Ctrl/Cmd+Shift+L → `toggleShowLiveActivity()`.                                                                     |
+| `test/useKeyboardShortcuts.test.js`                           | Shortcut tests.                                                                                                   |
+| `docs/USER_GUIDE.md`, `docs/DEBUGGING_GUIDE.md`, `CHANGELOG.md` | Short user/dev entries; `[Unreleased]` → Added.                                                                |
+| `scripts/verify-checkjs-ratchet.js`                           | `GLOBAL_DIRECTIVE_FLOOR` 475 → 482 (7 new `.js` files under `src/`).                                              |
 
 ### Deviations from the spec (decided while grounding in the code)
 
@@ -109,9 +113,9 @@ Modified:
    bounded, avoids the preload sanitizer's depth fallback on deep objects, and gives the Raw tab its
    "compact one-line JSON" directly. Expanding a Raw row shows the full message + `dataText` in a
    read-only details box under the list (fixed row heights keep virtualization simple).
-2. **"Filed → Financial" only shows a folder when the log line still has one.** The logger redacts
-   absolute paths to `[REDACTED_PATH]\name.ext`, so the destination folder of a move is usually gone
-   by the time the feed sees it; the Activity line then reads "Filed name.ext".
+2. **"Filed → Financial" only shows a folder when the log line still has one.** The logger
+   redacts absolute paths to `[REDACTED_PATH]\name.ext`, so the destination folder of a move is
+   usually gone by the time the feed sees it; the Activity line then reads "Filed name.ext".
 3. **Undo:** `UndoRedoService` logs no info line on a successful undo; the Activity rule uses
    `[UndoRedoService] Restoring file from backup` ("Undo: restoring name.ext"), and undo failures
    surface through the generic warn/error "Problem:" rule. No new log lines are added (non-goal).
@@ -276,8 +280,7 @@ describe('logger live record listeners', () => {
 
 - [ ] **Step 2: Run it and confirm it fails**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/logger.liveRecordListener.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/logger.liveRecordListener.test.js`
 
 Expected: FAIL — `addLiveRecordListener is not a function` (TypeError in `listen`).
 
@@ -309,6 +312,7 @@ function addLiveRecordListener(listener) {
 function removeLiveRecordListener(listener) {
   _liveRecordListeners.delete(listener);
 }
+
 ```
 
 In `_safeWrite`, replace:
@@ -423,8 +427,7 @@ module.exports = {
 
 - [ ] **Step 4: Run the tests and confirm they pass**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/logger.liveRecordListener.test.js test/logger.test.js test/logger.rotation.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/logger.liveRecordListener.test.js test/logger.test.js test/logger.rotation.test.js`
 
 Expected: PASS (all three suites).
 
@@ -474,7 +477,7 @@ The rule table below is grounded in the real log calls (message strings as they 
 | `storage-full`                  | `DegradedStateTracker`        | `[DegradedState] flag raised` with `code: 'storage.full'` (:118)                                               | `Disk is full; saving is paused`                                   |
 | `degraded-raised`               | `DegradedStateTracker`        | `[DegradedState] flag raised` (any other code)                                                                 | `Problem: <flag message>`                                          |
 | `storage-cleared`               | `DegradedStateTracker`        | `[DegradedState] flag cleared` with `code: 'storage.full'` (:166)                                              | `Disk has room again; saving resumed`                              |
-| `organize-batch-start`          | any (handler logger injected) | `[FILE-OPS] Starting batch operation <id> with <n> files` (batchOrganizeHandler.js:528)                        | `Organizing N files`                                               |
+| `organize-batch-start`          | any (handler logger injected) | `[FILE-OPS] Starting batch operation <id> with <n> files` (batchOrganizeHandler.js:528)                       | `Organizing N files`                                               |
 | `organize-move`                 | any                           | `[FILE-OPS] Move completed` + `{ source, destination }` (:848, dev builds only)                                | `Filed <file>[ → <folder>]`                                        |
 | `organize-paused`               | any                           | `[FILE-OPS] Batch paused by user` (:1064)                                                                      | `Organizing paused`                                                |
 | `auto-organize-file`            | `AutoOrganize-FileProcessor`  | `[AutoOrganize] Auto-organizing new file` + `{ file, destination }` (fileProcessor.js:373)                     | `Filing <file>[ → <folder>]`                                       |
@@ -1152,12 +1155,7 @@ describe('activityFromLogRecord', () => {
         msg: '[SMART-FOLDER-WATCHER] Queued for analysis:',
         data: { filePath: '[REDACTED_PATH]' }
       })
-    ).toEqual({
-      kind: 'analyze',
-      icon: 'analyze',
-      tone: 'info',
-      text: 'Queued a file for analysis'
-    });
+    ).toEqual({ kind: 'analyze', icon: 'analyze', tone: 'info', text: 'Queued a file for analysis' });
   });
 
   test('any unmatched warning becomes a Problem line without its [TAG]', () => {
@@ -1239,8 +1237,7 @@ describe('activityFromLogRecord', () => {
 
 - [ ] **Step 2: Run it and confirm it fails**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/main/services/liveLogActivity.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/main/services/liveLogActivity.test.js`
 
 Expected: FAIL — `Cannot find module '../../../src/main/services/liveLogActivity'`.
 
@@ -1502,9 +1499,7 @@ const RULES = [
         'folder-fallback',
         'folder',
         'info',
-        raw
-          ? `No folder matched "${raw}"; using ${fallback}`
-          : `No folder matched; using ${fallback}`
+        raw ? `No folder matched "${raw}"; using ${fallback}` : `No folder matched; using ${fallback}`
       );
     }
   ),
@@ -1826,8 +1821,7 @@ module.exports = { activityFromLogRecord, ACTIVITY_RULE_IDS };
 
 - [ ] **Step 4: Run the test and confirm it passes**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/main/services/liveLogActivity.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/main/services/liveLogActivity.test.js`
 
 Expected: PASS (all table rows + edge cases).
 
@@ -2200,8 +2194,7 @@ describe('liveLogFeed', () => {
 
 - [ ] **Step 2: Run it and confirm it fails**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/main/services/liveLogFeed.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/main/services/liveLogFeed.test.js`
 
 Expected: FAIL — `Cannot find module '../../../src/main/services/liveLogFeed'`.
 
@@ -2285,7 +2278,8 @@ function defaultSend(webContents, payload) {
  */
 function createLiveLogFeed(deps = {}) {
   const addListener = typeof deps.addListener === 'function' ? deps.addListener : () => {};
-  const removeListener = typeof deps.removeListener === 'function' ? deps.removeListener : () => {};
+  const removeListener =
+    typeof deps.removeListener === 'function' ? deps.removeListener : () => {};
   const classify = typeof deps.classify === 'function' ? deps.classify : activityFromLogRecord;
   const send = typeof deps.send === 'function' ? deps.send : defaultSend;
 
@@ -2465,8 +2459,7 @@ called by these tests (they inject `send`), so this task's suite passes on its o
 
 - [ ] **Step 4: Run the test and confirm it passes**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/main/services/liveLogFeed.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/main/services/liveLogFeed.test.js`
 
 Expected: PASS.
 
@@ -2541,24 +2534,23 @@ describe('live log IPC channels', () => {
 In `test/ipcEnforcement.test.js`, replace:
 
 ```js
-test('EVENT_ONLY_CHANNELS has 8 entries', () => {
-  expect(ipcEnforcement.EVENT_ONLY_CHANNELS.size).toBe(8);
-});
+    test('EVENT_ONLY_CHANNELS has 8 entries', () => {
+      expect(ipcEnforcement.EVENT_ONLY_CHANNELS.size).toBe(8);
+    });
 ```
 
 with:
 
 ```js
-// Grew to 9 with SYSTEM.LIVE_LOG_BATCH (Live Activity panel push channel).
-test('EVENT_ONLY_CHANNELS has 9 entries', () => {
-  expect(ipcEnforcement.EVENT_ONLY_CHANNELS.size).toBe(9);
-});
+    // Grew to 9 with SYSTEM.LIVE_LOG_BATCH (Live Activity panel push channel).
+    test('EVENT_ONLY_CHANNELS has 9 entries', () => {
+      expect(ipcEnforcement.EVENT_ONLY_CHANNELS.size).toBe(9);
+    });
 ```
 
 - [ ] **Step 2: Run them and confirm they fail**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/liveLogChannels.test.js test/ipcEnforcement.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/liveLogChannels.test.js test/ipcEnforcement.test.js`
 
 Expected: FAIL — `LIVE_LOG_SUBSCRIBE` is `undefined`, and `EVENT_ONLY_CHANNELS has 9 entries`
 receives `8`.
@@ -2638,8 +2630,7 @@ Expected: exit 0.
 
 - [ ] **Step 4: Run the tests and confirm they pass**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/liveLogChannels.test.js test/ipcEnforcement.test.js test/securityConfig.test.js test/preload.contract.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/liveLogChannels.test.js test/ipcEnforcement.test.js test/securityConfig.test.js test/preload.contract.test.js`
 
 Expected: PASS. (Do NOT run `verify:ipc-handlers` yet: `LIVE_LOG_SUBSCRIBE` / `UNSUBSCRIBE` get
 their handlers in Task 6.)
@@ -2764,8 +2755,7 @@ describe('system:live-log:batch event schema', () => {
 
 - [ ] **Step 2: Run it and confirm it fails**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/ipcEventSchemas.liveLog.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/ipcEventSchemas.liveLog.test.js`
 
 Expected: FAIL — `is registered so safeSend validates every batch` receives `false`.
 
@@ -2863,8 +2853,7 @@ with:
 
 - [ ] **Step 4: Run the tests and the event-schema verifier**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/ipcEventSchemas.liveLog.test.js test/ipcEventSchemas.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/ipcEventSchemas.liveLog.test.js test/ipcEventSchemas.test.js`
 
 Expected: PASS.
 
@@ -3004,8 +2993,7 @@ describe('system live log handlers', () => {
 
 - [ ] **Step 2: Run it and confirm it fails**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/systemIpc.liveLog.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/systemIpc.liveLog.test.js`
 
 Expected: FAIL — the first test receives `undefined` for the subscribe handler.
 
@@ -3070,8 +3058,7 @@ with:
 
 - [ ] **Step 4: Run the tests and the handler verifiers**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/systemIpc.liveLog.test.js test/systemIpc.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/systemIpc.liveLog.test.js test/systemIpc.test.js`
 
 Expected: PASS.
 
@@ -3183,7 +3170,9 @@ describe('systemIpc live log methods', () => {
   test('subscribeLiveLog throws on an error response', async () => {
     requireElectronAPI.mockReturnValue({
       system: {
-        subscribeLiveLog: jest.fn().mockResolvedValue({ success: false, error: 'handler missing' })
+        subscribeLiveLog: jest
+          .fn()
+          .mockResolvedValue({ success: false, error: 'handler missing' })
       }
     });
     await expect(systemIpc.subscribeLiveLog()).rejects.toThrow('handler missing');
@@ -3229,8 +3218,7 @@ describe('systemIpc live log methods', () => {
 
 - [ ] **Step 2: Run them and confirm they fail**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/ipcServices.liveLog.test.js test/preload.coverage.test.js test/liveLogChannels.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/ipcServices.liveLog.test.js test/preload.coverage.test.js test/liveLogChannels.test.js`
 
 Expected: FAIL — `systemIpc.subscribeLiveLog is not a function`,
 `electronAPI.system.subscribeLiveLog is not a function`, and the receive-allowlist test does not
@@ -3322,8 +3310,7 @@ with:
 
 - [ ] **Step 4: Run the tests and confirm they pass**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/ipcServices.liveLog.test.js test/preload.coverage.test.js test/liveLogChannels.test.js test/ipcServices.test.js test/securityConfig.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/ipcServices.liveLog.test.js test/preload.coverage.test.js test/liveLogChannels.test.js test/ipcServices.test.js test/securityConfig.test.js`
 
 Expected: PASS. securityConfig.test.js checks both directions: the new
 `safeOn(IPC_CHANNELS.SYSTEM.LIVE_LOG_BATCH, callback)` is in `ALLOWED_RECEIVE_CHANNELS`, and the new
@@ -3390,8 +3377,7 @@ describe('showLiveActivity setting', () => {
 
 - [ ] **Step 2: Run it and confirm it fails**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/settings.showLiveActivity.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/settings.showLiveActivity.test.js`
 
 Expected: FAIL — `defaults to off` receives `undefined`.
 
@@ -3469,8 +3455,7 @@ with:
 
 - [ ] **Step 4: Run the tests and confirm they pass**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/settings.showLiveActivity.test.js test/settings-keyset-parity.test.js test/settingsValidation.test.js test/defaultSettings.test.js test/securityConfig.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/settings.showLiveActivity.test.js test/settings-keyset-parity.test.js test/settingsValidation.test.js test/defaultSettings.test.js test/securityConfig.test.js`
 
 Expected: PASS.
 
@@ -3487,8 +3472,7 @@ git commit -m "feat(settings): register showLiveActivity (default off)"
 
 **Files:**
 
-- Modify: `src/renderer/styles.css` (Z-Index tokens ~lines 99–112; `@utility` block ~lines
-  2051–2062)
+- Modify: `src/renderer/styles.css` (Z-Index tokens ~lines 99–112; `@utility` block ~lines 2051–2062)
 - Modify: `test/ux/zIndexLayering.test.js`
 
 - [ ] **Step 1: Write the failing test**
@@ -3496,47 +3480,46 @@ git commit -m "feat(settings): register showLiveActivity (default off)"
 In `test/ux/zIndexLayering.test.js`, replace:
 
 ```js
-test('page tooltips stay below modal scrims', () => {
-  expect(token('--z-tooltip')).toBeLessThan(token('--z-modal'));
-});
+  test('page tooltips stay below modal scrims', () => {
+    expect(token('--z-tooltip')).toBeLessThan(token('--z-modal'));
+  });
 ```
 
 with:
 
 ```js
-test('page tooltips stay below modal scrims', () => {
-  expect(token('--z-tooltip')).toBeLessThan(token('--z-modal'));
-});
+  test('page tooltips stay below modal scrims', () => {
+    expect(token('--z-tooltip')).toBeLessThan(token('--z-modal'));
+  });
 
-test('the live activity panel floats above page overlays, below tooltips, modals and toasts', () => {
-  expect(token('--z-floating-panel')).toBe(300);
-  expect(token('--z-floating-panel')).toBeGreaterThan(token('--z-overlay'));
-  expect(token('--z-floating-panel')).toBeLessThan(token('--z-tooltip'));
-  expect(token('--z-floating-panel')).toBeLessThan(token('--z-modal'));
-  expect(token('--z-floating-panel')).toBeLessThan(token('--z-toast'));
-});
+  test('the live activity panel floats above page overlays, below tooltips, modals and toasts', () => {
+    expect(token('--z-floating-panel')).toBe(300);
+    expect(token('--z-floating-panel')).toBeGreaterThan(token('--z-overlay'));
+    expect(token('--z-floating-panel')).toBeLessThan(token('--z-tooltip'));
+    expect(token('--z-floating-panel')).toBeLessThan(token('--z-modal'));
+    expect(token('--z-floating-panel')).toBeLessThan(token('--z-toast'));
+  });
 
-test('the floating-panel layer has its @utility class', () => {
-  expect(css).toMatch(/@utility z-floating-panel\s*\{\s*z-index:\s*var\(--z-floating-panel\)/);
-});
+  test('the floating-panel layer has its @utility class', () => {
+    expect(css).toMatch(/@utility z-floating-panel\s*\{\s*z-index:\s*var\(--z-floating-panel\)/);
+  });
 ```
 
 and replace:
 
 ```js
-/className[^\n]*?\bz-(modal-consent|modal|toast|header|overlay|tooltip|skip-link)\b/;
+      /className[^\n]*?\bz-(modal-consent|modal|toast|header|overlay|tooltip|skip-link)\b/;
 ```
 
 with:
 
 ```js
-/className[^\n]*?\bz-(modal-consent|modal|toast|header|overlay|tooltip|skip-link|floating-panel)\b/;
+      /className[^\n]*?\bz-(modal-consent|modal|toast|header|overlay|tooltip|skip-link|floating-panel)\b/;
 ```
 
 - [ ] **Step 2: Run it and confirm it fails**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/ux/zIndexLayering.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/ux/zIndexLayering.test.js`
 
 Expected: FAIL — the `--z-floating-panel` token match is `null`.
 
@@ -3545,18 +3528,18 @@ Expected: FAIL — the `--z-floating-panel` token match is `null`.
 In `src/renderer/styles.css`, replace:
 
 ```css
---z-overlay: 200;
-/* Page tooltips sit below modal scrims (an open dialog should mask them). */
+  --z-overlay: 200;
+  /* Page tooltips sit below modal scrims (an open dialog should mask them). */
 ```
 
 with:
 
 ```css
---z-overlay: 200;
-/* Live Activity panel: floats above page content and overlays, below
+  --z-overlay: 200;
+  /* Live Activity panel: floats above page content and overlays, below
      tooltips, modal dialogs and toasts. Guarded by test/ux/zIndexLayering. */
---z-floating-panel: 300;
-/* Page tooltips sit below modal scrims (an open dialog should mask them). */
+  --z-floating-panel: 300;
+  /* Page tooltips sit below modal scrims (an open dialog should mask them). */
 ```
 
 and replace:
@@ -3580,8 +3563,7 @@ with:
 
 - [ ] **Step 4: Run the test and confirm it passes**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/ux/zIndexLayering.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/ux/zIndexLayering.test.js`
 
 Expected: PASS.
 
@@ -3704,8 +3686,7 @@ describe('live activity thunks', () => {
 
 - [ ] **Step 2: Run it and confirm it fails**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/liveActivityThunks.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/liveActivityThunks.test.js`
 
 Expected: FAIL — `Cannot find module '../src/renderer/store/thunks/liveActivityThunks'`.
 
@@ -3759,8 +3740,7 @@ export const toggleShowLiveActivity = () => (dispatch, getState) =>
 
 - [ ] **Step 4: Run the test and confirm it passes**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/liveActivityThunks.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/liveActivityThunks.test.js`
 
 Expected: PASS.
 
@@ -3890,11 +3870,9 @@ describe('liveActivityPanelState', () => {
 
 - [ ] **Step 2: Run it and confirm it fails**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/components/liveActivityPanelState.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/components/liveActivityPanelState.test.js`
 
-Expected: FAIL —
-`Cannot find module '../../src/renderer/components/diagnostics/liveActivityPanelState'`.
+Expected: FAIL — `Cannot find module '../../src/renderer/components/diagnostics/liveActivityPanelState'`.
 
 - [ ] **Step 3: Implement the storage helpers**
 
@@ -3985,8 +3963,7 @@ export function savePanelState(state) {
 
 - [ ] **Step 4: Run the test and confirm it passes**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/components/liveActivityPanelState.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/components/liveActivityPanelState.test.js`
 
 Expected: PASS.
 
@@ -4006,9 +3983,8 @@ git commit -m "feat(live-activity): persist panel layout per machine with guarde
 - Create: `src/renderer/components/diagnostics/liveActivityFormat.js`
 - Test: `test/components/liveActivityFormat.test.js` (create)
 
-The `LiveLogEntry` / `LiveActivity` typedefs are imported from
-`src/renderer/hooks/useLiveLogFeed.js` (Task 14). JSDoc `import()` types do not affect Jest;
-`typecheck:js` is run after Task 14.
+The `LiveLogEntry` / `LiveActivity` typedefs are imported from `src/renderer/hooks/useLiveLogFeed.js`
+(Task 14). JSDoc `import()` types do not affect Jest; `typecheck:js` is run after Task 14.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -4112,10 +4088,7 @@ describe('liveActivityFormat', () => {
       expect(redactActivityText(ANALYZING, false)).toBe('Analyzing receipt-0412.jpg');
       expect(redactActivityText(ANALYZING, true)).toBe(`Analyzing ${REDACTED_FILE_LABEL}`);
       expect(
-        redactActivityText(
-          { kind: 'vision', icon: 'eye', tone: 'info', text: 'Vision batch started' },
-          true
-        )
+        redactActivityText({ kind: 'vision', icon: 'eye', tone: 'info', text: 'Vision batch started' }, true)
       ).toBe('Vision batch started');
     });
 
@@ -4159,12 +4132,7 @@ describe('liveActivityFormat', () => {
       const e = entry(1, {
         level: 'warn',
         context: 'DownloadWatcher',
-        activity: {
-          kind: 'problem',
-          icon: 'alert',
-          tone: 'warn',
-          text: 'Problem: Cannot access file:'
-        }
+        activity: { kind: 'problem', icon: 'alert', tone: 'warn', text: 'Problem: Cannot access file:' }
       });
       expect(formatCopyLine(e, 'activity', false)).toBe(
         '09:04:07 Problem: Cannot access file: [DownloadWatcher]'
@@ -4197,11 +4165,9 @@ describe('liveActivityFormat', () => {
 
 - [ ] **Step 2: Run it and confirm it fails**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/components/liveActivityFormat.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/components/liveActivityFormat.test.js`
 
-Expected: FAIL —
-`Cannot find module '../../src/renderer/components/diagnostics/liveActivityFormat'`.
+Expected: FAIL — `Cannot find module '../../src/renderer/components/diagnostics/liveActivityFormat'`.
 
 - [ ] **Step 3: Implement the helpers**
 
@@ -4333,8 +4299,7 @@ export function formatCopyLine(entry, tab, redact) {
 
 - [ ] **Step 4: Run the test and confirm it passes**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/components/liveActivityFormat.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/components/liveActivityFormat.test.js`
 
 Expected: PASS.
 
@@ -4564,8 +4529,7 @@ describe('useDraggablePanel', () => {
 
 - [ ] **Step 2: Run it and confirm it fails**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/hooks/useDraggablePanel.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/hooks/useDraggablePanel.test.js`
 
 Expected: FAIL — `Cannot find module '../../src/renderer/hooks/useDraggablePanel'`.
 
@@ -4783,8 +4747,7 @@ export function useDraggablePanel({ initialGeometry, onCommit, limits = PANEL_LI
 
 - [ ] **Step 4: Run the test and confirm it passes**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/hooks/useDraggablePanel.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/hooks/useDraggablePanel.test.js`
 
 Expected: PASS.
 
@@ -5043,8 +5006,7 @@ describe('useLiveLogFeed', () => {
 
 - [ ] **Step 2: Run it and confirm it fails**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/hooks/useLiveLogFeed.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/hooks/useLiveLogFeed.test.js`
 
 Expected: FAIL — `Cannot find module '../../src/renderer/hooks/useLiveLogFeed'`.
 
@@ -5250,8 +5212,7 @@ export function useLiveLogFeed({ enabled = true } = {}) {
 
 - [ ] **Step 4: Run the tests and the JS type check**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/hooks/useLiveLogFeed.test.js test/components/liveActivityFormat.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/hooks/useLiveLogFeed.test.js test/components/liveActivityFormat.test.js`
 
 Expected: PASS.
 
@@ -5386,12 +5347,7 @@ const ENTRIES = [
     context: 'OramaVectorService',
     msg: '[OramaVectorService] Persisted databases',
     dataText: '{"collections":["files"]}',
-    activity: {
-      kind: 'index-saved',
-      icon: 'save',
-      tone: 'success',
-      text: 'Saved search index (files)'
-    }
+    activity: { kind: 'index-saved', icon: 'save', tone: 'success', text: 'Saved search index (files)' }
   }),
   entry(3, {
     level: 'warn',
@@ -5647,9 +5603,7 @@ describe('LiveActivityPanel', () => {
     test('opens minimized when it was left minimized', () => {
       seedState({ minimized: true });
       render(<LiveActivityPanel />);
-      expect(
-        screen.getByRole('button', { name: 'Restore live activity panel' })
-      ).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Restore live activity panel' })).toBeInTheDocument();
       expect(region()).not.toBeInTheDocument();
     });
 
@@ -5667,12 +5621,7 @@ describe('LiveActivityPanel', () => {
     test('restores the saved geometry and persists keyboard moves', () => {
       seedState({ x: 100, y: 100, width: 400, height: 300 });
       render(<LiveActivityPanel />);
-      expect(region()).toHaveStyle({
-        left: '100px',
-        top: '100px',
-        width: '400px',
-        height: '300px'
-      });
+      expect(region()).toHaveStyle({ left: '100px', top: '100px', width: '400px', height: '300px' });
 
       fireEvent.keyDown(dragHandle(), { key: 'ArrowRight' });
 
@@ -5736,8 +5685,7 @@ describe('LiveActivityPanel', () => {
 
 - [ ] **Step 2: Run it and confirm it fails**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/components/LiveActivityPanel.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/components/LiveActivityPanel.test.js`
 
 Expected: FAIL — `Cannot find module '../../src/renderer/components/diagnostics/LiveActivityPanel'`.
 
@@ -6289,16 +6237,14 @@ export default LiveActivityPanel;
 
 - [ ] **Step 4: Run the test and lint the new component**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/components/LiveActivityPanel.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/components/LiveActivityPanel.test.js`
 
 Expected: PASS.
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd eslint src/renderer/components/diagnostics src/renderer/hooks/useDraggablePanel.js src/renderer/hooks/useLiveLogFeed.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd eslint src/renderer/components/diagnostics src/renderer/hooks/useDraggablePanel.js src/renderer/hooks/useLiveLogFeed.js`
 
-Expected: exit 0 with no jsx-a11y errors (warnings from `react-hooks/exhaustive-deps` are acceptable
-only if none are reported; fix any that appear before committing).
+Expected: exit 0 with no jsx-a11y errors (warnings from `react-hooks/exhaustive-deps` are
+acceptable only if none are reported; fix any that appear before committing).
 
 - [ ] **Step 5: Commit**
 
@@ -6412,8 +6358,7 @@ describe('App live activity panel', () => {
 
 - [ ] **Step 2: Run it and confirm it fails**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/components/App.viewMode.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/components/App.viewMode.test.js`
 
 Expected: FAIL — `mounts when showLiveActivity is on…` times out on
 `findByTestId('live-activity-panel')`.
@@ -6438,16 +6383,16 @@ const LiveActivityPanel = lazy(() => import('./components/diagnostics/LiveActivi
 Replace:
 
 ```js
-const showSettings = useAppSelector((/** @type {any} */ state) => state.ui.showSettings);
+  const showSettings = useAppSelector((/** @type {any} */ state) => state.ui.showSettings);
 ```
 
 with:
 
 ```js
-const showSettings = useAppSelector((/** @type {any} */ state) => state.ui.showSettings);
-const showLiveActivity = useAppSelector(
-  (/** @type {any} */ state) => state.ui.settings?.showLiveActivity === true
-);
+  const showSettings = useAppSelector((/** @type {any} */ state) => state.ui.showSettings);
+  const showLiveActivity = useAppSelector(
+    (/** @type {any} */ state) => state.ui.settings?.showLiveActivity === true
+  );
 ```
 
 Replace:
@@ -6478,8 +6423,7 @@ with:
 
 - [ ] **Step 4: Run the test and confirm it passes**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/components/App.viewMode.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/components/App.viewMode.test.js`
 
 Expected: PASS (existing view-mode and theme tests still pass; the panel is absent by default).
 
@@ -6528,7 +6472,9 @@ jest.mock('../../src/renderer/services/ipc', () => ({
 
 jest.mock('../../src/renderer/components/ui/Button', () => ({
   __esModule: true,
-  default: ({ children, isLoading: _isLoading, ...props }) => <button {...props}>{children}</button>
+  default: ({ children, isLoading: _isLoading, ...props }) => (
+    <button {...props}>{children}</button>
+  )
 }));
 
 import DiagnosticsLogsSection from '../../src/renderer/components/settings/DiagnosticsLogsSection';
@@ -6584,11 +6530,9 @@ describe('DiagnosticsLogsSection — Show live activity', () => {
 
 - [ ] **Step 2: Run it and confirm it fails**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/components/DiagnosticsLogsSection.liveActivity.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/components/DiagnosticsLogsSection.liveActivity.test.js`
 
-Expected: FAIL —
-`Unable to find an accessible element with the role "switch" and name "Show live activity"`.
+Expected: FAIL — `Unable to find an accessible element with the role "switch" and name "Show live activity"`.
 
 - [ ] **Step 3: Add the switch row and pass the settings props**
 
@@ -6627,21 +6571,21 @@ function DiagnosticsLogsSection({ addNotification, settings, setSettings }) {
 Replace:
 
 ```jsx
-const canExportLogs = typeof electronApi?.system?.exportLogs === 'function';
+  const canExportLogs = typeof electronApi?.system?.exportLogs === 'function';
 ```
 
 with:
 
 ```jsx
-const canExportLogs = typeof electronApi?.system?.exportLogs === 'function';
-const showLiveActivity = settings?.showLiveActivity === true;
+  const canExportLogs = typeof electronApi?.system?.exportLogs === 'function';
+  const showLiveActivity = settings?.showLiveActivity === true;
 
-const handleLiveActivityToggle = React.useCallback(
-  (checked) => {
-    setSettings?.((prev) => ({ ...prev, showLiveActivity: checked === true }));
-  },
-  [setSettings]
-);
+  const handleLiveActivityToggle = React.useCallback(
+    (checked) => {
+      setSettings?.((prev) => ({ ...prev, showLiveActivity: checked === true }));
+    },
+    [setSettings]
+  );
 ```
 
 Replace:
@@ -6696,23 +6640,22 @@ DiagnosticsLogsSection.propTypes = {
 In `src/renderer/components/SettingsPanel.jsx`, replace:
 
 ```jsx
-<DiagnosticsLogsSection addNotification={addNotification} />
+                      <DiagnosticsLogsSection addNotification={addNotification} />
 ```
 
 with:
 
 ```jsx
-<DiagnosticsLogsSection
-  addNotification={addNotification}
-  settings={settings}
-  setSettings={applySettingsUpdate}
-/>
+                      <DiagnosticsLogsSection
+                        addNotification={addNotification}
+                        settings={settings}
+                        setSettings={applySettingsUpdate}
+                      />
 ```
 
 - [ ] **Step 4: Run the tests and confirm they pass**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/components/DiagnosticsLogsSection.liveActivity.test.js test/components/SettingsPanel.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/components/DiagnosticsLogsSection.liveActivity.test.js test/components/SettingsPanel.test.js`
 
 Expected: PASS.
 
@@ -6729,8 +6672,8 @@ git commit -m "feat(settings): Show live activity switch in Diagnostics"
 
 **Files:**
 
-- Modify: `src/renderer/hooks/useKeyboardShortcuts.js` (imports; callbacks ~line 72; `actions` ~line
-  79; `handleKeyDown` after the settings shortcut ~line 104)
+- Modify: `src/renderer/hooks/useKeyboardShortcuts.js` (imports; callbacks ~line 72; `actions`
+  ~line 79; `handleKeyDown` after the settings shortcut ~line 104)
 - Modify: `test/useKeyboardShortcuts.test.js`
 
 The shortcut sits right after Ctrl+, so it works from anywhere: inside text fields and while an
@@ -6811,11 +6754,10 @@ with:
 
 - [ ] **Step 2: Run it and confirm it fails**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/useKeyboardShortcuts.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/useKeyboardShortcuts.test.js`
 
-Expected: FAIL — `Ctrl+Shift+L toggles the live activity panel`: `toggleShowLiveActivity` was called
-0 times.
+Expected: FAIL — `Ctrl+Shift+L toggles the live activity panel`: `toggleShowLiveActivity` was
+called 0 times.
 
 - [ ] **Step 3: Add the shortcut**
 
@@ -6835,50 +6777,50 @@ import { toggleShowLiveActivity } from '../store/thunks/liveActivityThunks';
 Replace:
 
 ```js
-const handleLeaveDashboard = useCallback(() => {
-  dispatch(setViewMode('phased'));
-  dispatch(setCameFromDashboard(true));
-}, [dispatch]);
+  const handleLeaveDashboard = useCallback(() => {
+    dispatch(setViewMode('phased'));
+    dispatch(setCameFromDashboard(true));
+  }, [dispatch]);
 
-const actions = useMemo(
-  () => ({
-    openSettings: handleOpenSettings,
-    requestCloseSettings,
-    advancePhase: handleAdvancePhase,
-    leaveDashboard: handleLeaveDashboard
-  }),
-  [handleOpenSettings, requestCloseSettings, handleAdvancePhase, handleLeaveDashboard]
-);
+  const actions = useMemo(
+    () => ({
+      openSettings: handleOpenSettings,
+      requestCloseSettings,
+      advancePhase: handleAdvancePhase,
+      leaveDashboard: handleLeaveDashboard
+    }),
+    [handleOpenSettings, requestCloseSettings, handleAdvancePhase, handleLeaveDashboard]
+  );
 ```
 
 with:
 
 ```js
-const handleLeaveDashboard = useCallback(() => {
-  dispatch(setViewMode('phased'));
-  dispatch(setCameFromDashboard(true));
-}, [dispatch]);
+  const handleLeaveDashboard = useCallback(() => {
+    dispatch(setViewMode('phased'));
+    dispatch(setCameFromDashboard(true));
+  }, [dispatch]);
 
-const handleToggleLiveActivity = useCallback(() => {
-  dispatch(/** @type {any} */ (toggleShowLiveActivity()));
-}, [dispatch]);
+  const handleToggleLiveActivity = useCallback(() => {
+    dispatch(/** @type {any} */ (toggleShowLiveActivity()));
+  }, [dispatch]);
 
-const actions = useMemo(
-  () => ({
-    openSettings: handleOpenSettings,
-    requestCloseSettings,
-    advancePhase: handleAdvancePhase,
-    leaveDashboard: handleLeaveDashboard,
-    toggleLiveActivity: handleToggleLiveActivity
-  }),
-  [
-    handleOpenSettings,
-    requestCloseSettings,
-    handleAdvancePhase,
-    handleLeaveDashboard,
-    handleToggleLiveActivity
-  ]
-);
+  const actions = useMemo(
+    () => ({
+      openSettings: handleOpenSettings,
+      requestCloseSettings,
+      advancePhase: handleAdvancePhase,
+      leaveDashboard: handleLeaveDashboard,
+      toggleLiveActivity: handleToggleLiveActivity
+    }),
+    [
+      handleOpenSettings,
+      requestCloseSettings,
+      handleAdvancePhase,
+      handleLeaveDashboard,
+      handleToggleLiveActivity
+    ]
+  );
 ```
 
 Replace:
@@ -6922,8 +6864,7 @@ with:
 
 - [ ] **Step 4: Run the tests and confirm they pass**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/useKeyboardShortcuts.test.js test/keyboard-shortcuts.test.js`
+Run: `fnm exec --using=24.22.1 -- npx.cmd jest -c test/jest.config.js --coverage=false --maxWorkers=2 test/useKeyboardShortcuts.test.js test/keyboard-shortcuts.test.js`
 
 Expected: PASS.
 
@@ -7017,8 +6958,8 @@ are left out of the panel (never out of the log file). Use **Open folder** for t
 In `CHANGELOG.md`, replace:
 
 ```md
-work without running Settings → **Reindex file hashes**. That action is now only a backfill for
-files indexed by an older version.
+  work without running Settings → **Reindex file hashes**. That action is now only a backfill for
+  files indexed by an older version.
 
 ### Changed
 ```
@@ -7026,9 +6967,8 @@ files indexed by an older version.
 with:
 
 ```md
-work without running Settings → **Reindex file hashes**. That action is now only a backfill for
-files indexed by an older version.
-
+  work without running Settings → **Reindex file hashes**. That action is now only a backfill for
+  files indexed by an older version.
 - **Live activity panel.** Settings → Diagnostics → **Show live activity** (or Ctrl/Cmd+Shift+L)
   opens a small floating panel that shows what the app is doing as it happens: an **Activity** tab
   in plain words and a **Raw** tab with the log lines (level and context filters). Drag it, resize
@@ -7041,8 +6981,7 @@ files indexed by an older version.
 
 - [ ] **Step 4: Check the Markdown wraps**
 
-Run:
-`fnm exec --using=24.22.1 -- npx.cmd prettier --check docs/USER_GUIDE.md docs/DEBUGGING_GUIDE.md CHANGELOG.md`
+Run: `fnm exec --using=24.22.1 -- npx.cmd prettier --check docs/USER_GUIDE.md docs/DEBUGGING_GUIDE.md CHANGELOG.md`
 
 Expected: exit 0. If it reports a file, run the same command with `--write` and re-read the diff.
 
@@ -7117,9 +7056,9 @@ fnm exec --using=24.22.1 -- npm.cmd run knip:files
 ```
 
 Expected: every command exits 0. `lint` must show no jsx-a11y errors for
-`src/renderer/components/diagnostics/LiveActivityPanel.jsx`. `knip:files` must not list any new file
-as unused (each is reachable: classifier → feed → `system.js`; hooks/helpers/thunk → panel → App.js
-lazy import; thunk → `useKeyboardShortcuts`).
+`src/renderer/components/diagnostics/LiveActivityPanel.jsx`. `knip:files` must not list any new
+file as unused (each is reachable: classifier → feed → `system.js`; hooks/helpers/thunk → panel →
+App.js lazy import; thunk → `useKeyboardShortcuts`).
 
 - [ ] **Step 5: Optional manual smoke (only if memory allows `npm run dev`)**
 
@@ -7141,26 +7080,28 @@ git commit -m "chore(checkjs): raise the directive floor to 482 for the live act
 
 ## Spec coverage map
 
-| Spec section                                                                                       | Task(s)         |
-| -------------------------------------------------------------------------------------------------- | --------------- |
-| Open/close: Settings switch + Ctrl/Cmd+Shift+L, same setting                                       | 10, 17, 18      |
-| Panel layer `--z-floating-panel: 300` + layering test                                              | 9, 15           |
-| Drag by title bar, clamped (incl. window shrink)                                                   | 13, 15          |
-| Resize bottom-right, min 320×220, max 80%                                                          | 13, 15          |
-| Minimize to pill, pulse within 3 s, restore, close                                                 | 14, 15          |
-| Activity tab (time, icon, plain text, problems w/ context)                                         | 2, 12, 15       |
-| Raw tab (level badge, context, message, one-line JSON, expand)                                     | 3, 12, 15       |
-| Pause/resume with count, auto-scroll + scroll-up detection, copy, clear                            | 14, 15          |
-| Raw level + context filters                                                                        | 12, 15          |
-| `showLiveActivity` setting on four surfaces                                                        | 8               |
-| Geometry/minimized/tab in localStorage with try/catch                                              | 11, 15          |
-| Privacy: sanitized records; Redact paths hides basenames                                           | 1, 12, 15       |
-| Logger hook (sanitized, level-gated, errors swallowed)                                             | 1               |
-| `liveLogFeed` (listener only while subscribed, ring 500, 250 ms, ≤200 + dropped, auto-unsubscribe) | 3               |
-| `activityFromLogRecord` rule table                                                                 | 2               |
-| IPC channels, preload, Zod, event schema, verify scripts                                           | 4, 5, 6, 7      |
-| `useLiveLogFeed`, `useDraggablePanel`, panel, mount                                                | 13, 14, 15, 16  |
-| Error handling ("Live activity unavailable", failures swallowed)                                   | 1, 3, 6, 14, 15 |
-| Performance (no listener/timer idle; caps; virtualization)                                         | 1, 3, 14, 15    |
-| Accessibility (labelled region, named controls, reduced motion)                                    | 15              |
-| Docs + changelog + ratchet                                                                         | 19, 20          |
+| Spec section                                              | Task(s)          |
+| --------------------------------------------------------- | ---------------- |
+| Open/close: Settings switch + Ctrl/Cmd+Shift+L, same setting | 10, 17, 18     |
+| Panel layer `--z-floating-panel: 300` + layering test     | 9, 15            |
+| Drag by title bar, clamped (incl. window shrink)          | 13, 15           |
+| Resize bottom-right, min 320×220, max 80%                 | 13, 15           |
+| Minimize to pill, pulse within 3 s, restore, close        | 14, 15           |
+| Activity tab (time, icon, plain text, problems w/ context) | 2, 12, 15       |
+| Raw tab (level badge, context, message, one-line JSON, expand) | 3, 12, 15   |
+| Pause/resume with count, auto-scroll + scroll-up detection, copy, clear | 14, 15 |
+| Raw level + context filters                               | 12, 15           |
+| `showLiveActivity` setting on four surfaces               | 8                |
+| Geometry/minimized/tab in localStorage with try/catch     | 11, 15           |
+| Privacy: sanitized records; Redact paths hides basenames  | 1, 12, 15        |
+| Logger hook (sanitized, level-gated, errors swallowed)    | 1                |
+| `liveLogFeed` (listener only while subscribed, ring 500, 250 ms, ≤200 + dropped, auto-unsubscribe) | 3 |
+| `activityFromLogRecord` rule table                        | 2                |
+| IPC channels, preload, Zod, event schema, verify scripts  | 4, 5, 6, 7       |
+| `useLiveLogFeed`, `useDraggablePanel`, panel, mount       | 13, 14, 15, 16   |
+| Error handling ("Live activity unavailable", failures swallowed) | 1, 3, 6, 14, 15 |
+| Performance (no listener/timer idle; caps; virtualization) | 1, 3, 14, 15    |
+| Accessibility (labelled region, named controls, reduced motion) | 15       |
+| Docs + changelog + ratchet                                | 19, 20           |
+
+<!-- prettier-ignore-end -->
