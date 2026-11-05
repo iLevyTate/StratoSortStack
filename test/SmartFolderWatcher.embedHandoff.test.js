@@ -109,6 +109,30 @@ describe('SmartFolderWatcher reuses what the analysis pass already indexed', () 
     });
   });
 
+  test('a queued file the queue already finished is not set back to pending', async () => {
+    const fake = makeFakeWatcher();
+    const filePath = '/docs/report.pdf';
+    fake.analysisHistoryService.getAnalysisByPath.mockResolvedValue({
+      embedding: { status: 'done', model: 'embed-model' }
+    });
+
+    await embed(fake, filePath, {
+      extractedText: longText,
+      _embeddingForPersistence: {
+        vector: [0.1, 0.2],
+        model: 'embed-model',
+        meta: { path: filePath },
+        wasEnqueued: true,
+        chunksEmbedded: true
+      }
+    });
+
+    expect(fake.analysisHistoryService.updateEmbeddingStateByPath).not.toHaveBeenCalledWith(
+      filePath,
+      expect.objectContaining({ status: 'pending' })
+    );
+  });
+
   test('a queued document whose passages were NOT written still gets them here', async () => {
     const fake = makeFakeWatcher();
     const filePath = '/docs/report.pdf';

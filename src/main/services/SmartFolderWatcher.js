@@ -2919,10 +2919,16 @@ class SmartFolderWatcher {
         filePath
       });
       try {
-        await this.analysisHistoryService?.updateEmbeddingStateByPath?.(filePath, {
-          status: 'pending',
-          model: precomputed.model || null
-        });
+        // The queue may already have flushed this vector and written 'done'
+        // (its batch flush often lands as analysis finishes). 'pending' here
+        // would then overwrite it and leave a finished file looking unfinished.
+        const current = await this.analysisHistoryService?.getAnalysisByPath?.(filePath);
+        if (current?.embedding?.status !== 'done') {
+          await this.analysisHistoryService?.updateEmbeddingStateByPath?.(filePath, {
+            status: 'pending',
+            model: precomputed.model || null
+          });
+        }
       } catch {
         // Non-fatal
       }
