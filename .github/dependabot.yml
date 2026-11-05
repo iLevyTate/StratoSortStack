@@ -111,6 +111,16 @@ updates:
       # cssnano 8 calls Set.prototype.difference). The toolchain is Node 24
       # now, so their majors arrive as ordinary Dependabot PRs again; each
       # still has to pass `npm run ci` on its own.
+      #
+      # better-sqlite3 needs more than `npm run ci`: Jest never loads the
+      # native module (shouldUseSqliteBackend defaults to false under Jest,
+      # and suites jest.mock('better-sqlite3')), so a major that cannot load
+      # inside Electron still passes every test. Before merging one, check it
+      # loads under Electron's runtime: `npm run verify:native-modules` (or
+      # `npm run local:gate`, which runs it after `ci`). If it fails, try
+      # `npm run rebuild && npm run verify:native-modules` (the electron
+      # recipe above) and record whether the new major still loads its
+      # prebuild (`requiresElectronRebuild` in scripts/native-modules.js).
   - package-ecosystem: github-actions
     directory: '/'
     schedule:

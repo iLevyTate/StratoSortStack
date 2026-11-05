@@ -107,11 +107,17 @@ changes.
 
 #### Duplicate Resolution Modal
 
-- [ ] Opens showing groups of duplicate files.
-- [ ] Each group defaults to keeping the file with the shortest path.
-- [ ] Clicking a different file in a group changes the "keep" selection.
+- [ ] Opens showing exact, near-identical and related sets; the related slider starts at 90%.
+- [ ] Exact sets pre-select the newest copy (then the largest) as the keeper; near-identical sets
+      pre-select the largest file (then the deepest path); related sets have no keeper until you
+      pick one.
+- [ ] Clicking a different file in a set changes the "keep" selection.
 - [ ] "Open" and "Reveal in Explorer/Finder" buttons work for each file.
-- [ ] "Resolve" processes all groups and modal closes on success.
+- [ ] "Keep all" on a set hides it and drops it from the trash count; reopening the modal keeps it
+      hidden; "Show N kept" lists kept sets and "Restore" brings one back.
+- [ ] "Send N to Trash" acts only on the sets currently listed: a related set hidden by raising the
+      slider, or a kept set, is never trashed even if a keeper was picked in it first. The modal
+      closes on success.
 - [ ] File sizes are displayed and formatted correctly.
 - [ ] Empty or malformed groups are filtered out (no crash).
 

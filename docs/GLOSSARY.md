@@ -108,7 +108,8 @@ servers. StratoSort has an experimental MCP server feature; see [`MCP_SERVER.md`
 [`DI_PATTERNS.md`](DI_PATTERNS.md) for the full pattern.
 
 **persistenceMiddleware** — Redux middleware that debounces (1s + 5s max wait) renderer state writes
-to localStorage. Stamps state with a schema version for migration on rehydration.
+to localStorage; while an analysis runs and only its results, file states or selection change, it
+saves at most every 30 s. Stamps state with a schema version for migration on rehydration.
 
 **ipcMiddleware** — Redux middleware that subscribes to main→renderer IPC events, validates them
 against `src/shared/ipcEventSchemas.js` (invalid payloads are dropped) and dispatches them into the

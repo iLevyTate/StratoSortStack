@@ -499,10 +499,12 @@ function EmbeddingRebuildSection({ addNotification }) {
             <div className="pt-4 border-t border-border-soft">
               <Caption className="block text-system-gray-700 mb-2">Duplicate finder</Caption>
               <Text variant="tiny" className="text-system-gray-500 mb-2">
-                <strong>Reindex file hashes</strong> computes SHA-256 for every indexed file missing
-                a content hash. The Duplicate finder&apos;s &ldquo;Exact&rdquo; tier and the
-                Downloads triage hash-collision check rely on these hashes. Safe to run &mdash; no
-                files are moved or modified.
+                Every file is fingerprinted (SHA-256) automatically when it is indexed. The
+                Duplicate finder&apos;s &ldquo;Exact&rdquo; tier and the Downloads triage
+                hash-collision check rely on these fingerprints.{' '}
+                <strong>Reindex file hashes</strong> only fills them in for files indexed by an
+                older version that are still missing one. Safe to run &mdash; no files are moved or
+                modified.
               </Text>
               <Button
                 onClick={async () => {

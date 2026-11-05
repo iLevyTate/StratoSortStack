@@ -164,6 +164,10 @@ Open **Settings**. Use **Simple** unless you need model, retrieval, or diagnosti
 
 - Off by default. With a cloud provider selected, document analysis, chat and organization
   suggestions use it; each of the three can be sent to a different provider, or kept local.
+- Audio and video analysis follow the Analysis provider: speech is still transcribed on your machine
+  and the transcript is sent. A video also sends up to four frames, but only when "Describe video
+  keyframes" is on and you have accepted the current consent text. The pixels of still images stay
+  local.
 - Anthropic or any OpenAI-compatible endpoint (OpenAI, Ollama, LM Studio, vLLM, …).
 - Per-operation and per-Smart-Folder routing; a monthly spend cap per provider; self-hosted URLs
   count as $0.

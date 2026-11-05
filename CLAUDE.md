@@ -91,7 +91,8 @@ tree.
   classifier.
 - **File operations** use atomic writes via `src/shared/atomicFileOperations.js` (write-to-temp then
   rename).
-- **State persistence** uses debounced localStorage writes (1s debounce, 5s max wait) with
+- **State persistence** uses debounced localStorage writes (1s debounce, 5s max wait; while an
+  analysis runs and only its results, file states or selection change, at most every 30 s) with
   quota-exceeded fallbacks.
 - **Logging** uses structured logger from `src/shared/logger.js` with correlation IDs and JSONL
   format.
@@ -102,7 +103,7 @@ tree.
   `ci`) enforces a monotonic floor and blocks new .js under `COVERED_DIRS` (`src/shared`,
   `src/preload`, `src/main/{ipc,services,analysis,errors,utils,workers,transports,core}`,
   `src/renderer/{services,hooks,phases,store,utils,components}` today (every `.js` under `src/` is
-  now opted in — 466/466 as of 2026-10-31, and `GLOBAL_DIRECTIVE_FLOOR` matches at 466) — see
+  now opted in — 475/475 as of 2026-11-05, and `GLOBAL_DIRECTIVE_FLOOR` matches at 475) — see
   `scripts/verify-checkjs-ratchet.js` for the authoritative list) from landing without the
   directive. When adding a file to a covered dir: put `// @ts-check` on line 1 and fix the errors
   before commit. When opting in a new file elsewhere: bump `GLOBAL_DIRECTIVE_FLOOR` in

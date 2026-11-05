@@ -373,6 +373,22 @@ and downgraded to CPU-only.
 via the system menu — that path uses the concurrency-limited `system:dismiss-degraded-flag`
 channel).
 
+### "Your disk is full" banner, watchers paused
+
+**Cause.** The search index (`OramaVectorService`) or the analysis history could not save because
+the disk is full (`ENOSPC`, `EDQUOT` or SQLite's `SQLITE_FULL`, see `isDiskFullError()` in
+`src/shared/errorClassifier.js`). Each store holds the `storage.full` flag in `DegradedStateTracker`
+under its own source (`vector-store`, `analysis-history`), and the banner names every store still
+holding it. While the flag is up, the smart-folder watcher holds its queue and the Downloads watcher
+holds new downloads, each checking again once a minute; the watcher status line reads "paused, disk
+full · N files waiting".
+
+**Fix.** Free disk space. The search index keeps retrying its save once a minute, and each store
+releases its hold on its next successful save; the flag clears when no store holds it, and held work
+resumes on its own. Dismissing the banner only hides it; it does not lift the hold. Held downloads
+live in memory, so quitting while the disk is full drops them (the smart-folder watcher's queue is
+durable).
+
 ### Whisper transcription fails with binding errors
 
 **Cause.** `@fugood/whisper.node` 1.0.18+ requires an ArrayBuffer (not Buffer) for PCM input.
