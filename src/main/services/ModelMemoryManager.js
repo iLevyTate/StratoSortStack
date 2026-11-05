@@ -313,7 +313,25 @@ class ModelMemoryManager {
     // Check if we need to free memory -- evict LRU models until budget allows.
     // Break if _unloadLeastRecentlyUsed could not evict (all models in active use).
     const estimatedSize = this._modelSizeEstimates[modelType] || 0;
-    while (!this.canLoadModel(modelType) && this._loadedModels.size > 0) {
+
+    // A CPU-only load next to a pinned resident (the vision runtime during a
+    // vision batch) does not take the resident's GPU memory, so the resident
+    // is left out of the budget for this load. Without this, a 236 MB
+    // embedding model "did not fit" beside the 6 GB vision runtime and the
+    // runtime was shut down and restarted for every image of the batch.
+    const besideType = /** @type {any} */ (options)?.besideResident;
+    const besideEntry =
+      typeof besideType === 'string' && /** @type {any} */ (options)?.gpuLayersOverride === 0
+        ? this._loadedModels.get(besideType)
+        : null;
+    const besidePinned = Boolean(besideEntry && (this._activeRefs.get(besideType) || 0) > 0);
+    const fits = () =>
+      besidePinned
+        ? this._currentMemoryUsage - (besideEntry?.sizeBytes || 0) + estimatedSize <
+          this._maxMemoryUsage
+        : this.canLoadModel(modelType);
+
+    while (!fits() && this._loadedModels.size > 0) {
       const sizeBefore = this._loadedModels.size;
       await this._unloadLeastRecentlyUsed();
       if (this._loadedModels.size === sizeBefore) {
@@ -331,16 +349,12 @@ class ModelMemoryManager {
     // refs to drain and retry eviction so a document queued behind a vision
     // batch (or an embedding queued behind a text inference) runs once the
     // resident releases, instead of stacking a second multi-GB model.
-    if (
-      !this.canLoadModel(modelType) &&
-      this._loadedModels.size > 0 &&
-      this._pinnedResidentWaitMs > 0
-    ) {
+    if (!fits() && this._loadedModels.size > 0 && this._pinnedResidentWaitMs > 0) {
       const deadline = Date.now() + this._pinnedResidentWaitMs;
-      while (!this.canLoadModel(modelType) && Date.now() < deadline) {
+      while (!fits() && Date.now() < deadline) {
         await delay(this._pinnedResidentPollMs);
         this._refreshMemoryBudget();
-        while (!this.canLoadModel(modelType) && this._loadedModels.size > 0) {
+        while (!fits() && this._loadedModels.size > 0) {
           const sizeBefore = this._loadedModels.size;
           await this._unloadLeastRecentlyUsed();
           if (this._loadedModels.size === sizeBefore) break;
@@ -348,7 +362,7 @@ class ModelMemoryManager {
       }
     }
 
-    if (!this.canLoadModel(modelType)) {
+    if (!fits()) {
       if (this._loadedModels.size > 0) {
         // Fail closed under concurrent pressure: stacking another multi-GB
         // model on top of pinned residents risks a native OOM that takes the
