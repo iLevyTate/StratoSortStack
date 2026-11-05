@@ -72,6 +72,14 @@ const _rotationState = {
   basePath: null
 };
 const _fileStreams = new Set();
+// Set by shutdownLogging. A file stream can still be opening when logging
+// shuts down (sonic-boom opens asynchronously); if its open then fails, there
+// is no one left to tell, and in Jest the late console.error lands after the
+// test has finished ("Cannot log after tests are done"), which failed whole
+// CI runs on otherwise green suites. Cleared when file logging is configured.
+// Streams are deliberately left open here: the app keeps logging until it
+// exits, and pino's exit hook flushes them (see shutdownLogging).
+let _loggingShutDown = false;
 /** @type {Map<string, any>} */
 const _destinationsByPath = new Map();
 
@@ -92,6 +100,7 @@ function _lazyFs() {
 function _emitFileError(err) {
   _rotationState.diskErrorRaised = true;
   const code = err?.code;
+  if (_loggingShutDown) return;
   console.error('[Logger] File log stream error', { code, message: err?.message });
   if (typeof _rotationState.onError === 'function') {
     try {
@@ -1053,6 +1062,7 @@ function createLogger(context) {
  *   by the rotation timer, so we don't reset the rotation counter or onError.
  */
 function configureFileLogging(logFilePath, options = {}) {
+  _loggingShutDown = false;
   _globalLogConfig.enableFile = true;
   _globalLogConfig.logFile = logFilePath;
   if (typeof options.enableConsole === 'boolean') {
@@ -1182,6 +1192,7 @@ function createSafeLogger(name) {
 async function shutdownLogging() {
   const FLUSH_TIMEOUT = 3000;
   _stopRotationTimer();
+  _loggingShutDown = true;
 
   /** @param {any} pinoInstance */
   const flushOne = (pinoInstance) =>
