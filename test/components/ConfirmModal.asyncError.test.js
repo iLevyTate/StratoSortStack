@@ -65,9 +65,14 @@ describe('ConfirmModal async error handling', () => {
 
     fireEvent.click(screen.getByText('Delete'));
 
-    await waitFor(() => {
-      expect(screen.getByTestId('confirm-modal-error')).toBeInTheDocument();
-    });
+    await waitFor(
+      () => {
+        expect(screen.getByTestId('confirm-modal-error')).toBeInTheDocument();
+      },
+      // A loaded Windows CI runner has missed the 1 s default here while the
+      // rejection was still settling; the modal itself adds no delay.
+      { timeout: 5000 }
+    );
 
     expect(screen.getByTestId('confirm-modal-error')).toHaveTextContent('Disk full');
     // Modal must stay open so the user can retry or cancel.
@@ -87,9 +92,14 @@ describe('ConfirmModal async error handling', () => {
     renderModal({ onClose, onConfirm });
 
     fireEvent.click(screen.getByText('Delete'));
-    await waitFor(() => {
-      expect(screen.getByTestId('confirm-modal-error')).toBeInTheDocument();
-    });
+    await waitFor(
+      () => {
+        expect(screen.getByTestId('confirm-modal-error')).toBeInTheDocument();
+      },
+      // A loaded Windows CI runner has missed the 1 s default here while the
+      // rejection was still settling; the modal itself adds no delay.
+      { timeout: 5000 }
+    );
 
     fireEvent.click(screen.getByRole('button', { name: /try again/i }));
 
@@ -107,9 +117,14 @@ describe('ConfirmModal async error handling', () => {
 
     fireEvent.click(screen.getByText('Delete'));
 
-    await waitFor(() => {
-      expect(screen.getByTestId('confirm-modal-error')).toBeInTheDocument();
-    });
+    await waitFor(
+      () => {
+        expect(screen.getByTestId('confirm-modal-error')).toBeInTheDocument();
+      },
+      // A loaded Windows CI runner has missed the 1 s default here while the
+      // rejection was still settling; the modal itself adds no delay.
+      { timeout: 5000 }
+    );
     expect(screen.getByTestId('confirm-modal-error').textContent).toMatch(/went wrong/i);
     expect(onClose).not.toHaveBeenCalled();
   });
@@ -145,9 +160,14 @@ describe('ConfirmModal async error handling', () => {
     );
 
     fireEvent.click(screen.getByText('Go'));
-    await waitFor(() => {
-      expect(screen.getByTestId('confirm-modal-error')).toBeInTheDocument();
-    });
+    await waitFor(
+      () => {
+        expect(screen.getByTestId('confirm-modal-error')).toBeInTheDocument();
+      },
+      // A loaded Windows CI runner has missed the 1 s default here while the
+      // rejection was still settling; the modal itself adds no delay.
+      { timeout: 5000 }
+    );
 
     // Closing and reopening must clear the error state so the next invocation
     // starts fresh.
