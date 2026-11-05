@@ -339,11 +339,42 @@ async function getImagePreflight(/** @type {any} */ llamaService, { forceRefresh
 }
 
 // JSON repair constants and function consolidated to ../utils/llmJsonRepair.js
+/** The only content_type values an image analysis is stored with. */
+const IMAGE_CONTENT_TYPES = ['text_document', 'photograph', 'screenshot', 'other'];
+/** @type {Record<string, string>} */
+const IMAGE_CONTENT_TYPE_SYNONYMS = {
+  document: 'text_document',
+  text: 'text_document',
+  photo: 'photograph',
+  picture: 'photograph',
+  screen_capture: 'screenshot',
+  screengrab: 'screenshot'
+};
+
+/**
+ * Map a model's content_type onto IMAGE_CONTENT_TYPES. The schema example
+ * used to read "text_document OR photograph OR screenshot OR other", and
+ * models echoed it back verbatim; an echo (or anything unrecognized) is
+ * stored as 'other' rather than as the raw string.
+ * @param {unknown} raw
+ * @returns {string}
+ */
+function normalizeImageContentType(raw) {
+  const value = String(raw ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  if (IMAGE_CONTENT_TYPES.includes(value)) return value;
+  if (/_or_/.test(value)) return 'other';
+  if (IMAGE_CONTENT_TYPE_SYNONYMS[value]) return IMAGE_CONTENT_TYPE_SYNONYMS[value];
+  return 'other';
+}
+
 const IMAGE_ANALYSIS_SCHEMA = {
   ...ANALYSIS_SCHEMA_PROMPT,
   colors: ['#hex1', '#hex2'],
   has_text: true,
-  content_type: 'text_document OR photograph OR screenshot OR other'
+  content_type: 'photograph'
 };
 const IMAGE_JSON_SYSTEM_PROMPT =
   'You are a vision assistant for automated file organization. ' +
@@ -425,6 +456,7 @@ Return ONLY valid raw JSON (no markdown/code fences) matching this schema exactl
 ${JSON.stringify(IMAGE_ANALYSIS_SCHEMA)}
 Rules:
 - category must be one of the available folder names when provided.
+- content_type is exactly one of: ${IMAGE_CONTENT_TYPES.join(', ')}.
 - reasoning must briefly justify the category choice.
 - keywords: 3-7 terms from visual/OCR content.
 - suggestedName: 1-3 words, snake_case, no file extension (e.g. "sunset_beach", "meeting_notes").
@@ -2142,7 +2174,7 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
           category: normalizedCategory || analysis.category,
           suggestedNewFolder:
             categoryMatch.suggestedNewFolder || analysis.suggestedNewFolder || undefined,
-          content_type: analysis.content_type || 'unknown',
+          content_type: normalizeImageContentType(analysis.content_type),
           suggestedName: finalSuggestedName || safeSuggestedName(fileName, fileExtension),
           llmSuggestedName: finalSuggestedName || safeSuggestedName(fileName, fileExtension),
           extractedText: extractedTextForStorage
@@ -2411,5 +2443,7 @@ module.exports = {
   analyzeImageFile,
   extractTextFromImage,
   flushAllEmbeddings,
-  resetSingletons
+  resetSingletons,
+  IMAGE_CONTENT_TYPES,
+  normalizeImageContentType
 };

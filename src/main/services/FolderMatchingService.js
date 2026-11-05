@@ -17,6 +17,7 @@ const { AI_DEFAULTS } = require('../../shared/constants');
 const { namesAreEquivalent } = require('../../shared/smartFolderNameValidation');
 const {
   stripCategorySubjectSuffix,
+  isTitleLikeCategory,
   findBestSemanticFolder
 } = require('../../shared/categoryFolderMatching');
 
@@ -1988,7 +1989,9 @@ class FolderMatchingService {
 
     return {
       folder: matched,
-      suggestedNewFolder: fellThroughToUncategorized ? raw : null,
+      // A title-shaped category ("Mystery Bin Declutter: 2-5-10 Method") is
+      // not a folder anyone would create; the file still lands in the fallback.
+      suggestedNewFolder: fellThroughToUncategorized && !isTitleLikeCategory(raw) ? raw : null,
       source: fellThroughToUncategorized ? 'fallback' : 'matched'
     };
   }

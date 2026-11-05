@@ -8,6 +8,13 @@ const path = require('path');
 
 const MAX_SNIPPET_CHARS = 400;
 const MAX_QUERY_CHARS = 600;
+// Every recorded analysis marks the index stale, so 'rebuild when stale' meant a
+// full rebuild before every file of a batch. Naming context is only a hint: a
+// stale index is rebuilt at most this often (a missing one is always built).
+// Real searches keep their own stale check and are unaffected.
+const NAMING_REBUILD_MIN_INTERVAL_MS = 2 * 60 * 1000;
+/** @type {WeakMap<object, number>} last naming-context rebuild per SearchService */
+const lastNamingRebuildAt = new WeakMap();
 
 /**
  * @param {string} fileName - Basename or path (basename is used for stem tokens)
@@ -38,11 +45,14 @@ async function fetchNamingContextFromBm25(searchService, options) {
 
   try {
     // Never rebuild on every file: full history scan is O(history); batch analysis would degrade to O(n²).
+    const hasIndex = Boolean(searchService.bm25Index);
+    const stale =
+      typeof searchService.isIndexStale === 'function' ? searchService.isIndexStale() : !hasIndex;
+    const lastRebuild = lastNamingRebuildAt.get(searchService) || 0;
     const needsBuild =
-      typeof searchService.isIndexStale === 'function'
-        ? searchService.isIndexStale()
-        : !searchService.bm25Index;
+      !hasIndex || (stale && Date.now() - lastRebuild >= NAMING_REBUILD_MIN_INTERVAL_MS);
     if (needsBuild && typeof searchService.buildBM25Index === 'function') {
+      lastNamingRebuildAt.set(searchService, Date.now());
       await searchService.buildBM25Index();
     }
   } catch (err) {
@@ -88,5 +98,6 @@ async function fetchNamingContextFromBm25(searchService, options) {
 
 module.exports = {
   buildNamingBm25Query,
-  fetchNamingContextFromBm25
+  fetchNamingContextFromBm25,
+  NAMING_REBUILD_MIN_INTERVAL_MS
 };
