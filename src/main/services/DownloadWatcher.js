@@ -54,6 +54,9 @@ const { computeFileChecksum, handleDuplicateMove } = require('../utils/fileDedup
 const { removeEmbeddingsForPathBestEffort } = require('../ipc/files/embeddingSync');
 
 const logger = typeof createLogger === 'function' ? createLogger('DownloadWatcher') : baseLogger;
+
+// How often held work looks again while the disk is full (see DegradedStateTracker.isStorageFull).
+const STORAGE_FULL_RECHECK_MS = 60_000;
 if (typeof createLogger !== 'function' && logger?.setContext) {
   logger.setContext('DownloadWatcher');
 }
@@ -644,6 +647,17 @@ class DownloadWatcher {
    */
   async handleFile(filePath) {
     if (this._stopped) return;
+
+    // Disk full: hold this download rather than analyze it into a vector store
+    // that cannot save. It is retried until the store saves again.
+    if (require('./DegradedStateTracker').isStorageFull()) {
+      logger.warn('[DOWNLOAD-WATCHER] Disk full; holding new download', { filePath });
+      const timer = setTimeout(() => {
+        void this.handleFile(filePath);
+      }, STORAGE_FULL_RECHECK_MS);
+      if (typeof timer?.unref === 'function') timer.unref();
+      return;
+    }
 
     if (
       typeof this.analyzeDocumentFile !== 'function' ||

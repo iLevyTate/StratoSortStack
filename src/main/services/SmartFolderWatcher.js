@@ -70,6 +70,9 @@ const { findSmartFolderForExtension } = require('../../shared/categoryFolderMatc
 const { CONCURRENCY } = require('../../shared/performanceConstants');
 
 const logger = typeof createLogger === 'function' ? createLogger('SmartFolderWatcher') : baseLogger;
+
+// How often held work looks again while the disk is full (see DegradedStateTracker.isStorageFull).
+const STORAGE_FULL_RECHECK_MS = 60_000;
 if (typeof createLogger !== 'function' && logger?.setContext) {
   logger.setContext('SmartFolderWatcher');
 }
@@ -2074,6 +2077,26 @@ class SmartFolderWatcher {
    */
   async _processQueue() {
     if (this._isStopping || this.isProcessingQueue || this.analysisQueue.length === 0) {
+      return;
+    }
+
+    // Disk full: the vector store cannot save, so analyzing now would spend
+    // model time on results that are lost on restart. Hold the queue (it is
+    // durable) and look again shortly; the store clears the flag on its own
+    // once a save succeeds.
+    if (require('./DegradedStateTracker').isStorageFull()) {
+      if (!this._storageFullHoldTimer) {
+        logger.warn('[SMART-FOLDER-WATCHER] Disk full; holding analysis', {
+          queued: this.analysisQueue.length
+        });
+        this._storageFullHoldTimer = setTimeout(() => {
+          this._storageFullHoldTimer = null;
+          void this._processQueue();
+        }, STORAGE_FULL_RECHECK_MS);
+        if (typeof this._storageFullHoldTimer?.unref === 'function') {
+          this._storageFullHoldTimer.unref();
+        }
+      }
       return;
     }
 

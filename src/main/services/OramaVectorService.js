@@ -86,6 +86,13 @@ function getDegradedStateTrackerSafe() {
   }
 }
 
+// Errors that mean the disk has no room, as opposed to a bad path or a lock.
+const STORAGE_FULL_ERRNOS = new Set(['ENOSPC', 'EDQUOT']);
+// While the disk is full, try the save again this often. With background
+// analysis paused nothing else writes, so without this the flag would never
+// clear on its own.
+const STORAGE_FULL_RETRY_MS = 60_000;
+
 const PERSIST_COMPRESSION_ENABLED =
   String(process.env.STRATOSORT_ORAMA_COMPRESS || 'true').toLowerCase() !== 'false';
 
@@ -2122,6 +2129,67 @@ class OramaVectorService extends EventEmitter {
    * Schedule persistence (debounced)
    * @private
    */
+  /**
+   * Raise the storage-full flag: the banner tells the user why saving stopped,
+   * and background analysis holds until it clears.
+   * @private
+   * @param {string} errno
+   */
+  _raiseStorageFull(errno) {
+    const tracker = getDegradedStateTrackerSafe();
+    if (!tracker) return;
+    const { STORAGE_FULL_CODE } = require('./DegradedStateTracker');
+    tracker.raise({
+      code: STORAGE_FULL_CODE,
+      subsystem: 'storage',
+      severity: 'error',
+      message:
+        'Your disk is full, so StratoSort cannot save its search index. New files are not analyzed until there is free space; it will resume on its own.',
+      detail: { errno, dataPath: this._dataPath || null }
+    });
+    this._storageFullRaised = true;
+  }
+
+  /** @private */
+  _clearStorageFull() {
+    if (this._storageFullRetryTimer) {
+      clearTimeout(this._storageFullRetryTimer);
+      this._storageFullRetryTimer = null;
+    }
+    if (!this._storageFullRaised) return;
+    this._storageFullRaised = false;
+    const tracker = getDegradedStateTrackerSafe();
+    if (!tracker) return;
+    const { STORAGE_FULL_CODE } = require('./DegradedStateTracker');
+    tracker.clear(STORAGE_FULL_CODE);
+    logger.info(
+      '[OramaVectorService] Saved again after the disk was full; background analysis resumes'
+    );
+  }
+
+  /**
+   * One save attempt per STORAGE_FULL_RETRY_MS while the disk is full. The
+   * retry counter is left one short of the limit, so each attempt that fails
+   * schedules exactly one more instead of a fast round of five.
+   * @private
+   * @param {number} maxRetries
+   */
+  _scheduleStorageFullRetry(maxRetries) {
+    if (this._isShuttingDown || this._storageFullRetryTimer) return;
+    this._storageFullRetryTimer = setTimeout(() => {
+      this._storageFullRetryTimer = null;
+      if (this._isShuttingDown || this._isPersisting) return;
+      this._persistRetryCount = maxRetries - 1;
+      // _doPersist only runs when a save is pending; the last failed round
+      // cleared that, so mark it again or the retry is a no-op.
+      this._persistPending = true;
+      this._currentPersistPromise = this._doPersist();
+    }, STORAGE_FULL_RETRY_MS);
+    if (typeof this._storageFullRetryTimer?.unref === 'function') {
+      this._storageFullRetryTimer.unref();
+    }
+  }
+
   _schedulePersist() {
     if (this._isShuttingDown) return;
 
@@ -2292,15 +2360,21 @@ class OramaVectorService extends EventEmitter {
       }
 
       logger.debug('[OramaVectorService] Persisted all databases');
+      this._clearStorageFull();
     } catch (error) {
       this._persistRetryCount = (this._persistRetryCount || 0) + 1;
       const maxRetries = 5;
+      const storageFull = STORAGE_FULL_ERRNOS.has(/** @type {any} */ (error)?.code);
+      if (storageFull) this._raiseStorageFull(/** @type {any} */ (error).code);
       if (this._persistRetryCount >= maxRetries) {
         logger.error(
-          `[OramaVectorService] Persistence failed ${maxRetries} consecutive times, stopping retries`,
+          storageFull
+            ? `[OramaVectorService] Persistence failed ${maxRetries} consecutive times (disk full); retrying every ${STORAGE_FULL_RETRY_MS / 1000}s`
+            : `[OramaVectorService] Persistence failed ${maxRetries} consecutive times, stopping retries`,
           attachErrorCode(error, ERROR_CODES.VECTOR_DB_PERSIST_FAILED)
         );
         this._persistPending = false;
+        if (storageFull) this._scheduleStorageFullRetry(maxRetries);
       } else {
         this._persistPending = true;
         logger.error(
@@ -5366,6 +5440,10 @@ class OramaVectorService extends EventEmitter {
     if (this._persistTimer) {
       clearTimeout(this._persistTimer);
       this._persistTimer = null;
+    }
+    if (this._storageFullRetryTimer) {
+      clearTimeout(this._storageFullRetryTimer);
+      this._storageFullRetryTimer = null;
     }
 
     // Final persistence BEFORE setting _isShuttingDown (the guard in _doPersist blocks writes when shutting down)
