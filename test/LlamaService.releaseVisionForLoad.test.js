@@ -213,28 +213,19 @@ describe('LlamaService._releaseVisionForLoad', () => {
     expect(mockVision.shutdown).not.toHaveBeenCalled();
   });
 
-  test('leaves the server up when vision batch mode outlasts the wait', async () => {
+  test('leaves the server to a running vision batch without waiting for it', async () => {
+    // Waiting here ran under the load lock, and from the batch's own text
+    // fallback it waited on itself. The wait now happens once, before a text
+    // request queues (see LlamaService.visionBatchLane.test.js).
     configureVision({ startPromise: null, port: 12345, isReady: true });
     service._visionBatchMode = true;
-    service._visionBatchIdleWaitMs = 0;
+    service._visionBatchIdleWaitMs = 60_000;
+    const waitSpy = jest.spyOn(service, '_waitUntil');
 
     await service._releaseVisionForLoad('text', 'pre-lock');
 
+    expect(waitSpy).not.toHaveBeenCalled();
     expect(mockVision.shutdown).not.toHaveBeenCalled();
-  });
-
-  test('waits out vision batch mode, then releases the server for a text load', async () => {
-    configureVision({ startPromise: null, port: 12345, isReady: true });
-    service._visionBatchMode = true;
-    service._visionBatchIdleWaitMs = 1000;
-    service._lanePollMs = 10;
-    setTimeout(() => {
-      service._visionBatchMode = false;
-    }, 30);
-
-    await service._releaseVisionForLoad('text', 'pre-lock');
-
-    expect(mockVision.shutdown).toHaveBeenCalledTimes(1);
   });
 
   test('skips teardown when the runtime is not alive', async () => {

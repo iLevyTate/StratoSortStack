@@ -2121,6 +2121,7 @@ class SmartFolderWatcher {
 
       if (firstIsImage) {
         // Image batch: take consecutive images (up to 20) that are not currently processing
+        /** @type {any[]} */
         const batch = [];
         const maxImageBatch = 20;
         let i = firstAvailableIndex;
@@ -2147,9 +2148,13 @@ class SmartFolderWatcher {
           llamaService = null;
         }
 
+        // Exit only a batch mode this run entered. Exiting after a failed
+        // enter dropped another owner's ref and ended its batch mid-run.
+        let visionBatchEntered = false;
         if (llamaService) {
           try {
             await llamaService.enterVisionBatchMode();
+            visionBatchEntered = true;
           } catch (err) {
             logger.warn('[SMART-FOLDER-WATCHER] Failed to enter vision batch mode', {
               error: err.message
@@ -2157,35 +2162,44 @@ class SmartFolderWatcher {
           }
         }
 
+        // Inside the batch, an image's text fallback is the batch's own work
+        // and must not wait for the batch to end.
+        const runInBatch = (/** @type {() => Promise<void>} */ fn) =>
+          visionBatchEntered && typeof llamaService?.runAsVisionBatchMember === 'function'
+            ? llamaService.runAsVisionBatchMember(fn)
+            : fn();
+
         try {
-          for (const item of batch) {
-            try {
-              await this._analyzeWithTimeout(item);
-            } catch (error) {
+          await runInBatch(async () => {
+            for (const item of batch) {
               try {
-                this._handleAnalysisError(item, error);
-              } catch (handlerError) {
-                // A throw here would abort the whole sequential batch and leak
-                // every remaining _inFlightItems entry.
-                logger.error('[SMART-FOLDER-WATCHER] Analysis error handler threw', {
-                  filePath: item?.filePath,
-                  error: handlerError?.message
-                });
+                await this._analyzeWithTimeout(item);
+              } catch (error) {
+                try {
+                  this._handleAnalysisError(item, error);
+                } catch (handlerError) {
+                  // A throw here would abort the whole sequential batch and leak
+                  // every remaining _inFlightItems entry.
+                  logger.error('[SMART-FOLDER-WATCHER] Analysis error handler threw', {
+                    filePath: item?.filePath,
+                    error: handlerError?.message
+                  });
+                }
+              } finally {
+                // After _handleAnalysisError: a retry re-enqueues a fresh copy
+                // onto analysisQueue, so dropping the in-flight entry here never
+                // loses the item.
+                this._inFlightItems.delete(procKey(item));
               }
-            } finally {
-              // After _handleAnalysisError: a retry re-enqueues a fresh copy
-              // onto analysisQueue, so dropping the in-flight entry here never
-              // loses the item.
-              this._inFlightItems.delete(procKey(item));
             }
-          }
+          });
         } finally {
           // Belt and braces: if anything above escaped the per-item handling,
           // the batch's keys must not linger in the durable snapshot forever.
           for (const item of batch) {
             this._inFlightItems.delete(procKey(item));
           }
-          if (llamaService) {
+          if (visionBatchEntered) {
             try {
               await llamaService.exitVisionBatchMode();
             } catch (err) {

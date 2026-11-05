@@ -614,6 +614,34 @@ describe('Image Analysis Behavior', () => {
     expect(result.reason).not.toBe('AI engine failed');
   });
 
+  test('the OCR/text fallback carries the caller abort signal to the text request', async () => {
+    // Inside a vision batch, Cancel must also stop the fallback's text
+    // request, including any wait for the text model.
+    mockLlamaService.analyzeImage.mockRejectedValue(
+      new Error('Failed to parse JSON from vision response (empty response)')
+    );
+    const { recognizeIfAvailable } = require('../src/main/utils/tesseractUtils');
+    recognizeIfAvailable.mockResolvedValueOnce({
+      success: true,
+      text: 'Invoice #123 total amount due'
+    });
+    const { analyzeTextWithLlama } = require('../src/main/analysis/documentLlm');
+    analyzeTextWithLlama.mockResolvedValueOnce({
+      category: 'Financial',
+      keywords: ['invoice'],
+      confidence: 84,
+      suggestedName: 'invoice_scan'
+    });
+    const controller = new AbortController();
+
+    await analyzeImageFile('/path/to/invoice_scan.webp', [], { abortSignal: controller.signal });
+
+    const textOptions = analyzeTextWithLlama.mock.calls[0][5];
+    expect(textOptions).toEqual(
+      expect.objectContaining({ forceLocal: true, signal: controller.signal })
+    );
+  });
+
   test('treats vision timeouts as recoverable fallback errors without claiming CPU mode', async () => {
     mockLlamaService.analyzeImage.mockRejectedValue(
       new Error('Image analysis timed out before the vision runtime responded.')

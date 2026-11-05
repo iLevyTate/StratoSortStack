@@ -392,22 +392,31 @@ class BatchAnalysisService {
         }
 
         try {
-          const sectionResult = await this._analyzeSection(sectionFiles, smartFolders, {
-            section,
-            sectionConcurrency,
-            stopOnError,
-            onProgress,
-            onFileComplete,
-            progressState,
-            embeddingStats,
-            isCancelled: cancellationRequested,
-            abortSignal,
-            analyzers: {
-              document: documentAnalyzer,
-              image: imageAnalyzer,
-              media: mediaAnalyzer
-            }
-          });
+          // Inside the batch, an image's text fallback is the batch's own
+          // work and must not wait for the batch to end.
+          const llamaForBatch = visionBatchModeEntered ? getLlamaService() : null;
+          const runInBatch = (/** @type {() => Promise<any>} */ fn) =>
+            typeof llamaForBatch?.runAsVisionBatchMember === 'function'
+              ? llamaForBatch.runAsVisionBatchMember(fn)
+              : fn();
+          const sectionResult = await runInBatch(() =>
+            this._analyzeSection(sectionFiles, smartFolders, {
+              section,
+              sectionConcurrency,
+              stopOnError,
+              onProgress,
+              onFileComplete,
+              progressState,
+              embeddingStats,
+              isCancelled: cancellationRequested,
+              abortSignal,
+              analyzers: {
+                document: documentAnalyzer,
+                image: imageAnalyzer,
+                media: mediaAnalyzer
+              }
+            })
+          );
 
           sectionResults.push(sectionResult);
           processedCount += Number(sectionResult.processed || 0);
