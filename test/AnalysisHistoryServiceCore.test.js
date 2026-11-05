@@ -1033,6 +1033,33 @@ describe('AnalysisHistoryServiceCore', () => {
       expect(service.hasUnsavedChanges()).toBe(false);
     });
 
+    test('a disk-full history save raises the storage-full banner, and a good save clears it', async () => {
+      const tracker = require('../src/main/services/DegradedStateTracker');
+      tracker.getInstance()._reset();
+      persistence.saveHistory.mockRejectedValueOnce(
+        Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' })
+      );
+
+      await record('full.pdf');
+      await jest.advanceTimersByTimeAsync(service.HISTORY_SAVE_QUIET_MS);
+      expect(tracker.isStorageFull()).toBe(true);
+
+      await jest.advanceTimersByTimeAsync(service.HISTORY_SAVE_MIN_INTERVAL_MS);
+      expect(service.hasUnsavedChanges()).toBe(false);
+      expect(tracker.isStorageFull()).toBe(false);
+    });
+
+    test('a history save that fails for another reason does not claim the disk is full', async () => {
+      const tracker = require('../src/main/services/DegradedStateTracker');
+      tracker.getInstance()._reset();
+      persistence.saveHistory.mockRejectedValueOnce(
+        Object.assign(new Error('locked'), { code: 'EBUSY' })
+      );
+      await record('busy.pdf');
+      await jest.advanceTimersByTimeAsync(service.HISTORY_SAVE_QUIET_MS);
+      expect(tracker.isStorageFull()).toBe(false);
+    });
+
     test('embedding-state updates join the coalesced save instead of writing immediately', async () => {
       await record('embed.pdf');
       await jest.advanceTimersByTimeAsync(service.HISTORY_SAVE_QUIET_MS);

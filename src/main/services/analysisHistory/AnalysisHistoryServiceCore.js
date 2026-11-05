@@ -493,12 +493,50 @@ class AnalysisHistoryServiceCore {
           unsavedChanges: this._historyChangeSeq - this._historySavedSeq,
           errors: failures.map((r) => /** @type {any} */ (r).reason?.message).join('; ')
         });
+        // A full disk used to show up on the analysis result; with saves
+        // coalesced it would only be logged. Raise the same banner the vector
+        // store raises, so the user sees it and background analysis holds.
+        const diskFull = failures.some((r) =>
+          ['ENOSPC', 'EDQUOT'].includes(/** @type {any} */ (r).reason?.code)
+        );
+        if (diskFull) this._raiseStorageFull();
         this._scheduleHistorySave();
         return false;
       }
+      this._clearStorageFull();
       return true;
     } finally {
       if (typeof releaseLock === 'function') releaseLock();
+    }
+  }
+
+  /** @private */
+  _raiseStorageFull() {
+    try {
+      const { getInstance, STORAGE_FULL_CODE } = require('../DegradedStateTracker');
+      getInstance().raise({
+        code: STORAGE_FULL_CODE,
+        subsystem: 'storage',
+        severity: 'error',
+        message:
+          'Your disk is full, so StratoSort cannot save its analysis history. New files are not analyzed until there is free space; it will resume on its own.',
+        detail: { source: 'analysis-history' }
+      });
+      this._storageFullRaised = true;
+    } catch {
+      // Tracker unavailable: the failure is still logged above.
+    }
+  }
+
+  /** @private */
+  _clearStorageFull() {
+    if (!this._storageFullRaised) return;
+    this._storageFullRaised = false;
+    try {
+      const { getInstance, STORAGE_FULL_CODE } = require('../DegradedStateTracker');
+      getInstance().clear(STORAGE_FULL_CODE);
+    } catch {
+      // Non-fatal
     }
   }
 
