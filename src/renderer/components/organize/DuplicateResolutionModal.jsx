@@ -16,6 +16,42 @@ import { createLogger } from '../../../shared/logger';
 
 const logger = createLogger('DuplicateResolutionModal');
 
+// Groups the user chose to keep as they are. Stored per machine; a group whose
+// membership changes (a new copy appears) has a new signature and shows again.
+const DISMISSED_STORAGE_KEY = 'stratosort_dismissed_duplicate_groups';
+const MAX_DISMISSED = 500;
+// The related slider's range; groups below RELATED_MIN are never returned.
+const RELATED_MIN = 0.9;
+const RELATED_MAX = 0.97;
+
+/** @param {{ members: Array<{ path?: string, id?: string }> }} group */
+export function duplicateGroupSignature(group) {
+  return group.members
+    .map((member) => String(member.path || member.id || ''))
+    .sort()
+    .join('\u0000');
+}
+
+function loadDismissed() {
+  try {
+    const raw = window.localStorage.getItem(DISMISSED_STORAGE_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(list) ? list.filter((v) => typeof v === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+/** @param {Set<string>} dismissed */
+function saveDismissed(dismissed) {
+  try {
+    const list = [...dismissed].slice(-MAX_DISMISSED);
+    window.localStorage.setItem(DISMISSED_STORAGE_KEY, JSON.stringify(list));
+  } catch {
+    // Storage unavailable: the choice holds for this session only.
+  }
+}
+
 const TIER_CONFIG = {
   exact: {
     label: 'Exact duplicates',
@@ -121,7 +157,16 @@ function pickDefaultKeeper(group) {
 }
 
 const VirtualizedGroupRow = React.memo(function VirtualizedGroupRow({ index, style, data }) {
-  const { groups, selections, handleSelectKeep, openFile, revealFile, redactPaths } = data;
+  const {
+    groups,
+    selections,
+    handleSelectKeep,
+    openFile,
+    revealFile,
+    redactPaths,
+    dismissedSignatures,
+    onToggleDismissed
+  } = data;
   const group = groups[index];
   const groupIndex = group?.flatIndex ?? index;
 
@@ -151,6 +196,20 @@ const VirtualizedGroupRow = React.memo(function VirtualizedGroupRow({ index, sty
             <Text variant="small" className="text-system-gray-500">
               {group.members.length} files • {formatGroupSizeLabel(group)}
             </Text>
+            {onToggleDismissed && (
+              <Button
+                size="xs"
+                variant="ghost"
+                onClick={() => onToggleDismissed(group)}
+                title={
+                  dismissedSignatures?.has(group.signature)
+                    ? 'Show this set again next time'
+                    : 'Keep every file in this set and stop listing it'
+                }
+              >
+                {dismissedSignatures?.has(group.signature) ? 'Restore' : 'Keep all'}
+              </Button>
+            )}
           </div>
         </div>
 
@@ -285,7 +344,9 @@ VirtualizedGroupRow.propTypes = {
     handleSelectKeep: PropTypes.func.isRequired,
     openFile: PropTypes.func.isRequired,
     revealFile: PropTypes.func.isRequired,
-    redactPaths: PropTypes.bool.isRequired
+    redactPaths: PropTypes.bool.isRequired,
+    dismissedSignatures: PropTypes.instanceOf(Set),
+    onToggleDismissed: PropTypes.func
   }).isRequired
 };
 
@@ -300,7 +361,9 @@ function TierSection({
   collapsed,
   onToggle,
   threshold,
-  onThresholdChange
+  onThresholdChange,
+  dismissedSignatures,
+  onToggleDismissed
 }) {
   const cfg = TIER_CONFIG[tier];
 
@@ -322,10 +385,21 @@ function TierSection({
         handleSelectKeep,
         openFile,
         revealFile,
-        redactPaths
+        redactPaths,
+        dismissedSignatures,
+        onToggleDismissed
       }
     }),
-    [groups, selections, handleSelectKeep, openFile, revealFile, redactPaths]
+    [
+      groups,
+      selections,
+      handleSelectKeep,
+      openFile,
+      revealFile,
+      redactPaths,
+      dismissedSignatures,
+      onToggleDismissed
+    ]
   );
 
   const containerRef = useRef(null);
@@ -373,8 +447,8 @@ function TierSection({
           </Text>
           <input
             type="range"
-            min={0.9}
-            max={0.97}
+            min={RELATED_MIN}
+            max={RELATED_MAX}
             step={0.01}
             value={threshold}
             aria-label="Similarity threshold"
@@ -423,7 +497,9 @@ TierSection.propTypes = {
   collapsed: PropTypes.bool.isRequired,
   onToggle: PropTypes.func.isRequired,
   threshold: PropTypes.number,
-  onThresholdChange: PropTypes.func
+  onThresholdChange: PropTypes.func,
+  dismissedSignatures: PropTypes.instanceOf(Set),
+  onToggleDismissed: PropTypes.func
 };
 
 /**
@@ -447,7 +523,9 @@ export default function DuplicateResolutionModal({
     nearIdentical: false,
     related: true
   });
-  const [relatedThreshold, setRelatedThreshold] = useState(0.82);
+  const [relatedThreshold, setRelatedThreshold] = useState(RELATED_MIN);
+  const [dismissedSignatures, setDismissedSignatures] = useState(() => loadDismissed());
+  const [showDismissed, setShowDismissed] = useState(false);
   const { openFile, revealFile } = useFileActions();
   const redactPaths = useSelector(selectRedactPaths);
   const prevIsOpenRef = useRef(false);
@@ -470,6 +548,7 @@ export default function DuplicateResolutionModal({
           id: group?.id,
           tier,
           reason: group?.reason || null,
+          signature: duplicateGroupSignature({ members: normalizedMembers }),
           members: normalizedMembers,
           averageSimilarity: Number.isFinite(similarity)
             ? Math.max(0, Math.min(1, similarity))
@@ -488,22 +567,55 @@ export default function DuplicateResolutionModal({
         ? group.averageSimilarity >= relatedThreshold
         : true;
     };
+    const listed = (group) => showDismissed || !dismissedSignatures.has(group.signature);
     return {
-      exact: normalizedGroups.filter((g) => g.tier === 'exact'),
-      nearIdentical: normalizedGroups.filter((g) => g.tier === 'nearIdentical'),
-      related: normalizedGroups.filter((g) => g.tier === 'related' && filterRelated(g))
+      exact: normalizedGroups.filter((g) => g.tier === 'exact' && listed(g)),
+      nearIdentical: normalizedGroups.filter((g) => g.tier === 'nearIdentical' && listed(g)),
+      related: normalizedGroups.filter((g) => g.tier === 'related' && filterRelated(g) && listed(g))
     };
-  }, [normalizedGroups, relatedThreshold]);
+  }, [normalizedGroups, relatedThreshold, dismissedSignatures, showDismissed]);
+
+  // Only a listed, not-kept group can be acted on. A selection left on a group
+  // the slider or "Keep all" has hidden must never send files to Trash.
+  const actionableGroups = useMemo(
+    () =>
+      [...tierBuckets.exact, ...tierBuckets.nearIdentical, ...tierBuckets.related].filter(
+        (group) => !dismissedSignatures.has(group.signature)
+      ),
+    [tierBuckets, dismissedSignatures]
+  );
+
+  const dismissedCount = useMemo(
+    () => normalizedGroups.filter((g) => dismissedSignatures.has(g.signature)).length,
+    [normalizedGroups, dismissedSignatures]
+  );
+
+  // Nothing left to show: the toggle goes away, so its state must too, or the
+  // next Keep all would leave that set on screen.
+  useEffect(() => {
+    if (dismissedCount === 0 && showDismissed) setShowDismissed(false);
+  }, [dismissedCount, showDismissed]);
+
+  const handleToggleDismissed = useCallback((group) => {
+    setDismissedSignatures((prev) => {
+      const next = new Set(prev);
+      if (next.has(group.signature)) next.delete(group.signature);
+      else next.add(group.signature);
+      saveDismissed(next);
+      return next;
+    });
+  }, []);
 
   const relatedHiddenByThreshold = useMemo(
     () =>
       normalizedGroups.filter(
         (g) =>
           g.tier === 'related' &&
+          !dismissedSignatures.has(g.signature) &&
           Number.isFinite(g.averageSimilarity) &&
           g.averageSimilarity < relatedThreshold
       ).length,
-    [normalizedGroups, relatedThreshold]
+    [normalizedGroups, relatedThreshold, dismissedSignatures]
   );
 
   // Initialize per-tier default selection on open.
@@ -536,7 +648,7 @@ export default function DuplicateResolutionModal({
     setResolveError(null);
     try {
       const resolutions = [];
-      for (const group of normalizedGroups) {
+      for (const group of actionableGroups) {
         const keepId = selections[group.flatIndex];
         if (!keepId) continue;
         const keepFile = group.members.find((f) => (f.path || f.id) === keepId);
@@ -556,11 +668,11 @@ export default function DuplicateResolutionModal({
     } finally {
       setIsResolving(false);
     }
-  }, [normalizedGroups, selections, onResolve, onClose]);
+  }, [actionableGroups, selections, onResolve, onClose]);
 
   const totalSavingsSummary = useMemo(() => {
     const sizes = [];
-    for (const group of normalizedGroups) {
+    for (const group of actionableGroups) {
       const keepId = selections[group.flatIndex];
       if (!keepId) continue;
       group.members.forEach((file) => {
@@ -568,17 +680,17 @@ export default function DuplicateResolutionModal({
       });
     }
     return summarizeByteValues(sizes);
-  }, [normalizedGroups, selections]);
+  }, [actionableGroups, selections]);
 
   const pendingDeleteCount = useMemo(() => {
     let count = 0;
-    for (const group of normalizedGroups) {
+    for (const group of actionableGroups) {
       const keepId = selections[group.flatIndex];
       if (!keepId) continue;
       count += group.members.filter((f) => (f.path || f.id) !== keepId).length;
     }
     return count;
-  }, [normalizedGroups, selections]);
+  }, [actionableGroups, selections]);
 
   return (
     <Modal
@@ -593,13 +705,24 @@ export default function DuplicateResolutionModal({
               relatedHiddenByThreshold === 1 ? '' : 's'
             } below ${Math.round(relatedThreshold * 100)}% — lower the related slider to show)`
           : ''
-      }.`}
+      }.${
+        dismissedCount > 0
+          ? ` ${dismissedCount} set${dismissedCount === 1 ? '' : 's'} you chose to keep ${
+              showDismissed ? 'shown below' : 'hidden'
+            }.`
+          : ''
+      }`}
       size="xl"
       closeOnOverlayClick={!isResolving}
       closeOnEsc={!isResolving}
       closeDisabled={isResolving}
       footer={
         <>
+          {dismissedCount > 0 && (
+            <Button variant="ghost" size="sm" onClick={() => setShowDismissed((v) => !v)}>
+              {showDismissed ? 'Hide kept sets' : `Show ${dismissedCount} kept`}
+            </Button>
+          )}
           <Text as="div" variant="small" className="flex-1 text-system-gray-500">
             {pendingDeleteCount > 0
               ? `Will send ${pendingDeleteCount} file(s) to Trash · `
@@ -648,6 +771,8 @@ export default function DuplicateResolutionModal({
               redactPaths={redactPaths}
               collapsed={collapsedTiers.exact}
               onToggle={() => setCollapsedTiers((p) => ({ ...p, exact: !p.exact }))}
+              dismissedSignatures={dismissedSignatures}
+              onToggleDismissed={handleToggleDismissed}
             />
             <TierSection
               tier="nearIdentical"
@@ -659,6 +784,8 @@ export default function DuplicateResolutionModal({
               redactPaths={redactPaths}
               collapsed={collapsedTiers.nearIdentical}
               onToggle={() => setCollapsedTiers((p) => ({ ...p, nearIdentical: !p.nearIdentical }))}
+              dismissedSignatures={dismissedSignatures}
+              onToggleDismissed={handleToggleDismissed}
             />
             <TierSection
               tier="related"
@@ -672,6 +799,8 @@ export default function DuplicateResolutionModal({
               onToggle={() => setCollapsedTiers((p) => ({ ...p, related: !p.related }))}
               threshold={relatedThreshold}
               onThresholdChange={setRelatedThreshold}
+              dismissedSignatures={dismissedSignatures}
+              onToggleDismissed={handleToggleDismissed}
             />
           </>
         )}
