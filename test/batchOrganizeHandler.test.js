@@ -235,6 +235,27 @@ describe('Batch Organize Handler', () => {
     expect(batchLockManager.releaseBatchLock).toHaveBeenCalled();
   });
 
+  test('logs one "Move completed" info line per moved file outside development', async () => {
+    // The Live Activity feed reads this line; it used to be dev-trace only.
+    expect(process.env.NODE_ENV).not.toBe('development');
+    await handleBatchOrganize(params);
+
+    const moveLines = mockLogger.info.mock.calls.filter(
+      ([msg]) => msg === '[FILE-OPS] Move completed'
+    );
+    expect(moveLines).toHaveLength(2);
+    expect(moveLines.map(([, data]) => data)).toEqual([
+      expect.objectContaining({ index: 0, source: '/src/doc1.pdf', destination: '/dest/doc1.pdf' }),
+      expect.objectContaining({ index: 1, source: '/src/doc2.pdf', destination: '/dest/doc2.pdf' })
+    ]);
+    // Paths and timing only: no file content rides along.
+    for (const [, data] of moveLines) {
+      expect(Object.keys(data).sort()).toEqual(
+        ['batchId', 'destination', 'durationMs', 'index', 'source'].sort()
+      );
+    }
+  });
+
   test('decides every landing folder once, before the lock, and moves nothing into a refused one', async () => {
     const policy = require('../src/main/ipc/files/destinationPolicy');
     policy.authorizeDestinations.mockResolvedValueOnce(new Map());

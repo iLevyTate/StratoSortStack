@@ -844,15 +844,16 @@ async function handleBatchOrganize(params) {
               }
             }
 
-            if (ENABLE_BATCH_TRACE_LOGS) {
-              log.info('[FILE-OPS] Move completed', {
-                batchId,
-                index: i,
-                source: op.source,
-                destination: op.destination,
-                durationMs: Date.now() - opStart
-              });
-            }
+            // One info line per moved file in every build (not trace-only):
+            // the Live Activity feed turns it into "Filed <name>". Paths only,
+            // never file content; the logger redacts them to their basename.
+            log.info('[FILE-OPS] Move completed', {
+              batchId,
+              index: i,
+              source: op.source,
+              destination: op.destination,
+              durationMs: Date.now() - opStart
+            });
 
             // Post-move verification: ensure destination exists and source is gone
             await verifyMoveCompletion(op.source, op.destination, log);
