@@ -25,6 +25,9 @@ const { persistFailedItems, persistDeadLetterQueue, SQLITE_KEYS } = require('./p
  *   are skipped (in-memory state is kept). Used by the owner to protect on-disk data after a
  *   failed initial load, where the in-memory maps are empty/partial and writing them out would
  *   replace (lose) the persisted records.
+ * @param {() => void} [config.schedulePersist] - Owner's debounced persist scheduler. When set,
+ *   a tracked failure only marks the failed-items / dead-letter state dirty and asks the owner
+ *   to schedule a write (which calls persistPending()); without it every failure writes at once.
  * @returns {Record<string, any>} Failed item handler
  */
 function createFailedItemHandler(config) {
@@ -38,6 +41,14 @@ function createFailedItemHandler(config) {
   } = config;
   const shouldBlockPersist =
     typeof config.shouldBlockPersist === 'function' ? config.shouldBlockPersist : () => false;
+  const schedulePersist =
+    typeof config.schedulePersist === 'function' ? config.schedulePersist : null;
+
+  // Set when memory holds failed-items / dead-letter changes not yet written.
+  // Cleared just before a write starts, so a change made during the write
+  // marks it dirty again; restored if the write fails.
+  let failedItemsDirty = false;
+  let deadLetterDirty = false;
 
   /**
    * Persist the failed-items map unless the owner has latched persists off.
@@ -48,7 +59,13 @@ function createFailedItemHandler(config) {
       logger.warn('[EmbeddingQueue] Skipping failed-items persist — persist latch active');
       return;
     }
-    await persistFailedItems(failedItemsPath, failedItems, { key: persistenceKeys.failedItems });
+    failedItemsDirty = false;
+    try {
+      await persistFailedItems(failedItemsPath, failedItems, { key: persistenceKeys.failedItems });
+    } catch (err) {
+      failedItemsDirty = true;
+      throw err;
+    }
   }
 
   /**
@@ -60,9 +77,50 @@ function createFailedItemHandler(config) {
       logger.warn('[EmbeddingQueue] Skipping dead-letter persist — persist latch active');
       return;
     }
-    await persistDeadLetterQueue(deadLetterPath, deadLetterQueue, {
-      key: persistenceKeys.deadLetter
+    deadLetterDirty = false;
+    try {
+      await persistDeadLetterQueue(deadLetterPath, deadLetterQueue, {
+        key: persistenceKeys.deadLetter
+      });
+    } catch (err) {
+      deadLetterDirty = true;
+      throw err;
+    }
+  }
+
+  // Each failure used to write the whole failed-items map (or dead-letter
+  // queue) at once, so a batch of N failing items wrote it N times. With the
+  // owner's scheduler the writes coalesce into its debounced persist; the
+  // owner forces a write where an item would otherwise exist nowhere on disk.
+  function markFailedItemsChanged() {
+    failedItemsDirty = true;
+    if (schedulePersist) {
+      schedulePersist();
+      return;
+    }
+    persistFailedItemsGuarded().catch((err) => {
+      logger.warn('[EmbeddingQueue] Failed to persist failed items:', err.message);
     });
+  }
+
+  function markDeadLetterChanged() {
+    deadLetterDirty = true;
+    if (schedulePersist) {
+      schedulePersist();
+      return;
+    }
+    persistDeadLetterQueueGuarded().catch((err) => {
+      logger.warn('[EmbeddingQueue] Failed to persist dead letter queue:', err.message);
+    });
+  }
+
+  /**
+   * Write only the parts with unsaved changes (the scheduler's callback).
+   * @returns {Promise<void>}
+   */
+  async function persistPending() {
+    if (failedItemsDirty) await persistFailedItemsGuarded();
+    if (deadLetterDirty) await persistDeadLetterQueueGuarded();
   }
 
   // State
@@ -147,9 +205,7 @@ function createFailedItemHandler(config) {
     });
 
     // Persist failed items to disk for recovery
-    persistFailedItemsGuarded().catch((err) => {
-      logger.warn('[EmbeddingQueue] Failed to persist failed items:', err.message);
-    });
+    markFailedItemsChanged();
 
     logger.debug(
       `[EmbeddingQueue] Tracked failed item ${item.id} (retry ${retryCount}/${itemMaxRetries})`
@@ -198,9 +254,7 @@ function createFailedItemHandler(config) {
     );
 
     // Persist dead letter queue to disk
-    persistDeadLetterQueueGuarded().catch((err) => {
-      logger.warn('[EmbeddingQueue] Failed to persist dead letter queue:', err.message);
-    });
+    markDeadLetterChanged();
   }
 
   /**
@@ -255,7 +309,13 @@ function createFailedItemHandler(config) {
     // Use splice(0, 0, ...batch) in chunks to avoid stack overflow and O(n*m) unshift loop
     queue.splice(0, 0, ...deduped);
     await persistQueue();
-    await persistFailedItemsGuarded();
+    // Only lastAttempt changed here (the items stay in the map until they
+    // embed), so the map write can ride the owner's debounced persist.
+    if (schedulePersist) {
+      markFailedItemsChanged();
+    } else {
+      await persistFailedItemsGuarded();
+    }
   }
 
   /**
@@ -369,6 +429,7 @@ function createFailedItemHandler(config) {
     retryAllDeadLetterItems,
     setDeadLetterQueue,
     persistAll,
+    persistPending,
     getStats
   };
 }

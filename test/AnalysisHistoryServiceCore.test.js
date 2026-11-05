@@ -84,7 +84,8 @@ jest.mock('../src/main/services/analysisHistory/persistence', () => ({
     config: { schemaVersion: '1.0.0' },
     history: { entries: {}, totalAnalyzed: 0, totalSize: 0, metadata: {} },
     index: { byPath: {}, byCategory: {}, byTag: {}, byDate: {} }
-  })
+  }),
+  closeSqliteStore: jest.fn()
 }));
 
 // Mock indexManager
@@ -478,7 +479,7 @@ describe('AnalysisHistoryServiceCore', () => {
       expect(invalidateCachesOnAdd).toHaveBeenCalled();
     });
 
-    test('saves history and index', async () => {
+    test('saves history and index once the coalescing window passes', async () => {
       const {
         saveHistory,
         saveIndex
@@ -487,6 +488,7 @@ describe('AnalysisHistoryServiceCore', () => {
       const recordPromise = service.recordAnalysis(mockFileInfo, mockAnalysisResults);
       await flushWriteBuffer();
       await recordPromise;
+      await jest.advanceTimersByTimeAsync(service.HISTORY_SAVE_QUIET_MS);
 
       expect(saveHistory).toHaveBeenCalled();
       expect(saveIndex).toHaveBeenCalled();
@@ -953,6 +955,140 @@ describe('AnalysisHistoryServiceCore', () => {
       expect(entry.analysis.category).toBe('AVA');
       expect(entry.analysis.correctedFrom).toBeUndefined();
       expect(entry.organization.actual).toBe('/elsewhere/resume.docx');
+    });
+  });
+
+  // Every save rewrites the whole history + index blob. Saving per analyzed
+  // file (and again per embedding-status flip) grew analysis-history.db to
+  // megabytes with a bigger WAL in one session, so writes are coalesced.
+  describe('coalesced disk save', () => {
+    const fileAt = (name) => ({
+      path: `/batch/${name}`,
+      size: 10,
+      lastModified: '2024-01-01T00:00:00Z'
+    });
+    let persistence;
+
+    beforeEach(async () => {
+      jest.useFakeTimers();
+      persistence = require('../src/main/services/analysisHistory/persistence');
+      await service.initialize();
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    // recordAnalysis buffers for WRITE_BUFFER_MS before the in-memory commit.
+    const record = async (name) => {
+      const pending = service.recordAnalysis(fileAt(name), { category: 'docs' });
+      await jest.advanceTimersByTimeAsync(service.WRITE_BUFFER_MS);
+      return pending;
+    };
+
+    test('files analyzed a few seconds apart share disk writes', async () => {
+      // Serial analysis: one file every 3 s. The old 100 ms buffer saved
+      // after every file (4 saves); now the first save lands when things go
+      // quiet and the rest wait for the minimum spacing.
+      for (const name of ['a.pdf', 'b.pdf', 'c.pdf', 'd.pdf']) {
+        await record(name);
+        await jest.advanceTimersByTimeAsync(3000 - service.WRITE_BUFFER_MS);
+      }
+      await jest.advanceTimersByTimeAsync(15000);
+
+      expect(persistence.saveHistory).toHaveBeenCalledTimes(2);
+      expect(persistence.saveIndex).toHaveBeenCalledTimes(2);
+      expect(Object.keys(service.analysisHistory.entries)).toHaveLength(4);
+      expect(service.hasUnsavedChanges()).toBe(false);
+    });
+
+    test('a change is never held longer than the max wait during constant activity', async () => {
+      // A change every second never goes quiet for 2 s; the max wait still
+      // forces a write about 10 s after the first unsaved change.
+      for (let i = 0; i < 11; i += 1) {
+        await record(`busy-${i}.pdf`);
+        await jest.advanceTimersByTimeAsync(1000 - service.WRITE_BUFFER_MS);
+      }
+      expect(persistence.saveHistory).toHaveBeenCalledTimes(1);
+    });
+
+    test('recordAnalysis resolves from memory, and a failed write keeps the entry and retries', async () => {
+      persistence.saveHistory.mockRejectedValueOnce(new Error('disk full'));
+
+      const id = await record('keep.pdf');
+      expect(typeof id).toBe('string');
+      expect(persistence.saveHistory).not.toHaveBeenCalled();
+      expect(service.analysisHistory.entries[id]).toBeDefined();
+
+      // First write fails: nothing is rolled back and no reload is forced.
+      await jest.advanceTimersByTimeAsync(service.HISTORY_SAVE_QUIET_MS);
+      expect(persistence.saveHistory).toHaveBeenCalledTimes(1);
+      expect(service.analysisHistory.entries[id]).toBeDefined();
+      expect(service.initialized).toBe(true);
+      expect(service.hasUnsavedChanges()).toBe(true);
+
+      // The retry waits out the minimum spacing, then succeeds.
+      await jest.advanceTimersByTimeAsync(service.HISTORY_SAVE_MIN_INTERVAL_MS);
+      expect(persistence.saveHistory).toHaveBeenCalledTimes(2);
+      expect(service.hasUnsavedChanges()).toBe(false);
+    });
+
+    test('embedding-state updates join the coalesced save instead of writing immediately', async () => {
+      await record('embed.pdf');
+      await jest.advanceTimersByTimeAsync(service.HISTORY_SAVE_QUIET_MS);
+      persistence.saveHistory.mockClear();
+
+      await service.updateEmbeddingStateByPath('/batch/embed.pdf', { status: 'pending' });
+      await service.updateEmbeddingStateByPath('/batch/embed.pdf', { status: 'done' });
+      await service.updateEmbeddingStateByPath('/batch/embed.pdf', { model: 'embed-model' });
+      expect(persistence.saveHistory).not.toHaveBeenCalled();
+
+      await jest.advanceTimersByTimeAsync(service.HISTORY_SAVE_MIN_INTERVAL_MS);
+      expect(persistence.saveHistory).toHaveBeenCalledTimes(1);
+      const entry = Object.values(service.analysisHistory.entries)[0];
+      expect(entry.embedding).toEqual(
+        expect.objectContaining({ status: 'done', model: 'embed-model' })
+      );
+    });
+
+    test('flushPendingSaves writes buffered and unsaved changes immediately', async () => {
+      // Still inside the 100 ms buffer: not even in memory yet.
+      const pending = service.recordAnalysis(fileAt('now.pdf'), { category: 'docs' });
+
+      await expect(service.flushPendingSaves()).resolves.toBe(true);
+      await pending;
+      expect(persistence.saveHistory).toHaveBeenCalledTimes(1);
+      expect(service.hasUnsavedChanges()).toBe(false);
+    });
+
+    test('shutdown writes what the coalesced save was still holding', async () => {
+      await record('late.pdf');
+      await jest.advanceTimersByTimeAsync(service.HISTORY_SAVE_QUIET_MS);
+      persistence.saveHistory.mockClear();
+      await service.updateEmbeddingStateByPath('/batch/late.pdf', { status: 'done' });
+
+      await service.shutdown();
+
+      expect(persistence.saveHistory).toHaveBeenCalledTimes(1);
+      expect(service.hasUnsavedChanges()).toBe(false);
+      expect(persistence.closeSqliteStore).toHaveBeenCalled();
+    });
+
+    test('a path update still writes immediately and fails closed, carrying unsaved changes', async () => {
+      await record('move-me.pdf');
+      const entry = Object.values(service.analysisHistory.entries)[0];
+      expect(service.hasUnsavedChanges()).toBe(true);
+
+      await service.updateEntryPaths([{ oldPath: entry.originalPath, newPath: '/moved/a.pdf' }]);
+      expect(persistence.saveHistory).toHaveBeenCalledTimes(1);
+      expect(service.hasUnsavedChanges()).toBe(false);
+
+      // FilePathCoordinator rolls back its other stores only if this throws.
+      persistence.saveHistory.mockRejectedValueOnce(new Error('disk gone'));
+      await expect(
+        service.updateEntryPaths([{ oldPath: '/moved/a.pdf', newPath: '/moved/b.pdf' }])
+      ).rejects.toMatchObject({ code: 'HISTORY_PERSIST_FAILED' });
+      expect(service.initialized).toBe(false);
     });
   });
 });

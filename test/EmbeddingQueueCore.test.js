@@ -53,7 +53,8 @@ const mockFailedHandler = {
   deadLetterQueue: [],
   trackFailedItem: jest.fn(),
   retryFailedItems: jest.fn().mockResolvedValue(undefined),
-  setDeadLetterQueue: jest.fn()
+  setDeadLetterQueue: jest.fn(),
+  persistPending: jest.fn().mockResolvedValue(undefined)
 };
 
 jest.mock('../src/main/analysis/embeddingQueue/failedItemHandler', () => ({
@@ -160,9 +161,62 @@ describe('EmbeddingQueueCore', () => {
       expect.objectContaining({ id: 'file:overflow' }),
       'queue_overflow'
     );
-    expect(persistQueueData).toHaveBeenCalled();
+    // The overflowing item never entered the queue, so the (full) queue is
+    // not rewritten for it; its failed-items entry rides the debounced persist.
+    expect(persistQueueData).not.toHaveBeenCalled();
+    expect(q.queue).toHaveLength(1);
 
     jest.useRealTimers();
+  });
+
+  // Each failure used to rewrite the failed-items map (or dead-letter queue)
+  // on its own. The handler now asks the queue's debounced persist instead.
+  test('failures coalesce into the debounced persist without rewriting an unchanged queue', async () => {
+    jest.useFakeTimers();
+    const EmbeddingQueue = require('../src/main/analysis/embeddingQueue/EmbeddingQueueCore');
+    const {
+      createFailedItemHandler
+    } = require('../src/main/analysis/embeddingQueue/failedItemHandler');
+    const { persistQueueData } = require('../src/main/analysis/embeddingQueue/persistence');
+
+    const q = new EmbeddingQueue({ flushDelayMs: 0 });
+    q.initialized = true;
+    const { schedulePersist } = createFailedItemHandler.mock.calls.at(-1)[0];
+    expect(typeof schedulePersist).toBe('function');
+
+    // Three failures in a row (what trackFailedItem does for each).
+    schedulePersist();
+    schedulePersist();
+    schedulePersist();
+    expect(mockFailedHandler.persistPending).not.toHaveBeenCalled();
+
+    await advance(500);
+    expect(mockFailedHandler.persistPending).toHaveBeenCalledTimes(1);
+    expect(persistQueueData).not.toHaveBeenCalled();
+
+    jest.useRealTimers();
+  });
+
+  test('a database-offline give-up writes failed items before dropping them from the queue', async () => {
+    const EmbeddingQueue = require('../src/main/analysis/embeddingQueue/EmbeddingQueueCore');
+    const { persistQueueData } = require('../src/main/analysis/embeddingQueue/persistence');
+    const order = [];
+    mockFailedHandler.persistAll = jest.fn(async () => {
+      order.push('failedItems');
+    });
+    persistQueueData.mockImplementationOnce(async () => {
+      order.push('queue');
+    });
+
+    const q = new EmbeddingQueue({ flushDelayMs: 0 });
+    const batch = [{ id: 'file:a', vector: [1] }];
+    q.queue = [...batch];
+    q._offlineRetryCount = q.MAX_RETRY_COUNT - 1;
+
+    await q._handleOfflineDatabase(batch, batch.length);
+
+    expect(q.queue).toHaveLength(0);
+    expect(order).toEqual(['failedItems', 'queue']);
   });
 
   test('_acquireFlushMutex times out without force-release; chain heals when the holder resolves', async () => {

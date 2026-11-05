@@ -126,11 +126,19 @@ class EmbeddingQueue {
       // Share the load-failure latch: after a failed initialize() the handler's
       // maps are missing on-disk entries, so its persists must not replace the
       // persisted failedItems/deadLetter keys with the partial in-memory state.
-      shouldBlockPersist: () => this._persistBlocked || this._isShutdownComplete
+      shouldBlockPersist: () => this._persistBlocked || this._isShutdownComplete,
+      // Failures join the same debounced write as enqueues instead of each
+      // rewriting the failed-items map / dead-letter queue on its own.
+      schedulePersist: () => this._schedulePersist()
     });
 
     // Track pending operations for graceful shutdown
     this._pendingPersistence = null;
+    /** @type {ReturnType<typeof setTimeout>|null} */
+    this._persistDebounceTimer = null;
+    // Whether the next debounced persist must also write the main queue
+    // (failure-only changes leave the queue untouched).
+    this._queuePersistPending = false;
     this._pendingFlush = null;
     // Handle to the genuinely in-flight flush() worker, published by the worker
     // itself once it passes the double-check (paired with isFlushing). Distinct
@@ -290,6 +298,12 @@ class EmbeddingQueue {
       this._persistPendingRemovals();
     }
     await this.persistQueue();
+    // The debounce timer was cleared above; write the failures it held.
+    await this._failedItemHandler
+      .persistPending()
+      .catch((/** @type {any} */ err) =>
+        logger.warn('[EmbeddingQueue] Failed to persist pending failed items:', err.message)
+      );
   }
 
   /**
@@ -552,10 +566,10 @@ class EmbeddingQueue {
         `[EmbeddingQueue] Queue full (${capacityPercent}% capacity) - diverting item to failed queue (backpressure)`,
         { id: item.id }
       );
+      // The item was never added, so the queue itself is unchanged; the
+      // failed-items entry is written by the debounced persist. (This used to
+      // rewrite the whole full queue once per overflowing item.)
       this._failedItemHandler.trackFailedItem(item, 'queue_overflow');
-      await this.persistQueue().catch((/** @type {any} */ err) =>
-        logger.warn('[EmbeddingQueue] Failed to persist after overflow backpressure:', err.message)
-      );
       result.success = false;
       result.reason = 'queue_overflow';
       result.warnings.push('queue_overflow');
@@ -567,22 +581,7 @@ class EmbeddingQueue {
     }
 
     // Debounced persist: coalesce rapid enqueue() calls into a single disk write
-    if (!this._persistDebounceTimer) {
-      this._persistDebounceTimer = setTimeout(() => {
-        this._persistDebounceTimer = null;
-
-        if (this._isShuttingDown) return;
-        this._pendingPersistence = this.persistQueue()
-          .catch((err) => logger.warn('[EmbeddingQueue] Failed to persist queue:', err.message))
-          .finally(() => {
-            this._pendingPersistence = null;
-          });
-      }, 500);
-      // Allow process to exit if this timer is the only thing keeping it alive
-      if (typeof this._persistDebounceTimer.unref === 'function') {
-        this._persistDebounceTimer.unref();
-      }
-    }
+    this._schedulePersist({ queue: true });
 
     if (this.queue.length >= this.BATCH_SIZE) {
       // Honor the exponential error backoff: while a retry timer from a
@@ -611,6 +610,36 @@ class EmbeddingQueue {
     }
 
     return result;
+  }
+
+  /**
+   * Debounced persist shared by enqueue() and the failed-item handler: one
+   * write per 500 ms window instead of one per enqueue or per failure.
+   * shutdown() and ensurePendingComplete() write whatever is still pending.
+   * @param {{ queue?: boolean }} [options] - queue: the main queue changed too
+   */
+  _schedulePersist({ queue = false } = {}) {
+    if (queue) this._queuePersistPending = true;
+    if (this._persistDebounceTimer) return;
+    this._persistDebounceTimer = setTimeout(() => {
+      this._persistDebounceTimer = null;
+
+      if (this._isShuttingDown) return;
+      const writeQueue = this._queuePersistPending;
+      this._queuePersistPending = false;
+      this._pendingPersistence = (async () => {
+        if (writeQueue) await this.persistQueue();
+        await this._failedItemHandler.persistPending();
+      })()
+        .catch((err) => logger.warn('[EmbeddingQueue] Failed to persist queue:', err.message))
+        .finally(() => {
+          this._pendingPersistence = null;
+        });
+    }, 500);
+    // Allow process to exit if this timer is the only thing keeping it alive
+    if (typeof this._persistDebounceTimer.unref === 'function') {
+      this._persistDebounceTimer.unref();
+    }
   }
 
   /**
@@ -905,9 +934,9 @@ class EmbeddingQueue {
         try {
           // Durability barrier: the just-failed items were removed from
           // this.queue above (by batch identity) and so are excluded from the
-          // queue persist below. Their only on-disk record so far is the
-          // non-awaited persist inside trackFailedItem, so a hard kill between
-          // the queue persist and that fire-and-forget write would leave those
+          // queue persist below. Their failed-items entry is only scheduled for the
+          // debounced persist (trackFailedItem), so a hard kill between
+          // the queue persist and that deferred write would leave those
           // items in NEITHER file — silently dropping their files from indexing.
           // Persist failed items durably FIRST so they survive the same crash
           // window. (The prior-failed cleanup case is persisted below via
@@ -952,7 +981,11 @@ class EmbeddingQueue {
           this.queue.unshift(...itemsToReAdd);
           throw persistError;
         }
-        await this._failedItemHandler.retryFailedItems(this.queue, () => this.persistQueue());
+        // The re-queued items are still in the failed-items map on disk, so
+        // the queue write can wait for the debounced persist.
+        await this._failedItemHandler.retryFailedItems(this.queue, () =>
+          this._schedulePersist({ queue: true })
+        );
         if (clearedFailed > 0) {
           await this._failedItemHandler
             .persistAll()
@@ -1066,6 +1099,14 @@ class EmbeddingQueue {
       for (const item of batch) {
         this._failedItemHandler.trackFailedItem(item, 'Database offline');
       }
+      // Durability barrier (same reason as in flush): these items leave the
+      // queue below, and the failed-items write is otherwise only scheduled,
+      // so write it before the queue write drops them.
+      await this._failedItemHandler
+        .persistAll()
+        .catch((/** @type {any} */ err) =>
+          logger.warn('[EmbeddingQueue] Failed to persist failed items (offline):', err.message)
+        );
       // Remove only the exact batch items by object identity.
       // Queue may have been mutated while flush was in progress.
       const batchItems = new Set(batch);

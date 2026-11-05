@@ -421,4 +421,78 @@ describe('failedItemHandler', () => {
       });
     });
   });
+
+  // With the owner's scheduler, a failure marks state dirty and asks for the
+  // debounced persist instead of rewriting the whole map / queue at once.
+  describe('with a schedulePersist owner', () => {
+    let schedulePersist;
+    let scheduled;
+
+    beforeEach(() => {
+      schedulePersist = jest.fn();
+      scheduled = createFailedItemHandler({
+        itemMaxRetries: 1,
+        maxDeadLetterSize: 10,
+        maxFailedItemsSize: 5,
+        failedItemsPath: '/tmp/failed.json',
+        deadLetterPath: '/tmp/deadletter.json',
+        schedulePersist
+      });
+    });
+
+    test('a run of failures schedules one write instead of writing per failure', async () => {
+      scheduled.trackFailedItem({ id: 'file:a', vector: [1] }, 'boom');
+      scheduled.trackFailedItem({ id: 'file:b', vector: [1] }, 'boom');
+      scheduled.trackFailedItem({ id: 'file:c', vector: [1] }, 'boom');
+
+      expect(persistFailedItems).not.toHaveBeenCalled();
+      expect(schedulePersist).toHaveBeenCalledTimes(3);
+
+      await scheduled.persistPending();
+      expect(persistFailedItems).toHaveBeenCalledTimes(1);
+      expect(persistDeadLetterQueue).not.toHaveBeenCalled();
+
+      // Nothing changed since: the next scheduled persist writes nothing.
+      await scheduled.persistPending();
+      expect(persistFailedItems).toHaveBeenCalledTimes(1);
+    });
+
+    test('a dead-lettered item is written by the scheduled persist', async () => {
+      const item = { id: 'file:dead', vector: [1] };
+      scheduled.trackFailedItem(item, 'boom');
+      scheduled.trackFailedItem(item, 'boom'); // over itemMaxRetries -> dead letter
+
+      expect(persistDeadLetterQueue).not.toHaveBeenCalled();
+      await scheduled.persistPending();
+      expect(persistDeadLetterQueue).toHaveBeenCalledTimes(1);
+      expect(scheduled.deadLetterQueue).toHaveLength(1);
+    });
+
+    test('a failed write stays pending for the next persist', async () => {
+      scheduled.trackFailedItem({ id: 'file:a', vector: [1] }, 'boom');
+      persistFailedItems.mockRejectedValueOnce(new Error('disk full'));
+
+      await expect(scheduled.persistPending()).rejects.toThrow('disk full');
+      await scheduled.persistPending();
+
+      expect(persistFailedItems).toHaveBeenCalledTimes(2);
+    });
+
+    test('retrying failed items leaves the map write to the scheduler', async () => {
+      const item = { id: 'file:retry', vector: [1] };
+      scheduled.trackFailedItem(item, 'boom');
+      schedulePersist.mockClear();
+      const queue = [];
+      const persistQueue = jest.fn();
+
+      // Make the item's backoff already elapsed.
+      scheduled.failedItems.get(item.id).lastAttempt = 0;
+      await scheduled.retryFailedItems(queue, persistQueue);
+
+      expect(queue).toEqual([item]);
+      expect(persistQueue).toHaveBeenCalledTimes(1);
+      expect(persistFailedItems).not.toHaveBeenCalled();
+      expect(schedulePersist).toHaveBeenCalledTimes(1);
+    });
+  });
 });
