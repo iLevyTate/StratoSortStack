@@ -210,13 +210,10 @@ function entryChars(entry) {
 function defaultSend(webContents, payload) {
   // Lazy: ipcWrappers pulls in the IPC stack; only needed once a batch ships.
   const { safeSend } = require('../ipc/ipcWrappers');
-  // TODO(live-activity Task 4): drop this cast once IPC_CHANNELS.SYSTEM
-  // declares LIVE_LOG_BATCH; until then nothing subscribes, so it never runs.
-  const channels = /** @type {Record<string, string>} */ (IPC_CHANNELS.SYSTEM);
   const target = /** @type {import('electron').WebContents} */ (
     /** @type {unknown} */ (webContents)
   );
-  return safeSend(target, channels.LIVE_LOG_BATCH, payload);
+  return safeSend(target, IPC_CHANNELS.SYSTEM.LIVE_LOG_BATCH, payload);
 }
 
 /**

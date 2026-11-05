@@ -194,7 +194,10 @@ const IPC_CHANNELS = {
     DISMISS_DEGRADED_FLAG: 'system:dismiss-degraded-flag',
     ABORT_INVOKE: 'system:abort-invoke',
     GET_LEGAL_NOTICES: 'system:get-legal-notices',
-    OPEN_LEGAL_DOCUMENT: 'system:open-legal-document'
+    OPEN_LEGAL_DOCUMENT: 'system:open-legal-document',
+    LIVE_LOG_SUBSCRIBE: 'system:live-log:subscribe',
+    LIVE_LOG_UNSUBSCRIBE: 'system:live-log:unsubscribe',
+    LIVE_LOG_BATCH: 'system:live-log:batch'
   },
 
   // WINDOW
