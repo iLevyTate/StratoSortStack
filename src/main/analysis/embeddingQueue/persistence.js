@@ -248,6 +248,9 @@ async function persistQueueData(filePath, queue, options = {}) {
  * @param {string} filePath - Path to persist to
  * @param {Map<any, any>} failedItems - Failed items map
  * @param {{ key?: string, jsonPath?: string }} [options]
+ * @returns {Promise<boolean>} false when the write failed. It never throws, so
+ *   fire-and-forget callers stay safe; a caller tracking unsaved changes reads
+ *   the result to keep them marked for the next write.
  */
 async function persistFailedItems(filePath, failedItems, options = {}) {
   const key = options.key || SQLITE_KEYS.failedItems;
@@ -256,12 +259,14 @@ async function persistFailedItems(filePath, failedItems, options = {}) {
       const store = getSqliteStore(filePath);
       const data = Array.from(failedItems.entries());
       store.set(key, data);
-      return;
+      return true;
     }
     const targetPath = options.jsonPath || filePath;
     await persistMap(targetPath, failedItems);
+    return true;
   } catch (error) {
     logger.error('[EmbeddingQueue] Error persisting failed items:', error.message);
+    return false;
   }
 }
 
@@ -270,6 +275,8 @@ async function persistFailedItems(filePath, failedItems, options = {}) {
  * @param {string} filePath - Path to persist to
  * @param {any[]} deadLetterQueue - Dead letter queue
  * @param {{ key?: string, jsonPath?: string }} [options]
+ * @returns {Promise<boolean>} false when the write failed (never throws; see
+ *   persistFailedItems)
  */
 async function persistDeadLetterQueue(filePath, deadLetterQueue, options = {}) {
   const key = options.key || SQLITE_KEYS.deadLetter;
@@ -277,12 +284,14 @@ async function persistDeadLetterQueue(filePath, deadLetterQueue, options = {}) {
     if (shouldUseSqlite()) {
       const store = getSqliteStore(filePath);
       store.set(key, deadLetterQueue);
-      return;
+      return true;
     }
     const targetPath = options.jsonPath || filePath;
     await persistData(targetPath, deadLetterQueue, { pretty: true });
+    return true;
   } catch (error) {
     logger.error('[EmbeddingQueue] Error persisting dead letter queue:', error.message);
+    return false;
   }
 }
 

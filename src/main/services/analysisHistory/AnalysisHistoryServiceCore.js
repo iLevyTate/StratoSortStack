@@ -18,6 +18,7 @@ const { LIMITS, TIMEOUTS } = require('../../../shared/performanceConstants');
 const { CircuitBreaker } = require('../../utils/CircuitBreaker');
 const { traceHistoryUpdate } = require('../../../shared/pathTraceLogger');
 const { deepClone } = require('../../../shared/safeJsonOps');
+const { isDiskFullError } = require('../../../shared/errorClassifier');
 
 // Import decomposed modules
 const {
@@ -451,6 +452,10 @@ class AnalysisHistoryServiceCore {
         if (this._historySaveTimer) clearTimeout(this._historySaveTimer);
         this._historySaveTimer = null;
       }
+      // Any good save proves history can write again, including the
+      // immediate saves (organize moves, copies, deletes). Those also cancel
+      // the coalesced retry above, so this is the only place that sees them.
+      this._clearStorageFull();
     }
     return results;
   }
@@ -496,32 +501,29 @@ class AnalysisHistoryServiceCore {
         // A full disk used to show up on the analysis result; with saves
         // coalesced it would only be logged. Raise the same banner the vector
         // store raises, so the user sees it and background analysis holds.
-        const diskFull = failures.some((r) =>
-          ['ENOSPC', 'EDQUOT'].includes(/** @type {any} */ (r).reason?.code)
-        );
-        if (diskFull) this._raiseStorageFull();
+        // The production store is SQLite, which reports SQLITE_FULL rather
+        // than ENOSPC; isDiskFullError knows both.
+        const diskFull = failures.find((r) => isDiskFullError(/** @type {any} */ (r).reason));
+        if (diskFull) this._raiseStorageFull(/** @type {any} */ (diskFull).reason?.code);
         this._scheduleHistorySave();
         return false;
       }
-      this._clearStorageFull();
       return true;
     } finally {
       if (typeof releaseLock === 'function') releaseLock();
     }
   }
 
-  /** @private */
-  _raiseStorageFull() {
+  /**
+   * Hold the storage-full flag up under history's own source. The vector
+   * store raises the same flag; each releases only its own hold.
+   * @private
+   * @param {string} [errno]
+   */
+  _raiseStorageFull(errno) {
     try {
-      const { getInstance, STORAGE_FULL_CODE } = require('../DegradedStateTracker');
-      getInstance().raise({
-        code: STORAGE_FULL_CODE,
-        subsystem: 'storage',
-        severity: 'error',
-        message:
-          'Your disk is full, so StratoSort cannot save its analysis history. New files are not analyzed until there is free space; it will resume on its own.',
-        detail: { source: 'analysis-history' }
-      });
+      const { raiseStorageFull, STORAGE_FULL_SOURCES } = require('../DegradedStateTracker');
+      raiseStorageFull(STORAGE_FULL_SOURCES.ANALYSIS_HISTORY, { errno: errno || null });
       this._storageFullRaised = true;
     } catch {
       // Tracker unavailable: the failure is still logged above.
@@ -533,8 +535,8 @@ class AnalysisHistoryServiceCore {
     if (!this._storageFullRaised) return;
     this._storageFullRaised = false;
     try {
-      const { getInstance, STORAGE_FULL_CODE } = require('../DegradedStateTracker');
-      getInstance().clear(STORAGE_FULL_CODE);
+      const { clearStorageFull, STORAGE_FULL_SOURCES } = require('../DegradedStateTracker');
+      clearStorageFull(STORAGE_FULL_SOURCES.ANALYSIS_HISTORY);
     } catch {
       // Non-fatal
     }

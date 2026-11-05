@@ -59,6 +59,51 @@ describe('DegradedStateTracker storage-full flag', () => {
     tracker.getInstance().clear(tracker.STORAGE_FULL_CODE);
     expect(tracker.isStorageFull()).toBe(false);
   });
+
+  // Two stores raise the one flag. Whichever saved first used to clear it
+  // while the other still could not write, so the hold and the banner flapped.
+  test('the flag stays up until every store that raised it can save again', () => {
+    const { VECTOR_STORE, ANALYSIS_HISTORY } = tracker.STORAGE_FULL_SOURCES;
+    tracker.raiseStorageFull(VECTOR_STORE, { errno: 'ENOSPC' });
+    tracker.raiseStorageFull(ANALYSIS_HISTORY, { errno: 'SQLITE_FULL' });
+    const [both] = tracker.getInstance().list();
+    expect(both.message).toMatch(/search index/);
+    expect(both.message).toMatch(/analysis history/);
+    tracker.getInstance().dismiss(tracker.STORAGE_FULL_CODE);
+
+    expect(tracker.clearStorageFull(ANALYSIS_HISTORY)).toBe(false);
+    expect(tracker.isStorageFull()).toBe(true);
+    const [left] = tracker.getInstance().list();
+    // Still the same, still-dismissed flag: the banner does not come back.
+    expect(left.dismissed).toBe(true);
+    expect(left.sources).toEqual([VECTOR_STORE]);
+    expect(left.message).not.toMatch(/analysis history/);
+
+    expect(tracker.clearStorageFull(VECTOR_STORE)).toBe(true);
+    expect(tracker.isStorageFull()).toBe(false);
+  });
+
+  test('a store that never raised the flag cannot clear it', () => {
+    const { VECTOR_STORE, ANALYSIS_HISTORY } = tracker.STORAGE_FULL_SOURCES;
+    tracker.raiseStorageFull(VECTOR_STORE);
+    tracker.clearStorageFull(ANALYSIS_HISTORY);
+    expect(tracker.isStorageFull()).toBe(true);
+  });
+});
+
+describe('isDiskFullError', () => {
+  const { isDiskFullError } = require('../src/shared/errorClassifier');
+
+  test('knows the Node and SQLite codes for a full disk, and nothing else', () => {
+    expect(isDiskFullError({ code: 'ENOSPC' })).toBe(true);
+    expect(isDiskFullError({ code: 'EDQUOT' })).toBe(true);
+    expect(isDiskFullError({ code: 'SQLITE_FULL' })).toBe(true);
+    expect(isDiskFullError('SQLITE_FULL')).toBe(true);
+    expect(isDiskFullError(new Error('database or disk is full'))).toBe(true);
+    expect(isDiskFullError({ code: 'EBUSY', message: 'locked' })).toBe(false);
+    expect(isDiskFullError({ code: 'SQLITE_BUSY' })).toBe(false);
+    expect(isDiskFullError(null)).toBe(false);
+  });
 });
 
 describe('OramaVectorService on a full disk', () => {
@@ -132,6 +177,74 @@ describe('OramaVectorService on a full disk', () => {
       jest.useRealTimers();
     }
   });
+
+  // Space freed, but the retry then hit a lock (antivirus on the big .lz4)
+  // instead of ENOSPC: no further retry was scheduled, so the flag and the
+  // watchers' hold stayed on until some user action happened to save.
+  test('the once-a-minute retry keeps going when a later attempt fails for another reason', async () => {
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+    try {
+      diskFull();
+      for (let i = 0; i < 5; i++) await persistOnce();
+      expect(service._storageFullRetryTimer).toBeTruthy();
+
+      writeSpy.mockRejectedValue(Object.assign(new Error('locked'), { code: 'EBUSY' }));
+      jest.advanceTimersByTime(60_000);
+      await service._currentPersistPromise;
+      expect(tracker.isStorageFull()).toBe(true);
+      expect(service._storageFullRetryTimer).toBeTruthy();
+
+      writeSpy.mockRestore();
+      writeSpy = null;
+      jest.advanceTimersByTime(60_000);
+      await service._currentPersistPromise;
+      expect(tracker.isStorageFull()).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  // The sidecar (uncompressed vectors) is the biggest write. It failing used
+  // to be logged at debug level while the round still counted as saved, so
+  // the flag cleared and incremental saves never wrote that sidecar again.
+  test('a sidecar that fails to save is a failed save, and is written again next time', async () => {
+    const realWriteFile = fsp.writeFile;
+    writeSpy = jest
+      .spyOn(fsp, 'writeFile')
+      .mockImplementation((file, ...rest) =>
+        String(file).includes('.sidecar.json')
+          ? Promise.reject(
+              Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' })
+            )
+          : realWriteFile.call(fsp, file, ...rest)
+      );
+
+    await persistOnce();
+    expect(tracker.isStorageFull()).toBe(true);
+    const collections = Object.keys(service._databases);
+    expect(collections.length).toBeGreaterThan(0);
+    for (const name of collections) expect(service._collectionNeedsSave(name)).toBe(true);
+
+    writeSpy.mockRestore();
+    writeSpy = null;
+    await persistOnce();
+    expect(tracker.isStorageFull()).toBe(false);
+    for (const name of collections) expect(service._collectionNeedsSave(name)).toBe(false);
+  });
+
+  test('the vector store saving again does not lift analysis history’s hold', async () => {
+    diskFull();
+    await persistOnce();
+    tracker.raiseStorageFull(tracker.STORAGE_FULL_SOURCES.ANALYSIS_HISTORY, {
+      errno: 'SQLITE_FULL'
+    });
+
+    writeSpy.mockRestore();
+    writeSpy = null;
+    await persistOnce();
+    expect(service._storageFullRaised).toBe(false);
+    expect(tracker.isStorageFull()).toBe(true);
+  });
 });
 
 describe('watchers hold while the disk is full', () => {
@@ -173,27 +286,96 @@ describe('watchers hold while the disk is full', () => {
     }
   });
 
-  test('DownloadWatcher holds a new download instead of analyzing it', async () => {
-    jest.useFakeTimers();
-    try {
+  test('SmartFolderWatcher status says the queue is held, not being analyzed', () => {
+    const mod = require('../src/main/services/SmartFolderWatcher');
+    const Watcher = mod.SmartFolderWatcher || mod;
+    const fake = {
+      isRunning: true,
+      isStarting: false,
+      watchedPaths: new Set(['/w']),
+      analysisQueue: [{ filePath: '/w/a.png' }, { filePath: '/w/b.png' }],
+      processingFiles: new Set(),
+      _pendingReanalyzeItems: [],
+      _parkedItems: [],
+      stats: {}
+    };
+    expect(Watcher.prototype.getStatus.call(fake).heldForDiskFull).toBe(false);
+    raiseFull();
+    expect(Watcher.prototype.getStatus.call(fake).heldForDiskFull).toBe(true);
+    fake.analysisQueue = [];
+    expect(Watcher.prototype.getStatus.call(fake).heldForDiskFull).toBe(false);
+  });
+
+  describe('DownloadWatcher', () => {
+    const chokidar = require('chokidar');
+    let watcher;
+
+    const fakeChokidar = () => ({
+      on: jest.fn(),
+      removeAllListeners: jest.fn(),
+      close: jest.fn().mockResolvedValue(undefined)
+    });
+
+    beforeEach(() => {
+      jest.useFakeTimers();
+      require('electron').app.getPath.mockReturnValue(path.join(__dirname, 'temp-dl-storage-full'));
       const mod = require('../src/main/services/DownloadWatcher');
       const DownloadWatcher = mod.DownloadWatcher || mod;
-      raiseFull();
-      const fake = {
-        _stopped: false,
+      watcher = new DownloadWatcher({
+        settingsService: { load: jest.fn().mockResolvedValue({}) },
         analyzeDocumentFile: jest.fn(),
-        analyzeImageFile: jest.fn(),
-        _loadSettingsSnapshot: jest.fn()
-      };
-      fake.handleFile = DownloadWatcher.prototype.handleFile;
-      await fake.handleFile('/dl/report.pdf');
-      expect(fake._loadSettingsSnapshot).not.toHaveBeenCalled();
-
-      const retried = jest.spyOn(fake, 'handleFile').mockResolvedValue(undefined);
-      jest.advanceTimersByTime(60_000);
-      expect(retried).toHaveBeenCalledWith('/dl/report.pdf');
-    } finally {
+        analyzeImageFile: jest.fn()
+      });
+      // Running, as far as the hold is concerned.
+      watcher.watcher = fakeChokidar();
+    });
+    afterEach(() => {
       jest.useRealTimers();
-    }
+    });
+
+    test('holds a new download instead of analyzing it, once per file', async () => {
+      raiseFull();
+      const load = jest.spyOn(watcher, '_loadSettingsSnapshot');
+      await watcher.handleFile('/dl/report.pdf');
+      // A second watcher event for the same file while it is held.
+      await watcher.handleFile('/dl/report.pdf');
+      expect(load).not.toHaveBeenCalled();
+      expect(watcher.getStatus().heldForDiskFullCount).toBe(1);
+
+      const handle = jest.spyOn(watcher, 'handleFile');
+      const debounced = jest.spyOn(watcher, '_debouncedHandleFile').mockImplementation(() => {});
+      // Still full at the recheck: nothing is let through.
+      jest.advanceTimersByTime(60_000);
+      expect(debounced).not.toHaveBeenCalled();
+
+      tracker.getInstance()._reset();
+      jest.advanceTimersByTime(60_000);
+      // One run, through the debounced path so the per-file dedupe applies.
+      expect(debounced).toHaveBeenCalledTimes(1);
+      expect(debounced).toHaveBeenCalledWith('/dl/report.pdf');
+      expect(handle).not.toHaveBeenCalled();
+      expect(watcher.getStatus().heldForDiskFullCount).toBe(0);
+    });
+
+    test('stop() cancels the recheck, and the next start() picks the held download up', async () => {
+      raiseFull();
+      await watcher.handleFile('/dl/held.pdf');
+      await watcher.stop();
+
+      // The user turned the watcher off; space frees later. Nothing runs.
+      tracker.getInstance()._reset();
+      const handle = jest.spyOn(watcher, 'handleFile');
+      const debounced = jest.spyOn(watcher, '_debouncedHandleFile').mockImplementation(() => {});
+      jest.advanceTimersByTime(5 * 60_000);
+      expect(handle).not.toHaveBeenCalled();
+      expect(debounced).not.toHaveBeenCalled();
+
+      // Turned back on: ignoreInitial means chokidar never reports the file
+      // again, so the watcher hands it to the pipeline itself.
+      chokidar.watch.mockReturnValue(fakeChokidar());
+      jest.spyOn(watcher, '_verifyDirectory').mockResolvedValue(true);
+      await watcher.start();
+      expect(debounced).toHaveBeenCalledWith('/dl/held.pdf');
+    });
   });
 });

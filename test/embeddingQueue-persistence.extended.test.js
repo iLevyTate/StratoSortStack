@@ -98,7 +98,8 @@ describe('Embedding Queue Persistence (JSON mode)', () => {
 
     test('swallows errors without throwing', async () => {
       persistMap.mockRejectedValueOnce(new Error('write error'));
-      await expect(persistFailedItems('/tmp/failed.json', new Map())).resolves.toBeUndefined();
+      // Never throws; reports the failure so a caller can keep it marked unsaved.
+      await expect(persistFailedItems('/tmp/failed.json', new Map())).resolves.toBe(false);
     });
   });
 
@@ -111,7 +112,7 @@ describe('Embedding Queue Persistence (JSON mode)', () => {
 
     test('swallows errors without throwing', async () => {
       persistData.mockRejectedValueOnce(new Error('permission denied'));
-      await expect(persistDeadLetterQueue('/tmp/dlq.json', [])).resolves.toBeUndefined();
+      await expect(persistDeadLetterQueue('/tmp/dlq.json', [])).resolves.toBe(false);
     });
   });
 });

@@ -159,6 +159,48 @@ describe('HashCache', () => {
       expect(parsed.entries['/quit']).toEqual({ size: 1, mtimeMs: 2, sha256: 'q' });
     });
 
+    // Quit flushes the cache. If the debounced save was already writing, flush
+    // found nothing dirty and returned at once, and shutdown went on while
+    // the write was still in flight.
+    test('flush waits for a timer save already writing, then writes what changed since', async () => {
+      jest.useFakeTimers();
+      const cache = new HashCache({ filePath: path.join(testDir, 'inflight.json') });
+      const writeSpy = stubWrites();
+      const renameSpy = /** @type {jest.SpyInstance} */ (require('fs').promises.rename);
+      let finishFirstWrite;
+      writeSpy.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishFirstWrite = resolve;
+          })
+      );
+
+      await cache.set('/first', { size: 1, mtimeMs: 1, sha256: 'one' });
+      await jest.advanceTimersByTimeAsync(5000);
+      expect(writeSpy).toHaveBeenCalledTimes(1); // the timer save, still writing
+
+      // A hash lands mid-write, then the app quits.
+      await cache.set('/second', { size: 2, mtimeMs: 2, sha256: 'two' });
+      let flushed = false;
+      const flushing = cache.flush().then(() => {
+        flushed = true;
+      });
+      await jest.advanceTimersByTimeAsync(0);
+      expect(flushed).toBe(false);
+      // Saves take turns on the shared tmp file.
+      expect(writeSpy).toHaveBeenCalledTimes(1);
+
+      finishFirstWrite();
+      await flushing;
+      expect(writeSpy).toHaveBeenCalledTimes(2);
+      expect(renameSpy).toHaveBeenCalledTimes(2);
+      expect(JSON.parse(writeSpy.mock.calls[1][1]).entries['/second']).toEqual({
+        size: 2,
+        mtimeMs: 2,
+        sha256: 'two'
+      });
+    });
+
     test('a failed write keeps the changes for the next flush', async () => {
       const cachePath = path.join(testDir, 'retry.json');
       const cache = new HashCache({ filePath: cachePath });

@@ -46,7 +46,8 @@ function createFailedItemHandler(config) {
 
   // Set when memory holds failed-items / dead-letter changes not yet written.
   // Cleared just before a write starts, so a change made during the write
-  // marks it dirty again; restored if the write fails.
+  // marks it dirty again; restored if the write fails. The persistence calls
+  // log and return false rather than throw, so the result is what says so.
   let failedItemsDirty = false;
   let deadLetterDirty = false;
 
@@ -60,12 +61,16 @@ function createFailedItemHandler(config) {
       return;
     }
     failedItemsDirty = false;
+    let saved;
     try {
-      await persistFailedItems(failedItemsPath, failedItems, { key: persistenceKeys.failedItems });
+      saved = await persistFailedItems(failedItemsPath, failedItems, {
+        key: persistenceKeys.failedItems
+      });
     } catch (err) {
       failedItemsDirty = true;
       throw err;
     }
+    if (saved === false) failedItemsDirty = true;
   }
 
   /**
@@ -78,14 +83,16 @@ function createFailedItemHandler(config) {
       return;
     }
     deadLetterDirty = false;
+    let saved;
     try {
-      await persistDeadLetterQueue(deadLetterPath, deadLetterQueue, {
+      saved = await persistDeadLetterQueue(deadLetterPath, deadLetterQueue, {
         key: persistenceKeys.deadLetter
       });
     } catch (err) {
       deadLetterDirty = true;
       throw err;
     }
+    if (saved === false) deadLetterDirty = true;
   }
 
   // Each failure used to write the whole failed-items map (or dead-letter
@@ -154,18 +161,21 @@ function createFailedItemHandler(config) {
     const retryCount = existing ? existing.retryCount + 1 : 1;
     const normalizedError = normalizeError(errorMessage);
 
+    // A dead-lettered item leaves the failed-items map too. Both writes must
+    // be marked: writing only the dead-letter queue left the item in the
+    // on-disk failed-items map, so after a crash it was retried again.
     if (normalizedError.requiresRebuild) {
       addToDeadLetterQueue(item, normalizedError.message, retryCount, {
         requiresRebuild: true,
         errorCode: normalizedError.errorCode
       });
-      failedItems.delete(item.id);
+      if (failedItems.delete(item.id)) markFailedItemsChanged();
       return;
     }
 
     if (retryCount > itemMaxRetries) {
       addToDeadLetterQueue(item, errorMessage, retryCount);
-      failedItems.delete(item.id);
+      if (failedItems.delete(item.id)) markFailedItemsChanged();
       return;
     }
 

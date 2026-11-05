@@ -265,6 +265,18 @@ describe('Embedding Queue Persistence', () => {
 
       expect(mockFs.unlink).toHaveBeenCalled();
     });
+
+    // It never throws (fire-and-forget callers rely on that), so the result
+    // is the only way a caller tracking unsaved changes learns it failed.
+    test('resolves true when written and false when the write fails', async () => {
+      const failedItems = new Map([['id1', { item: { id: 'id1' }, retryCount: 1 }]]);
+      await expect(persistFailedItems('/path/to/failed.json', failedItems)).resolves.toBe(true);
+
+      mockFs.writeFile.mockRejectedValueOnce(
+        Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' })
+      );
+      await expect(persistFailedItems('/path/to/failed.json', failedItems)).resolves.toBe(false);
+    });
   });
 
   describe('persistDeadLetterQueue', () => {
@@ -286,6 +298,14 @@ describe('Embedding Queue Persistence', () => {
       await persistDeadLetterQueue('/path/to/dlq.json', []);
 
       expect(mockFs.unlink).toHaveBeenCalled();
+    });
+
+    test('resolves true when written and false when the write fails', async () => {
+      const dlq = [{ itemId: 'item1', error: 'Error 1' }];
+      await expect(persistDeadLetterQueue('/path/to/dlq.json', dlq)).resolves.toBe(true);
+
+      mockFs.writeFile.mockRejectedValueOnce(new Error('disk full'));
+      await expect(persistDeadLetterQueue('/path/to/dlq.json', dlq)).resolves.toBe(false);
     });
   });
 

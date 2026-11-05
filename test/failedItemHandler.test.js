@@ -478,6 +478,48 @@ describe('failedItemHandler', () => {
       expect(persistFailedItems).toHaveBeenCalledTimes(2);
     });
 
+    // persistFailedItems logs and returns false instead of throwing, so the
+    // "restore dirty on failure" catch never ran and the change was dropped.
+    test('a write that fails without throwing stays pending for the next persist', async () => {
+      scheduled.trackFailedItem({ id: 'file:a', vector: [1] }, 'boom');
+      persistFailedItems.mockResolvedValueOnce(false);
+
+      await scheduled.persistPending();
+      await scheduled.persistPending();
+
+      expect(persistFailedItems).toHaveBeenCalledTimes(2);
+    });
+
+    test('a dead-letter write that fails without throwing stays pending', async () => {
+      const item = { id: 'file:dl', vector: [1] };
+      scheduled.trackFailedItem(item, 'boom');
+      scheduled.trackFailedItem(item, 'boom'); // dead-lettered
+      persistDeadLetterQueue.mockResolvedValueOnce(false);
+
+      await scheduled.persistPending();
+      await scheduled.persistPending();
+
+      expect(persistDeadLetterQueue).toHaveBeenCalledTimes(2);
+    });
+
+    // A dead-lettered item leaves the failed-items map. Only the dead-letter
+    // queue used to be written, so after a crash the item was still in the
+    // on-disk failed-items map and was retried again.
+    test('dead-lettering an item also writes the failed-items map without it', async () => {
+      const item = { id: 'file:gone', vector: [1] };
+      scheduled.trackFailedItem(item, 'boom');
+      await scheduled.persistPending();
+      expect(persistFailedItems).toHaveBeenCalledTimes(1);
+
+      scheduled.trackFailedItem(item, 'boom'); // over itemMaxRetries -> dead letter
+      await scheduled.persistPending();
+
+      expect(persistDeadLetterQueue).toHaveBeenCalledTimes(1);
+      expect(persistFailedItems).toHaveBeenCalledTimes(2);
+      const writtenMap = persistFailedItems.mock.calls[1][1];
+      expect(writtenMap.has('file:gone')).toBe(false);
+    });
+
     test('retrying failed items leaves the map write to the scheduler', async () => {
       const item = { id: 'file:retry', vector: [1] };
       scheduled.trackFailedItem(item, 'boom');

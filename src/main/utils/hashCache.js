@@ -35,6 +35,11 @@ class HashCache {
     this._saveTimer = null;
     // When the oldest unsaved change was made (0 = nothing unsaved).
     this._firstUnsavedAt = 0;
+    // The write in progress, if any. Saves run one at a time: they share one
+    // tmp file, and flush() at quit must wait for a timer save already
+    // writing instead of returning while it is mid-write.
+    /** @type {Promise<void> | null} */
+    this._savePromise = null;
   }
 
   /** @param {string} filePath */
@@ -90,8 +95,26 @@ class HashCache {
     if (typeof this._saveTimer?.unref === 'function') this._saveTimer.unref();
   }
 
+  /**
+   * Write pending changes, after any write already in progress has finished.
+   * Resolves once the file on disk holds everything changed before the call.
+   */
   async _save() {
+    while (this._savePromise) {
+      // Its outcome belongs to whoever started it; we only wait our turn.
+      await this._savePromise.catch(() => {});
+    }
     if (!this._dirty) return;
+    const write = this._writeFile();
+    this._savePromise = write;
+    try {
+      await write;
+    } finally {
+      if (this._savePromise === write) this._savePromise = null;
+    }
+  }
+
+  async _writeFile() {
     this._dirty = false;
     this._firstUnsavedAt = 0;
     const payload = {

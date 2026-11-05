@@ -58,6 +58,7 @@ const { createLogger } = require('../../shared/logger');
 const { createSingletonHelpers } = require('../../shared/singletonFactory');
 const { AI_DEFAULTS, IPC_CHANNELS } = require('../../shared/constants');
 const { ERROR_CODES } = require('../../shared/errorCodes');
+const { isDiskFullError } = require('../../shared/errorClassifier');
 const { attachErrorCode } = require('../../shared/errorHandlingUtils');
 const { replaceFileWithRetry } = require('../../shared/atomicFile');
 const { tryParse: safeJsonTryParse } = require('../../shared/safeJsonOps');
@@ -123,8 +124,6 @@ function getDegradedStateTrackerSafe() {
   }
 }
 
-// Errors that mean the disk has no room, as opposed to a bad path or a lock.
-const STORAGE_FULL_ERRNOS = new Set(['ENOSPC', 'EDQUOT']);
 // While the disk is full, try the save again this often. With background
 // analysis paused nothing else writes, so without this the flag would never
 // clear on its own.
@@ -2227,18 +2226,20 @@ class OramaVectorService extends EventEmitter {
    * @param {string} errno
    */
   _raiseStorageFull(errno) {
-    const tracker = getDegradedStateTrackerSafe();
-    if (!tracker) return;
-    const { STORAGE_FULL_CODE } = require('./DegradedStateTracker');
-    tracker.raise({
-      code: STORAGE_FULL_CODE,
-      subsystem: 'storage',
-      severity: 'error',
-      message:
-        'Your disk is full, so StratoSort cannot save its search index. New files are not analyzed until there is free space; it will resume on its own.',
-      detail: { errno, dataPath: this._dataPath || null }
-    });
-    this._storageFullRaised = true;
+    try {
+      // Raised under the vector store's own source: analysis history raises
+      // the same flag, and neither store's recovery may lift the other's.
+      const { raiseStorageFull, STORAGE_FULL_SOURCES } = require('./DegradedStateTracker');
+      raiseStorageFull(STORAGE_FULL_SOURCES.VECTOR_STORE, {
+        errno,
+        dataPath: this._dataPath || null
+      });
+      this._storageFullRaised = true;
+    } catch (error) {
+      logger.debug('[OramaVectorService] Could not raise the storage-full flag', {
+        error: /** @type {any} */ (error)?.message
+      });
+    }
   }
 
   /** @private */
@@ -2249,13 +2250,19 @@ class OramaVectorService extends EventEmitter {
     }
     if (!this._storageFullRaised) return;
     this._storageFullRaised = false;
-    const tracker = getDegradedStateTrackerSafe();
-    if (!tracker) return;
-    const { STORAGE_FULL_CODE } = require('./DegradedStateTracker');
-    tracker.clear(STORAGE_FULL_CODE);
-    logger.info(
-      '[OramaVectorService] Saved again after the disk was full; background analysis resumes'
-    );
+    try {
+      const { clearStorageFull, STORAGE_FULL_SOURCES } = require('./DegradedStateTracker');
+      const lifted = clearStorageFull(STORAGE_FULL_SOURCES.VECTOR_STORE);
+      logger.info(
+        lifted
+          ? '[OramaVectorService] Saved again after the disk was full; background analysis resumes'
+          : '[OramaVectorService] Saved again after the disk was full; analysis history still cannot save, so background analysis stays held'
+      );
+    } catch (error) {
+      logger.debug('[OramaVectorService] Could not clear the storage-full flag', {
+        error: /** @type {any} */ (error)?.message
+      });
+    }
   }
 
   /**
@@ -2347,6 +2354,16 @@ class OramaVectorService extends EventEmitter {
     // Unmark before serializing: a write that lands while this save runs marks
     // its collection again, so the next save picks it up.
     for (const name of toSave) changedDatabases.delete(this._databases[name]);
+    // Collections whose sidecar did not reach disk, with the first such error.
+    // Their Orama blob is still written, but the collection is not recorded
+    // as saved: an incremental save only rewrites what changed, so a sidecar
+    // recorded as saved after a failed write would stay stale until the
+    // collection changes again.
+    /** @type {Set<string>} */
+    const failedSidecars = new Set();
+    /** @type {any} */
+    let sidecarError = null;
+    let blobsWritten = false;
 
     try {
       // Persist embedding sidecar maps before Orama JSON blobs so we always
@@ -2383,10 +2400,12 @@ class OramaVectorService extends EventEmitter {
               error: metaError.message
             });
           }
-        } catch (sidecarError) {
-          logger.debug('[OramaVectorService] Failed to persist sidecar', {
+        } catch (error) {
+          failedSidecars.add(name);
+          if (!sidecarError) sidecarError = error;
+          logger.warn('[OramaVectorService] Failed to persist sidecar', {
             collection: name,
-            error: sidecarError.message
+            error: /** @type {any} */ (error)?.message
           });
         }
       }
@@ -2468,7 +2487,13 @@ class OramaVectorService extends EventEmitter {
         }
       }
 
+      blobsWritten = true;
       for (const name of toSave) {
+        if (failedSidecars.has(name)) {
+          // Keep it marked so the next save writes its sidecar again.
+          if (this._databases[name]) changedDatabases.add(this._databases[name]);
+          continue;
+        }
         this._savedDatabases.set(name, this._databases[name]);
         this._savedSidecarSizes.set(name, this._embeddingStore?.[name]?.size ?? 0);
       }
@@ -2477,6 +2502,10 @@ class OramaVectorService extends EventEmitter {
         this._forceFullPersist = false;
       }
       this._lastPersistDurationMs = Date.now() - saveStartedAt;
+      // A failed sidecar is a failed save: it takes the retry path below
+      // (and raises storage-full when the disk is out of room) instead of
+      // clearing the flag while part of the round never reached disk.
+      if (sidecarError) throw sidecarError;
       logger.debug('[OramaVectorService] Persisted databases', {
         collections: toSave,
         full: fullSave,
@@ -2485,22 +2514,34 @@ class OramaVectorService extends EventEmitter {
       this._clearStorageFull();
     } catch (error) {
       // Nothing from this round reached disk for certain: mark it all again.
-      for (const name of toSave) {
-        if (this._databases[name]) changedDatabases.add(this._databases[name]);
+      // (When only sidecars failed, the blobs did land; those collections
+      // were recorded as saved and the failed ones re-marked above.)
+      if (!blobsWritten) {
+        for (const name of toSave) {
+          if (this._databases[name]) changedDatabases.add(this._databases[name]);
+        }
       }
       this._persistRetryCount = (this._persistRetryCount || 0) + 1;
       const maxRetries = 5;
-      const storageFull = STORAGE_FULL_ERRNOS.has(/** @type {any} */ (error)?.code);
-      if (storageFull) this._raiseStorageFull(/** @type {any} */ (error).code);
+      const storageFull = isDiskFullError(/** @type {any} */ (error));
+      if (storageFull) {
+        this._raiseStorageFull(/** @type {any} */ (error)?.code || 'ENOSPC');
+      }
+      // While the flag is up, keep the slow retry going whatever this
+      // attempt failed with: once space frees, the next try can fail on a
+      // lock (EPERM/EBUSY from antivirus on the big .lz4) instead of ENOSPC,
+      // and with background analysis held nothing else would ever save again
+      // to clear the flag.
+      const keepSlowRetry = storageFull || this._storageFullRaised;
       if (this._persistRetryCount >= maxRetries) {
         logger.error(
-          storageFull
+          keepSlowRetry
             ? `[OramaVectorService] Persistence failed ${maxRetries} consecutive times (disk full); retrying every ${STORAGE_FULL_RETRY_MS / 1000}s`
             : `[OramaVectorService] Persistence failed ${maxRetries} consecutive times, stopping retries`,
           attachErrorCode(error, ERROR_CODES.VECTOR_DB_PERSIST_FAILED)
         );
         this._persistPending = false;
-        if (storageFull) this._scheduleStorageFullRetry(maxRetries);
+        if (keepSlowRetry) this._scheduleStorageFullRetry(maxRetries);
       } else {
         this._persistPending = true;
         logger.error(
