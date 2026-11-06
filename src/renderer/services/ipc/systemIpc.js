@@ -63,6 +63,37 @@ export const systemIpc = {
     }
     return api.dismissDegradedFlag(code);
   },
+  /** @returns {Promise<{ entries: any[] }>} */
+  async subscribeLiveLog() {
+    const api = requireElectronAPI().system;
+    if (typeof api.subscribeLiveLog !== 'function') {
+      throw new Error('Live activity is unavailable in this build');
+    }
+    const result = await api.subscribeLiveLog();
+    if (result && typeof result === 'object' && result.success === false) {
+      // The main handler fails with createErrorResponse ({ error: { code, message } });
+      // the preload result validator's fallback uses a plain string `error`.
+      const message = typeof result.error === 'string' ? result.error : result.error?.message;
+      throw new Error(message || 'Failed to start live activity');
+    }
+    return { entries: Array.isArray(result?.entries) ? result.entries : [] };
+  },
+  /** @returns {Promise<void>} */
+  async unsubscribeLiveLog() {
+    const api = requireElectronAPI().system;
+    if (typeof api.unsubscribeLiveLog !== 'function') return;
+    await api.unsubscribeLiveLog();
+  },
+  /**
+   * @param {(payload: any) => void} callback
+   * @returns {() => void}
+   */
+  onLiveLogBatch(callback) {
+    const api = requireElectronAPI().system;
+    if (typeof api.onLiveLogBatch !== 'function') return () => {};
+    const off = api.onLiveLogBatch(callback);
+    return typeof off === 'function' ? off : () => {};
+  },
   async getMetrics() {
     const api = requireElectronAPI().system;
     if (typeof api.getMetrics !== 'function') {

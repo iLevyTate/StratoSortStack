@@ -91,7 +91,8 @@ jest.mock('../src/shared/securityConfig', () => ({
     'notification',
     'batch-results-chunk',
     'chat:stream-chunk',
-    'chat:stream-end'
+    'chat:stream-end',
+    'system:live-log:batch'
   ],
   ALLOWED_SEND_CHANNELS: ['renderer-error-report']
 }));
@@ -1320,6 +1321,16 @@ describe('Preload Coverage', () => {
       );
       const off = electronAPI.system.onOpenSemanticSearch(jest.fn());
       expect(typeof off).toBe('function');
+    });
+
+    test('live log bridges (Live Activity panel)', async () => {
+      await electronAPI.system.subscribeLiveLog();
+      expect(mockInvoke).toHaveBeenCalledWith('system:live-log:subscribe', IPC_META_ENVELOPE);
+      await electronAPI.system.unsubscribeLiveLog();
+      expect(mockInvoke).toHaveBeenCalledWith('system:live-log:unsubscribe', IPC_META_ENVELOPE);
+      const off = electronAPI.system.onLiveLogBatch(jest.fn());
+      expect(typeof off).toBe('function');
+      expect(mockOn).toHaveBeenCalledWith('system:live-log:batch', expect.any(Function));
     });
 
     test('trace bridges', () => {

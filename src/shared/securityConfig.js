@@ -360,7 +360,9 @@ const ALLOWED_RECEIVE_CHANNELS = [
   // were workaround-using raw ipcRenderer.on, which bypassed listener
   // tracking and the channel allowlist.
   IPC_CHANNELS.AI_PROVIDER?.STATUS_CHANGED,
-  IPC_CHANNELS.MCP?.STATUS_CHANGED
+  IPC_CHANNELS.MCP?.STATUS_CHANGED,
+  // Live Activity panel log batches (main → subscribed window).
+  IPC_CHANNELS.SYSTEM?.LIVE_LOG_BATCH
 ].filter(Boolean);
 
 /**

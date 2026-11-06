@@ -2149,6 +2149,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getDegradedState: () => secureIPC.safeInvoke(IPC_CHANNELS.SYSTEM.GET_DEGRADED_STATE),
     dismissDegradedFlag: (/** @type {any} */ code) =>
       secureIPC.safeInvoke(IPC_CHANNELS.SYSTEM.DISMISS_DEGRADED_FLAG, { code }),
+    // Live Activity panel: start/stop streaming sanitized log entries to this
+    // window; batches arrive on onLiveLogBatch.
+    subscribeLiveLog: () => secureIPC.safeInvoke(IPC_CHANNELS.SYSTEM.LIVE_LOG_SUBSCRIBE),
+    unsubscribeLiveLog: () => secureIPC.safeInvoke(IPC_CHANNELS.SYSTEM.LIVE_LOG_UNSUBSCRIBE),
+    onLiveLogBatch: (/** @type {any} */ callback) =>
+      secureIPC.safeOn(IPC_CHANNELS.SYSTEM.LIVE_LOG_BATCH, callback),
     // Cooperative cancel of in-flight invokes on a channel (e.g. user clicks
     // Cancel during a batch organize). Synchronous fire-and-forget; returns
     // the number of in-flight requests signalled.
