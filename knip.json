@@ -9,6 +9,7 @@
     "src/renderer/components/SettingsPanel.jsx",
     "src/renderer/components/AnalysisHistoryModal.jsx",
     "src/renderer/components/search/UnifiedSearchModal.jsx",
+    "src/renderer/components/diagnostics/LiveActivityPanel.jsx",
     "src/renderer/phases/WelcomePhase.jsx",
     "src/renderer/phases/SetupPhase.jsx",
     "src/renderer/phases/DiscoverPhase.jsx",
