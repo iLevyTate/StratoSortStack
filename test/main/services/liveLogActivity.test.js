@@ -9,7 +9,8 @@ const path = require('path');
 const {
   activityFromLogRecord,
   ACTIVITY_RULE_IDS,
-  REDACTED_FILE_LABEL
+  REDACTED_FILE_LABEL,
+  hideBareFileNames
 } = require('../../../src/main/services/liveLogActivity');
 const { IPC_CHANNELS } = require('../../../src/shared/constants');
 const { validateEventPayload } = require('../../../src/shared/ipcEventSchemas');
@@ -1340,6 +1341,75 @@ describe('activityFromLogRecord', () => {
     expect(long.redactedText.length).toBe(300);
     expect(long.redactedText.endsWith('…')).toBe(true);
     expect(long.redactedText).not.toContain('x.pdf');
+  });
+
+  describe('bare file names (no redacted-path token)', () => {
+    test('the real batch-organize UUID fallback line hides its file name', () => {
+      // src/main/ipc/files/batchOrganizeHandler.js performUUIDFallback logs
+      // path.basename(op.source), so no [REDACTED_PATH] token precedes it.
+      const result = activityFromLogRecord({
+        level: 'warn',
+        context: 'IPC:Files:BatchOrganize',
+        msg: '[FILE-OPS] Falling back to UUID for tax-return-2025.pdf'
+      });
+      expect(result).toEqual({
+        kind: 'problem',
+        icon: 'alert',
+        tone: 'warn',
+        text: 'Problem: Falling back to UUID for tax-return-2025.pdf',
+        file: 'tax-return-2025.pdf',
+        files: ['tax-return-2025.pdf'],
+        redactedText: 'Problem: Falling back to UUID for a file'
+      });
+    });
+
+    test('token names come first in files, then bare names, without repeats', () => {
+      const result = activityFromLogRecord({
+        level: 'error',
+        context: 'X',
+        msg: String.raw`Copy [REDACTED_PATH]a.pdf as b.docx failed (b.docx, IMG_2041.HEIC).`
+      });
+      expect(result.files).toEqual(['a.pdf', 'b.docx', 'IMG_2041.HEIC']);
+      expect(result.redactedText).toBe('Problem: Copy a file as a file failed (a file, a file).');
+    });
+
+    test('bare names count toward the files cap but are all hidden', () => {
+      const names = Array.from({ length: 10 }, (_, i) => `f${i}.txt`);
+      const result = activityFromLogRecord({
+        level: 'warn',
+        context: 'X',
+        msg: `Lost ${names.join(' ')}`
+      });
+      expect(result.files).toEqual(names.slice(0, 8));
+      expect(result.redactedText).toBe(`Problem: Lost ${Array(10).fill('a file').join(' ')}`);
+    });
+
+    test.each([
+      ['a web URL', 'GET https://example.com/files/report.pdf failed'],
+      ['a host name', 'Cannot reach api.anthropic.com'],
+      ['a model file', 'Failed to load Qwen3-4B-Instruct-Q4_K_M.gguf'],
+      ['a version', 'Update 4.0.6 failed'],
+      ['a camelCase member', 'window.localStorage.getItem threw'],
+      ['an abbreviation', 'Bad input, e.g. empty'],
+      ['a dotfile or bare extension', 'Unsupported type .pdf in .env']
+    ])('%s stays readable and the line names no file', (_label, msg) => {
+      const result = activityFromLogRecord({ level: 'warn', context: 'X', msg });
+      expect(result.text).toBe(`Problem: ${msg}`);
+      expect(result).not.toHaveProperty('files');
+      expect(result).not.toHaveProperty('redactedText');
+    });
+
+    test.each([
+      ['opened tax.pdf ok', 'opened a file ok'],
+      ['Done with IMG_2041.HEIC.', 'Done with a file.'],
+      ['name=foo.docx', 'name=a file'],
+      ['(tax.pdf)', '(a file)'],
+      ['cut tax.pd…', 'cut a file…'],
+      ['IMG (1).jpg', 'IMG (a file'],
+      ['[REDACTED_PATH] gone', '[REDACTED_PATH] gone']
+    ])('hideBareFileNames(%j) is %j', (input, expected) => {
+      expect(hideBareFileNames(input)).toBe(expected);
+    });
   });
 
   test('a Problem line that names no file carries no redactedText', () => {

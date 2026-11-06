@@ -1,4 +1,12 @@
-import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react';
 import PropTypes from 'prop-types';
 import { List } from 'react-window';
 import {
@@ -28,7 +36,7 @@ import {
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { selectRedactPaths } from '../../store/selectors';
 import { setShowLiveActivity } from '../../store/thunks/liveActivityThunks';
-import { useLiveLogFeed } from '../../hooks/useLiveLogFeed';
+import { MAX_RENDERER_ENTRIES, useLiveLogFeed } from '../../hooks/useLiveLogFeed';
 import { getViewport, useDraggablePanel } from '../../hooks/useDraggablePanel';
 import { loadPanelState, savePanelState } from './liveActivityPanelState';
 import {
@@ -51,9 +59,11 @@ import {
  * that setting off. Layout (position, size, minimized, tab) is per-machine
  * UI state in localStorage (liveActivityPanelState.js).
  *
- * Text colors use the neutral gray ink ramp (500+ meets 4.5:1 on every
- * theme's surfaces); level and tone colors are carried by icons and badge
- * tints only, so nothing depends on brand-colored small text for contrast.
+ * Text colors use the neutral gray ink ramp: 500 meets 4.5:1 on the panel
+ * surface and gray-100 (hover), but not on gray-200, so text that can sit on
+ * gray-200 (badges, tags, the selected Raw row) uses 600 or darker. Level and
+ * tone colors are carried by icons and badge tints only, so nothing depends
+ * on brand-colored small text for contrast.
  * The pulse uses `motion-safe:` and the global reduced-motion rule in
  * styles.css, so it never animates under prefers-reduced-motion.
  */
@@ -61,6 +71,8 @@ import {
 const ROW_HEIGHT = 28;
 const DETAILS_HEIGHT = 88;
 const COPY_STATUS_MS = 4000;
+const LIST_STYLE = Object.freeze({ height: '100%', width: '100%' });
+const NO_CONTEXTS = Object.freeze([]);
 
 const ACTIVITY_ICONS = Object.freeze({
   analyze: FileSearch,
@@ -193,7 +205,7 @@ function RawRow({ index, style, ariaAttributes, rows, redact, selectedId, onSele
           selected ? 'bg-system-gray-200' : ''
         }`}
       >
-        <span className="flex-shrink-0 tabular-nums text-system-gray-500">
+        <span className="flex-shrink-0 tabular-nums text-system-gray-600">
           {formatEntryTime(entry.time)}
         </span>
         <span
@@ -206,7 +218,7 @@ function RawRow({ index, style, ariaAttributes, rows, redact, selectedId, onSele
         <span className="flex-shrink-0 text-system-gray-600">{entry.context || 'App'}</span>
         <span className="min-w-0 truncate text-system-gray-900">{msg}</span>
         {dataText ? (
-          <span className="min-w-0 flex-1 truncate text-system-gray-500">{dataText}</span>
+          <span className="min-w-0 flex-1 truncate text-system-gray-600">{dataText}</span>
         ) : null}
       </button>
     </div>
@@ -273,12 +285,13 @@ function LiveActivityPanel() {
   const lastVisibleId = visible.length > 0 ? visible[visible.length - 1].id : null;
 
   const contextOptions = useMemo(() => {
+    if (tab !== 'raw') return NO_CONTEXTS;
     const contexts = listContexts(feed.entries);
     // Keep a chosen context selectable after its entries are cleared or capped away.
     return contextFilter !== 'all' && !contexts.includes(contextFilter)
       ? [...contexts, contextFilter]
       : contexts;
-  }, [feed.entries, contextFilter]);
+  }, [tab, feed.entries, contextFilter]);
 
   const selectedEntry =
     tab === 'raw' && selectedId !== null
@@ -302,6 +315,31 @@ function LiveActivityPanel() {
     scrollToLatest(visible.length);
   }, [autoScroll, minimized, lastVisibleId, visible.length, tab, scrollToLatest]);
 
+  // Scrolled up with the list full, each batch drops the oldest rows from the
+  // head and every row moves up under the reader. Keep their place: move the
+  // scroll position up by the rows that left the head. Only for feed
+  // updates; a tab or filter change is a new list, not a shifted one.
+  const anchorRef = useRef({ visible, view: '' });
+  const adjustingScrollRef = useRef(false);
+  const view = [tab, minLevel, contextFilter].join('|');
+  useLayoutEffect(() => {
+    const previous = anchorRef.current;
+    anchorRef.current = { visible, view };
+    if (autoScroll || minimized || previous.view !== view) return;
+    const before = previous.visible;
+    if (before === visible || before.length === 0 || visible.length === 0) return;
+    const firstId = visible[0].id;
+    if (before[0].id === firstId) return;
+    const removed = before.findIndex((candidate) => candidate.id === firstId);
+    if (removed <= 0) return;
+    const element = listRef.current?.element;
+    if (!element) return;
+    const nextTop = Math.max(0, element.scrollTop - removed * ROW_HEIGHT);
+    if (nextTop === element.scrollTop) return;
+    adjustingScrollRef.current = true;
+    element.scrollTop = nextTop;
+  }, [visible, view, autoScroll, minimized]);
+
   useEffect(() => {
     const target = pendingFocusRef.current;
     if (!target) return;
@@ -318,8 +356,15 @@ function LiveActivityPanel() {
   const handleScroll = useCallback((event) => {
     const element = event.currentTarget;
     if (!element) return;
-    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
-    setAutoScroll(distanceFromBottom <= ROW_HEIGHT / 2);
+    const atBottom =
+      element.scrollHeight - element.scrollTop - element.clientHeight <= ROW_HEIGHT / 2;
+    if (adjustingScrollRef.current) {
+      // The scroll the place-keeping above caused: it may stop following, never start it.
+      adjustingScrollRef.current = false;
+      if (!atBottom) setAutoScroll(false);
+      return;
+    }
+    setAutoScroll(atBottom);
   }, []);
 
   const jumpToLatest = useCallback(() => {
@@ -381,6 +426,10 @@ function LiveActivityPanel() {
   }, [clearFeed]);
 
   const handleCopy = useCallback(async () => {
+    if (visible.length === 0) {
+      setCopyStatus('Nothing to copy');
+      return;
+    }
     const text = visible.map((candidate) => formatCopyLine(candidate, tab, redactPaths)).join('\n');
     const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : undefined;
     if (!clipboard || typeof clipboard.writeText !== 'function') {
@@ -458,7 +507,7 @@ function LiveActivityPanel() {
           tabIndex={0}
           aria-label={tab === 'raw' ? 'Raw log lines' : 'Activity entries'}
           className="scrollbar-thin focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-stratosort-blue/80"
-          style={{ height: '100%', width: '100%' }}
+          style={LIST_STYLE}
         />
       </div>
     );
@@ -560,7 +609,12 @@ function LiveActivityPanel() {
         ) : null}
         <div className="ml-auto flex items-center gap-1">
           {feed.paused && feed.pausedCount > 0 ? (
-            <span className="text-xs text-system-gray-700">{feed.pausedCount} new</span>
+            <span className="text-xs text-system-gray-700">
+              {feed.pausedCount >= MAX_RENDERER_ENTRIES
+                ? MAX_RENDERER_ENTRIES + '+'
+                : feed.pausedCount}{' '}
+              new
+            </span>
           ) : null}
           <ToolbarButton
             label={feed.paused ? 'Resume live activity' : 'Pause live activity'}

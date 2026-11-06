@@ -11,6 +11,7 @@ import {
   filterRawEntries,
   formatCopyLine,
   formatEntryTime,
+  hideBareFileNames,
   levelRank,
   listContexts,
   pickActivityIcon,
@@ -405,6 +406,108 @@ describe('liveActivityFormat', () => {
       ['quoted names in a message', 'Renamed "a.pdf" to "b c.pdf"', 'Renamed "a file" to "a file"']
     ])('%s', (_label, input, expected) => {
       expect(redactRawText(input, true)).toBe(expected);
+    });
+  });
+
+  describe('bare file names (no redacted-path token)', () => {
+    // src/main/ipc/files/batchOrganizeHandler.js performUUIDFallback logs
+    // path.basename(op.source): no [REDACTED_PATH] token precedes the name.
+    const UUID_FALLBACK = '[FILE-OPS] Falling back to UUID for tax-return-2025.pdf';
+
+    test('the real UUID fallback line hides its name in Raw and in its Activity line', () => {
+      const { activityFromLogRecord } = require('../../src/main/services/liveLogActivity');
+      expect(redactRawText(UUID_FALLBACK, true)).toBe('[FILE-OPS] Falling back to UUID for a file');
+      expect(redactRawText(UUID_FALLBACK, false)).toBe(UUID_FALLBACK);
+      const activity = activityFromLogRecord({
+        level: 'warn',
+        context: 'IPC:Files:BatchOrganize',
+        msg: UUID_FALLBACK
+      });
+      expect(redactActivityText(activity, true)).toBe('Problem: Falling back to UUID for a file');
+      const line = formatCopyLine(
+        {
+          id: 1,
+          time: new Date(2026, 10, 5, 9, 0, 1).toISOString(),
+          level: 'warn',
+          context: 'IPC:Files:BatchOrganize',
+          msg: UUID_FALLBACK,
+          dataText: '',
+          activity
+        },
+        'raw',
+        true
+      );
+      expect(line).not.toContain('tax-return');
+    });
+
+    test.each([
+      [
+        'an unquoted name inside a data string',
+        '{"error":"opened tax.pdf ok"}',
+        '{"error":"opened a file ok"}'
+      ],
+      ['a name used as a key', '{"tax.pdf":{"size":3}}', '{"a file":{"size":3}}'],
+      [
+        'a name after a JSON newline escape',
+        '{"detail":"line\\ntax.pdf ok"}',
+        '{"detail":"line\\na file ok"}'
+      ],
+      ['a cut value', '{"error":"cannot open tax.pd…', '{"error":"cannot open a file…'],
+      ['a name in a plain message', 'opened IMG_2041.HEIC.', 'opened a file.'],
+      ['a name in parentheses', 'skipped (b.docx)', 'skipped (a file)'],
+      ['a model value stays', '{"model":"Qwen.Q4.bin"}', '{"model":"Qwen.Q4.bin"}'],
+      ['a URL value stays', '{"url":"https://x.test/a.pdf"}', '{"url":"https://x.test/a.pdf"}'],
+      [
+        'a URL in a message stays',
+        'GET https://example.com/a.pdf 404',
+        'GET https://example.com/a.pdf 404'
+      ],
+      ['a host stays', 'reach api.anthropic.com', 'reach api.anthropic.com'],
+      ['a model file stays', 'load Qwen3-4B-Q4_K_M.gguf', 'load Qwen3-4B-Q4_K_M.gguf'],
+      [
+        'versions and members stay',
+        'v4.0.6 storage.getItem e.g. 1.5',
+        'v4.0.6 storage.getItem e.g. 1.5'
+      ]
+    ])('%s', (_label, input, expected) => {
+      expect(redactRawText(input, true)).toBe(expected);
+    });
+
+    test('dataText stays valid JSON after hiding bare names', () => {
+      const out = redactRawText('{"error":"opened tax.pdf ok","n":1.5,"tax.pdf":true}', true);
+      expect(JSON.parse(out)).toEqual({ error: 'opened a file ok', n: 1.5, 'a file': true });
+    });
+
+    test('Activity lines hide bare names the classifier did not list', () => {
+      expect(
+        redactActivityText(
+          {
+            kind: 'organize',
+            icon: 'folder',
+            tone: 'success',
+            text: 'Renamed a.pdf to b.pdf',
+            file: 'a.pdf'
+          },
+          true
+        )
+      ).toBe('Renamed a file to a file');
+    });
+
+    test('the panel and the classifier find the same bare names', () => {
+      const classifier = require('../../src/main/services/liveLogActivity');
+      const cases = [
+        UUID_FALLBACK,
+        'opened tax.pdf ok',
+        'Done with IMG_2041.HEIC.',
+        'name=foo.docx (1).jpg [x.png]',
+        'cut tax.pd…',
+        'see https://example.com/a.pdf and api.openai.com',
+        'load Qwen3-4B-Q4_K_M.gguf v4.0.6 storage.getItem e.g. i.e. .env .pdf',
+        'line\ntax.pdf'
+      ];
+      for (const value of cases) {
+        expect(hideBareFileNames(value)).toBe(classifier.hideBareFileNames(value));
+      }
     });
   });
 

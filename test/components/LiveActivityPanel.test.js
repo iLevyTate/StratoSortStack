@@ -34,12 +34,15 @@ jest.mock('react-window', () => {
       defaultHeight: _defaultHeight,
       ...rest
     }) {
+      const elementRef = ReactActual.useRef(null);
       ReactActual.useImperativeHandle(listRef, () => ({
-        element: null,
+        get element() {
+          return elementRef.current;
+        },
         scrollToRow: mockScrollToRow
       }));
       return (
-        <div role="list" data-testid="virtual-list" style={style} {...rest}>
+        <div ref={elementRef} role="list" data-testid="virtual-list" style={style} {...rest}>
           {Array.from({ length: rowCount }).map((_, index) => (
             <RowComponent
               key={index}
@@ -64,10 +67,6 @@ jest.mock('../../src/renderer/store/hooks', () => ({
   useAppSelector: (selector) => selector(mockState)
 }));
 
-jest.mock('../../src/renderer/store/selectors', () => ({
-  selectRedactPaths: (state) => state.redactPaths
-}));
-
 jest.mock('../../src/renderer/store/thunks/liveActivityThunks', () => ({
   setShowLiveActivity: jest.fn((enabled) => ({
     type: 'test/setShowLiveActivity',
@@ -76,10 +75,18 @@ jest.mock('../../src/renderer/store/thunks/liveActivityThunks', () => ({
 }));
 
 jest.mock('../../src/renderer/hooks/useLiveLogFeed', () => ({
+  MAX_RENDERER_ENTRIES: 500,
   useLiveLogFeed: () => mockFeed
 }));
 
+/** Store state for the real selectRedactPaths. */
+function redactState(redactPaths, redactPathsLoaded = true) {
+  return { system: { redactPaths, redactPathsLoaded } };
+}
+
 import LiveActivityPanel from '../../src/renderer/components/diagnostics/LiveActivityPanel';
+
+const { activityFromLogRecord } = jest.requireActual('../../src/main/services/liveLogActivity');
 
 const STORAGE_KEY = 'stratosort_live_activity_panel';
 
@@ -190,7 +197,7 @@ describe('LiveActivityPanel', () => {
     jest.clearAllMocks();
     window.localStorage.clear();
     setViewport(1200, 900);
-    mockState = { redactPaths: false };
+    mockState = redactState(false);
     mockFeed = makeFeed();
   });
 
@@ -290,6 +297,31 @@ describe('LiveActivityPanel', () => {
       expect(screen.getByText('[LlamaService] Model configuration updated')).toBeInTheDocument();
     });
 
+    test('a chosen context stays selectable after the feed is cleared', () => {
+      const { rerender } = render(<LiveActivityPanel />);
+      fireEvent.click(screen.getByRole('tab', { name: 'Raw' }));
+      fireEvent.change(screen.getByLabelText('Context'), {
+        target: { value: 'OramaVectorService' }
+      });
+      mockFeed = makeFeed({ entries: [] });
+      rerender(<LiveActivityPanel />);
+      const select = screen.getByLabelText('Context');
+      expect(select).toHaveValue('OramaVectorService');
+      expect(screen.getByRole('option', { name: 'OramaVectorService' })).toBeInTheDocument();
+      expect(screen.queryByRole('option', { name: 'DownloadWatcher' })).not.toBeInTheDocument();
+    });
+
+    test('the details close when the selected line is capped away', () => {
+      const { rerender } = render(<LiveActivityPanel />);
+      fireEvent.click(screen.getByRole('tab', { name: 'Raw' }));
+      fireEvent.click(screen.getByRole('button', { name: /Analyzing file/ }));
+      expect(screen.getByLabelText('Selected log line details')).toBeInTheDocument();
+
+      mockFeed = makeFeed({ entries: [...ENTRIES.slice(1), entry(5)] });
+      rerender(<LiveActivityPanel />);
+      expect(screen.queryByLabelText('Selected log line details')).not.toBeInTheDocument();
+    });
+
     test('clicking a row shows its full details; clicking again hides them', () => {
       render(<LiveActivityPanel />);
       fireEvent.click(screen.getByRole('tab', { name: 'Raw' }));
@@ -340,8 +372,64 @@ describe('LiveActivityPanel', () => {
   });
 
   describe('Redact paths', () => {
+    // src/main/ipc/files/batchOrganizeHandler.js performUUIDFallback: a bare
+    // basename with no [REDACTED_PATH] token, classified for real.
+    const UUID_MSG = '[FILE-OPS] Falling back to UUID for tax-return-2025.pdf';
+    const uuidEntry = () =>
+      entry(9, {
+        level: 'warn',
+        context: 'IPC:Files:BatchOrganize',
+        msg: UUID_MSG,
+        dataText: '{"error":"opened tax-return-2025.pdf ok","attempt":1}',
+        activity: activityFromLogRecord({
+          level: 'warn',
+          context: 'IPC:Files:BatchOrganize',
+          msg: UUID_MSG
+        })
+      });
+    const NAMES = ['receipt-0412', 'tax.pdf', 'tax-return-2025'];
+    const expectNoNames = (html) => {
+      for (const name of NAMES) expect(html).not.toContain(name);
+    };
+
+    test('no file name reaches the DOM in either tab, titles and labels included', () => {
+      mockState = redactState(true);
+      mockFeed = makeFeed({ entries: [...ENTRIES, uuidEntry()] });
+      const { container } = render(<LiveActivityPanel />);
+      expect(screen.getByText('Problem: Falling back to UUID for a file')).toBeInTheDocument();
+      expectNoNames(container.innerHTML);
+
+      fireEvent.click(screen.getByRole('tab', { name: 'Raw' }));
+      expect(screen.getByText('[FILE-OPS] Falling back to UUID for a file')).toBeInTheDocument();
+      expectNoNames(container.innerHTML);
+
+      fireEvent.click(screen.getByRole('button', { name: /Falling back to UUID/ }));
+      const details = screen.getByLabelText('Selected log line details');
+      expect(details).toHaveValue(
+        [
+          '[FILE-OPS] Falling back to UUID for a file',
+          '{"error":"opened a file ok","attempt":1}'
+        ].join(String.fromCharCode(10))
+      );
+      expectNoNames(details.value);
+      expectNoNames(container.innerHTML);
+    });
+
+    test('is on until the setting has loaded (real selector)', () => {
+      mockState = redactState(null, false);
+      render(<LiveActivityPanel />);
+      expect(screen.getByText('Analyzing a file')).toBeInTheDocument();
+      expect(screen.queryByText(/receipt-0412/)).not.toBeInTheDocument();
+    });
+
+    test('shows names once the setting has loaded as off (real selector)', () => {
+      mockState = redactState(false, true);
+      render(<LiveActivityPanel />);
+      expect(screen.getByText('Analyzing receipt-0412.jpg')).toBeInTheDocument();
+    });
+
     test('hides file names in both tabs', () => {
-      mockState = { redactPaths: true };
+      mockState = redactState(true);
       render(<LiveActivityPanel />);
 
       expect(screen.getByText('Analyzing a file')).toBeInTheDocument();
@@ -356,7 +444,7 @@ describe('LiveActivityPanel', () => {
     });
 
     test('problem lines use their own redacted text', () => {
-      mockState = { redactPaths: true };
+      mockState = redactState(true);
       mockFeed = makeFeed({
         entries: [
           entry(20, {
@@ -380,7 +468,7 @@ describe('LiveActivityPanel', () => {
     });
 
     test('details of a selected row are redacted too', () => {
-      mockState = { redactPaths: true };
+      mockState = redactState(true);
       render(<LiveActivityPanel />);
       fireEvent.click(screen.getByRole('tab', { name: 'Raw' }));
       fireEvent.click(screen.getByRole('button', { name: /Cannot access file/ }));
@@ -439,7 +527,7 @@ describe('LiveActivityPanel', () => {
     });
 
     test('copy in the Raw tab honors redaction', async () => {
-      mockState = { redactPaths: true };
+      mockState = redactState(true);
       mockFeed = makeFeed({ entries: [ENTRIES[2]] });
       const writeText = jest.fn().mockResolvedValue(undefined);
       Object.defineProperty(window.navigator, 'clipboard', {
@@ -546,6 +634,90 @@ describe('LiveActivityPanel', () => {
       });
       rerender(<LiveActivityPanel />);
       expect(mockScrollToRow).toHaveBeenLastCalledWith({ index: 2, align: 'end' });
+    });
+
+    test('copy with nothing visible says so instead of writing an empty clipboard', async () => {
+      const writeText = jest.fn().mockResolvedValue(undefined);
+      Object.defineProperty(window.navigator, 'clipboard', {
+        configurable: true,
+        value: { writeText }
+      });
+      try {
+        mockFeed = makeFeed({ entries: [] });
+        render(<LiveActivityPanel />);
+        fireEvent.click(screen.getByRole('button', { name: 'Copy visible lines' }));
+        expect(await screen.findByText('Nothing to copy')).toBeInTheDocument();
+        expect(writeText).not.toHaveBeenCalled();
+      } finally {
+        delete window.navigator.clipboard;
+      }
+    });
+
+    test('a paused count at the cap reads "500+ new"', () => {
+      mockFeed = makeFeed({ paused: true, pausedCount: 500 });
+      render(<LiveActivityPanel />);
+      expect(screen.getByText('500+ new')).toBeInTheDocument();
+    });
+
+    /** Activity entry with a plain "Done N" line. */
+    const done = (id) =>
+      entry(id, { activity: { kind: 'x', icon: 'check', tone: 'success', text: 'Done ' + id } });
+
+    /** Scroll the (mock) list up to 400 of 1000 with a 200 high viewport. */
+    function scrollUp() {
+      const list = screen.getByTestId('virtual-list');
+      Object.defineProperty(list, 'scrollHeight', { configurable: true, value: 1000 });
+      Object.defineProperty(list, 'clientHeight', { configurable: true, value: 200 });
+      list.scrollTop = 400;
+      fireEvent.scroll(list);
+      return list;
+    }
+
+    test('scrolled up, the view keeps its place when the oldest rows drop off', () => {
+      const { rerender } = render(<LiveActivityPanel />);
+      const list = scrollUp();
+      expect(screen.getByRole('button', { name: 'Jump to latest' })).toBeInTheDocument();
+      mockScrollToRow.mockClear();
+
+      // Activity rows were 1, 2, 3; the cap pushes 1 and 2 out as 5 and 6 arrive.
+      mockFeed = makeFeed({ entries: [ENTRIES[2], ENTRIES[3], done(5), done(6)] });
+      rerender(<LiveActivityPanel />);
+
+      expect(list.scrollTop).toBe(400 - 2 * 28);
+      expect(mockScrollToRow).not.toHaveBeenCalled();
+      // The scroll event that adjustment causes keeps following off.
+      fireEvent.scroll(list);
+      expect(screen.getByRole('button', { name: 'Jump to latest' })).toBeInTheDocument();
+
+      // A batch that removes nothing from the head leaves the position alone.
+      mockFeed = makeFeed({ entries: [ENTRIES[2], ENTRIES[3], done(5), done(6), done(7)] });
+      rerender(<LiveActivityPanel />);
+      expect(list.scrollTop).toBe(344);
+    });
+
+    test('the place-keeping scroll cannot resume following even if it lands at the bottom', () => {
+      const { rerender } = render(<LiveActivityPanel />);
+      const list = scrollUp();
+
+      mockFeed = makeFeed({ entries: ENTRIES.slice(1) });
+      rerender(<LiveActivityPanel />);
+      expect(list.scrollTop).toBe(372);
+      // Pretend the content shrank so the adjusted position is the bottom.
+      Object.defineProperty(list, 'scrollHeight', { configurable: true, value: 572 });
+      fireEvent.scroll(list);
+      expect(screen.getByRole('button', { name: 'Jump to latest' })).toBeInTheDocument();
+      // A real user scroll at the bottom does resume it.
+      fireEvent.scroll(list);
+      expect(screen.queryByRole('button', { name: 'Jump to latest' })).not.toBeInTheDocument();
+    });
+
+    test('a filter change while scrolled up is a new list, not a shifted one', () => {
+      render(<LiveActivityPanel />);
+      fireEvent.click(screen.getByRole('tab', { name: 'Raw' }));
+      const list = scrollUp();
+
+      fireEvent.change(screen.getByLabelText('Minimum level'), { target: { value: 'warn' } });
+      expect(list.scrollTop).toBe(400);
     });
 
     test('reports entries skipped during a burst', () => {

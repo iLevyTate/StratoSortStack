@@ -73,6 +73,104 @@ const MAX_PROBLEM_FILES = 8;
 const REDACTED_PATH_NAMES =
   /\[REDACTED_PATH\](?:(\\+)((?:(?! =>)(?!\[REDACTED_PATH\])[^\\/:*?<>|\r\n])+)|(\\*\/[\\/]*)((?:(?! =>)(?!\[REDACTED_PATH\])[^\\:*?<>|\r\n])+))/g;
 
+/**
+ * Bare file names (no redacted-path token before them), e.g. the basename in
+ * `[FILE-OPS] Falling back to UUID for tax-return-2025.pdf`. A candidate is
+ * a run of characters between whitespace and punctuation that cannot sit
+ * inside a name token (quotes, `,;:<>|*?=`, slashes, braces). Brackets and
+ * parentheses can be part of a name ("IMG (1).jpg"), so they only come off
+ * the ends, together with trailing sentence punctuation and a cut mark. A
+ * candidate names a file when it does not start with a dot and ends like
+ * one: a dot, a letter, then up to seven letters or digits. Kept readable:
+ * web URLs, host names (common top-level domains), model files, camelCase
+ * members (`storage.getItem`) and "e.g."-style abbreviations. A name with
+ * spaces is hidden from its last space on; nothing here knows where it
+ * starts.
+ *
+ * The renderer's liveActivityFormat.js scans raw lines the same way (a test
+ * runs both over one set of cases).
+ */
+const BARE_TOKEN = /[^\s"'`,;:<>|*?=\\/{}]+/gu;
+const BARE_LEADING_PUNCTUATION = /^[([]+/u;
+const BARE_TRAILING_PUNCTUATION = /[)\].!…]+$/u;
+const BARE_FILE_NAME = /^[^.].*\.([A-Za-z][A-Za-z0-9]{0,7})$/u;
+const CAMEL_CASE = /[a-z][A-Z]/u;
+const WEB_URL = /\b(?:https?|wss?):\/\/?[^\s"'<>]*/giu;
+/** Endings that are host names or model files, never user documents. */
+const NON_FILE_EXTENSIONS = new Set([
+  'com',
+  'net',
+  'org',
+  'io',
+  'co',
+  'dev',
+  'edu',
+  'gov',
+  'local',
+  'localhost',
+  'internal',
+  'gguf',
+  'ggml',
+  'onnx'
+]);
+const ABBREVIATION = /^(?:e\.g|i\.e|a\.m|p\.m)$/iu;
+
+/**
+ * Spans (start, end) of the bare file names in `value`, in order.
+ * @param {string} value
+ * @returns {Array<[number, number]>}
+ */
+function bareFileNameSpans(value) {
+  /** @type {Array<[number, number]>} */
+  const urls = [];
+  for (const match of value.matchAll(WEB_URL)) {
+    const start = match.index ?? 0;
+    urls.push([start, start + match[0].length]);
+  }
+  /** @type {Array<[number, number]>} */
+  const spans = [];
+  for (const match of value.matchAll(BARE_TOKEN)) {
+    const lead = match[0].length - match[0].replace(BARE_LEADING_PUNCTUATION, '').length;
+    const start = (match.index ?? 0) + lead;
+    const token = match[0].slice(lead).replace(BARE_TRAILING_PUNCTUATION, '');
+    const end = start + token.length;
+    if (urls.some(([from, to]) => start < to && end > from)) continue;
+    const name = BARE_FILE_NAME.exec(token);
+    if (!name) continue;
+    const extension = name[1];
+    if (NON_FILE_EXTENSIONS.has(extension.toLowerCase())) continue;
+    if (CAMEL_CASE.test(extension) || ABBREVIATION.test(token)) continue;
+    spans.push([start, end]);
+  }
+  return spans;
+}
+
+/**
+ * The bare file names in `value`, in order (duplicates kept).
+ * @param {string} value
+ * @returns {string[]}
+ */
+function bareFileNames(value) {
+  return bareFileNameSpans(value).map(([start, end]) => value.slice(start, end));
+}
+
+/**
+ * `value` with each bare file name replaced by REDACTED_FILE_LABEL.
+ * @param {string} value
+ * @returns {string}
+ */
+function hideBareFileNames(value) {
+  const spans = bareFileNameSpans(value);
+  if (spans.length === 0) return value;
+  let out = '';
+  let cursor = 0;
+  for (const [start, end] of spans) {
+    out += value.slice(cursor, start) + REDACTED_FILE_LABEL;
+    cursor = end;
+  }
+  return out + value.slice(cursor);
+}
+
 /** @param {string} value */
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -255,18 +353,25 @@ function messageWithNamesHidden(message) {
 
 /**
  * A "Problem: …" line. Redacted-path tokens are dropped from the text (the
- * file names stay). Every such name is listed in `files` and the first is
- * also `file` (the feed's merge key). `redactedText` is the same line with
- * every name replaced by "a file" (only when it names a file), which is what
- * redact mode shows; it is cut at the same cap as `text`.
+ * file names stay). Every such name, then every bare file name the message
+ * carries without a token (see bareFileNameSpans), is listed in `files` (at
+ * most MAX_PROBLEM_FILES) and the first is also `file` (the feed's merge
+ * key). `redactedText` is the same line with every name of both kinds
+ * replaced by "a file" (only when it names a file), which is what redact
+ * mode shows; it is cut at the same cap as `text`.
  * @param {string} message
  * @param {ActivityTone} tone
  * @returns {LiveActivity}
  */
 function problem(message, tone) {
+  const tokensHidden = messageWithNamesHidden(message);
   const files = redactedFileNames(message);
+  for (const name of bareFileNames(tokensHidden)) {
+    if (files.length === MAX_PROBLEM_FILES) break;
+    if (!files.includes(name)) files.push(name);
+  }
   const shown = message.replace(REDACTED_PATH_TOKEN, '').trim();
-  const hidden = messageWithNamesHidden(message).trim();
+  const hidden = hideBareFileNames(tokensHidden).trim();
   const result = activity(
     'problem',
     'alert',
@@ -749,4 +854,9 @@ function activityFromLogRecord(record) {
 
 const ACTIVITY_RULE_IDS = Object.freeze(RULES.map((rule) => rule.id));
 
-module.exports = { activityFromLogRecord, ACTIVITY_RULE_IDS, REDACTED_FILE_LABEL };
+module.exports = {
+  activityFromLogRecord,
+  ACTIVITY_RULE_IDS,
+  REDACTED_FILE_LABEL,
+  hideBareFileNames
+};

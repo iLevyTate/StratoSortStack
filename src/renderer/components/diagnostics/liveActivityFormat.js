@@ -156,6 +156,107 @@ const MAX_FILE_LIKE_CHARS = 300;
 const WORD_CHAR = /[\p{L}\p{N}]/u;
 
 /**
+ * Bare file names (no redacted-path token before them), e.g. the basename in
+ * `[FILE-OPS] Falling back to UUID for tax-return-2025.pdf`. A candidate is
+ * a run of characters between whitespace and punctuation that cannot sit
+ * inside a name token (quotes, `,;:<>|*?=`, slashes, braces). Brackets and
+ * parentheses can be part of a name ("IMG (1).jpg"), so they only come off
+ * the ends, together with trailing sentence punctuation and a cut mark. A
+ * candidate names a file when it does not start with a dot and ends like
+ * one: a dot, a letter, then up to seven letters or digits. Kept readable:
+ * web URLs, host names (common top-level domains), model files, camelCase
+ * members (`storage.getItem`) and "e.g."-style abbreviations. A name with
+ * spaces is hidden from its last space on; nothing here knows where it
+ * starts.
+ *
+ * The classifier (src/main/services/liveLogActivity.js) builds a Problem
+ * line's redacted text with the same scan (a test runs both over one set of
+ * cases).
+ */
+const BARE_TOKEN = /[^\s"'`,;:<>|*?=\\/{}]+/gu;
+const BARE_LEADING_PUNCTUATION = /^[([]+/u;
+const BARE_TRAILING_PUNCTUATION = /[)\].!…]+$/u;
+const BARE_FILE_NAME = /^[^.].*\.([A-Za-z][A-Za-z0-9]{0,7})$/u;
+const CAMEL_CASE = /[a-z][A-Z]/u;
+const WEB_URL = /\b(?:https?|wss?):\/\/?[^\s"'<>]*/giu;
+/** Endings that are host names or model files, never user documents. */
+const NON_FILE_EXTENSIONS = new Set([
+  'com',
+  'net',
+  'org',
+  'io',
+  'co',
+  'dev',
+  'edu',
+  'gov',
+  'local',
+  'localhost',
+  'internal',
+  'gguf',
+  'ggml',
+  'onnx'
+]);
+const ABBREVIATION = /^(?:e\.g|i\.e|a\.m|p\.m)$/iu;
+
+/**
+ * Spans (start, end) of the bare file names in `value`, in order.
+ * @param {string} value
+ * @returns {Array<[number, number]>}
+ */
+function bareFileNameSpans(value) {
+  /** @type {Array<[number, number]>} */
+  const urls = [];
+  for (const match of value.matchAll(WEB_URL)) {
+    const start = match.index ?? 0;
+    urls.push([start, start + match[0].length]);
+  }
+  /** @type {Array<[number, number]>} */
+  const spans = [];
+  for (const match of value.matchAll(BARE_TOKEN)) {
+    const lead = match[0].length - match[0].replace(BARE_LEADING_PUNCTUATION, '').length;
+    const start = (match.index ?? 0) + lead;
+    const token = match[0].slice(lead).replace(BARE_TRAILING_PUNCTUATION, '');
+    const end = start + token.length;
+    if (urls.some(([from, to]) => start < to && end > from)) continue;
+    const name = BARE_FILE_NAME.exec(token);
+    if (!name) continue;
+    const extension = name[1];
+    if (NON_FILE_EXTENSIONS.has(extension.toLowerCase())) continue;
+    if (CAMEL_CASE.test(extension) || ABBREVIATION.test(token)) continue;
+    spans.push([start, end]);
+  }
+  return spans;
+}
+
+/**
+ * `value` with each bare file name replaced by the redaction label.
+ * @param {string} value
+ * @returns {string}
+ */
+export function hideBareFileNames(value) {
+  const spans = bareFileNameSpans(value);
+  return spans.length > 0 ? replaceSpans(value, spans) : value;
+}
+
+/** A JSON escape: `\uXXXX` or a backslash and the character after it. */
+const JSON_ESCAPE = /(\\(?:u[0-9a-fA-F]{4}|[\s\S]))/;
+
+/**
+ * The body of a JSON string (escapes kept) with each bare file name hidden.
+ * Escapes split the text, so in `line\ntax.pdf` the name is `tax.pdf`, not
+ * `ntax.pdf`.
+ * @param {string} body
+ * @returns {string}
+ */
+function hideBareFileNamesInJsonString(body) {
+  if (!body.includes('\\')) return hideBareFileNames(body);
+  return body
+    .split(JSON_ESCAPE)
+    .map((part, index) => (index % 2 === 1 ? part : hideBareFileNames(part)))
+    .join('');
+}
+
+/**
  * Rank of a log level; unknown levels count as info.
  * @param {string} level
  * @returns {number}
@@ -291,7 +392,9 @@ function activityFileNames(activity) {
  * but keeps names whole, so a long name can run past the cut: the start of
  * a name left just before the "…" is hidden as well, when it starts a word.
  * That holds even if the same name also appears whole earlier ("Failed to
- * move X to X…").
+ * move X to X…"). Any bare file name the text carries beyond those (see
+ * bareFileNameSpans) is hidden too, as a backstop for lines whose names the
+ * classifier did not list.
  * @param {LiveActivity} activity
  * @param {boolean} redact
  * @returns {string}
@@ -302,13 +405,13 @@ export function redactActivityText(activity, redact) {
   // A Problem line carries its own redacted text, built from the message
   // with each name replaced where it stands (short names never hide letters
   // inside other words). Other activities are hidden by name below.
-  if (typeof activity.redactedText === 'string') return activity.redactedText;
+  if (typeof activity.redactedText === 'string') return hideBareFileNames(activity.redactedText);
   const names = activityFileNames(activity);
-  if (names.length === 0) return text;
+  if (names.length === 0) return hideBareFileNames(text);
   const cut = text.endsWith(CUT_MARK);
   const body = cut ? text.slice(0, -CUT_MARK.length) : text;
   /** @type {Array<[number, number]>} */
-  const spans = [];
+  const spans = bareFileNameSpans(text);
   for (const name of names) {
     for (let at = text.indexOf(name); at !== -1; at = text.indexOf(name, at + 1)) {
       spans.push([at, at + name.length]);
@@ -339,36 +442,43 @@ function isFileValue(key, value) {
 /**
  * JSON string values that hold a file name become "a file" (a value cut at
  * the end of the text keeps its "…"). Keys stay; an array's values belong
- * to the key before it.
+ * to the key before it. Bare file names are hidden everywhere else: in the
+ * text between quoted strings (a plain message), inside keys, and inside
+ * other values, except under the code/type keys (a model or URL value stays
+ * readable).
  * @param {string} text
  * @returns {string}
  */
 function redactJsonFileValues(text) {
   let key = '';
-  return text.replace(
-    JSON_STRING,
-    (
-      /** @type {string} */ match,
-      /** @type {string} */ body,
-      /** @type {string} */ close,
-      /** @type {string | undefined} */ colon
-    ) => {
-      if (colon) {
-        key = body;
-        return match;
-      }
-      if (!isFileValue(key, body)) return match;
+  let out = '';
+  let cursor = 0;
+  for (const match of text.matchAll(JSON_STRING)) {
+    const [whole, body, close, colon] = match;
+    const at = match.index ?? 0;
+    out += hideBareFileNames(text.slice(cursor, at));
+    cursor = at + whole.length;
+    if (colon) {
+      key = body;
+      out += `"${hideBareFileNamesInJsonString(body)}${close}${colon}`;
+    } else if (isFileValue(key, body)) {
       const cutMark = close === '' && body.endsWith(CUT_MARK) ? CUT_MARK : '';
-      return `"${REDACTED_FILE_LABEL}${cutMark}${close}`;
+      out += `"${REDACTED_FILE_LABEL}${cutMark}${close}`;
+    } else if (NON_FILE_KEYS.has(key)) {
+      out += whole;
+    } else {
+      out += `"${hideBareFileNamesInJsonString(body)}${close}`;
     }
-  );
+  }
+  return out + hideBareFileNames(text.slice(cursor));
 }
 
 /**
  * Raw text (a message or dataText JSON) with file names hidden when `redact`
  * is on: the name after each redacted-path token is dropped (the token
- * stays), and quoted values that hold a file name (by key, or by looking
- * like one) become "a file".
+ * stays), quoted values that hold a file name (by key, or by looking like
+ * one) become "a file", and so does every bare file name elsewhere in the
+ * text (see bareFileNameSpans).
  * @param {string} text
  * @param {boolean} redact
  * @returns {string}
