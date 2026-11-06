@@ -54,8 +54,9 @@ const BACKSLASH_NAME = String.raw`(?:(?! =>)${NOT_NEXT_TOKEN}[^\\/:*?"<>|\r\n])+
  * and POSIX paths (cut at whitespace) this way, and the two cannot be told
  * apart, so it is read like a Windows name: a POSIX name errs toward hiding
  * the words after it. It also runs across further `/`: the logger cuts a
- * POSIX path at the first whitespace, so `/Users/me/My Drive/passport.pdf`
- * reaches the panel as `[REDACTED_PATH]/My Drive/passport.pdf`, and the
+ * POSIX path outside the well-known roots (`/Users`, `/home`, ...) at the
+ * first whitespace, so `/data/My Drive/passport.pdf` reaches the panel as
+ * `[REDACTED_PATH]/My Drive/passport.pdf`, and the
  * rest of the path is part of what must be hidden. A JSON escape (`\"`,
  * `\\`) stays inside the name, and a `"` ends it only where it closes a JSON
  * string (followed by `,` `:` `}` `]`, a cut mark or the end), so dataText

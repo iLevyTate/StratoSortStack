@@ -461,8 +461,9 @@ Three log lines feed that view and are written at `info` in every build:
 - `[FILE-OPS] Move completed` and `[FILE-OPS] Move skipped (duplicate)`, one per file in a batch
   organize (`src/main/ipc/files/batchOrganizeHandler.js`). They used to be development-only
   (`ENABLE_BATCH_TRACE_LOGS`, now removed). Their `source` and `destination` are file names only
-  (`path.basename`), never folders or file content: the POSIX path redaction stops at the first
-  space, so a full path could leak a folder such as `Medical Records`.
+  (`path.basename`), never folders or file content: POSIX path redaction follows folder names with
+  spaces only under the well-known roots (see below), so a full path elsewhere could still leak a
+  folder such as `Medical Records`.
 
 The feed (`src/main/services/liveLogFeed.js`) listens to the logger only while a window is
 subscribed and ignores records logged while it is sending a batch, so a failing send cannot feed
@@ -479,9 +480,30 @@ takes no settings backup (`BACKUP_EXEMPT_KEYS` in `src/main/services/SettingsSer
 `[REDACTED_PATH]<separator>name.ext`, for the log file and the panel alike: drive paths written with
 `\`, `/` (`C:/Users/...`) or JSON-escaped `\\` separators, UNC paths (`\\server\share\...`) and
 POSIX paths. That includes a second path in the same line: before, `move C:\a\x.pdf to D:\b\x.pdf`
-left the second path raw. Windows file names keep their spaces. A POSIX path is still cut at its
-first whitespace, so `/Users/me/My Drive/passport.pdf` is written as
-`[REDACTED_PATH]/My Drive/passport.pdf`.
+left the second path raw. Windows file names keep their spaces.
+
+A POSIX path keeps spaces inside its folder names only when it starts at a well-known root
+(`/Users`, `/home`, `/Volumes`, `/private`, `/var`, `/tmp`, `/mnt`, `/media`, `/run/media`, `/opt`,
+`/Library`, `/Applications`, `/System`, `/root`, `/srv`, `/net`) or at `~/`, so
+`/Users/me/My Drive/passport.pdf` is written as `[REDACTED_PATH]/passport.pdf`, and
+`'/Users/a/x.pdf' -> '/Users/a/Finance Docs/x.pdf'` as two separate tokens. Free text cannot say
+where a path ends, so the rest is a compromise:
+
+- A POSIX path under any other root, or glued to a word (as in a URL), is still cut at its first
+  whitespace: `/data/My Files/x.pdf` becomes `[REDACTED_PATH]/My Files/x.pdf`.
+- The file name is captured only up to its first whitespace; the rest stays as plain text
+  (`[REDACTED_PATH]/2024 return.pdf`).
+- A folder name with two spaces in a row, or a word after a space that contains `"`, `\`, `:`, `;`,
+  `=`, `<`, `>`, `|`, `*`, `?` or a backtick, or is only opening punctuation, ends the folder early,
+  which can leave the rest of the path visible. These rules keep two paths in one line apart.
+- `, ` is allowed inside a folder name (`Smith, John`); a second path after `, ` still splits.
+- A relative path written right after a rooted one (`/Users/a/x.pdf to Finance/Taxes`) is read as
+  part of it and hidden (`[REDACTED_PATH]/Taxes`).
+- JSON text keeps its shape: a `"` that closes a string ends the path. `JSON.stringify` does not
+  escape `/`, so `\/`-escaped paths are not handled. `file://` URLs keep their scheme, encoded
+  (`%20`) or not.
+
+The comment above `POSIX_PATH_PATTERN` in `src/shared/logger.js` holds the exact rules.
 
 With `STRATOSORT_REDACT_PATHS=1` (`npm run dev:demo`) the panel also replaces those names with "a
 file" (`redactActivityText` / `redactRawText` in

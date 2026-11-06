@@ -388,6 +388,186 @@ describe('Logger', () => {
         }
       });
     });
+    describe('macOS and Linux paths with spaces in their folders', () => {
+      test.each([
+        [
+          'iCloud Drive',
+          '/Users/bob/Library/Mobile Documents/com~apple~CloudDocs/Medical Records/scan.pdf',
+          '[REDACTED_PATH]/scan.pdf'
+        ],
+        [
+          'Google Drive',
+          '/Users/me/Library/CloudStorage/GoogleDrive-x/My Drive/passport.pdf',
+          '[REDACTED_PATH]/passport.pdf'
+        ],
+        [
+          'a Linux home folder (the basename still stops at its first space)',
+          '/home/me/Documents/Tax Returns/2024 return.pdf',
+          '[REDACTED_PATH]/2024 return.pdf'
+        ],
+        ['a home-relative path', '~/Documents/a b/x.pdf', '[REDACTED_PATH]/x.pdf'],
+        [
+          'folder names with parentheses, brackets, apostrophes, commas, ampersands and dots',
+          "/Volumes/My Passport/Backups (2024)/Bob's [old] & new, v1.2/The Kids' Photos/x.pdf",
+          '[REDACTED_PATH]/x.pdf'
+        ],
+        [
+          'a comma and space inside a folder name',
+          '/Users/a/Smith, John/x.pdf',
+          '[REDACTED_PATH]/x.pdf'
+        ],
+        ['unicode folder names', '/Users/zoë/Données perso/日本 語/x.pdf', '[REDACTED_PATH]/x.pdf'],
+        ['a removable drive on Linux', '/run/media/me/USB Stick/x.pdf', '[REDACTED_PATH]/x.pdf'],
+        ['a WSL mount', '/mnt/c/Users/Bob Smith/x.pdf', '[REDACTED_PATH]/x.pdf'],
+        [
+          'the macOS temp folder',
+          '/private/var/folders/ab/T/My Temp/x.pdf',
+          '[REDACTED_PATH]/x.pdf'
+        ],
+        [
+          'the app data folder',
+          '/Users/bob/Library/Application Support/StratoSort Stack/logs/a.log',
+          '[REDACTED_PATH]/a.log'
+        ],
+        ['a home folder alone', '/Users/bob', '[REDACTED_PATH]/bob']
+      ])('reduces %s to its file name', (_label, raw, expected) => {
+        expect(sanitizeLogData(raw)).toBe(expected);
+      });
+
+      test.each([
+        [
+          'Failed /Users/a/x.pdf -> /Users/a/Finance Docs/x.pdf',
+          'Failed [REDACTED_PATH]/x.pdf -> [REDACTED_PATH]/x.pdf'
+        ],
+        ['/Users/a/x.pdf to /Users/a/y.pdf', '[REDACTED_PATH]/x.pdf to [REDACTED_PATH]/y.pdf'],
+        [
+          'Copy /Users/a/My Docs/x.pdf => /home/b/Tax Returns/y.pdf failed',
+          'Copy [REDACTED_PATH]/x.pdf => [REDACTED_PATH]/y.pdf failed'
+        ],
+        ['/Users/a/x.pdf, /Users/b/My Docs/y.pdf', '[REDACTED_PATH]/x.pdf, [REDACTED_PATH]/y.pdf'],
+        [
+          "ENOENT: no such file or directory, rename '/Users/a/My Docs/x.pdf' -> '/Users/a/Finance Docs/x.pdf'",
+          "ENOENT: no such file or directory, rename '[REDACTED_PATH]/x.pdf' -> '[REDACTED_PATH]/x.pdf'"
+        ],
+        [
+          "copy '/Users/a/x.pdf' '/Users/b/My Docs/y.pdf'",
+          "copy '[REDACTED_PATH]/x.pdf' '[REDACTED_PATH]/y.pdf'"
+        ],
+        [
+          '"/Users/a/x.pdf" "/Users/b/My Docs/y.pdf"',
+          '"[REDACTED_PATH]/x.pdf" "[REDACTED_PATH]/y.pdf"'
+        ],
+        [
+          '(/Users/a/x.pdf) (/Users/b/My Docs/y.pdf)',
+          '([REDACTED_PATH]/x.pdf) ([REDACTED_PATH]/y.pdf)'
+        ],
+        [
+          'src=/Users/a/x.pdf dest=/Users/a/My Docs/y.pdf',
+          'src=[REDACTED_PATH]/x.pdf dest=[REDACTED_PATH]/y.pdf'
+        ],
+        [
+          'move /Users/a/x.pdf to C:/Users/b/My Docs/y.pdf',
+          'move [REDACTED_PATH]/x.pdf to [REDACTED_PATH]/y.pdf'
+        ],
+        ['Saved to /Users/a/My Docs/x.pdf.', 'Saved to [REDACTED_PATH]/x.pdf.']
+      ])('keeps two paths on one line apart: %s', (raw, expected) => {
+        const sanitized = sanitizeLogData(raw);
+        expect(sanitized).toBe(expected);
+        expect(sanitized).not.toMatch(/Users|home|Docs|Finance|Tax/);
+      });
+
+      test('reduces paths inside JSON text and keeps it valid JSON', () => {
+        const raw = JSON.stringify({
+          from: '/Users/a/Finance Docs/x.pdf',
+          to: '/Users/a/Tax Returns/y.pdf',
+          all: ['/Users/a/x.pdf', '/home/b/My Docs/y.pdf']
+        });
+        const sanitized = sanitizeLogData(`payload ${raw}`);
+        expect(sanitized).toBe(
+          'payload {"from":"[REDACTED_PATH]/x.pdf","to":"[REDACTED_PATH]/y.pdf","all":["[REDACTED_PATH]/x.pdf","[REDACTED_PATH]/y.pdf"]}'
+        );
+        expect(JSON.parse(sanitized.slice('payload '.length)).all).toHaveLength(2);
+      });
+
+      test('reduces a path between escaped quotes inside JSON text', () => {
+        const raw = JSON.stringify({ msg: 'open "/Users/a/My Docs/x.pdf" failed' });
+        expect(sanitizeLogData(raw)).toBe(
+          String.raw`{"msg":"open \"[REDACTED_PATH]/x.pdf\" failed"}`
+        );
+      });
+
+      test('reduces file URLs, encoded or not', () => {
+        expect(sanitizeLogData('file:///Users/bob/Medical%20Records/scan.pdf')).toBe(
+          'file://[REDACTED_PATH]/scan.pdf'
+        );
+        expect(sanitizeLogData('load file:///Users/bob/Medical Records/scan.pdf now')).toBe(
+          'load file://[REDACTED_PATH]/scan.pdf now'
+        );
+      });
+
+      test('keeps the line and column of a stack frame under a folder with a space', () => {
+        expect(
+          sanitizeLogData(
+            'at load (/Users/a/My App/src/x.js:10:5)\n    at /home/b/Dev Work/y.js:3:1'
+          )
+        ).toBe('at load ([REDACTED_PATH]/x.js:10:5)\\n    at [REDACTED_PATH]/y.js:3:1');
+      });
+
+      test.each([
+        // Other roots keep the whitespace cut, so prose is not swallowed.
+        ['/data/My Files/x.pdf', '[REDACTED_PATH]/My Files/x.pdf'],
+        ['read/write and/or', 'read/write and/or'],
+        ['use /tmp or /var for scratch', 'use /tmp or /var for scratch'],
+        ['the /Users folder and /home dir', 'the /Users folder and /home dir'],
+        ['ratio 3:4 at 10:30 (12/40)', 'ratio 3:4 at 10:30 (12/40)'],
+        // URLs behave as before: a root inside a URL path is not a root.
+        ['see https://host/Users/a b/c', 'see https:/[REDACTED_PATH]/a b/c'],
+        ['GET http://localhost:8080/home/x y/z', 'GET http:/[REDACTED_PATH]/x y/z'],
+        [
+          'at node:internal/process/task_queues:104:5 (/Users/a/My App/x.js:1:2)',
+          'at node:internal/process/task_queues:104:5 ([REDACTED_PATH]/x.js:1:2)'
+        ],
+        // A word glued to the root is not a root (the old whitespace cut applies).
+        ['foo/Users/a b/c', 'foo[REDACTED_PATH]/a b/c'],
+        ['C:\\PROGRA~1/a b/c', '[REDACTED_PATH]\\PROGRA~1/a b/c']
+      ])('leaves non-rooted text as before: %s', (raw, expected) => {
+        expect(sanitizeLogData(raw)).toBe(expected);
+      });
+
+      test('a relative path after an absolute one is hidden with it (errs toward hiding)', () => {
+        // "x.pdf to Finance" could be a folder name, so the absolute path
+        // runs on to the last slash before whitespace.
+        expect(sanitizeLogData('Moved /Users/a/x.pdf to Finance/Taxes')).toBe(
+          'Moved [REDACTED_PATH]/Taxes'
+        );
+      });
+
+      test('stays linear on long hostile inputs', () => {
+        const hostile = [
+          '/'.repeat(50000),
+          '/Users/'.repeat(7000),
+          '/Users/' + 'a '.repeat(25000),
+          '/Users/a' + ' a'.repeat(25000) + ' ',
+          '/a '.repeat(16000),
+          '"/Users/a/' + 'b c '.repeat(12000),
+          '/ / '.repeat(12500),
+          '~/'.repeat(25000),
+          '/Users/a/' + 'x( '.repeat(16000) + '/',
+          ('/Users/a' + ' a'.repeat(50) + ' (').repeat(400),
+          'file:///Users/' + 'a b/'.repeat(12000),
+          '/Users/a/' + 'a'.repeat(50000),
+          '/Users/a/' + "'(a '".repeat(8000) + 'x',
+          ' /Users'.repeat(7000) + '/',
+          "'/home/" + '"a, '.repeat(12000)
+        ];
+        for (const input of hostile) {
+          const start = Date.now();
+          const out = sanitizeLogData(input);
+          expect(typeof out).toBe('string');
+          expect(Date.now() - start).toBeLessThan(500);
+        }
+      });
+    });
   });
 
   describe('logging methods', () => {

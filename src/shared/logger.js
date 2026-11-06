@@ -512,6 +512,79 @@ function redactWindowsPathMatch(matched) {
   return `[REDACTED_PATH]${tail[1]}${tail[2]}`;
 }
 
+// POSIX absolute-path redaction, reduced to `[REDACTED_PATH]/basename`.
+//
+// Free text cannot say where a POSIX path ends: `/a/b c/d` may be one path
+// whose folder is "b c", or the path `/a/b` followed by prose. So spaces are
+// only allowed inside folder names when the path starts at a root where
+// macOS and Linux keep user folders (`/Users`, `/home`, `/Volumes`, ...) or
+// at `~/`. Any other path (and a path glued to a word, as in a URL)
+// keeps the old rule, cut at the first whitespace, so prose such as
+// "read/write and/or" is redacted no more than before.
+//
+// Under a known root a folder name is words joined by single spaces and must
+// be followed by `/`; the last segment (the file name, which is kept) still
+// stops at whitespace. To keep two paths on one line apart, a word after a
+// space cannot contain `" \` : ; = < > | * ?` or a backtick, cannot be only
+// opening punctuation (`(`, `[`, `{`, `'`), and cannot start a
+// `[REDACTED_PATH]` token, so `'/a/x.pdf' '/a/y.pdf'`, `(…) (…)`,
+// `src=… dest=…`, `x.pdf: /…` and `x.pdf -> /…` all split. `, ` is allowed
+// inside a folder name ("Smith, John"); a path after `, ` still splits
+// because it starts with a space and `/`. The first word of a folder name
+// takes anything the old rule took, except a `"` that closes a JSON string
+// (followed by `, : } ]`), so a JSON array of paths keeps each file name.
+// A relative path written right after an absolute one on the same line
+// (`/Users/a/x.pdf to Finance/Taxes`) is read as part of it: hiding too much
+// is the safe direction.
+//
+// The rooted path may follow the start of the text, whitespace, a quote,
+// opening punctuation, `= , ; | < >`, or `file://` (an unencoded file URL).
+// Words and separators are disjoint character sets, each word has a single
+// way to end, and every quantifier is bounded by a character the next one
+// cannot take, so matching stays linear.
+const POSIX_ROOTS = [
+  'Users',
+  'home',
+  'Volumes',
+  'private',
+  'var',
+  'tmp',
+  'mnt',
+  'media',
+  'opt',
+  'Library',
+  'Applications',
+  'System',
+  'root',
+  'srv',
+  'run/media',
+  'net'
+].join('|');
+const POSIX_ROOTED_START = String.raw`(?<=^|[\s"'\x60([{<>=,;|]|file:\/\/)(?:\/(?:${POSIX_ROOTS})|~)(?=\/)`;
+// First word of a folder name: the old segment rule minus a closing JSON quote.
+const POSIX_FIRST_WORD = String.raw`(?:[^\s/"]|"(?![,:}\]]))+`;
+// A later word: optional opening punctuation, then at least one other character.
+const POSIX_WORD_CHAR = String.raw`[^\s/\\"\x60:;=<>|*?]`;
+const POSIX_WORD_CORE = String.raw`[^\s/\\"\x60:;=<>|*?([{']`;
+const POSIX_LATER_WORD = String.raw`(?!\[REDACTED_PATH\])[([{']*${POSIX_WORD_CORE}${POSIX_WORD_CHAR}*`;
+const POSIX_FOLDER = String.raw`${POSIX_FIRST_WORD}(?: ${POSIX_LATER_WORD})*`;
+// Group 1: the basename of a rooted path. Group 2: the basename of any other
+// path (the old rule, which never starts right after `:` so `https://` and
+// `file://` keep their scheme).
+const POSIX_PATH_PATTERN = new RegExp(
+  String.raw`${POSIX_ROOTED_START}(?:\/${POSIX_FOLDER})*\/([^/\s]+)|(?<!:)\/(?:[^/\s]+\/)+([^/\s]+)`,
+  'g'
+);
+
+/**
+ * @param {string} _match
+ * @param {string | undefined} rootedName
+ * @param {string | undefined} otherName
+ */
+function redactPosixPathMatch(_match, rootedName, otherName) {
+  return `[REDACTED_PATH]/${rootedName ?? otherName}`;
+}
+
 /**
  * @param {any} value
  */
@@ -562,10 +635,7 @@ function sanitizeLogData(data, _depth = 0, _seen = undefined) {
     });
     sanitized = sanitized.replace(WINDOWS_DRIVE_PATH_PATTERN, redactWindowsPathMatch);
     sanitized = sanitized.replace(WINDOWS_UNC_PATH_PATTERN, redactWindowsPathMatch);
-    sanitized = sanitized.replace(
-      /(?<!:)\/(?:[^/\s]+\/)+([^/\s]+)/g,
-      (_match, filename) => `[REDACTED_PATH]/${filename}`
-    );
+    sanitized = sanitized.replace(POSIX_PATH_PATTERN, redactPosixPathMatch);
     // Restore protected node:internal/... segments now that path redaction
     // has run. Sentinel uses control chars (/__) so it cannot
     // collide with any legitimate log content; stripLogControlChars below
