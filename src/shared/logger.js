@@ -464,6 +464,48 @@ function redactPathValue(value) {
 // eslint-disable-next-line no-control-regex
 const LOG_CONTROL_CHAR_PATTERN = /[\u0000-\u0008\u000A-\u001F\u007F]/g;
 
+// Windows absolute-path redaction (drive and UNC), reduced to
+// `[REDACTED_PATH]<sep>basename` where <sep> is the separator the path used
+// before its last segment, so a JSON-escaped path (`C:\\Users\\x.pdf`) stays
+// valid JSON as `[REDACTED_PATH]\\x.pdf`.
+//
+// A path segment runs to a character Windows forbids in names, so names with
+// spaces, brackets and parentheses stay whole. It also stops before the next
+// drive (`D:\`, `D:/`): otherwise the last segment of the first path in
+// `move C:\a\x.pdf to D:\b\x.pdf` swallows " to D" and the second path is left
+// raw, user folders and all.
+//
+// Separators are runs of `\` or `/` so single, JSON-escaped (`\\`) and
+// forward-slash (`C:/Users/...`) spellings are all covered. Segment and
+// separator classes are disjoint, which keeps matching linear.
+const PATH_SEGMENT = String.raw`(?:(?![A-Za-z]:[\\/])[^\\/:*?"<>|\r\n])+`;
+// A drive letter preceded by a letter or digit is not a drive: it is the tail
+// of a URL scheme (`https://`) or a word, which the POSIX pass handles.
+const WINDOWS_DRIVE_PATH_PATTERN = new RegExp(
+  String.raw`(?<![A-Za-z0-9])[A-Za-z]:[\\/]+(?:${PATH_SEGMENT}[\\/]+)*${PATH_SEGMENT}`,
+  'g'
+);
+// `\\server\share\...` (or `\\\\server\\share\\...` once JSON-escaped). Only
+// backslashes open it, so `//` in a URL never does. A server and at least one
+// more segment are required. It only starts at the first backslash of a run:
+// starting inside a long run would retry the whole run from every position.
+const WINDOWS_UNC_PATH_PATTERN = new RegExp(
+  String.raw`(?<!\\)\\{2,}${PATH_SEGMENT}(?:[\\/]+${PATH_SEGMENT})+`,
+  'g'
+);
+// The last separator run and the basename of a matched Windows path.
+const WINDOWS_PATH_TAIL_PATTERN = /([\\/]+)([^\\/]+)$/;
+
+/**
+ * @param {string} matched A whole drive or UNC path matched above.
+ */
+function redactWindowsPathMatch(matched) {
+  const tail = matched.match(WINDOWS_PATH_TAIL_PATTERN);
+  // Both patterns end in a separator followed by a segment, so this holds.
+  if (!tail) return '[REDACTED_PATH]';
+  return `[REDACTED_PATH]${tail[1]}${tail[2]}`;
+}
+
 /**
  * @param {any} value
  */
@@ -512,10 +554,8 @@ function sanitizeLogData(data, _depth = 0, _seen = undefined) {
       nodeInternalSentinels.push(match);
       return `__STRATOSORT_NODEINTERNAL_${idx}__`;
     });
-    sanitized = sanitized.replace(
-      /[A-Za-z]:\\(?:[^\\/:*?"<>|\r\n]+\\)*([^\\/:*?"<>|\r\n]+)/g,
-      (_match, filename) => `[REDACTED_PATH]\\${filename}`
-    );
+    sanitized = sanitized.replace(WINDOWS_DRIVE_PATH_PATTERN, redactWindowsPathMatch);
+    sanitized = sanitized.replace(WINDOWS_UNC_PATH_PATTERN, redactWindowsPathMatch);
     sanitized = sanitized.replace(
       /(?<!:)\/(?:[^/\s]+\/)+([^/\s]+)/g,
       (_match, filename) => `[REDACTED_PATH]/${filename}`
