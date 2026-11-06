@@ -292,7 +292,8 @@ const SETTINGS_SECTION_INDEX = [
       'live log',
       'real time',
       'what the app is doing',
-      'ctrl+shift+l'
+      'ctrl+shift+l',
+      'cmd+shift+l'
     ]
   },
   {

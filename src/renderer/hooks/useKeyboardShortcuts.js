@@ -122,13 +122,14 @@ export function useKeyboardShortcuts() {
       // Ctrl/Cmd+Shift+L: show or hide the Live Activity panel. Like Ctrl+,
       // it works from anywhere (text fields, open overlays, either experience
       // mode) — it only flips a setting and has no text-editing meaning.
-      // `code` covers non-Latin layouts. Auto-repeat is claimed but ignored,
-      // so holding the keys toggles once.
+      // Matched by the L the layout types; the physical key (`code`) is only
+      // a fallback when the layout types no Latin letter there (Cyrillic,
+      // Greek, ...), so Dvorak's Ctrl+Shift+N on that key never toggles.
+      // Auto-repeat is claimed but ignored, so holding the keys toggles once.
+      const shortcutKey = String(event.key || '').toLowerCase();
+      const isLKey = shortcutKey === 'l' || (!/^[a-z]$/.test(shortcutKey) && event.code === 'KeyL');
       const liveActivityShortcut =
-        (event.ctrlKey || event.metaKey) &&
-        event.shiftKey &&
-        !event.altKey &&
-        (event.code === 'KeyL' || String(event.key || '').toLowerCase() === 'l');
+        (event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && isLKey;
       if (liveActivityShortcut) {
         event.preventDefault();
         if (!event.repeat) {

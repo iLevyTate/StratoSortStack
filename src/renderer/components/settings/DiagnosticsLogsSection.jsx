@@ -9,6 +9,7 @@ import { TIMEOUTS } from '../../../shared/performanceConstants';
 import { getElectronAPI, settingsIpc, systemIpc } from '../../services/ipc';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { setShowLiveActivity } from '../../store/thunks/liveActivityThunks';
+import { isMac } from '../../utils/platform';
 
 /**
  * Diagnostics logs section (open/export logs for troubleshooting) and the
@@ -34,7 +35,13 @@ function DiagnosticsLogsSection({ addNotification }) {
       // at once) and puts the old value back if the save fails.
       const saved = await dispatch(setShowLiveActivity(checked === true));
       if (saved === false) {
-        addNotification?.("Couldn't save the live activity setting", 'error');
+        // Grouped so repeated failed clicks update one toast in place.
+        addNotification?.(
+          "Couldn't save the live activity setting",
+          'error',
+          6000,
+          'live-activity-save-error'
+        );
       }
     },
     [addNotification, dispatch]
@@ -136,7 +143,7 @@ function DiagnosticsLogsSection({ addNotification }) {
 
       <SettingRow
         label="Show live activity"
-        description="A small floating panel shows what the app is doing as it happens, with the raw log lines one tab away. Shortcut: Ctrl+Shift+L (Cmd+Shift+L on Mac)."
+        description={`A small floating panel shows what the app is doing as it happens, with the raw log lines one tab away. Shortcut: ${isMac ? 'Cmd' : 'Ctrl'}+Shift+L.`}
       >
         <Switch
           checked={showLiveActivity}

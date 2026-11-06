@@ -233,6 +233,21 @@ describe('useKeyboardShortcuts', () => {
       expect(toggleShowLiveActivity).toHaveBeenCalledTimes(1);
     });
 
+    test('the physical L key does not toggle when the layout types another Latin letter', () => {
+      // Dvorak: the KeyL position types "n" — Ctrl+Shift+N must not toggle.
+      renderShortcuts();
+      const event = fireKey('n', { ctrl: true, shift: true, code: 'KeyL' });
+      expect(event.preventDefault).not.toHaveBeenCalled();
+      expect(toggleShowLiveActivity).not.toHaveBeenCalled();
+    });
+
+    test('the L the layout types toggles wherever the key sits', () => {
+      // Dvorak: "l" is typed from the KeyP position.
+      renderShortcuts();
+      fireKey('L', { ctrl: true, shift: true, code: 'KeyP' });
+      expect(toggleShowLiveActivity).toHaveBeenCalledTimes(1);
+    });
+
     test('holding the keys toggles once (auto-repeat is ignored)', () => {
       renderShortcuts();
       fireKey('L', { ctrl: true, shift: true });

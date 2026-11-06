@@ -25,6 +25,13 @@ jest.mock('../../src/renderer/store/thunks/liveActivityThunks', () => ({
   setShowLiveActivity: (...args) => mockSetShowLiveActivity(...args)
 }));
 
+let mockIsMac = false;
+jest.mock('../../src/renderer/utils/platform', () => ({
+  get isMac() {
+    return mockIsMac;
+  }
+}));
+
 jest.mock('../../src/renderer/services/ipc', () => ({
   getElectronAPI: () => ({ settings: {}, system: {} }),
   settingsIpc: { openLogsFolder: jest.fn() },
@@ -43,6 +50,7 @@ describe('DiagnosticsLogsSection — Show live activity', () => {
     jest.clearAllMocks();
     mockDispatch.mockResolvedValue(true);
     mockState = { ui: { settings: { showLiveActivity: false } } };
+    mockIsMac = false;
   });
 
   test('is off when the setting is off, and turning it on saves through the thunk', () => {
@@ -78,9 +86,18 @@ describe('DiagnosticsLogsSection — Show live activity', () => {
     );
   });
 
-  test('mentions the keyboard shortcut', () => {
+  test('shows the Ctrl shortcut on Windows and Linux', () => {
+    mockIsMac = false;
     render(<DiagnosticsLogsSection />);
-    expect(screen.getByText(/Ctrl\+Shift\+L/)).toBeInTheDocument();
+    expect(screen.getByText(/Shortcut: Ctrl\+Shift\+L\./)).toBeInTheDocument();
+    expect(screen.queryByText(/Cmd\+Shift\+L/)).not.toBeInTheDocument();
+  });
+
+  test('shows the Cmd shortcut on macOS', () => {
+    mockIsMac = true;
+    render(<DiagnosticsLogsSection />);
+    expect(screen.getByText(/Shortcut: Cmd\+Shift\+L\./)).toBeInTheDocument();
+    expect(screen.queryByText(/Ctrl\+Shift\+L/)).not.toBeInTheDocument();
   });
 
   test('says so when the save fails (the thunk has already put the switch back)', async () => {
@@ -93,7 +110,10 @@ describe('DiagnosticsLogsSection — Show live activity', () => {
     await waitFor(() =>
       expect(addNotification).toHaveBeenCalledWith(
         "Couldn't save the live activity setting",
-        'error'
+        'error',
+        expect.any(Number),
+        // Grouped: repeated failed clicks update one toast instead of stacking.
+        'live-activity-save-error'
       )
     );
   });

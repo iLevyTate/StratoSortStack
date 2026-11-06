@@ -119,10 +119,11 @@ const isElectronAPIAvailable = () => {
 /**
  * Canonical persisted-settings snapshot: exactly what autoSaveSettings sends
  * to settings:save (sanitized, `ai` blob stripped — AI provider config
- * persists via its own IPC — and showLiveActivity stripped, see above). EVERY snapshot store/compare must use this one
- * shape: mixing ai-full and ai-free shapes left a permanently "dirty"
- * snapshot after Redux sync, firing a phantom no-op settings:save (+
- * settings-changed broadcast) on every Settings open.
+ * persists via its own IPC — and showLiveActivity stripped, see above).
+ * EVERY snapshot store/compare must use this one shape: mixing ai-full and
+ * ai-free shapes left a permanently "dirty" snapshot after Redux sync,
+ * firing a phantom no-op settings:save (+ settings-changed broadcast) on
+ * every Settings open.
  */
 const computeSettingsSnapshot = (value) =>
   stableStringify(

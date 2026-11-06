@@ -99,8 +99,8 @@ Modified:
 | `test/ux/zIndexLayering.test.js`                              | Pin the new layer and include it in the utility scan.                                                            |
 | `src/renderer/App.js`                                         | Lazy-mount `LiveActivityPanel` behind `ui.settings.showLiveActivity`.                                             |
 | `test/components/App.viewMode.test.js`                        | Mount/unmount tests for the panel.                                                                                |
-| `src/renderer/components/settings/DiagnosticsLogsSection.jsx` | "Show live activity" switch row (via SettingsPanel's local settings updater).                                    |
-| `src/renderer/components/SettingsPanel.jsx`                   | Pass `settings` / `setSettings` to `DiagnosticsLogsSection` (~line 1789).                                         |
+| `src/renderer/components/settings/DiagnosticsLogsSection.jsx` | "Show live activity" switch row: reads `ui.settings.showLiveActivity` from the store, saves via the `setShowLiveActivity` thunk; platform shortcut text. |
+| `src/renderer/components/SettingsPanel.jsx`                   | `settingsWithoutLiveActivity`: keep `showLiveActivity` out of the snapshot, auto-save payload and store writes (thunk owns it). |
 | `src/renderer/hooks/useKeyboardShortcuts.js`                  | Ctrl/Cmd+Shift+L → `toggleShowLiveActivity()`.                                                                     |
 | `test/useKeyboardShortcuts.test.js`                           | Shortcut tests.                                                                                                   |
 | `docs/USER_GUIDE.md`, `docs/DEBUGGING_GUIDE.md`, `CHANGELOG.md` | Short user/dev entries; `[Unreleased]` → Added.                                                                |

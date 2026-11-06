@@ -50,6 +50,8 @@ describe('settingsSearch', () => {
     const entry = SETTINGS_SECTION_INDEX.find((s) => s.title === 'Live activity');
     expect(sectionMatchesQuery(entry, 'real time log')).toBe(true);
     expect(sectionMatchesQuery(entry, 'what is the app doing')).toBe(true);
+    expect(sectionMatchesQuery(entry, 'ctrl+shift+l')).toBe(true);
+    expect(sectionMatchesQuery(entry, 'cmd+shift+l')).toBe(true);
   });
 
   test('returns empty set for nonsense query', () => {
