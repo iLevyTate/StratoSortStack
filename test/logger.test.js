@@ -259,6 +259,399 @@ describe('Logger', () => {
       // must not double-escape backslashes or alter basename output.
       expect(sanitized).toBe('regular log message with path [REDACTED_PATH]\\file.txt');
     });
+
+    describe('every absolute path in one line', () => {
+      test.each([' to ', ', ', ' -> ', ' => '])(
+        'redacts both Windows paths joined by %j, leaving no directory of either',
+        (joiner) => {
+          const raw = String.raw`Failed to move C:\Users\jdoe\Documents\Inbox\Lab results.pdf${joiner}D:\Users\jdoe\Documents\Medical\Lab results.pdf: EBUSY`;
+          const sanitized = sanitizeLogData(raw);
+          expect(sanitized).toBe(
+            String.raw`Failed to move [REDACTED_PATH]\Lab results.pdf${joiner}[REDACTED_PATH]\Lab results.pdf: EBUSY`
+          );
+          expect(sanitized).not.toMatch(/jdoe|Users|Documents|Inbox|Medical/);
+        }
+      );
+
+      test('redacts the asyncFileOps move line with the same drive twice', () => {
+        const sanitized = sanitizeLogData(
+          String.raw`Failed to move C:\Users\jdoe\a.pdf to C:\Users\jdoe\Medical\a.pdf: EPERM`
+        );
+        expect(sanitized).toBe(
+          String.raw`Failed to move [REDACTED_PATH]\a.pdf to [REDACTED_PATH]\a.pdf: EPERM`
+        );
+      });
+
+      test('redacts a UNC path to its basename', () => {
+        const sanitized = sanitizeLogData(String.raw`copy \\server\share\dir\file.pdf done`);
+        expect(sanitized).toBe(String.raw`copy [REDACTED_PATH]\file.pdf done`);
+        expect(sanitized).not.toMatch(/server|share|dir\\/);
+      });
+
+      test('redacts JSON-escaped Windows paths inside a string, keeping the escape', () => {
+        const raw = JSON.stringify({
+          from: 'C:\\Users\\jdoe\\x.pdf',
+          to: '\\\\nas\\home\\jdoe\\y.pdf'
+        });
+        const sanitized = sanitizeLogData(`payload ${raw}`);
+        expect(sanitized).toBe(
+          String.raw`payload {"from":"[REDACTED_PATH]\\x.pdf","to":"[REDACTED_PATH]\\y.pdf"}`
+        );
+        expect(sanitized).not.toMatch(/Users|jdoe|nas|home/);
+        // The redacted text is still valid JSON.
+        expect(JSON.parse(sanitized.slice('payload '.length))).toEqual({
+          from: '[REDACTED_PATH]\\x.pdf',
+          to: '[REDACTED_PATH]\\y.pdf'
+        });
+      });
+
+      test('redacts forward-slash drive paths, including the drive and first folder', () => {
+        const sanitized = sanitizeLogData('open C:/Users/jdoe/x.pdf then D:/Users/jdoe/y.pdf');
+        expect(sanitized).toBe('open [REDACTED_PATH]/x.pdf then [REDACTED_PATH]/y.pdf');
+        expect(sanitized).not.toMatch(/Users|jdoe|C:|D:/);
+      });
+
+      test.each([
+        [
+          String.raw`Moved C:\Users\Bob\a.pdf to Finance/Taxes`,
+          String.raw`Moved [REDACTED_PATH]\a.pdf to Finance/Taxes`
+        ],
+        [
+          String.raw`Loaded C:\Models\qwen.gguf in 300ms (gpu=yes, 50% layers/offload)`,
+          String.raw`Loaded [REDACTED_PATH]\qwen.gguf in 300ms (gpu=yes, 50% layers/offload)`
+        ],
+        [
+          String.raw`[FILE-OPS] Move completed C:\Users\Bob\Inbox\a.pdf -> C:\Users\Bob\Finance\a.pdf (12/40)`,
+          String.raw`[FILE-OPS] Move completed [REDACTED_PATH]\a.pdf -> [REDACTED_PATH]\a.pdf (12/40)`
+        ],
+        [
+          String.raw`payload {"from":"C:\\Users\\Bob\\a.pdf","note":"12/40"}`,
+          String.raw`payload {"from":"[REDACTED_PATH]\\a.pdf","note":"12/40"}`
+        ]
+      ])('a backslash path stops at its own separators, not a later slash: %s', (raw, expected) => {
+        expect(sanitizeLogData(raw)).toBe(expected);
+      });
+
+      test('keeps basenames with spaces, brackets and parentheses whole', () => {
+        expect(sanitizeLogData(String.raw`C:\Users\jdoe\My Docs\report [final] (2).pdf`)).toBe(
+          String.raw`[REDACTED_PATH]\report [final] (2).pdf`
+        );
+        expect(sanitizeLogData('C:/Users/jdoe/My Docs/report [final] (2).pdf')).toBe(
+          '[REDACTED_PATH]/report [final] (2).pdf'
+        );
+      });
+
+      test('leaves POSIX paths, ratios, times and URLs as they were', () => {
+        expect(sanitizeLogData('/home/me/a.pdf')).toBe('[REDACTED_PATH]/a.pdf');
+        expect(sanitizeLogData('ratio 3:4 at 10:30')).toBe('ratio 3:4 at 10:30');
+        // URLs: the scheme's single trailing letter is not a drive, so the
+        // drive-path pass must not touch them (the POSIX pass already
+        // reduced their path to the last segment before this change).
+        expect(sanitizeLogData('see https://x/y')).toBe('see https:/[REDACTED_PATH]/y');
+        expect(sanitizeLogData('GET http://localhost:8080/api/v1/models')).toBe(
+          'GET http:/[REDACTED_PATH]/models'
+        );
+      });
+
+      test('keeps the line and column of a stack frame and node:internal frames', () => {
+        expect(
+          sanitizeLogData(
+            String.raw`at foo (C:\app\src\x.js:10:5) at node:internal/process/task_queues:104:5`
+          )
+        ).toBe(
+          String.raw`at foo ([REDACTED_PATH]\x.js:10:5) at node:internal/process/task_queues:104:5`
+        );
+      });
+
+      test('stays linear on long hostile inputs', () => {
+        const hostile = [
+          'C:\\' + 'a'.repeat(50000),
+          'C:\\a'.repeat(12500),
+          '\\\\' + 'a\\'.repeat(25000),
+          'C:/' + 'a/'.repeat(25000) + ' ',
+          'x' + 'aC:'.repeat(16000),
+          'C:\\' + ' to C'.repeat(10000) + ':',
+          '\\\\'.repeat(25000) + 'x',
+          'C:' + '\\'.repeat(50000),
+          '\\\\a:'.repeat(12500),
+          'C:\\' + 'C:\\'.repeat(16000),
+          'C:' + '\\'.repeat(25000) + 'a' + '\\'.repeat(24999) + 'a',
+          'C:\\\\a\\'.repeat(10000),
+          '\\\\\\\\a\\\\\\'.repeat(6000),
+          'C:/a\\'.repeat(10000)
+        ];
+        for (const input of hostile) {
+          const start = Date.now();
+          const out = sanitizeLogData(input);
+          expect(typeof out).toBe('string');
+          expect(Date.now() - start).toBeLessThan(500);
+        }
+      });
+    });
+    describe('macOS and Linux paths with spaces in their folders', () => {
+      test.each([
+        [
+          'iCloud Drive',
+          '/Users/bob/Library/Mobile Documents/com~apple~CloudDocs/Medical Records/scan.pdf',
+          '[REDACTED_PATH]/scan.pdf'
+        ],
+        [
+          'Google Drive',
+          '/Users/me/Library/CloudStorage/GoogleDrive-x/My Drive/passport.pdf',
+          '[REDACTED_PATH]/passport.pdf'
+        ],
+        [
+          'a Linux home folder (the basename still stops at its first space)',
+          '/home/me/Documents/Tax Returns/2024 return.pdf',
+          '[REDACTED_PATH]/2024 return.pdf'
+        ],
+        ['a home-relative path', '~/Documents/a b/x.pdf', '[REDACTED_PATH]/x.pdf'],
+        [
+          'folder names with parentheses, brackets, apostrophes, commas, ampersands and dots',
+          "/Volumes/My Passport/Backups (2024)/Bob's [old] & new, v1.2/The Kids' Photos/x.pdf",
+          '[REDACTED_PATH]/x.pdf'
+        ],
+        [
+          'a comma and space inside a folder name',
+          '/Users/a/Smith, John/x.pdf',
+          '[REDACTED_PATH]/x.pdf'
+        ],
+        ['unicode folder names', '/Users/zoë/Données perso/日本 語/x.pdf', '[REDACTED_PATH]/x.pdf'],
+        ['a removable drive on Linux', '/run/media/me/USB Stick/x.pdf', '[REDACTED_PATH]/x.pdf'],
+        ['a WSL mount', '/mnt/c/Users/Bob Smith/x.pdf', '[REDACTED_PATH]/x.pdf'],
+        [
+          'the macOS temp folder',
+          '/private/var/folders/ab/T/My Temp/x.pdf',
+          '[REDACTED_PATH]/x.pdf'
+        ],
+        [
+          'the app data folder',
+          '/Users/bob/Library/Application Support/StratoSort Stack/logs/a.log',
+          '[REDACTED_PATH]/a.log'
+        ],
+        ['a home folder alone', '/Users/bob', '[REDACTED_PATH]/bob']
+      ])('reduces %s to its file name', (_label, raw, expected) => {
+        expect(sanitizeLogData(raw)).toBe(expected);
+      });
+
+      test.each([
+        [
+          'Failed /Users/a/x.pdf -> /Users/a/Finance Docs/x.pdf',
+          'Failed [REDACTED_PATH]/x.pdf -> [REDACTED_PATH]/x.pdf'
+        ],
+        ['/Users/a/x.pdf to /Users/a/y.pdf', '[REDACTED_PATH]/x.pdf to [REDACTED_PATH]/y.pdf'],
+        [
+          'Copy /Users/a/My Docs/x.pdf => /home/b/Tax Returns/y.pdf failed',
+          'Copy [REDACTED_PATH]/x.pdf => [REDACTED_PATH]/y.pdf failed'
+        ],
+        ['/Users/a/x.pdf, /Users/b/My Docs/y.pdf', '[REDACTED_PATH]/x.pdf, [REDACTED_PATH]/y.pdf'],
+        [
+          "ENOENT: no such file or directory, rename '/Users/a/My Docs/x.pdf' -> '/Users/a/Finance Docs/x.pdf'",
+          "ENOENT: no such file or directory, rename '[REDACTED_PATH]/x.pdf' -> '[REDACTED_PATH]/x.pdf'"
+        ],
+        [
+          "copy '/Users/a/x.pdf' '/Users/b/My Docs/y.pdf'",
+          "copy '[REDACTED_PATH]/x.pdf' '[REDACTED_PATH]/y.pdf'"
+        ],
+        [
+          '"/Users/a/x.pdf" "/Users/b/My Docs/y.pdf"',
+          '"[REDACTED_PATH]/x.pdf" "[REDACTED_PATH]/y.pdf"'
+        ],
+        [
+          '(/Users/a/x.pdf) (/Users/b/My Docs/y.pdf)',
+          '([REDACTED_PATH]/x.pdf) ([REDACTED_PATH]/y.pdf)'
+        ],
+        [
+          'src=/Users/a/x.pdf dest=/Users/a/My Docs/y.pdf',
+          'src=[REDACTED_PATH]/x.pdf dest=[REDACTED_PATH]/y.pdf'
+        ],
+        [
+          'move /Users/a/x.pdf to C:/Users/b/My Docs/y.pdf',
+          'move [REDACTED_PATH]/x.pdf to [REDACTED_PATH]/y.pdf'
+        ],
+        ['Saved to /Users/a/My Docs/x.pdf.', 'Saved to [REDACTED_PATH]/x.pdf.']
+      ])('keeps two paths on one line apart: %s', (raw, expected) => {
+        const sanitized = sanitizeLogData(raw);
+        expect(sanitized).toBe(expected);
+        expect(sanitized).not.toMatch(/Users|home|Docs|Finance|Tax/);
+      });
+
+      test('reduces paths inside JSON text and keeps it valid JSON', () => {
+        const raw = JSON.stringify({
+          from: '/Users/a/Finance Docs/x.pdf',
+          to: '/Users/a/Tax Returns/y.pdf',
+          all: ['/Users/a/x.pdf', '/home/b/My Docs/y.pdf']
+        });
+        const sanitized = sanitizeLogData(`payload ${raw}`);
+        expect(sanitized).toBe(
+          'payload {"from":"[REDACTED_PATH]/x.pdf","to":"[REDACTED_PATH]/y.pdf","all":["[REDACTED_PATH]/x.pdf","[REDACTED_PATH]/y.pdf"]}'
+        );
+        expect(JSON.parse(sanitized.slice('payload '.length)).all).toHaveLength(2);
+      });
+
+      test('reduces a path between escaped quotes inside JSON text', () => {
+        const raw = JSON.stringify({ msg: 'open "/Users/a/My Docs/x.pdf" failed' });
+        expect(sanitizeLogData(raw)).toBe(
+          String.raw`{"msg":"open \"[REDACTED_PATH]/x.pdf\" failed"}`
+        );
+      });
+
+      test('reduces file URLs, encoded or not', () => {
+        expect(sanitizeLogData('file:///Users/bob/Medical%20Records/scan.pdf')).toBe(
+          'file://[REDACTED_PATH]/scan.pdf'
+        );
+        expect(sanitizeLogData('load file:///Users/bob/Medical Records/scan.pdf now')).toBe(
+          'load file://[REDACTED_PATH]/scan.pdf now'
+        );
+      });
+
+      test('keeps the line and column of a stack frame under a folder with a space', () => {
+        expect(
+          sanitizeLogData(
+            'at load (/Users/a/My App/src/x.js:10:5)\n    at /home/b/Dev Work/y.js:3:1'
+          )
+        ).toBe('at load ([REDACTED_PATH]/x.js:10:5)\\n    at [REDACTED_PATH]/y.js:3:1');
+      });
+
+      test.each([
+        // Other roots keep the whitespace cut, so prose is not swallowed.
+        ['/data/My Files/x.pdf', '[REDACTED_PATH]/My Files/x.pdf'],
+        ['read/write and/or', 'read/write and/or'],
+        ['use /tmp or /var for scratch', 'use /tmp or /var for scratch'],
+        ['the /Users folder and /home dir', 'the /Users folder and /home dir'],
+        ['ratio 3:4 at 10:30 (12/40)', 'ratio 3:4 at 10:30 (12/40)'],
+        // URLs behave as before: a root inside a URL path is not a root.
+        ['see https://host/Users/a b/c', 'see https:/[REDACTED_PATH]/a b/c'],
+        ['GET http://localhost:8080/home/x y/z', 'GET http:/[REDACTED_PATH]/x y/z'],
+        [
+          'at node:internal/process/task_queues:104:5 (/Users/a/My App/x.js:1:2)',
+          'at node:internal/process/task_queues:104:5 ([REDACTED_PATH]/x.js:1:2)'
+        ],
+        // A word glued to the root is not a root (the old whitespace cut applies).
+        ['foo/Users/a b/c', 'foo[REDACTED_PATH]/a b/c'],
+        ['C:\\PROGRA~1/a b/c', '[REDACTED_PATH]\\PROGRA~1/a b/c']
+      ])('leaves non-rooted text as before: %s', (raw, expected) => {
+        expect(sanitizeLogData(raw)).toBe(expected);
+      });
+
+      test.each([
+        // A word that looks like a file name, followed by a space, ends the
+        // path there, so a relative destination after it stays readable.
+        ['Moved /Users/a/x.pdf to Finance/Taxes', 'Moved [REDACTED_PATH]/x.pdf to Finance/Taxes'],
+        [
+          'Moved /Users/a/My Docs/scan.JPG to Photos/2024',
+          'Moved [REDACTED_PATH]/scan.JPG to Photos/2024'
+        ],
+        [
+          '/Users/a/x.pdf to /Users/a/My Docs/y.pdf',
+          '[REDACTED_PATH]/x.pdf to [REDACTED_PATH]/y.pdf'
+        ],
+        // Version numbers are not file names, so the folder runs on.
+        ['/Users/a/release 1.2.3 notes/x.pdf', '[REDACTED_PATH]/x.pdf'],
+        ['/Users/a/build v1.2 final/x.pdf', '[REDACTED_PATH]/x.pdf'],
+        // Known gap: a folder name with a file-like word ends protection there.
+        ['/Users/a/notes.txt and more/x.pdf', '[REDACTED_PATH]/notes.txt and more/x.pdf']
+      ])('a file-like word ends a rooted path: %s', (raw, expected) => {
+        expect(sanitizeLogData(raw)).toBe(expected);
+      });
+
+      test.each([
+        // The app's own file ids lower-case the path on darwin.
+        [
+          'file:/users/jane/library/mobile documents/com~apple~clouddocs/medical records/scan.pdf',
+          'file:[REDACTED_PATH]/scan.pdf'
+        ],
+        [
+          'Embedding file:/users/jane/documents/tax returns/2024.pdf queued',
+          'Embedding file:[REDACTED_PATH]/2024.pdf queued'
+        ],
+        ['image:/home/j/a b/x.pdf', 'image:[REDACTED_PATH]/x.pdf'],
+        ['cwd:/Users/j/My Docs/x.pdf', 'cwd:[REDACTED_PATH]/x.pdf'],
+        ['key:/tmp/My Dir/x.pdf', 'key:[REDACTED_PATH]/x.pdf'],
+        // A single letter before `:` is a Windows drive to the earlier pass.
+        ['k:/tmp/My Dir/x.pdf', '[REDACTED_PATH]/x.pdf'],
+        ['/volumes/my passport/x.pdf', '[REDACTED_PATH]/x.pdf'],
+        ['/Network/Servers/nas/Shared Docs/x.pdf', '[REDACTED_PATH]/x.pdf'],
+        [
+          '/run/user/1000/gvfs/smb-share:server=nas,share=docs/My Docs/x.pdf',
+          '[REDACTED_PATH]/x.pdf'
+        ]
+      ])('reduces a lowercase or colon-prefixed path: %s', (raw, expected) => {
+        const sanitized = sanitizeLogData(raw);
+        expect(sanitized).toBe(expected);
+        expect(sanitized).not.toMatch(/jane|documents|returns|Docs|Dir|passport|Shared/i);
+      });
+
+      test.each([
+        ['ratio 3:4 at 10:30 (12/40)'],
+        ['at node:internal/process/task_queues:104:5'],
+        ['the /users folder and /Network share'],
+        ['note: /users is lower case on darwin']
+      ])('leaves text with a colon or a bare root as it was: %s', (raw) => {
+        expect(sanitizeLogData(raw)).toBe(raw);
+      });
+
+      test('a URL path starting at a lowercase root behaves as before', () => {
+        expect(sanitizeLogData('see https://host/users/a b/c')).toBe(
+          'see https:/[REDACTED_PATH]/a b/c'
+        );
+      });
+
+      test.each([
+        ['/Users/a/Amazon.com Orders/x.pdf', '[REDACTED_PATH]/x.pdf'],
+        ['/Users/a/Example.ORG Files/x.pdf', '[REDACTED_PATH]/x.pdf'],
+        ['/Users/a/Notes.io Backup/x.pdf', '[REDACTED_PATH]/x.pdf']
+      ])('a web ending does not end a folder name: %s', (raw, expected) => {
+        expect(sanitizeLogData(raw)).toBe(expected);
+      });
+
+      test('no-break spaces join the words of a folder name', () => {
+        expect(sanitizeLogData('/Users/a/My\u00A0Docs/Narrow\u202FGap/x.pdf')).toBe(
+          '[REDACTED_PATH]/x.pdf'
+        );
+      });
+
+      test.each([
+        // Known gaps: these end the folder early and leave the rest visible.
+        ['/Users/a/x y=z/q.pdf', '[REDACTED_PATH]/x y=z/q.pdf'],
+        ['/Users/a/My "Best" Docs/x.pdf', '[REDACTED_PATH]/My "Best" Docs/x.pdf'],
+        ['/Users/a/My  Docs/x.pdf', '[REDACTED_PATH]/My  Docs/x.pdf'],
+        // Known over-redaction: a count after a folder path joins the path.
+        ['Scanned /Users/a/My Docs 3/12', 'Scanned [REDACTED_PATH]/12']
+      ])('known gap: %s', (raw, expected) => {
+        expect(sanitizeLogData(raw)).toBe(expected);
+      });
+
+      test('stays linear on long hostile inputs', () => {
+        const hostile = [
+          '/'.repeat(50000),
+          '/Users/'.repeat(7000),
+          '/Users/' + 'a '.repeat(25000),
+          '/Users/a' + ' a'.repeat(25000) + ' ',
+          '/a '.repeat(16000),
+          '"/Users/a/' + 'b c '.repeat(12000),
+          '/ / '.repeat(12500),
+          '~/'.repeat(25000),
+          '/Users/a/' + 'x( '.repeat(16000) + '/',
+          ('/Users/a' + ' a'.repeat(50) + ' (').repeat(400),
+          'file:///Users/' + 'a b/'.repeat(12000),
+          '/Users/a/' + 'a'.repeat(50000),
+          '/Users/a/' + "'(a '".repeat(8000) + 'x',
+          ' /Users'.repeat(7000) + '/',
+          "'/home/" + '"a, '.repeat(12000),
+          '/Users/a/' + 'x.pdf '.repeat(8000) + '/',
+          ':/users'.repeat(7000) + '/',
+          '/Users/a/' + 'a\u00A0'.repeat(25000) + '/',
+          '/Users/a/' + 'a.com '.repeat(8000) + '/'
+        ];
+        for (const input of hostile) {
+          const start = Date.now();
+          const out = sanitizeLogData(input);
+          expect(typeof out).toBe('string');
+          expect(Date.now() - start).toBeLessThan(500);
+        }
+      });
+    });
   });
 
   describe('logging methods', () => {

@@ -35,6 +35,39 @@ schema exists for a channel, an invalid payload is logged and **dropped** (not d
 without a schema pass through unvalidated. `npm run verify:ipc-event-schemas` (part of `ci`) fails
 when a push event sent from main has no schema.
 
+### Live Activity log channels
+
+The Live Activity panel streams sanitized log records from `src/main/services/liveLogFeed.js`.
+
+| Channel                       | Direction                     | Payload                                                                                   |
+| :---------------------------- | :---------------------------- | :---------------------------------------------------------------------------------------- |
+| `system:live-log:subscribe`   | invoke (renderer -> main)     | No input. Returns `{ success: true, entries }` (backlog).                                 |
+| `system:live-log:unsubscribe` | invoke (renderer -> main)     | No input. Returns `{ success: true }`.                                                    |
+| `system:live-log:batch`       | event-only (main -> renderer) | `{ entries, dropped }`, pushed at most every 250 ms, only when there is something to send |
+
+Both invoke channels act on the calling window (`event.sender`). Each entry is
+`{ id, time, level, context, msg, dataText, activity }`, where `activity` is
+`{ kind, icon, tone, text, file?, files?, redactedText? }` or `null` and `tone` is
+`info | success | warn | error`. A Problem activity lists every file name its message mentions in
+`files` (the first is also `file`), and `redactedText` is its line with each name replaced by "a
+file", which the panel's redact mode shows.
+
+Unlike the events above, `system:live-log:batch` is validated **only in main**, by `safeSend`
+against `liveLogBatchSchema`; the renderer receives it through the preload bridge and does not
+re-check it. `safeSend` blocks a batch that fails, so the feed clamps every field to the schema's
+bounds before sending, and no single log line can get a batch blocked:
+
+- At most 200 entries per batch.
+- Entry `msg` 2000 characters, `dataText` 1500, `context` 120, `time` 40.
+- Activity `kind` 64 characters, `icon` 32, `text` 2000, `redactedText` 2000, `file` 2000; `files`
+  at most 8 names of 2000 characters each (non-string items and empty names are dropped). An unknown
+  `tone` becomes `info`; an activity without a string `kind` and `text` becomes `null`.
+- `dropped` is a non-negative integer: entries discarded since this window's previous batch,
+  including any batch whose send was refused.
+
+`test/ipcEventSchemas.liveLog.test.js` pins these bounds to the feed's exported constants. Entries
+in the backlog may reappear in the next batch; consumers dedupe by `id`.
+
 ## Adding or Modifying a Contract
 
 1. Add/modify a schema in `src/main/ipc/validationSchemas.js` or `src/shared/ipcEventSchemas.js`.

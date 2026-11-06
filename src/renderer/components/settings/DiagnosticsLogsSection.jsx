@@ -1,22 +1,51 @@
 import React from 'react';
 import PropTypes from 'prop-types';
 import Button from '../ui/Button';
+import Switch from '../ui/Switch';
 import SettingRow from './SettingRow';
 import SettingsCard from './SettingsCard';
 import { logger } from '../../../shared/logger';
 import { TIMEOUTS } from '../../../shared/performanceConstants';
 import { getElectronAPI, settingsIpc, systemIpc } from '../../services/ipc';
+import { useAppDispatch, useAppSelector } from '../../store/hooks';
+import { setShowLiveActivity } from '../../store/thunks/liveActivityThunks';
+import { isMac } from '../../utils/platform';
 
 /**
- * Diagnostics logs section (open/export logs for troubleshooting).
+ * Diagnostics logs section (open/export logs for troubleshooting) and the
+ * "Show live activity" switch for the floating Live Activity panel.
+ *
+ * The switch reads the store and saves through the live-activity thunk (the
+ * same path as Ctrl/Cmd+Shift+L and the panel's Close button), not through
+ * SettingsPanel's draft — the panel leaves that one key alone.
  */
 function DiagnosticsLogsSection({ addNotification }) {
+  const dispatch = useAppDispatch();
+  const showLiveActivity = useAppSelector((state) => state.ui.settings?.showLiveActivity === true);
   const [isOpeningLogs, setIsOpeningLogs] = React.useState(false);
   const [isExportingLogs, setIsExportingLogs] = React.useState(false);
   const [exportStatus, setExportStatus] = React.useState('');
   const electronApi = getElectronAPI();
   const canOpenLogsFolder = typeof electronApi?.settings?.openLogsFolder === 'function';
   const canExportLogs = typeof electronApi?.system?.exportLogs === 'function';
+
+  const handleLiveActivityToggle = React.useCallback(
+    async (checked) => {
+      // The thunk updates the store first (the switch and the panel follow
+      // at once) and puts the old value back if the save fails.
+      const saved = await dispatch(setShowLiveActivity(checked === true));
+      if (saved === false) {
+        // Grouped so repeated failed clicks update one toast in place.
+        addNotification?.(
+          "Couldn't save the live activity setting",
+          'error',
+          6000,
+          'live-activity-save-error'
+        );
+      }
+    },
+    [addNotification, dispatch]
+  );
 
   const handleOpenLogsFolder = React.useCallback(async () => {
     if (isOpeningLogs) return;
@@ -110,6 +139,17 @@ function DiagnosticsLogsSection({ addNotification }) {
         {isExportingLogs && exportStatus && (
           <div className="w-full mt-2 text-sm text-system-gray-600">{exportStatus}</div>
         )}
+      </SettingRow>
+
+      <SettingRow
+        label="Show live activity"
+        description={`A small floating panel shows what the app is doing as it happens, with the raw log lines one tab away. Shortcut: ${isMac ? 'Cmd' : 'Ctrl'}+Shift+L.`}
+      >
+        <Switch
+          checked={showLiveActivity}
+          onChange={handleLiveActivityToggle}
+          aria-label="Show live activity"
+        />
       </SettingRow>
     </SettingsCard>
   );

@@ -16,6 +16,7 @@ import { TIMEOUTS } from '../../shared/performanceConstants';
 import { canHotkeySwapSurface, hasActiveOverlay, isTopOverlay } from '../utils/overlayStack';
 import { isEditableTarget } from '../utils/isEditableTarget';
 import { dispatchAcked } from '../utils/dispatchAcked';
+import { toggleShowLiveActivity } from '../store/thunks/liveActivityThunks';
 
 const logger = createLogger('useKeyboardShortcuts');
 
@@ -76,14 +77,25 @@ export function useKeyboardShortcuts() {
     dispatch(setCameFromDashboard(true));
   }, [dispatch]);
 
+  const handleToggleLiveActivity = useCallback(() => {
+    dispatch(/** @type {any} */ (toggleShowLiveActivity()));
+  }, [dispatch]);
+
   const actions = useMemo(
     () => ({
       openSettings: handleOpenSettings,
       requestCloseSettings,
       advancePhase: handleAdvancePhase,
-      leaveDashboard: handleLeaveDashboard
+      leaveDashboard: handleLeaveDashboard,
+      toggleLiveActivity: handleToggleLiveActivity
     }),
-    [handleOpenSettings, requestCloseSettings, handleAdvancePhase, handleLeaveDashboard]
+    [
+      handleOpenSettings,
+      requestCloseSettings,
+      handleAdvancePhase,
+      handleLeaveDashboard,
+      handleToggleLiveActivity
+    ]
   );
 
   useEffect(() => {
@@ -103,6 +115,25 @@ export function useKeyboardShortcuts() {
           // nested inside it (destructive ConfirmModal, TriageModal, ...)
           // mid-flow.
           actions.openSettings();
+        }
+        return;
+      }
+
+      // Ctrl/Cmd+Shift+L: show or hide the Live Activity panel. Like Ctrl+,
+      // it works from anywhere (text fields, open overlays, either experience
+      // mode) — it only flips a setting and has no text-editing meaning.
+      // Matched by the L the layout types; the physical key (`code`) is only
+      // a fallback when the layout types no Latin letter there (Cyrillic,
+      // Greek, ...), so Dvorak's Ctrl+Shift+N on that key never toggles.
+      // Auto-repeat is claimed but ignored, so holding the keys toggles once.
+      const shortcutKey = String(event.key || '').toLowerCase();
+      const isLKey = shortcutKey === 'l' || (!/^[a-z]$/.test(shortcutKey) && event.code === 'KeyL');
+      const liveActivityShortcut =
+        (event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && isLKey;
+      if (liveActivityShortcut) {
+        event.preventDefault();
+        if (!event.repeat) {
+          actions.toggleLiveActivity();
         }
         return;
       }

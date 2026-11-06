@@ -464,6 +464,154 @@ function redactPathValue(value) {
 // eslint-disable-next-line no-control-regex
 const LOG_CONTROL_CHAR_PATTERN = /[\u0000-\u0008\u000A-\u001F\u007F]/g;
 
+// Windows absolute-path redaction (drive and UNC), reduced to
+// `[REDACTED_PATH]<sep>basename` where <sep> is the separator the path used
+// before its last segment, so a JSON-escaped path (`C:\\Users\\x.pdf`) stays
+// valid JSON as `[REDACTED_PATH]\\x.pdf`.
+//
+// A path segment runs to a character Windows forbids in names, so names with
+// spaces, brackets and parentheses stay whole. It also stops before the next
+// drive (`D:\`, `D:/`): otherwise the last segment of the first path in
+// `move C:\a\x.pdf to D:\b\x.pdf` swallows " to D" and the second path is left
+// raw, user folders and all.
+//
+// A path keeps the separator style it starts with (captured as group 1 and
+// matched again by back-reference): `C:\...` continues only on single `\`,
+// JSON-escaped `C:\\...` only on `\\`, and `C:/...` only on `/`. A later `/`
+// on the same line therefore ends a backslash path instead of extending it:
+// `Moved C:\a\x.pdf to Finance/Taxes` keeps " to Finance/Taxes" after the
+// name rather than collapsing to `[REDACTED_PATH]/Taxes`. Segments never
+// contain `\` or `/`, so segment and separator are disjoint and matching
+// stays linear.
+const PATH_SEGMENT = String.raw`(?:(?![A-Za-z]:[\\/])[^\\/:*?"<>|\r\n])+`;
+// A drive letter preceded by a letter or digit is not a drive: it is the tail
+// of a URL scheme (`https://`) or a word, which the POSIX pass handles.
+const WINDOWS_DRIVE_PATH_PATTERN = new RegExp(
+  String.raw`(?<![A-Za-z0-9])[A-Za-z]:(\\+|\/)(?:${PATH_SEGMENT}\1)*${PATH_SEGMENT}`,
+  'g'
+);
+// `\\server\share\...` (or `\\\\server\\share\\...` once JSON-escaped): the
+// prefix is the separator written twice. Only backslashes open it, so `//` in
+// a URL never does. A server and at least one more segment are required. It
+// only starts at the first backslash of a run, and the separator is at most
+// four backslashes, so a long run is never retried from every position.
+const WINDOWS_UNC_PATH_PATTERN = new RegExp(
+  String.raw`(?<!\\)(\\{1,4})\1${PATH_SEGMENT}(?:\1${PATH_SEGMENT})+`,
+  'g'
+);
+// The last separator run and the basename of a matched Windows path.
+const WINDOWS_PATH_TAIL_PATTERN = /([\\/]+)([^\\/]+)$/;
+
+/**
+ * @param {string} matched A whole drive or UNC path matched above.
+ */
+function redactWindowsPathMatch(matched) {
+  const tail = matched.match(WINDOWS_PATH_TAIL_PATTERN);
+  // Both patterns end in a separator followed by a segment, so this holds.
+  if (!tail) return '[REDACTED_PATH]';
+  return `[REDACTED_PATH]${tail[1]}${tail[2]}`;
+}
+
+// POSIX absolute-path redaction, reduced to `[REDACTED_PATH]/basename`.
+//
+// Free text cannot say where a POSIX path ends: `/a/b c/d` may be one path
+// whose folder is "b c", or the path `/a/b` followed by prose. So spaces are
+// only allowed inside folder names when the path starts at a root where
+// macOS and Linux keep user folders (`/Users`, `/home`, `/Volumes`, ...) or
+// at `~/`. The macOS roots are also matched in lower case, because the app's
+// own file ids lower-case the path on darwin (`file:/users/<name>/...`, from
+// normalizePathForIndex). Any other path (and a path glued to a word, as in a URL)
+// keeps the old rule, cut at the first whitespace, so prose such as
+// "read/write and/or" is redacted no more than before.
+//
+// Under a known root a folder name is words joined by single spaces (a
+// no-break space U+00A0 or narrow no-break space U+202F counts) and must
+// be followed by `/`; the last segment (the file name, which is kept) still
+// stops at whitespace. To keep two paths on one line apart, a word after a
+// space cannot contain `" \` : ; = < > | * ?` or a backtick, cannot be only
+// opening punctuation (`(`, `[`, `{`, `'`), and cannot start a
+// `[REDACTED_PATH]` token, so `'/a/x.pdf' '/a/y.pdf'`, `(…) (…)`,
+// `src=… dest=…`, `x.pdf: /…` and `x.pdf -> /…` all split. `, ` is allowed
+// inside a folder name ("Smith, John"); a path after `, ` still splits
+// because it starts with a space and `/`. The first word of a folder name
+// takes anything the old rule took, except a `"` that closes a JSON string
+// (followed by `, : } ]`), so a JSON array of paths keeps each file name.
+// A word that looks like a file name (`x.pdf`) followed by a space ends the
+// path at that word (web endings `.com .org .net .io .edu .gov` do not
+// count, so "Amazon.com Orders" stays one folder), so in `Moved /Users/a/x.pdf to Finance/Taxes` the name
+// and the relative destination after it stay readable. The cost: a folder
+// name with a file-like word before a space (`notes.txt and more`) ends
+// protection there and the rest of the path shows. A relative path after a
+// path whose last word does not look like a file name is still read as part
+// of it, hiding too much, which is the safe direction.
+//
+// The rooted path may follow the start of the text, whitespace, a quote,
+// opening punctuation, `= , ; | < > :`, or `file://` (an unencoded file
+// URL). `:` covers `file:/users/...` ids and `cwd:/Users/...` labels; a
+// Windows drive (`C:/`) is redacted by the earlier pass, `node:internal/...`
+// is protected before any pass, and a URL path has a host, not `:`, before
+// its first slash.
+// Words and separators are disjoint character sets, each word has a single
+// way to end, and every quantifier is bounded by a character the next one
+// cannot take, so matching stays linear.
+const POSIX_ROOTS = [
+  'Users',
+  'home',
+  'Volumes',
+  'private',
+  'var',
+  'tmp',
+  'mnt',
+  'media',
+  'opt',
+  'Library',
+  'Applications',
+  'System',
+  'Network',
+  'users',
+  'volumes',
+  'library',
+  'applications',
+  'system',
+  'network',
+  'root',
+  'srv',
+  'run/media',
+  'run/user',
+  'net'
+].join('|');
+const POSIX_ROOTED_START = String.raw`(?<=^|[\s"'\x60([{<>=,;|:]|file:\/\/)(?:\/(?:${POSIX_ROOTS})|~)(?=\/)`;
+// First word of a folder name: the old segment rule minus a closing JSON quote.
+const POSIX_FIRST_WORD = String.raw`(?:[^\s/"]|"(?![,:}\]]))+`;
+// A later word: optional opening punctuation, then at least one other character.
+const POSIX_WORD_CHAR = String.raw`[^\s/\\"\x60:;=<>|*?]`;
+const POSIX_WORD_CORE = String.raw`[^\s/\\"\x60:;=<>|*?([{']`;
+const POSIX_LATER_WORD = String.raw`(?!\[REDACTED_PATH\])[([{']*${POSIX_WORD_CORE}${POSIX_WORD_CHAR}*`;
+// A word that ends like a file name (`.` + a letter + up to 7 letters or
+// digits: `x.pdf`, `scan.JPG`; not `v1.2` or `1.2.3`) cannot be followed by
+// a space inside a folder name, so the path ends at that word.
+const POSIX_WEB_ENDING = String.raw`\.(?:[Cc][Oo][Mm]|[Oo][Rr][Gg]|[Nn][Ee][Tt]|[Ii][Oo]|[Ee][Dd][Uu]|[Gg][Oo][Vv])`;
+const POSIX_NOT_AFTER_FILE_NAME = String.raw`(?:(?<!\.[A-Za-z][A-Za-z0-9]{0,7})|(?<=${POSIX_WEB_ENDING}))`;
+// The space between two words of a folder name.
+const POSIX_WORD_SPACE = String.raw`[ \u00A0\u202F]`;
+const POSIX_FOLDER = String.raw`${POSIX_FIRST_WORD}(?:${POSIX_NOT_AFTER_FILE_NAME}${POSIX_WORD_SPACE}${POSIX_LATER_WORD})*`;
+// Group 1: the basename of a rooted path. Group 2: the basename of any other
+// path (the old rule, which never starts right after `:` so `https://` and
+// `file://` keep their scheme).
+const POSIX_PATH_PATTERN = new RegExp(
+  String.raw`${POSIX_ROOTED_START}(?:\/${POSIX_FOLDER})*\/([^/\s]+)|(?<!:)\/(?:[^/\s]+\/)+([^/\s]+)`,
+  'g'
+);
+
+/**
+ * @param {string} _match
+ * @param {string | undefined} rootedName
+ * @param {string | undefined} otherName
+ */
+function redactPosixPathMatch(_match, rootedName, otherName) {
+  return `[REDACTED_PATH]/${rootedName ?? otherName}`;
+}
+
 /**
  * @param {any} value
  */
@@ -512,14 +660,9 @@ function sanitizeLogData(data, _depth = 0, _seen = undefined) {
       nodeInternalSentinels.push(match);
       return `__STRATOSORT_NODEINTERNAL_${idx}__`;
     });
-    sanitized = sanitized.replace(
-      /[A-Za-z]:\\(?:[^\\/:*?"<>|\r\n]+\\)*([^\\/:*?"<>|\r\n]+)/g,
-      (_match, filename) => `[REDACTED_PATH]\\${filename}`
-    );
-    sanitized = sanitized.replace(
-      /(?<!:)\/(?:[^/\s]+\/)+([^/\s]+)/g,
-      (_match, filename) => `[REDACTED_PATH]/${filename}`
-    );
+    sanitized = sanitized.replace(WINDOWS_DRIVE_PATH_PATTERN, redactWindowsPathMatch);
+    sanitized = sanitized.replace(WINDOWS_UNC_PATH_PATTERN, redactWindowsPathMatch);
+    sanitized = sanitized.replace(POSIX_PATH_PATTERN, redactPosixPathMatch);
     // Restore protected node:internal/... segments now that path redaction
     // has run. Sentinel uses control chars (/__) so it cannot
     // collide with any legitimate log content; stripLogControlChars below
@@ -657,6 +800,37 @@ function normalizeBrowserTransmit(messages = []) {
     message: util.format(...messages),
     data: {}
   };
+}
+
+/**
+ * One sanitized log record as the Live Activity feed sees it.
+ * @typedef {{ time: string, level: string, context: string, msg: string, data?: any }} LiveLogRecord
+ */
+
+/**
+ * Opt-in observers of every record this process writes. Only the main
+ * process registers here (src/main/services/liveLogFeed.js, while a window
+ * is subscribed to the Live Activity panel). Empty by default, so logging
+ * pays nothing for the feature until someone listens.
+ * @type {Set<(record: LiveLogRecord) => void>}
+ */
+const _liveRecordListeners = new Set();
+
+/**
+ * True while listeners are being handed a record. A listener that logs
+ * synchronously would otherwise recurse (log -> listener -> log -> ...) until
+ * the stack overflows; its own line is still written, just not re-announced.
+ */
+let _emittingLiveRecord = false;
+
+/** @param {(record: LiveLogRecord) => void} listener */
+function addLiveRecordListener(listener) {
+  if (typeof listener === 'function') _liveRecordListeners.add(listener);
+}
+
+/** @param {(record: LiveLogRecord) => void} listener */
+function removeLiveRecordListener(listener) {
+  _liveRecordListeners.delete(listener);
 }
 
 class Logger {
@@ -915,6 +1089,52 @@ class Logger {
       } else {
         throw err; // Re-throw non-transport errors
       }
+    }
+    // Announce only records that were actually written (pino or the console
+    // fallback), and only after the write, so a listener can never alter what
+    // pino serializes.
+    if (_liveRecordListeners.size > 0) {
+      this._emitLiveRecord(level, sanitizedMessage, sanitized);
+    }
+  }
+
+  /**
+   * Hand one sanitized record to the live listeners, only at levels this
+   * logger would write. Never throws: a broken listener must not break the
+   * log call it is observing, and a listener that logs is not re-entered.
+   * @param {string} level
+   * @param {any} message
+   * @param {any} data
+   */
+  _emitLiveRecord(level, message, data) {
+    if (_emittingLiveRecord) return;
+    _emittingLiveRecord = true;
+    try {
+      const _pino = /** @type {any} */ (this.pino);
+      if (_pino && typeof _pino.isLevelEnabled === 'function' && !_pino.isLevelEnabled(level)) {
+        return;
+      }
+      /** @type {LiveLogRecord} */
+      const record = {
+        time: new Date().toISOString(),
+        level,
+        context: this.context || '',
+        // A non-string message (e.g. logger.error(err)) reaches here
+        // unsanitized; redact its string form before it leaves the logger.
+        msg: typeof message === 'string' ? message : sanitizeLogData(String(message)),
+        data
+      };
+      for (const listener of _liveRecordListeners) {
+        try {
+          listener(record);
+        } catch {
+          // A listener failure never reaches the caller of the log method.
+        }
+      }
+    } catch {
+      // The live feed is best-effort; logging continues regardless.
+    } finally {
+      _emittingLiveRecord = false;
     }
   }
 
@@ -1250,6 +1470,8 @@ module.exports = {
   createSafeLogger,
   sanitizeLogData,
   stripLogControlChars,
+  addLiveRecordListener,
+  removeLiveRecordListener,
   _normalizeLogCall: normalizeLogCall,
   _normalizeBrowserTransmit: normalizeBrowserTransmit,
   configureFileLogging,
