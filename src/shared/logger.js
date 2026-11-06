@@ -518,11 +518,14 @@ function redactWindowsPathMatch(matched) {
 // whose folder is "b c", or the path `/a/b` followed by prose. So spaces are
 // only allowed inside folder names when the path starts at a root where
 // macOS and Linux keep user folders (`/Users`, `/home`, `/Volumes`, ...) or
-// at `~/`. Any other path (and a path glued to a word, as in a URL)
+// at `~/`. The macOS roots are also matched in lower case, because the app's
+// own file ids lower-case the path on darwin (`file:/users/<name>/...`, from
+// normalizePathForIndex). Any other path (and a path glued to a word, as in a URL)
 // keeps the old rule, cut at the first whitespace, so prose such as
 // "read/write and/or" is redacted no more than before.
 //
-// Under a known root a folder name is words joined by single spaces and must
+// Under a known root a folder name is words joined by single spaces (a
+// no-break space U+00A0 or narrow no-break space U+202F counts) and must
 // be followed by `/`; the last segment (the file name, which is kept) still
 // stops at whitespace. To keep two paths on one line apart, a word after a
 // space cannot contain `" \` : ; = < > | * ?` or a backtick, cannot be only
@@ -534,7 +537,8 @@ function redactWindowsPathMatch(matched) {
 // takes anything the old rule took, except a `"` that closes a JSON string
 // (followed by `, : } ]`), so a JSON array of paths keeps each file name.
 // A word that looks like a file name (`x.pdf`) followed by a space ends the
-// path at that word, so in `Moved /Users/a/x.pdf to Finance/Taxes` the name
+// path at that word (web endings `.com .org .net .io .edu .gov` do not
+// count, so "Amazon.com Orders" stays one folder), so in `Moved /Users/a/x.pdf to Finance/Taxes` the name
 // and the relative destination after it stay readable. The cost: a folder
 // name with a file-like word before a space (`notes.txt and more`) ends
 // protection there and the rest of the path shows. A relative path after a
@@ -542,7 +546,11 @@ function redactWindowsPathMatch(matched) {
 // of it, hiding too much, which is the safe direction.
 //
 // The rooted path may follow the start of the text, whitespace, a quote,
-// opening punctuation, `= , ; | < >`, or `file://` (an unencoded file URL).
+// opening punctuation, `= , ; | < > :`, or `file://` (an unencoded file
+// URL). `:` covers `file:/users/...` ids and `cwd:/Users/...` labels; a
+// Windows drive (`C:/`) is redacted by the earlier pass, `node:internal/...`
+// is protected before any pass, and a URL path has a host, not `:`, before
+// its first slash.
 // Words and separators are disjoint character sets, each word has a single
 // way to end, and every quantifier is bounded by a character the next one
 // cannot take, so matching stays linear.
@@ -559,12 +567,20 @@ const POSIX_ROOTS = [
   'Library',
   'Applications',
   'System',
+  'Network',
+  'users',
+  'volumes',
+  'library',
+  'applications',
+  'system',
+  'network',
   'root',
   'srv',
   'run/media',
+  'run/user',
   'net'
 ].join('|');
-const POSIX_ROOTED_START = String.raw`(?<=^|[\s"'\x60([{<>=,;|]|file:\/\/)(?:\/(?:${POSIX_ROOTS})|~)(?=\/)`;
+const POSIX_ROOTED_START = String.raw`(?<=^|[\s"'\x60([{<>=,;|:]|file:\/\/)(?:\/(?:${POSIX_ROOTS})|~)(?=\/)`;
 // First word of a folder name: the old segment rule minus a closing JSON quote.
 const POSIX_FIRST_WORD = String.raw`(?:[^\s/"]|"(?![,:}\]]))+`;
 // A later word: optional opening punctuation, then at least one other character.
@@ -574,8 +590,11 @@ const POSIX_LATER_WORD = String.raw`(?!\[REDACTED_PATH\])[([{']*${POSIX_WORD_COR
 // A word that ends like a file name (`.` + a letter + up to 7 letters or
 // digits: `x.pdf`, `scan.JPG`; not `v1.2` or `1.2.3`) cannot be followed by
 // a space inside a folder name, so the path ends at that word.
-const POSIX_NOT_AFTER_FILE_NAME = String.raw`(?<!\.[A-Za-z][A-Za-z0-9]{0,7})`;
-const POSIX_FOLDER = String.raw`${POSIX_FIRST_WORD}(?:${POSIX_NOT_AFTER_FILE_NAME} ${POSIX_LATER_WORD})*`;
+const POSIX_WEB_ENDING = String.raw`\.(?:[Cc][Oo][Mm]|[Oo][Rr][Gg]|[Nn][Ee][Tt]|[Ii][Oo]|[Ee][Dd][Uu]|[Gg][Oo][Vv])`;
+const POSIX_NOT_AFTER_FILE_NAME = String.raw`(?:(?<!\.[A-Za-z][A-Za-z0-9]{0,7})|(?<=${POSIX_WEB_ENDING}))`;
+// The space between two words of a folder name.
+const POSIX_WORD_SPACE = String.raw`[ \u00A0\u202F]`;
+const POSIX_FOLDER = String.raw`${POSIX_FIRST_WORD}(?:${POSIX_NOT_AFTER_FILE_NAME}${POSIX_WORD_SPACE}${POSIX_LATER_WORD})*`;
 // Group 1: the basename of a rooted path. Group 2: the basename of any other
 // path (the old rule, which never starts right after `:` so `https://` and
 // `file://` keep their scheme).

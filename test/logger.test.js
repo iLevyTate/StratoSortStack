@@ -555,6 +555,73 @@ describe('Logger', () => {
         expect(sanitizeLogData(raw)).toBe(expected);
       });
 
+      test.each([
+        // The app's own file ids lower-case the path on darwin.
+        [
+          'file:/users/jane/library/mobile documents/com~apple~clouddocs/medical records/scan.pdf',
+          'file:[REDACTED_PATH]/scan.pdf'
+        ],
+        [
+          'Embedding file:/users/jane/documents/tax returns/2024.pdf queued',
+          'Embedding file:[REDACTED_PATH]/2024.pdf queued'
+        ],
+        ['image:/home/j/a b/x.pdf', 'image:[REDACTED_PATH]/x.pdf'],
+        ['cwd:/Users/j/My Docs/x.pdf', 'cwd:[REDACTED_PATH]/x.pdf'],
+        ['key:/tmp/My Dir/x.pdf', 'key:[REDACTED_PATH]/x.pdf'],
+        // A single letter before `:` is a Windows drive to the earlier pass.
+        ['k:/tmp/My Dir/x.pdf', '[REDACTED_PATH]/x.pdf'],
+        ['/volumes/my passport/x.pdf', '[REDACTED_PATH]/x.pdf'],
+        ['/Network/Servers/nas/Shared Docs/x.pdf', '[REDACTED_PATH]/x.pdf'],
+        [
+          '/run/user/1000/gvfs/smb-share:server=nas,share=docs/My Docs/x.pdf',
+          '[REDACTED_PATH]/x.pdf'
+        ]
+      ])('reduces a lowercase or colon-prefixed path: %s', (raw, expected) => {
+        const sanitized = sanitizeLogData(raw);
+        expect(sanitized).toBe(expected);
+        expect(sanitized).not.toMatch(/jane|documents|returns|Docs|Dir|passport|Shared/i);
+      });
+
+      test.each([
+        ['ratio 3:4 at 10:30 (12/40)'],
+        ['at node:internal/process/task_queues:104:5'],
+        ['the /users folder and /Network share'],
+        ['note: /users is lower case on darwin']
+      ])('leaves text with a colon or a bare root as it was: %s', (raw) => {
+        expect(sanitizeLogData(raw)).toBe(raw);
+      });
+
+      test('a URL path starting at a lowercase root behaves as before', () => {
+        expect(sanitizeLogData('see https://host/users/a b/c')).toBe(
+          'see https:/[REDACTED_PATH]/a b/c'
+        );
+      });
+
+      test.each([
+        ['/Users/a/Amazon.com Orders/x.pdf', '[REDACTED_PATH]/x.pdf'],
+        ['/Users/a/Example.ORG Files/x.pdf', '[REDACTED_PATH]/x.pdf'],
+        ['/Users/a/Notes.io Backup/x.pdf', '[REDACTED_PATH]/x.pdf']
+      ])('a web ending does not end a folder name: %s', (raw, expected) => {
+        expect(sanitizeLogData(raw)).toBe(expected);
+      });
+
+      test('no-break spaces join the words of a folder name', () => {
+        expect(sanitizeLogData('/Users/a/My\u00A0Docs/Narrow\u202FGap/x.pdf')).toBe(
+          '[REDACTED_PATH]/x.pdf'
+        );
+      });
+
+      test.each([
+        // Known gaps: these end the folder early and leave the rest visible.
+        ['/Users/a/x y=z/q.pdf', '[REDACTED_PATH]/x y=z/q.pdf'],
+        ['/Users/a/My "Best" Docs/x.pdf', '[REDACTED_PATH]/My "Best" Docs/x.pdf'],
+        ['/Users/a/My  Docs/x.pdf', '[REDACTED_PATH]/My  Docs/x.pdf'],
+        // Known over-redaction: a count after a folder path joins the path.
+        ['Scanned /Users/a/My Docs 3/12', 'Scanned [REDACTED_PATH]/12']
+      ])('known gap: %s', (raw, expected) => {
+        expect(sanitizeLogData(raw)).toBe(expected);
+      });
+
       test('stays linear on long hostile inputs', () => {
         const hostile = [
           '/'.repeat(50000),
@@ -572,7 +639,10 @@ describe('Logger', () => {
           '/Users/a/' + "'(a '".repeat(8000) + 'x',
           ' /Users'.repeat(7000) + '/',
           "'/home/" + '"a, '.repeat(12000),
-          '/Users/a/' + 'x.pdf '.repeat(8000) + '/'
+          '/Users/a/' + 'x.pdf '.repeat(8000) + '/',
+          ':/users'.repeat(7000) + '/',
+          '/Users/a/' + 'a\u00A0'.repeat(25000) + '/',
+          '/Users/a/' + 'a.com '.repeat(8000) + '/'
         ];
         for (const input of hostile) {
           const start = Date.now();

@@ -17,8 +17,8 @@ Cloud analysis now covers audio and video, and video frames are sent only with y
 until it can save again. Exact duplicates are found without a manual step, and Find Duplicates can
 keep a whole set. A batch of images no longer restarts the vision model for every image, and much
 less is rewritten to disk while a batch runs. A new Live Activity panel shows what the app is doing
-as it happens, and log lines no longer leave a second file path, or a macOS or Linux folder with a
-space in its name, in the clear. Contributors now need Node 24.
+as it happens, and in most cases (see Known issues) log lines no longer leave a second file path, or
+a macOS or Linux folder with a space in its name, in the clear. Contributors now need Node 24.
 
 Changes you will notice:
 
@@ -41,11 +41,11 @@ Changes you will notice:
 - **Some macOS and Linux folder names can still reach the log.** A path that starts somewhere other
   than the usual places for files (for example `/data/My Files/x.pdf`) is still cleaned up only to
   its first space, so the folders after it can appear. A folder name with two spaces in a row, or
-  with `"`, `:`, `;` or `=` after a space, also ends the cleanup early. The file name is kept on
-  purpose; when it contains a space, only the part before the space is marked as the name. A word
-  that looks like a file name ends the path, so `Moved /Users/a/x.pdf to Finance/Taxes` keeps "x.pdf
-  to Finance/Taxes" readable, but a folder whose name has such a word before a space
-  (`notes.txt and more`) shows from that word on.
+  with `"`, `:`, `;`, `=` and some other punctuation after a space (see `docs/DEBUGGING_GUIDE.md`),
+  also ends the cleanup early. The file name is kept on purpose; when it contains a space, only the
+  part before the space is marked as the name. A word that looks like a file name ends the path, so
+  `Moved /Users/a/x.pdf to Finance/Taxes` keeps "x.pdf to Finance/Taxes" readable, but a folder
+  whose name has such a word before a space (`notes.txt and more`) shows from that word on.
 
 ### Privacy
 
@@ -72,10 +72,11 @@ Changes you will notice:
 - **Log lines hide macOS and Linux folders whose names contain spaces.** A macOS or Linux path used
   to be cleaned up only to its first space, so in
   `/Users/me/Library/Mobile Documents/…/Medical Records/scan.pdf` the folders after the space were
-  written in full. A path that starts in a usual place for files (`/Users`, `/home`, `/Volumes`,
-  `/media`, `/mnt`, `/tmp`, `~/` and similar) is now reduced to its file name, whatever spaces its
-  folders have, and two paths in one line stay apart. Both changes apply to the log files and to the
-  new Live Activity panel.
+  written in full. In most cases (see Known issues), a path that starts in a usual place for files
+  (`/Users`, `/home`, `/Volumes`, `/media`, `/mnt`, `/tmp`, `~/` and similar) is now reduced to its
+  file name even when its folders have spaces, and two paths in one line stay apart. That includes
+  the app's own lower-case file ids on macOS (`file:/users/…`). Both changes apply to the log files
+  and to the new Live Activity panel.
 
 ### Added
 
