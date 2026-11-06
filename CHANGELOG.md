@@ -56,11 +56,14 @@ Changes you will notice:
 - Settings routing text, the keyframe switch, About and Diagnostics say what each operation sends.
   `PRIVACY.md` and `docs/AI_PROVIDERS.md` (new "Video frames" and "Consent versions" sections) are
   updated to match.
-- **Log lines hide every folder path.** The logger already cut a Windows path down to its file name,
-  but only the first one in a line: in `move C:\Users\…\a.pdf to D:\Archive\…\a.pdf` the second path
-  was written in full. Every absolute path in a line is now reduced to its file name, including
-  network paths (`\\server\share\…`), paths written with forward slashes (`C:/Users/…`) and paths
-  inside JSON text. This applies to the log files and to the new Live Activity panel.
+- **Log lines hide every Windows folder path.** The logger already cut a Windows path down to its
+  file name, but only the first one in a line: in `move C:\Users\…\a.pdf to D:\Archive\…\a.pdf` the
+  second path was written in full. Every Windows path in a line is now reduced to its file name:
+  drive-letter paths (also written with forward slashes, `C:/Users/…`), network paths
+  (`\\server\share\…`) and paths escaped inside JSON text. macOS and Linux paths are handled as
+  before: they are still cut at the first space, so the folders after a space (such as
+  `/Users/me/Mobile Documents/…`) can still appear. This applies to the log files and to the new
+  Live Activity panel.
 
 ### Added
 
@@ -94,10 +97,11 @@ Changes you will notice:
   minimum-level filter, a context filter and a details box for the selected line. Drag it by its
   title bar, resize it from the corner, move or resize it with the arrow keys, minimize it to a pill
   that pulses when new lines arrive, and pause, copy or clear it. Its position, size and tab are
-  remembered on this computer. It shows the same cleaned-up lines the log file gets (folder paths
-  removed), and when paths are hidden for demos (`STRATOSORT_REDACT_PATHS=1`) it also shows file
-  names as "a file", with the limits listed under Known issues. Off by default; nothing is collected
-  for it while it is closed, and turning it on or off does not create a settings backup.
+  remembered on this computer. It shows the same cleaned-up lines the log file gets (Windows folder
+  paths removed; see Privacy for macOS and Linux paths), and when paths are hidden for demos
+  (`STRATOSORT_REDACT_PATHS=1`) it also shows file names as "a file", with the limits listed under
+  Known issues. Off by default; nothing is collected for it while it is closed, and turning it on or
+  off does not create a settings backup.
 
 ### Changed
 
@@ -131,7 +135,8 @@ Changes you will notice:
   (`Persisted databases`) and each file moved or skipped as a duplicate by Organize
   (`[FILE-OPS] Move completed`, `Move skipped (duplicate)`) are now logged at info in every build,
   so the Live Activity panel can show them. The move lines were only written in development builds
-  before. They hold paths with the folders removed, never file content.
+  before. The move lines hold only the file's name (no folders, on every platform), never file
+  content.
 - The keyword index used for naming context is rebuilt at most every 2 minutes during a batch,
   instead of before every file. Search keeps its own freshness check.
 - **Organize** checks for duplicates on each move with the stored fingerprints instead of reading

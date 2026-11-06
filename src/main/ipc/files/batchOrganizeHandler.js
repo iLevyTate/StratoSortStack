@@ -790,12 +790,14 @@ async function handleBatchOrganize(params) {
               });
 
               // One info line per skipped file in every build: the Live
-              // Activity feed shows "Skipped <name> (already in place)". Paths
-              // only, never file content; the logger redacts absolute paths.
+              // Activity feed shows "Skipped <name> (already in place)". File
+              // names only, never folders or content: the logger's POSIX path
+              // redaction stops at the first space, so a full path could leak
+              // folder names such as "Medical Records" into the log.
               log.info('[FILE-OPS] Move skipped (duplicate)', {
                 batchId,
-                source: op.source,
-                destination: resolvedDestination
+                source: path.basename(op.source),
+                destination: path.basename(resolvedDestination)
               });
 
               // Verify state is consistent (dest exists, source gone)
@@ -845,13 +847,13 @@ async function handleBatchOrganize(params) {
             }
 
             // One info line per moved file in every build (not trace-only):
-            // the Live Activity feed turns it into "Filed <name>". Paths only,
-            // never file content; the logger redacts absolute paths.
+            // the Live Activity feed turns it into "Filed <name>". File names
+            // only, never folders or content (see the skipped line above).
             log.info('[FILE-OPS] Move completed', {
               batchId,
               index: i,
-              source: op.source,
-              destination: op.destination,
+              source: path.basename(op.source),
+              destination: path.basename(op.destination),
               durationMs: Date.now() - opStart
             });
 

@@ -15,6 +15,23 @@ the main window that shows a friendly **Activity** feed by default and the real 
 - No remote/telemetry use. Everything stays in-process.
 - No editing, re-running or acting on log entries from the panel.
 
+### Changes during implementation
+
+The first non-goal held only in part. Beyond the panel itself, these shipped:
+
+- **Logger path redaction rewritten** (`sanitizeLogData` in `src/shared/logger.js`): every Windows
+  path in a line is reduced to its file name, including a second path, UNC, JSON-escaped and `C:/`
+  forms; before, only the first drive path in a line was. POSIX paths are unchanged (still cut at
+  the first space).
+- **Three log lines promoted to `info` in every build**, so the Activity feed can show them:
+  `[OramaVectorService] Persisted databases` (only when a save wrote something) and
+  `[FILE-OPS] Move completed` / `Move skipped (duplicate)` (were development-only, and now log file
+  names only, never folders).
+- **Settings backup exemption:** toggling `showLiveActivity` takes no pre-save settings backup
+  (`BACKUP_EXEMPT_KEYS` in `SettingsService`).
+- **5 s IPC timeouts** for `system:live-log:subscribe` / `:unsubscribe`
+  (`src/shared/ipcInvokeTimeout.js`) instead of the 330 s default.
+
 ## User-facing behavior
 
 - **Open/close:** "Show live activity" switch in Settings → Diagnostics (next to the existing logs

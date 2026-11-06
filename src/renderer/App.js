@@ -57,8 +57,10 @@ function AppContent() {
   const effectiveDashboard = viewMode === 'dashboard' && smartFoldersConfigured;
   const selectedTheme = useAppSelector((/** @type {any} */ state) => state.ui.selectedTheme);
   const showSettings = useAppSelector((/** @type {any} */ state) => state.ui.showSettings);
-  // Strict `=== true`: settings is null until the first load resolves, so the
-  // panel (and its live-log subscription) never mounts during startup.
+  // Strict `=== true`: settings may be null (nothing persisted yet) or the
+  // copy restored from localStorage at startup (store/index.js), so the panel
+  // mounts from that restored value and follows the settings load after it;
+  // a missing or non-boolean value never mounts it.
   const showLiveActivity = useAppSelector(
     (/** @type {any} */ state) => state.ui.settings?.showLiveActivity === true
   );

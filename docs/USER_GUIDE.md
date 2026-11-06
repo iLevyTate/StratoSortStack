@@ -290,11 +290,13 @@ Then run a small batch first and review outcomes before scaling up.
     the arrow keys (Shift+arrow keys resize). Minimize it to a small pill, pause it (new lines are
     counted and shown when you resume), copy the visible lines, or clear it. Its position, size and
     tab are remembered on this computer.
-  - It shows the same cleaned-up lines the log file holds: folder paths are already removed, leaving
-    file names. When paths are hidden for a demo or recording (`STRATOSORT_REDACT_PATHS=1`), the
-    panel also shows file names as "a file". This is best effort: it can hide some words that only
-    look like file names (such as `simple-main.js` or a web address), it can show the part of a file
-    name before its last space, and a name inside a web link or ending in `.com`, `.co` or `.io` can
+  - It shows the same cleaned-up lines the log file holds. On Windows, folder paths are already
+    removed, leaving file names. On macOS and Linux a path is only cleaned up to its first space, so
+    folder names after a space (such as "Mobile Documents") can still show; organize lines name only
+    the file. When paths are hidden for a demo or recording (`STRATOSORT_REDACT_PATHS=1`), the panel
+    also shows file names as "a file". This is best effort: it can hide some words that only look
+    like file names (such as `simple-main.js` or a web address), it can show the part of a file name
+    before its last space, and a name inside a web link or ending in `.com`, `.co` or `.io` can
     still show. The context column (which part of the app wrote the line) is never hidden.
   - Turning it on or off does not create a settings backup. While it is closed, nothing is collected
     for it.

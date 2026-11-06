@@ -13,6 +13,7 @@ import { axe, toHaveNoViolations } from 'jest-axe';
 expect.extend(toHaveNoViolations);
 
 const mockDispatch = jest.fn();
+const mockAddNotification = jest.fn();
 const mockPause = jest.fn();
 const mockResume = jest.fn();
 const mockClear = jest.fn();
@@ -61,6 +62,10 @@ jest.mock('react-window', () => {
     }
   };
 });
+
+jest.mock('../../src/renderer/contexts/NotificationContext', () => ({
+  useNotification: () => ({ addNotification: mockAddNotification })
+}));
 
 jest.mock('../../src/renderer/store/hooks', () => ({
   useAppDispatch: () => mockDispatch,
@@ -787,6 +792,35 @@ describe('LiveActivityPanel', () => {
         type: 'test/setShowLiveActivity',
         payload: false
       });
+    });
+
+    test('a close whose save fails shows the grouped save-error toast', async () => {
+      // The thunk resolves false when the save failed and it rolled back.
+      mockDispatch.mockResolvedValueOnce(false);
+      render(<LiveActivityPanel />);
+      fireEvent.click(screen.getByRole('button', { name: 'Close live activity panel' }));
+      await waitFor(() =>
+        expect(mockAddNotification).toHaveBeenCalledWith(
+          "Couldn't save the live activity setting",
+          'error',
+          6000,
+          'live-activity-save-error'
+        )
+      );
+      expect(mockAddNotification).toHaveBeenCalledTimes(1);
+    });
+
+    test('a close whose save succeeds shows no toast', async () => {
+      mockDispatch.mockResolvedValueOnce(true);
+      render(<LiveActivityPanel />);
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Close live activity panel' }));
+      });
+      expect(mockDispatch).toHaveBeenCalledWith({
+        type: 'test/setShowLiveActivity',
+        payload: false
+      });
+      expect(mockAddNotification).not.toHaveBeenCalled();
     });
   });
 

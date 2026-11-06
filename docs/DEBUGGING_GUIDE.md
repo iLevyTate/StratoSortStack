@@ -460,15 +460,18 @@ Three log lines feed that view and are written at `info` in every build:
   (a save with nothing to write stays at `debug`). Saves are already spaced 5 s to 2 min apart.
 - `[FILE-OPS] Move completed` and `[FILE-OPS] Move skipped (duplicate)`, one per file in a batch
   organize (`src/main/ipc/files/batchOrganizeHandler.js`). They used to be development-only
-  (`ENABLE_BATCH_TRACE_LOGS`, now removed). They carry paths, never file content.
+  (`ENABLE_BATCH_TRACE_LOGS`, now removed). Their `source` and `destination` are file names only
+  (`path.basename`), never folders or file content: the POSIX path redaction stops at the first
+  space, so a full path could leak a folder such as `Medical Records`.
 
 The feed (`src/main/services/liveLogFeed.js`) listens to the logger only while a window is
-subscribed, keeps the last 500 records as the backlog a newly opened panel starts with, and ignores
-records logged while it is sending a batch, so a failing send cannot feed itself. The panel's
-position, size, minimized state and tab live in `localStorage` under
-`stratosort_live_activity_panel`; delete that key in DevTools to reset the panel's layout. Toggling
-`showLiveActivity` takes no settings backup (`BACKUP_EXEMPT_KEYS` in
-`src/main/services/SettingsService.js`).
+subscribed and ignores records logged while it is sending a batch, so a failing send cannot feed
+itself. The panel's position, size, minimized state and tab live in `localStorage` under
+`stratosort_live_activity_panel`; delete that key in DevTools to reset the panel's layout. The panel
+starts empty: the feed keeps up to 500 records only while some window is subscribed and clears them
+when the last one unsubscribes (closing the panel, or a reload, which detaches the window). That
+backlog only reaches a second window subscribing while another is open. Toggling `showLiveActivity`
+takes no settings backup (`BACKUP_EXEMPT_KEYS` in `src/main/services/SettingsService.js`).
 
 ### Absolute paths in log lines
 

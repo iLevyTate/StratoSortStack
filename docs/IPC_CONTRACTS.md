@@ -39,11 +39,11 @@ when a push event sent from main has no schema.
 
 The Live Activity panel streams sanitized log records from `src/main/services/liveLogFeed.js`.
 
-| Channel                       | Direction                     | Payload                                                      |
-| :---------------------------- | :---------------------------- | :----------------------------------------------------------- |
-| `system:live-log:subscribe`   | invoke (renderer -> main)     | No input. Returns `{ success: true, entries }` (backlog).    |
-| `system:live-log:unsubscribe` | invoke (renderer -> main)     | No input. Returns `{ success: true }`.                       |
-| `system:live-log:batch`       | event-only (main -> renderer) | `{ entries, dropped }`, pushed every 250 ms while subscribed |
+| Channel                       | Direction                     | Payload                                                                                   |
+| :---------------------------- | :---------------------------- | :---------------------------------------------------------------------------------------- |
+| `system:live-log:subscribe`   | invoke (renderer -> main)     | No input. Returns `{ success: true, entries }` (backlog).                                 |
+| `system:live-log:unsubscribe` | invoke (renderer -> main)     | No input. Returns `{ success: true }`.                                                    |
+| `system:live-log:batch`       | event-only (main -> renderer) | `{ entries, dropped }`, pushed at most every 250 ms, only when there is something to send |
 
 Both invoke channels act on the calling window (`event.sender`). Each entry is
 `{ id, time, level, context, msg, dataText, activity }`, where `activity` is

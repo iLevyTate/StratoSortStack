@@ -33,6 +33,7 @@ import {
   Wrench,
   X
 } from 'lucide-react';
+import { useNotification } from '../../contexts/NotificationContext';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { selectRedactPaths } from '../../store/selectors';
 import { setShowLiveActivity } from '../../store/thunks/liveActivityThunks';
@@ -237,6 +238,7 @@ RawRow.propTypes = {
 
 function LiveActivityPanel() {
   const dispatch = useAppDispatch();
+  const { addNotification } = useNotification();
   // The selector stays true until the setting has loaded (privacy-safe).
   const redactPaths = useAppSelector(selectRedactPaths) === true;
   const feed = useLiveLogFeed({ enabled: true });
@@ -413,9 +415,21 @@ function LiveActivityPanel() {
     persist({ minimized: false });
   }, [persist]);
 
-  const handleClose = useCallback(() => {
-    dispatch(setShowLiveActivity(false));
-  }, [dispatch]);
+  const handleClose = useCallback(async () => {
+    // The thunk hides the panel at once and puts it back if the save fails,
+    // so a failed save would otherwise only look like the panel reopening.
+    // Same grouped toast as the Diagnostics switch: repeated failures update
+    // one toast in place. The provider outlives this panel's unmount.
+    const saved = await dispatch(setShowLiveActivity(false));
+    if (saved === false) {
+      addNotification(
+        "Couldn't save the live activity setting",
+        'error',
+        6000,
+        'live-activity-save-error'
+      );
+    }
+  }, [addNotification, dispatch]);
 
   const { clear: clearFeed } = feed;
   const handleClear = useCallback(() => {

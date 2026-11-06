@@ -473,6 +473,39 @@ const CASES = [
     }
   },
   {
+    // The shape batchOrganizeHandler writes: bare file names, no folders.
+    rule: 'organize-move',
+    record: {
+      level: 'info',
+      context: 'IPC:Files:BatchOrganize',
+      msg: '[FILE-OPS] Move completed',
+      data: { batchId: 'b1', index: 0, source: 'tax 2025.pdf', destination: 'tax 2025.pdf' }
+    },
+    expected: {
+      kind: 'organize',
+      icon: 'folder',
+      tone: 'success',
+      text: 'Filed tax 2025.pdf',
+      file: 'tax 2025.pdf'
+    }
+  },
+  {
+    rule: 'organize-skipped',
+    record: {
+      level: 'info',
+      context: 'IPC:Files:BatchOrganize',
+      msg: '[FILE-OPS] Move skipped (duplicate)',
+      data: { batchId: 'b1', source: 'scan 7.pdf', destination: 'scan 7.pdf' }
+    },
+    expected: {
+      kind: 'organize',
+      icon: 'folder',
+      tone: 'info',
+      text: 'Skipped scan 7.pdf (already in place)',
+      file: 'scan 7.pdf'
+    }
+  },
+  {
     rule: 'organize-move',
     record: {
       level: 'info',

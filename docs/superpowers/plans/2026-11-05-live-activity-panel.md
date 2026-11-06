@@ -119,6 +119,12 @@ Modified:
 3. **Undo:** `UndoRedoService` logs no info line on a successful undo; the Activity rule uses
    `[UndoRedoService] Restoring file from backup` ("Undo: restoring name.ext"), and undo failures
    surface through the generic warn/error "Problem:" rule. No new log lines are added (non-goal).
+   **Changed during implementation:** three existing lines moved to `info` in every build
+   (`Persisted databases` when a save wrote something; `[FILE-OPS] Move completed` and
+   `Move skipped (duplicate)`, now with file names only), the logger's path redaction was rewritten
+   to cover every Windows path in a line, `showLiveActivity` was exempted from settings backups, and
+   live-log subscribe/unsubscribe got 5 s invoke timeouts. See the spec's "Changes during
+   implementation".
 4. **Downloads:** there is no "new download detected" info log; the Activity rules use the real
    lines: auto-organized, renamed-on-conflict, left in place, held for disk full, disk room again.
 5. **The Settings switch lives in the Diagnostics section, which SettingsPanel shows in Advanced

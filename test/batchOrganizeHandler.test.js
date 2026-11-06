@@ -245,10 +245,11 @@ describe('Batch Organize Handler', () => {
     );
     expect(moveLines).toHaveLength(2);
     expect(moveLines.map(([, data]) => data)).toEqual([
-      expect.objectContaining({ index: 0, source: '/src/doc1.pdf', destination: '/dest/doc1.pdf' }),
-      expect.objectContaining({ index: 1, source: '/src/doc2.pdf', destination: '/dest/doc2.pdf' })
+      expect.objectContaining({ index: 0, source: 'doc1.pdf', destination: 'doc1.pdf' }),
+      expect.objectContaining({ index: 1, source: 'doc2.pdf', destination: 'doc2.pdf' })
     ]);
-    // Paths and timing only: no file content rides along.
+    // File names and timing only: no folders (POSIX redaction stops at a
+    // space) and no file content ride along.
     for (const [, data] of moveLines) {
       expect(Object.keys(data).sort()).toEqual(
         ['batchId', 'destination', 'durationMs', 'index', 'source'].sort()
@@ -274,16 +275,16 @@ describe('Batch Organize Handler', () => {
       ([msg]) => msg === '[FILE-OPS] Move skipped (duplicate)'
     );
     expect(skipLines).toHaveLength(1);
-    // Paths only: no file content rides along.
+    // File names only: no folders and no file content ride along.
     expect(skipLines[0][1]).toEqual({
       batchId: expect.any(String),
-      source: '/src/doc1.pdf',
-      destination: '/dest/doc1.pdf'
+      source: 'doc1.pdf',
+      destination: 'doc1.pdf'
     });
     const moveLines = mockLogger.info.mock.calls.filter(
       ([msg]) => msg === '[FILE-OPS] Move completed'
     );
-    expect(moveLines.map(([, data]) => data.source)).toEqual(['/src/doc2.pdf']);
+    expect(moveLines.map(([, data]) => data.source)).toEqual(['doc2.pdf']);
   });
 
   test('decides every landing folder once, before the lock, and moves nothing into a refused one', async () => {
