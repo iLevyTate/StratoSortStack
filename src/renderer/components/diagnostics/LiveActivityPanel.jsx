@@ -162,7 +162,7 @@ function ActivityRow({ index, style, ariaAttributes, rows, redact }) {
   const text = redactActivityText(entry.activity, redact);
   const tag = activityContextTag(entry);
   return (
-    <div style={style} {...ariaAttributes} className="flex items-center gap-2 px-3 text-xs">
+    <div style={style} {...ariaAttributes} className="flex items-center gap-compact px-3 text-xs">
       <span className="flex-shrink-0 font-mono tabular-nums text-system-gray-500">
         {formatEntryTime(entry.time)}
       </span>
@@ -202,7 +202,7 @@ function RawRow({ index, style, ariaAttributes, rows, redact, selectedId, onSele
         type="button"
         aria-pressed={selected}
         onClick={() => onSelect(entry.id)}
-        className={`flex h-full w-full items-center gap-2 px-3 text-left font-mono text-xs hover:bg-system-gray-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-stratosort-blue/80 ${
+        className={`flex h-full w-full items-center gap-compact px-3 text-left font-mono text-xs hover:bg-system-gray-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-stratosort-blue/80 ${
           selected ? 'bg-system-gray-200' : ''
         }`}
       >
@@ -474,7 +474,7 @@ function LiveActivityPanel() {
         aria-label="Restore live activity panel"
         title="Restore live activity panel"
         onClick={handleRestore}
-        className={`fixed bottom-4 right-4 z-floating-panel inline-flex items-center gap-2 rounded-full border border-border-strong bg-surface-primary px-3 py-1.5 text-xs font-medium text-system-gray-900 shadow-lg ${FOCUS_RING}`}
+        className={`fixed bottom-4 right-4 z-floating-panel inline-flex items-center gap-compact rounded-full border border-border-strong bg-surface-primary px-3 py-1.5 text-xs font-medium text-system-gray-900 shadow-lg ${FOCUS_RING}`}
       >
         <PulseDot active={feed.recentlyActive} />
         Live activity
@@ -493,7 +493,7 @@ function LiveActivityPanel() {
   let body;
   if (feed.status === 'unavailable') {
     body = (
-      <p className="flex items-center gap-2 p-4 text-sm text-system-gray-900">
+      <p className="flex items-center gap-compact p-4 text-sm text-system-gray-900">
         <AlertTriangle aria-hidden="true" className="h-4 w-4 text-stratosort-danger" />
         Live activity unavailable
       </p>
@@ -550,7 +550,7 @@ function LiveActivityPanel() {
           aria-label="Move live activity panel. Arrow keys move it; Shift plus arrow keys resize it."
           title="Drag to move. Arrow keys move; Shift+arrow keys resize."
           {...dragHandleProps}
-          className={`flex h-8 min-w-0 flex-1 cursor-move select-none items-center gap-2 rounded px-1 ${FOCUS_RING}`}
+          className={`flex h-8 min-w-0 flex-1 cursor-move select-none items-center gap-compact rounded px-1 ${FOCUS_RING}`}
           style={{ touchAction: 'none' }}
         >
           <PulseDot active={feed.recentlyActive} />
@@ -676,7 +676,7 @@ function LiveActivityPanel() {
         ) : null}
       </div>
 
-      <div className="flex h-6 flex-shrink-0 items-center gap-2 border-t border-border-soft px-3 pr-4 text-xs text-system-gray-500">
+      <div className="flex h-6 flex-shrink-0 items-center gap-compact border-t border-border-soft px-3 pr-4 text-xs text-system-gray-500">
         <span>{connectionText}</span>
         {feed.dropped > 0 ? <span>{feed.dropped} skipped (too fast)</span> : null}
         {/* Always mounted so screen readers announce the copy result. */}
