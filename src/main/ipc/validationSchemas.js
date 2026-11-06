@@ -686,6 +686,8 @@ if (!z) {
       smartFolderWatchEnabled: z.boolean().nullish(),
       // Vision captions for video keyframes (off by default; per-video cost)
       captionVideoKeyframes: z.boolean().nullish(),
+      // Live Activity panel on/off (Settings → Diagnostics)
+      showLiveActivity: z.boolean().nullish(),
       // Advanced-mode values parked while Simple mode is on; keys limited to
       // the Simple-mode enforced set (bounds mirror the top-level fields).
       advancedModeValues: z

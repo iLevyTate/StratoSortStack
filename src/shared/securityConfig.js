@@ -262,6 +262,8 @@ const SETTINGS_VALIDATION = {
     'smartFolderWatchEnabled',
     // Vision captions for video keyframes (Settings → Processing limits)
     'captionVideoKeyframes',
+    // Live Activity panel on/off (Settings → Diagnostics)
+    'showLiveActivity',
     // Advanced-mode values parked while Simple mode is on (internal-only)
     'advancedModeValues'
   ]),
