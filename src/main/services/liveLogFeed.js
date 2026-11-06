@@ -22,6 +22,11 @@
  *   are sliced and objects copied down to what could still fit, and nothing
  *   is descended into once the budget is spent. The walk is bounded by the
  *   budget, but a payload still costs whatever the logger spent building it.
+ * - Every text field (time, context, msg, dataText, activity strings) is
+ *   stripped of C0 control characters other than tab, newline and CR — the
+ *   set preload's safeOn strips from batches — because the subscribe backlog
+ *   is an invoke result preload does not sanitize. Backlog and batch entries
+ *   therefore carry the same text.
  * - The classifier's activity is clamped to the batch schema's bounds
  *   (src/shared/ipcEventSchemas.js liveLogBatchSchema): kind, icon, text and
  *   file are cut, an unknown tone becomes 'info', unknown fields are dropped,
@@ -110,6 +115,31 @@ const DETACH_EVENTS = ['destroyed', 'render-process-gone', 'did-navigate'];
  * any feed's buffer and comes back as another send.
  */
 let delivering = false;
+
+// C0 control characters except tab, newline and carriage return.
+// eslint-disable-next-line no-control-regex
+const C0_CONTROLS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g;
+
+/**
+ * `value` without C0 control characters (tab, newline and CR are kept), the
+ * same set preload's safeOn strips from event payloads. The subscribe backlog
+ * is an invoke result, which preload does not sanitize, so the feed cleans
+ * entries itself and backlog and batch entries carry identical text.
+ * @param {string} value
+ */
+function stripControls(value) {
+  return value.replace(C0_CONTROLS, '');
+}
+
+/**
+ * `value` cut to `max` characters (see truncate), then without C0 controls.
+ * Cutting first keeps the scan bounded by `max` whatever the input size.
+ * @param {string} value
+ * @param {number} max
+ */
+function cleanText(value, max) {
+  return stripControls(truncate(value, max));
+}
 
 /**
  * Cut `value` to at most `max` characters, ending in "…" when cut. Never
@@ -231,14 +261,14 @@ function clampActivity(value) {
     typeof source.tone === 'string' && ACTIVITY_TONES.has(source.tone) ? source.tone : 'info';
   /** @type {LiveActivity} */
   const activity = {
-    kind: truncate(source.kind, MAX_ACTIVITY_KIND_CHARS),
-    icon: typeof source.icon === 'string' ? truncate(source.icon, MAX_ACTIVITY_ICON_CHARS) : '',
+    kind: cleanText(source.kind, MAX_ACTIVITY_KIND_CHARS),
+    icon: typeof source.icon === 'string' ? cleanText(source.icon, MAX_ACTIVITY_ICON_CHARS) : '',
     tone: /** @type {LiveActivity['tone']} */ (tone),
-    text: truncate(source.text, MAX_ACTIVITY_TEXT_CHARS)
+    text: cleanText(source.text, MAX_ACTIVITY_TEXT_CHARS)
   };
-  if (typeof source.file === 'string' && source.file !== '') {
-    activity.file = truncate(source.file, MAX_ACTIVITY_FILE_CHARS);
-  }
+  const file =
+    typeof source.file === 'string' ? cleanText(source.file, MAX_ACTIVITY_FILE_CHARS) : '';
+  if (file !== '') activity.file = file;
   return activity;
 }
 
@@ -295,11 +325,11 @@ function createLiveLogFeed(deps = {}) {
    */
   function toEntry(record) {
     const level = LEVELS.has(record.level) ? record.level : 'info';
-    const msg = truncate(
+    const msg = cleanText(
       typeof record.msg === 'string' ? record.msg : String(record.msg ?? ''),
       MAX_MSG_CHARS
     );
-    const context = truncate(
+    const context = cleanText(
       typeof record.context === 'string' ? record.context : '',
       MAX_CONTEXT_CHARS
     );
@@ -316,12 +346,12 @@ function createLiveLogFeed(deps = {}) {
       id,
       time:
         typeof record.time === 'string'
-          ? truncate(record.time, MAX_TIME_CHARS)
+          ? cleanText(record.time, MAX_TIME_CHARS)
           : new Date(now()).toISOString(),
       level,
       context,
       msg,
-      dataText: stringifyData(record.data),
+      dataText: stripControls(stringifyData(record.data)),
       activity
     };
   }

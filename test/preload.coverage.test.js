@@ -42,9 +42,14 @@ jest.mock('../src/preload/ipcRateLimiter', () => ({
   }))
 }));
 
+// Invoke arguments pass through untouched; main→renderer events use the real
+// trusted-event sanitizer so event bridges are exercised end to end.
 jest.mock('../src/preload/ipcSanitizer', () => ({
-  createIpcSanitizer: jest.fn(() => ({
-    sanitizeArguments: jest.fn((args) => args)
+  createIpcSanitizer: jest.fn((deps) => ({
+    sanitizeArguments: jest.fn((args) => args),
+    sanitizeTrustedEventArgs: jest
+      .requireActual('../src/preload/ipcSanitizer')
+      .createIpcSanitizer(deps).sanitizeTrustedEventArgs
   }))
 }));
 
@@ -1328,9 +1333,33 @@ describe('Preload Coverage', () => {
       expect(mockInvoke).toHaveBeenCalledWith('system:live-log:subscribe', IPC_META_ENVELOPE);
       await electronAPI.system.unsubscribeLiveLog();
       expect(mockInvoke).toHaveBeenCalledWith('system:live-log:unsubscribe', IPC_META_ENVELOPE);
-      const off = electronAPI.system.onLiveLogBatch(jest.fn());
+      const callback = jest.fn();
+      const off = electronAPI.system.onLiveLogBatch(callback);
       expect(typeof off).toBe('function');
       expect(mockOn).toHaveBeenCalledWith('system:live-log:batch', expect.any(Function));
+
+      // Main→renderer batches are trusted events: markup-like text, backslashes
+      // and redacted paths reach the panel unchanged.
+      const handler = mockOn.mock.calls.find(([ch]) => ch === 'system:live-log:batch')[1];
+      const payload = {
+        entries: [
+          {
+            id: 1,
+            time: '2026-11-05T09:00:00.000Z',
+            level: 'info',
+            context: 'Test',
+            msg: 'Moved [REDACTED_PATH]\\x.pdf <script>alert(1)</script>',
+            dataText: '{"path":"C:\\\\Users\\\\a\\\\b.txt"}',
+            activity: null
+          }
+        ],
+        dropped: 0
+      };
+      handler({ sender: {} }, payload);
+      expect(callback).toHaveBeenCalledWith(payload);
+
+      off();
+      expect(mockRemoveListener).toHaveBeenCalledWith('system:live-log:batch', handler);
     });
 
     test('trace bridges', () => {

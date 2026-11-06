@@ -78,17 +78,27 @@ export const systemIpc = {
     }
     return { entries: Array.isArray(result?.entries) ? result.entries : [] };
   },
-  /** @returns {Promise<void>} */
+  /**
+   * Best-effort: an error response (`{ success: false }`) is not surfaced and
+   * a missing bridge is a no-op. Main also drops a window's subscription when
+   * it is destroyed, crashes or navigates. Only a rejected invoke (e.g. an
+   * IPC timeout) rejects.
+   * @returns {Promise<void>}
+   */
   async unsubscribeLiveLog() {
     const api = requireElectronAPI().system;
     if (typeof api.unsubscribeLiveLog !== 'function') return;
     await api.unsubscribeLiveLog();
   },
   /**
+   * Registers nothing (and returns a no-op cleanup) when `callback` is not a
+   * function: preload's safeOn would log an error for every batch, and that
+   * log line would itself come back as a feed entry, once per batch.
    * @param {(payload: any) => void} callback
    * @returns {() => void}
    */
   onLiveLogBatch(callback) {
+    if (typeof callback !== 'function') return () => {};
     const api = requireElectronAPI().system;
     if (typeof api.onLiveLogBatch !== 'function') return () => {};
     const off = api.onLiveLogBatch(callback);

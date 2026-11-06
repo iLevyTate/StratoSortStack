@@ -89,6 +89,30 @@ describe('systemIpc live log methods', () => {
     expect(cleanup).toHaveBeenCalledTimes(1);
   });
 
+  test('unsubscribeLiveLog does not surface an error response', async () => {
+    requireElectronAPI.mockReturnValue({
+      system: {
+        unsubscribeLiveLog: jest
+          .fn()
+          .mockResolvedValue({ success: false, error: { code: 'X', message: 'nope' } })
+      }
+    });
+    await expect(systemIpc.unsubscribeLiveLog()).resolves.toBeUndefined();
+  });
+
+  test.each([undefined, null, 'handler', {}])(
+    'onLiveLogBatch registers nothing for a non-function callback (%p)',
+    (callback) => {
+      const onLiveLogBatch = jest.fn(() => jest.fn());
+      requireElectronAPI.mockReturnValue({ system: { onLiveLogBatch } });
+
+      const off = systemIpc.onLiveLogBatch(callback);
+
+      expect(onLiveLogBatch).not.toHaveBeenCalled();
+      expect(() => off()).not.toThrow();
+    }
+  );
+
   test('onLiveLogBatch returns a no-op cleanup without the bridge', () => {
     requireElectronAPI.mockReturnValue({ system: {} });
     const off = systemIpc.onLiveLogBatch(jest.fn());

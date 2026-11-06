@@ -413,6 +413,61 @@ describe('liveLogFeed', () => {
     expect(entry.activity).toBeNull();
   });
 
+  test('strips C0 control characters (keeping tab, newline, CR) so backlog and batch entries match', () => {
+    // Batches pass through preload safeOn (which strips C0 controls) but the
+    // subscribe backlog is an invoke result (not sanitized), so the feed
+    // cleans every text field itself.
+    const dirty = (s) => `\u0000${s}\u0007\t\n\r\u001b[31m\u001f`;
+    const clean = (s) => `${s}\t\n\r[31m`;
+    const classify = jest.fn(() => ({
+      kind: dirty('kind'),
+      icon: dirty('icon'),
+      tone: 'info',
+      text: dirty('text'),
+      file: dirty('a.pdf')
+    }));
+    const { feed, registry, send } = makeFeed({ classify });
+    const wc = makeWebContents();
+    feed.subscribe(wc);
+
+    registry.emit(
+      record(1, {
+        time: dirty('2026-11-05T09:00:00.000Z'),
+        context: dirty('Ctx'),
+        msg: dirty('hello'),
+        data: { [dirty('key')]: dirty('value') }
+      })
+    );
+
+    const [entry] = feed.subscribe(makeWebContents()).entries;
+    expect(entry).toMatchObject({
+      time: clean('2026-11-05T09:00:00.000Z'),
+      context: clean('Ctx'),
+      msg: clean('hello'),
+      activity: {
+        kind: clean('kind'),
+        icon: clean('icon'),
+        tone: 'info',
+        text: clean('text'),
+        file: clean('a.pdf')
+      }
+    });
+    // JSON.stringify already escapes controls in data; no raw one survives.
+    const rawControls = [...entry.dataText].filter((ch) => {
+      const code = ch.charCodeAt(0);
+      return code < 32 && code !== 9 && code !== 10 && code !== 13;
+    });
+    expect(rawControls).toEqual([]);
+    expect(entry.dataText).toContain('value');
+    expect(classify).toHaveBeenCalledWith(
+      expect.objectContaining({ msg: clean('hello'), context: clean('Ctx') })
+    );
+
+    jest.advanceTimersByTime(FLUSH_INTERVAL_MS);
+    const batch = send.mock.calls.find(([target]) => target === wc)[1];
+    expect(batch.entries).toEqual([entry]);
+  });
+
   describe('per-line bounds', () => {
     function onlyEntry(overrides) {
       const { feed, registry } = makeFeed();
