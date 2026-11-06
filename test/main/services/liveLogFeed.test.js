@@ -1021,6 +1021,38 @@ describe('liveLogFeed', () => {
       });
     });
 
+    test('redactedText is kept when a string, cut like text, controls stripped', () => {
+      const cut = activityOf({
+        kind: 'problem',
+        icon: 'alert',
+        tone: 'warn',
+        text: 'Problem',
+        redactedText: `${'😀'.repeat(MAX_ACTIVITY_TEXT_CHARS)}`
+      });
+      expect(cut.redactedText.length).toBeLessThanOrEqual(MAX_ACTIVITY_TEXT_CHARS);
+      expect(cut.redactedText.endsWith('…')).toBe(true);
+      expect(cut.redactedText).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+      expect(
+        activityOf({
+          kind: 'problem',
+          icon: 'alert',
+          tone: 'warn',
+          text: 'P',
+          redactedText: 'Problem: a\u0001 file'
+        }).redactedText
+      ).toBe('Problem: a file');
+    });
+
+    test.each([
+      ['a number', 5],
+      ['an empty string', ''],
+      ['an object', { a: 1 }]
+    ])('redactedText that is %s is left out', (_label, redactedText) => {
+      expect(
+        activityOf({ kind: 'problem', icon: 'alert', tone: 'warn', text: 'P', redactedText })
+      ).toEqual({ kind: 'problem', icon: 'alert', tone: 'warn', text: 'P' });
+    });
+
     test('files keeps the first MAX_ACTIVITY_FILES string names, each cut like file', () => {
       const names = Array.from({ length: 12 }, (_, i) => `n${i}.pdf`);
       const result = activityOf({

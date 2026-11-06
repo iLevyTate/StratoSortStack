@@ -18,13 +18,18 @@
 
 /**
  * @typedef {'info' | 'success' | 'warn' | 'error'} ActivityTone
- * @typedef {{ kind: string, icon: string, text: string, file?: string, files?: string[], tone: ActivityTone }} LiveActivity
+ * @typedef {{ kind: string, icon: string, text: string, file?: string, files?: string[], redactedText?: string, tone: ActivityTone }} LiveActivity
  * @typedef {{ level: string, context?: string, msg: string, data?: any }} ActivityInput
  * @typedef {(input: ActivityInput, match: RegExpMatchArray) => (LiveActivity | null)} ActivityBuilder
  * @typedef {{ id: string, contexts: string[] | null, pattern: RegExp, build: ActivityBuilder }} ActivityRule
  */
 
 const MAX_TEXT_CHARS = 300;
+/**
+ * What redact mode shows in place of a file name. The renderer's
+ * liveActivityFormat.js exports the same value (a test pins the two equal).
+ */
+const REDACTED_FILE_LABEL = 'a file';
 const MAX_FILE_CHARS = 120;
 /**
  * A message from a record's data (not its msg, which the feed has already cut
@@ -139,7 +144,15 @@ function capitalize(value) {
 
 /** @param {string | undefined} file */
 function orAFile(file) {
-  return file || 'a file';
+  return file || REDACTED_FILE_LABEL;
+}
+
+/**
+ * `line` cut to the activity text cap, ending in "…" when cut.
+ * @param {string} line
+ */
+function capText(line) {
+  return line.length > MAX_TEXT_CHARS ? `${line.slice(0, MAX_TEXT_CHARS - 1)}…` : line;
 }
 
 /**
@@ -156,7 +169,7 @@ function activity(kind, icon, tone, line, file) {
     kind,
     icon,
     tone,
-    text: line.length > MAX_TEXT_CHARS ? `${line.slice(0, MAX_TEXT_CHARS - 1)}…` : line
+    text: capText(line)
   };
   if (file) result.file = file;
   return result;
@@ -188,10 +201,27 @@ function stripLeadingTag(msg) {
 }
 
 /**
+ * The file name of one REDACTED_PATH_NAMES match, as the Problem text shows
+ * it: a backslash name ends at a `"`, and trailing spaces and `.,;'"` are
+ * trimmed. `rest` is what was matched after the name (left in the text).
+ * @param {RegExpMatchArray | string[]} match
+ * @returns {{ name: string, rest: string }}
+ */
+function matchedName(match) {
+  const captured = match[2] ?? match[4] ?? '';
+  let name = captured;
+  if (match[2] !== undefined) {
+    const quote = name.indexOf('"');
+    if (quote !== -1) name = name.slice(0, quote);
+  }
+  name = name.replace(/[\s.,;'"]+$/, '');
+  return { name, rest: captured.slice(name.length) };
+}
+
+/**
  * The distinct file names after the redacted-path tokens in `message`, in
  * order, at most MAX_PROBLEM_FILES. Each is kept exactly as the Problem text
- * shows it (no length cap; only trailing spaces and `.,;'"` trimmed), so
- * hiding it by substring hides all of it.
+ * shows it (no length cap), so hiding it by substring hides all of it.
  * @param {string} message
  * @returns {string[]}
  */
@@ -199,12 +229,7 @@ function redactedFileNames(message) {
   /** @type {string[]} */
   const names = [];
   for (const match of message.matchAll(REDACTED_PATH_NAMES)) {
-    let name = match[2] ?? match[4] ?? '';
-    if (match[2] !== undefined) {
-      const quote = name.indexOf('"');
-      if (quote !== -1) name = name.slice(0, quote);
-    }
-    name = name.replace(/[\s.,;'"]+$/, '');
+    const { name } = matchedName(match);
     if (name && !names.includes(name)) names.push(name);
     if (names.length === MAX_PROBLEM_FILES) break;
   }
@@ -212,10 +237,28 @@ function redactedFileNames(message) {
 }
 
 /**
+ * `message` with each redacted path and its file name replaced by
+ * REDACTED_FILE_LABEL, and any token left without a name dropped. Built
+ * from the message itself, so a short name ("b", "health") never hides
+ * letters inside other words the way hiding it by substring would.
+ * @param {string} message
+ * @returns {string}
+ */
+function messageWithNamesHidden(message) {
+  return message
+    .replace(REDACTED_PATH_NAMES, (/** @type {string[]} */ ...match) => {
+      const { name, rest } = matchedName(match);
+      return name ? `${REDACTED_FILE_LABEL}${rest}` : rest;
+    })
+    .replace(REDACTED_PATH_TOKEN, '');
+}
+
+/**
  * A "Problem: …" line. Redacted-path tokens are dropped from the text (the
  * file names stay). Every such name is listed in `files` and the first is
- * also `file` (the feed's merge key), so the panel's redact mode can hide
- * all of them, not just the first.
+ * also `file` (the feed's merge key). `redactedText` is the same line with
+ * every name replaced by "a file" (only when it names a file), which is what
+ * redact mode shows; it is cut at the same cap as `text`.
  * @param {string} message
  * @param {ActivityTone} tone
  * @returns {LiveActivity}
@@ -223,6 +266,7 @@ function redactedFileNames(message) {
 function problem(message, tone) {
   const files = redactedFileNames(message);
   const shown = message.replace(REDACTED_PATH_TOKEN, '').trim();
+  const hidden = messageWithNamesHidden(message).trim();
   const result = activity(
     'problem',
     'alert',
@@ -230,7 +274,10 @@ function problem(message, tone) {
     `Problem: ${shown || PROBLEM_FALLBACK_TEXT}`,
     files[0]
   );
-  if (files.length > 0) result.files = files;
+  if (files.length > 0) {
+    result.files = files;
+    result.redactedText = capText(`Problem: ${hidden || PROBLEM_FALLBACK_TEXT}`);
+  }
   return result;
 }
 
@@ -702,4 +749,4 @@ function activityFromLogRecord(record) {
 
 const ACTIVITY_RULE_IDS = Object.freeze(RULES.map((rule) => rule.id));
 
-module.exports = { activityFromLogRecord, ACTIVITY_RULE_IDS };
+module.exports = { activityFromLogRecord, ACTIVITY_RULE_IDS, REDACTED_FILE_LABEL };

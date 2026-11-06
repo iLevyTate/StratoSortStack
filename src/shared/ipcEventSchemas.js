@@ -504,6 +504,7 @@ const schemas = z
           .array(z.string().max(LIVE_LOG_MAX_ACTIVITY_FILE_CHARS))
           .max(LIVE_LOG_MAX_ACTIVITY_FILES)
           .optional(),
+        redactedText: z.string().max(LIVE_LOG_MAX_ACTIVITY_TEXT_CHARS).optional(),
         tone: z.enum(['info', 'success', 'warn', 'error'])
       });
 

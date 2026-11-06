@@ -285,8 +285,9 @@ function activityFileNames(activity) {
 
 /**
  * Activity text with every file name it mentions hidden when `redact` is
- * on: `file` and each of `files`, at every occurrence (overlapping ones
- * included). The classifier cuts its text at 300 characters (ending in "…")
+ * on. A Problem line's own `redactedText` is used when it has one;
+ * otherwise `file` and each of `files` are hidden at every occurrence
+ * (overlapping ones included). The classifier cuts its text at 300 characters (ending in "…")
  * but keeps names whole, so a long name can run past the cut: the start of
  * a name left just before the "…" is hidden as well, when it starts a word.
  * That holds even if the same name also appears whole earlier ("Failed to
@@ -298,6 +299,10 @@ function activityFileNames(activity) {
 export function redactActivityText(activity, redact) {
   const { text } = activity;
   if (!redact) return text;
+  // A Problem line carries its own redacted text, built from the message
+  // with each name replaced where it stands (short names never hide letters
+  // inside other words). Other activities are hidden by name below.
+  if (typeof activity.redactedText === 'string') return activity.redactedText;
   const names = activityFileNames(activity);
   if (names.length === 0) return text;
   const cut = text.endsWith(CUT_MARK);

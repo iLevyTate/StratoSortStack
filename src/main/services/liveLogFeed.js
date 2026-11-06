@@ -29,8 +29,8 @@
  *   therefore carry the same text.
  * - The classifier's activity is clamped to the batch schema's bounds
  *   (src/shared/ipcEventSchemas.js liveLogBatchSchema): kind, icon, text,
- *   file and each of a Problem line's `files` (at most MAX_ACTIVITY_FILES)
- *   are cut, an unknown tone becomes 'info', unknown fields are dropped,
+ *   file, a Problem line's redactedText and each of its `files` (at most
+ *   MAX_ACTIVITY_FILES) are cut, an unknown tone becomes 'info', unknown fields are dropped,
  *   and anything that is not an object with a string kind and text becomes
  *   null. No single log line can make the schema reject (and safeSend block)
  *   a whole batch.
@@ -272,6 +272,12 @@ function clampActivity(value) {
   const file =
     typeof source.file === 'string' ? cleanText(source.file, MAX_ACTIVITY_FILE_CHARS) : '';
   if (file !== '') activity.file = file;
+  // What redact mode shows for a Problem line; cut like `text`.
+  const redactedText =
+    typeof source.redactedText === 'string'
+      ? cleanText(source.redactedText, MAX_ACTIVITY_TEXT_CHARS)
+      : '';
+  if (redactedText !== '') activity.redactedText = redactedText;
   // `files` is what redact mode hides; keep every usable name it can (the
   // first MAX_ACTIVITY_FILES strings, each cut like `file`, empties dropped)
   // rather than dropping the list for one bad item.

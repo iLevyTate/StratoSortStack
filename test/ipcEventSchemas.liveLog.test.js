@@ -137,7 +137,8 @@ describe('system:live-log:batch event schema', () => {
       ['kind', () => MAX_ACTIVITY_KIND_CHARS],
       ['icon', () => MAX_ACTIVITY_ICON_CHARS],
       ['text', () => MAX_ACTIVITY_TEXT_CHARS],
-      ['file', () => MAX_ACTIVITY_FILE_CHARS]
+      ['file', () => MAX_ACTIVITY_FILE_CHARS],
+      ['redactedText', () => MAX_ACTIVITY_TEXT_CHARS]
     ])('activity %s: the feed clamp bound', (field, max) => {
       const activity = (n) => ({
         kind: 'problem',
@@ -293,6 +294,28 @@ describe('system:live-log:batch event schema', () => {
       expect(many.files).toEqual(names.slice(0, MAX_ACTIVITY_FILES));
       expect(two.files).toEqual(['alpha secret.pdf to', 'beta secret.pdf']);
       expect(two.file).toBe('alpha secret.pdf to');
+      expect(two.redactedText).toBe('Problem: Failed to move a file a file');
+    });
+
+    test('a Problem line with short names ships its own redactedText', () => {
+      const batches = feedBatches([
+        {
+          time: '2026-11-05T09:00:00.000Z',
+          level: 'error',
+          context: 'X',
+          msg: 'Deleted [REDACTED_PATH]/b: GET http:/[REDACTED_PATH]/health failed'
+        },
+        {
+          time: '2026-11-05T09:00:00.000Z',
+          level: 'warn',
+          context: 'X',
+          msg: `Cannot read [REDACTED_PATH]/${'n'.repeat(400)}.pdf ${'then '.repeat(80)}`
+        }
+      ]);
+      expectAllValid(batches);
+      const [short, long] = batches.flatMap((b) => b.entries).map((e) => e.activity);
+      expect(short.redactedText).toBe('Problem: Deleted a file: GET http:/a file');
+      expect(long.redactedText).toBe('Problem: Cannot read a file');
     });
 
     test('a flood beyond the batch caps ships a bounded batch with a dropped count', () => {

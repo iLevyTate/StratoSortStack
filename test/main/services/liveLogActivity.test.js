@@ -8,7 +8,8 @@ const fs = jest.requireActual('fs');
 const path = require('path');
 const {
   activityFromLogRecord,
-  ACTIVITY_RULE_IDS
+  ACTIVITY_RULE_IDS,
+  REDACTED_FILE_LABEL
 } = require('../../../src/main/services/liveLogActivity');
 const { IPC_CHANNELS } = require('../../../src/shared/constants');
 const { validateEventPayload } = require('../../../src/shared/ipcEventSchemas');
@@ -1136,7 +1137,8 @@ describe('activityFromLogRecord', () => {
       tone: 'warn',
       text: 'Problem: Could not move statement.pdf: EBUSY',
       file: 'statement.pdf',
-      files: ['statement.pdf']
+      files: ['statement.pdf'],
+      redactedText: 'Problem: Could not move a file: EBUSY'
     });
     expect(
       activityFromLogRecord({
@@ -1150,20 +1152,32 @@ describe('activityFromLogRecord', () => {
       tone: 'error',
       text: 'Problem: Copy a.txt => b.txt failed',
       file: 'a.txt',
-      files: ['a.txt', 'b.txt failed']
+      files: ['a.txt', 'b.txt failed'],
+      redactedText: 'Problem: Copy a file => a file'
     });
   });
 
   test.each([
     // Windows: the logger keeps spaces and brackets in a name, so the whole
     // name is the file (redact mode must hide all of it, not just "My").
-    ['[REDACTED_PATH]\\My Invoice 2024.pdf', 'My Invoice 2024.pdf', 'Problem: My Invoice 2024.pdf'],
-    ["[REDACTED_PATH]\\it's (copy).pdf", "it's (copy).pdf", "Problem: it's (copy).pdf"],
+    [
+      '[REDACTED_PATH]\\My Invoice 2024.pdf',
+      'My Invoice 2024.pdf',
+      'Problem: My Invoice 2024.pdf',
+      'Problem: a file'
+    ],
+    [
+      "[REDACTED_PATH]\\it's (copy).pdf",
+      "it's (copy).pdf",
+      "Problem: it's (copy).pdf",
+      'Problem: a file'
+    ],
     // Over-capturing trailing words is accepted: it errs toward hiding.
     [
       'Cannot read [REDACTED_PATH]\\My Invoice.pdf failed',
       'My Invoice.pdf failed',
-      'Problem: Cannot read My Invoice.pdf failed'
+      'Problem: Cannot read My Invoice.pdf failed',
+      'Problem: Cannot read a file'
     ],
     // After `/` the name is read the same way: a forward-slash drive path
     // (C:/Users/...) keeps its spaces, so a POSIX name (which the logger cuts
@@ -1171,27 +1185,31 @@ describe('activityFromLogRecord', () => {
     [
       'Cannot read [REDACTED_PATH]/notes.txt because it is locked',
       'notes.txt because it is locked',
-      'Problem: Cannot read notes.txt because it is locked'
+      'Problem: Cannot read notes.txt because it is locked',
+      'Problem: Cannot read a file'
     ],
     [
       'open [REDACTED_PATH]/report [final] (2).pdf',
       'report [final] (2).pdf',
-      'Problem: open report [final] (2).pdf'
+      'Problem: open report [final] (2).pdf',
+      'Problem: open a file'
     ],
     // JSON-escaped Windows separator.
     [
       String.raw`payload {"from":"[REDACTED_PATH]\\Lab results.pdf"}`,
       'Lab results.pdf',
-      'Problem: payload {"from":"Lab results.pdf"}'
+      'Problem: payload {"from":"Lab results.pdf"}',
+      'Problem: payload {"from":"a file"}'
     ]
-  ])('a redacted path in %j names the file %j', (msg, file, text) => {
+  ])('a redacted path in %j names the file %j', (msg, file, text, redactedText) => {
     expect(activityFromLogRecord({ level: 'warn', context: 'X', msg })).toEqual({
       kind: 'problem',
       icon: 'alert',
       tone: 'warn',
       text,
       file,
-      files: [file]
+      files: [file],
+      redactedText
     });
   });
 
@@ -1276,6 +1294,64 @@ describe('activityFromLogRecord', () => {
     ).toEqual(['a.pdf']);
   });
 
+  test('redactedText replaces each name where it stands, never letters inside words', () => {
+    // Short names (a folder or URL tail) hidden by substring would also hit
+    // "Problem" or "health" elsewhere in the line.
+    const url = activityFromLogRecord({
+      level: 'error',
+      context: 'X',
+      msg: 'Deleted [REDACTED_PATH]/b: GET http:/[REDACTED_PATH]/health failed'
+    });
+    expect(url.files).toEqual(['b', 'health failed']);
+    expect(url.redactedText).toBe('Problem: Deleted a file: GET http:/a file');
+    const folder = activityFromLogRecord({
+      level: 'warn',
+      context: 'X',
+      msg: 'Deleted [REDACTED_PATH]/health: rebuilt the health index'
+    });
+    expect(folder.redactedText).toBe('Problem: Deleted a file: rebuilt the health index');
+  });
+
+  test('redactedText hides names the files list has no room for, and a name-less token', () => {
+    const many = Array.from({ length: 12 }, (_, i) => `[REDACTED_PATH]/f${i}.txt`).join(' => ');
+    const result = activityFromLogRecord({
+      level: 'warn',
+      context: 'X',
+      msg: `Lost ${many}: [REDACTED_PATH]`
+    });
+    expect(result.files).toHaveLength(8);
+    expect(result.redactedText).toBe(`Problem: Lost ${Array(12).fill('a file').join(' => ')}:`);
+  });
+
+  test('redactedText is cut at the text cap, after the names are hidden', () => {
+    const name = `${'n'.repeat(400)}.pdf`;
+    const result = activityFromLogRecord({
+      level: 'warn',
+      context: 'X',
+      msg: `Cannot read [REDACTED_PATH]/${name} ${'then '.repeat(80)}`
+    });
+    expect(result.text.length).toBe(300);
+    expect(result.redactedText).toBe('Problem: Cannot read a file');
+    const long = activityFromLogRecord({
+      level: 'warn',
+      context: 'X',
+      msg: `${'word '.repeat(80)}[REDACTED_PATH]\\x.pdf`
+    });
+    expect(long.redactedText.length).toBe(300);
+    expect(long.redactedText.endsWith('…')).toBe(true);
+    expect(long.redactedText).not.toContain('x.pdf');
+  });
+
+  test('a Problem line that names no file carries no redactedText', () => {
+    expect(
+      activityFromLogRecord({ level: 'warn', context: 'X', msg: 'Cannot open [REDACTED_PATH]' })
+    ).not.toHaveProperty('redactedText');
+  });
+
+  test('the classifier and the panel use the same redaction label', () => {
+    expect(REDACTED_FILE_LABEL).toBe('a file');
+  });
+
   test('a bare redacted-path token is removed from Problem text', () => {
     expect(
       activityFromLogRecord({ level: 'error', context: 'X', msg: 'Cannot open [REDACTED_PATH]' })
@@ -1303,7 +1379,8 @@ describe('activityFromLogRecord', () => {
       tone: 'warn',
       text: 'Problem: scan.pdf could not be read',
       file: 'scan.pdf could not be read',
-      files: ['scan.pdf could not be read']
+      files: ['scan.pdf could not be read'],
+      redactedText: 'Problem: a file'
     });
   });
 
@@ -1321,7 +1398,8 @@ describe('activityFromLogRecord', () => {
       tone: 'error',
       text: 'Problem: Cannot open index.db',
       file: 'index.db',
-      files: ['index.db']
+      files: ['index.db'],
+      redactedText: 'Problem: Cannot open a file'
     });
   });
 

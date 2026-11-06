@@ -179,6 +179,18 @@ describe('liveActivityFormat', () => {
       ).toBe('Problem: Could not read (a file…');
     });
 
+    test("shows a Problem line's own redactedText instead of hiding names by substring", () => {
+      const activity = {
+        ...problemActivity('Problem: Deleted b: GET http:/health failed', 'b'),
+        files: ['b', 'health failed'],
+        redactedText: 'Problem: Deleted a file: GET http:/a file'
+      };
+      expect(redactActivityText(activity, true)).toBe('Problem: Deleted a file: GET http:/a file');
+      expect(redactActivityText(activity, false)).toBe(
+        'Problem: Deleted b: GET http:/health failed'
+      );
+    });
+
     test('hides every name a Problem line lists in files', () => {
       expect(
         redactActivityText(
@@ -411,9 +423,10 @@ describe('liveActivityFormat', () => {
 
     /** Raw (unsanitized) log lines naming `name`, and one naming two files. */
     const rawLines = (name) => [
-      String.raw`Failed to move C:\Users\jdoe\Inbox\${name} to D:\Archive\Okapi.pdf: EBUSY`,
-      String.raw`Failed to move C:\Users\jdoe\a.pdf, C:\Users\jdoe\${name}`,
-      String.raw`copy \\nas\home\jdoe\${name} done`,
+      // Plain templates: in String.raw, `\${name}` would escape the `$`.
+      `Failed to move C:\\Users\\jdoe\\Inbox\\${name} to D:\\Archive\\Okapi.pdf: EBUSY`,
+      `Failed to move C:\\Users\\jdoe\\a.pdf, C:\\Users\\jdoe\\${name}`,
+      `copy \\\\nas\\home\\jdoe\\${name} done`,
       `payload ${JSON.stringify({ from: `C:\\Users\\jdoe\\${name}` })}`,
       `open C:/Users/jdoe/${name} now`,
       `/home/jdoe/docs/${name} could not be read`,
@@ -431,8 +444,10 @@ describe('liveActivityFormat', () => {
 
     test.each(NAMES)('%s', (name) => {
       for (const raw of rawLines(name)) {
+        expect(raw).toContain(name);
         const msg = sanitizeLogData(raw);
         expect(msg).toContain('[REDACTED_PATH]');
+        expect(msg).not.toMatch(/jdoe|Users|Inbox|Archive|nas\b/);
         expectHidden(redactRawText(msg, true), name);
 
         const activity = activityFromLogRecord({ level: 'warn', context: 'X', msg });
@@ -481,6 +496,43 @@ describe('liveActivityFormat', () => {
         expect(redactActivityText(activity, true)).toBe('Problem: Moved a file');
       }
     );
+
+    test.each([
+      [
+        // "b" (a folder tail) and "health" (a URL tail) would, hidden by
+        // substring, also eat letters out of "Problem" and other words.
+        '[FILE-OPS] Deleted /srv/data/b: GET http://localhost:8080/api/health failed',
+        'Problem: Deleted a file: GET http:/a file'
+      ],
+      [
+        '[CACHE] Deleted /var/cache/health: rebuilt the health index',
+        'Problem: Deleted a file: rebuilt the health index'
+      ]
+    ])('Activity tab: short names do not garble other words (%s)', (raw, expected) => {
+      const activity = activityFromLogRecord({
+        level: 'warn',
+        context: 'X',
+        msg: sanitizeLogData(raw)
+      });
+      expect(redactActivityText(activity, true)).toBe(expected);
+    });
+
+    test('Activity tab: a line cut at 300 characters still hides every name', () => {
+      const name = `Zephyr ${'long '.repeat(80)}results.pdf`;
+      const msg = sanitizeLogData(
+        `Failed to move C:\\Users\\jdoe\\${name} to D:\\Archive\\${name}: EBUSY`
+      );
+      const activity = activityFromLogRecord({ level: 'error', context: 'X', msg });
+      expect(activity.text.endsWith('…')).toBe(true);
+      const shown = redactActivityText(activity, true);
+      expect(shown).toBe('Problem: Failed to move a file a file: EBUSY');
+      expectHidden(shown, name);
+    });
+
+    test('the classifier and the panel use the same redaction label', () => {
+      const classifier = require('../../src/main/services/liveLogActivity');
+      expect(classifier.REDACTED_FILE_LABEL).toBe(REDACTED_FILE_LABEL);
+    });
   });
 
   describe('icons', () => {
