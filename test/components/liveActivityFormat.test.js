@@ -170,6 +170,48 @@ describe('liveActivityFormat', () => {
       );
     });
 
+    test('the end of a word is not taken for the start of a cut name', () => {
+      // "folder" ends in "r", which starts "report.pdf", but not at a word start.
+      const text = 'Problem: Could not move it into the archive folder…';
+      expect(redactActivityText(problemActivity(text, 'report.pdf'), true)).toBe(text);
+      expect(
+        redactActivityText(problemActivity('Problem: Could not read (rep…', 'report.pdf'), true)
+      ).toBe('Problem: Could not read (a file…');
+    });
+
+    test('hides every name a Problem line lists in files', () => {
+      expect(
+        redactActivityText(
+          {
+            ...problemActivity(
+              'Problem: Failed to move alpha secret.pdf to beta secret.pdf: EBUSY',
+              'alpha secret.pdf to'
+            ),
+            files: ['alpha secret.pdf to', 'beta secret.pdf']
+          },
+          true
+        )
+      ).toBe('Problem: Failed to move a file a file: EBUSY');
+    });
+
+    test('applies the cut-line rule to each listed name', () => {
+      const second = `beta ${'b'.repeat(400)}.pdf`;
+      const full = `Problem: Failed to move a.pdf to ${second}`;
+      const text = `${full.slice(0, 299)}…`;
+      expect(
+        redactActivityText({ ...problemActivity(text, 'a.pdf'), files: ['a.pdf', second] }, true)
+      ).toBe('Problem: Failed to move a file to a file…');
+    });
+
+    test('ignores a files value that is not a list of names', () => {
+      expect(
+        redactActivityText({ ...problemActivity('Problem: x.pdf', 'x.pdf'), files: 'x' }, true)
+      ).toBe('Problem: a file');
+      expect(
+        redactActivityText({ ...problemActivity('Problem: y.pdf'), files: [7, '', 'y.pdf'] }, true)
+      ).toBe('Problem: a file');
+    });
+
     test('a name the feed itself cut still hides the start that reached the line', () => {
       const file = `${'A'.repeat(1999)}…`;
       const text = `Problem: ${'A'.repeat(290)}…`;
@@ -222,14 +264,22 @@ describe('liveActivityFormat', () => {
         'Merged [REDACTED_PATH][REDACTED_PATH]'
       ],
       [
-        'POSIX name stops at whitespace',
+        // A forward-slash drive path (C:/...) keeps the spaces in its name, and
+        // it cannot be told from a POSIX path, so a "/" name is read like a
+        // Windows one: the words after a POSIX name are hidden too.
+        'a name after "/" runs like a Windows name',
         '[FILE-OPS] Deleted file: [REDACTED_PATH]/old.log (120 bytes)',
-        '[FILE-OPS] Deleted file: [REDACTED_PATH] (120 bytes)'
+        '[FILE-OPS] Deleted file: [REDACTED_PATH]'
       ],
       [
-        'POSIX name with a quote inside',
+        'a forward-slash drive name with spaces and brackets',
+        'open [REDACTED_PATH]/report [final] (2).pdf: EBUSY',
+        'open [REDACTED_PATH]: EBUSY'
+      ],
+      [
+        'a name after "/" with a quote inside',
         'Read [REDACTED_PATH]/my"file.pdf ok',
-        'Read [REDACTED_PATH] ok'
+        'Read [REDACTED_PATH]'
       ],
       [
         'JSON-escaped Windows path in a file field',
@@ -276,9 +326,108 @@ describe('liveActivityFormat', () => {
         '{"profile":"default","file":""}',
         '{"profile":"default","file":""}'
       ],
-      ['a bare token is left alone', 'Path: [REDACTED_PATH]', 'Path: [REDACTED_PATH]']
+      ['a bare token is left alone', 'Path: [REDACTED_PATH]', 'Path: [REDACTED_PATH]'],
+      [
+        'ipc/analysis.js naming line: original, raw and final',
+        '{"convention":"subject-date","caseConvention":"kebab-case","original":"Lab results.pdf","raw":"Blood work","final":"2026-11-05-blood-work.pdf"}',
+        '{"convention":"subject-date","caseConvention":"kebab-case","original":"a file","raw":"a file","final":"a file"}'
+      ],
+      [
+        'ipc/semantic.js rebuild failure: path and name',
+        String.raw`{"path":"[REDACTED_PATH]\\x.pdf","name":"Quarterly report.pdf","reason":"boom","code":"REBUILD_ERROR"}`,
+        '{"path":"a file","name":"a file","reason":"boom","code":"REBUILD_ERROR"}'
+      ],
+      [
+        'FilePathCoordinator copy line: source and dest',
+        '{"source":"tax.pdf","dest":"tax (1).pdf"}',
+        '{"source":"a file","dest":"a file"}'
+      ],
+      [
+        'a list of names',
+        '{"files":["a.pdf","b notes.docx"],"count":2}',
+        '{"files":["a file","a file"],"count":2}'
+      ],
+      [
+        'a bare name under an unlisted key',
+        '{"message":"x","detail":"scan 2024.png","items":["IMG_2041.HEIC"]}',
+        '{"message":"x","detail":"a file","items":["a file"]}'
+      ],
+      [
+        'codes, types, versions and model names survive',
+        '{"version":"1.2.3","level":"info","mimeType":"image/jpeg","model":"Qwen2.5-7B-Instruct-Q4_K_M.gguf","code":"storage.full","host":"api.example.com","collections":["files"],"note":"done."}',
+        '{"version":"1.2.3","level":"info","mimeType":"image/jpeg","model":"Qwen2.5-7B-Instruct-Q4_K_M.gguf","code":"storage.full","host":"api.example.com","collections":["files"],"note":"done."}'
+      ],
+      [
+        // Pinned over-redaction: any other value that ends like a file name
+        // (a domain, a sentence ending in one) is hidden whole.
+        'over-hides other values that end like a file name',
+        '{"url":"example.com","detail":"see config.json"}',
+        '{"url":"a file","detail":"a file"}'
+      ],
+      [
+        'a file field cut at the end of dataText',
+        '{"n":1,"fileName":"very long na…',
+        '{"n":1,"fileName":"a file…'
+      ],
+      ['a file field cut without a mark', '{"n":1,"filePath":"abc', '{"n":1,"filePath":"a file'],
+      ['quoted names in a message', 'Renamed "a.pdf" to "b c.pdf"', 'Renamed "a file" to "a file"']
     ])('%s', (_label, input, expected) => {
       expect(redactRawText(input, true)).toBe(expected);
+    });
+  });
+
+  describe('end to end: real logger and classifier output leaves no file name', () => {
+    const { sanitizeLogData } = jest.requireActual('../../src/shared/logger');
+    const { activityFromLogRecord } = require('../../src/main/services/liveLogActivity');
+
+    const NAMES = [
+      'Zephyr Lab results.pdf',
+      'Quokka [2024] (final) draft.docx',
+      'Narwhal, Inc; memo.txt',
+      'Okapi.pdf'
+    ];
+    /** Distinctive words of a name (4+ letters or digits). */
+    const wordsOf = (name) => name.split(/[^A-Za-z0-9]+/).filter((w) => w.length >= 4);
+
+    /** Raw (unsanitized) log lines naming `name`, and one naming two files. */
+    const rawLines = (name) => [
+      String.raw`Failed to move C:\Users\jdoe\Inbox\${name} to D:\Archive\Okapi.pdf: EBUSY`,
+      String.raw`Failed to move C:\Users\jdoe\a.pdf, C:\Users\jdoe\${name}`,
+      String.raw`copy \\nas\home\jdoe\${name} done`,
+      `payload ${JSON.stringify({ from: `C:\\Users\\jdoe\\${name}` })}`,
+      `open C:/Users/jdoe/${name} now`,
+      `/home/jdoe/docs/${name} could not be read`
+    ];
+
+    /** @param {string} output @param {string} name */
+    function expectHidden(output, name) {
+      expect(output).not.toContain(name);
+      for (const word of wordsOf(name)) expect(output).not.toContain(word);
+    }
+
+    test.each(NAMES)('%s', (name) => {
+      for (const raw of rawLines(name)) {
+        const msg = sanitizeLogData(raw);
+        expect(msg).toContain('[REDACTED_PATH]');
+        expectHidden(redactRawText(msg, true), name);
+
+        const activity = activityFromLogRecord({ level: 'warn', context: 'X', msg });
+        expect(activity.kind).toBe('problem');
+        expectHidden(redactActivityText(activity, true), name);
+        expectHidden(redactActivityText(activity, true), 'Okapi.pdf');
+      }
+
+      const winPath = `C:\\Users\\jdoe\\${name}`;
+      const dataText = JSON.stringify(
+        sanitizeLogData({
+          filePath: winPath,
+          error: `cannot open ${winPath}: EBUSY`,
+          detail: `D:/x/${name}`,
+          name,
+          files: [name]
+        })
+      );
+      expectHidden(redactRawText(dataText, true), name);
     });
   });
 

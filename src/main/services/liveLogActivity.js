@@ -18,7 +18,7 @@
 
 /**
  * @typedef {'info' | 'success' | 'warn' | 'error'} ActivityTone
- * @typedef {{ kind: string, icon: string, text: string, file?: string, tone: ActivityTone }} LiveActivity
+ * @typedef {{ kind: string, icon: string, text: string, file?: string, files?: string[], tone: ActivityTone }} LiveActivity
  * @typedef {{ level: string, context?: string, msg: string, data?: any }} ActivityInput
  * @typedef {(input: ActivityInput, match: RegExpMatchArray) => (LiveActivity | null)} ActivityBuilder
  * @typedef {{ id: string, contexts: string[] | null, pattern: RegExp, build: ActivityBuilder }} ActivityRule
@@ -44,15 +44,24 @@ const COLLECTION_WORDS = Object.freeze({
   feedback: 'learning',
   learningPatterns: 'learning'
 });
-/** The logger's redacted-path token, with its separator when it has one. */
-const REDACTED_PATH_TOKEN = /\[REDACTED_PATH\][\\/]?/g;
+/** The logger's redacted-path token with its whole separator run (`\`, `\\`, `/`). */
+const REDACTED_PATH_TOKEN = /\[REDACTED_PATH\][\\/]*/g;
+/** Most file names a Problem line lists in `files` (the batch schema's cap). */
+const MAX_PROBLEM_FILES = 8;
 /**
- * The file name after the first redacted-path token, captured the way
- * sanitizeLogData wrote it: after `\` (Windows) the name runs to a character
- * Windows forbids in names, spaces included, so it may over-capture trailing
- * words (erring toward hiding more); after `/` (POSIX) it stops at whitespace.
+ * Every file name after a redacted-path token, captured the way
+ * sanitizeLogData writes it: `[REDACTED_PATH]` + the path's last separator
+ * run (`\`, a JSON-escaped `\\`, or `/`) + the basename. A Windows basename
+ * (drive, UNC or forward-slash drive `C:/...`) runs to a character Windows
+ * forbids in names, spaces included, so a name after `/` is captured the
+ * same way: a forward-slash drive path keeps its spaces, and a POSIX name
+ * (which the logger cuts at whitespace) errs toward hiding the words after
+ * it. A name stops before the " => " the app writes between two paths and
+ * before the next token. After `/` a `"` stays in the name (POSIX allows
+ * it); after backslashes it ends the name (Windows forbids it).
  */
-const REDACTED_PATH_FILE = /\[REDACTED_PATH\](?:\\([^\\/:*?"<>|\r\n]+)|\/([^/\s]+))/;
+const REDACTED_PATH_NAMES =
+  /\[REDACTED_PATH\]([\\/]+)((?:(?! =>)(?!\[REDACTED_PATH\])[^\\/:*?<>|\r\n])+)/g;
 
 /** @param {string} value */
 function escapeRegExp(value) {
@@ -174,20 +183,50 @@ function stripLeadingTag(msg) {
 }
 
 /**
+ * The distinct file names after the redacted-path tokens in `message`, in
+ * order, at most MAX_PROBLEM_FILES. Each is kept exactly as the Problem text
+ * shows it (no length cap; only trailing spaces and `.,;'"` trimmed), so
+ * hiding it by substring hides all of it.
+ * @param {string} message
+ * @returns {string[]}
+ */
+function redactedFileNames(message) {
+  /** @type {string[]} */
+  const names = [];
+  for (const match of message.matchAll(REDACTED_PATH_NAMES)) {
+    let name = match[2];
+    if (!match[1].includes('/')) {
+      const quote = name.indexOf('"');
+      if (quote !== -1) name = name.slice(0, quote);
+    }
+    name = name.replace(/[\s.,;'"]+$/, '');
+    if (name && !names.includes(name)) names.push(name);
+    if (names.length === MAX_PROBLEM_FILES) break;
+  }
+  return names;
+}
+
+/**
  * A "Problem: …" line. Redacted-path tokens are dropped from the text (the
- * file name stays) and the first such name becomes `file`, so the panel's
- * redact mode can hide it. `file` is kept exactly as it appears in the text
- * (no length cap, no `)` trimmed) so hiding it by substring hides all of it.
+ * file names stay). Every such name is listed in `files` and the first is
+ * also `file` (the feed's merge key), so the panel's redact mode can hide
+ * all of them, not just the first.
  * @param {string} message
  * @param {ActivityTone} tone
  * @returns {LiveActivity}
  */
 function problem(message, tone) {
-  const fileMatch = message.match(REDACTED_PATH_FILE);
-  const captured = fileMatch ? fileMatch[1] || fileMatch[2] || '' : '';
-  const file = captured.replace(/[\s.,;'"]+$/, '') || undefined;
+  const files = redactedFileNames(message);
   const shown = message.replace(REDACTED_PATH_TOKEN, '').trim();
-  return activity('problem', 'alert', tone, `Problem: ${shown || PROBLEM_FALLBACK_TEXT}`, file);
+  const result = activity(
+    'problem',
+    'alert',
+    tone,
+    `Problem: ${shown || PROBLEM_FALLBACK_TEXT}`,
+    files[0]
+  );
+  if (files.length > 0) result.files = files;
+  return result;
 }
 
 /**

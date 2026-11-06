@@ -5,16 +5,16 @@
  * React, no I/O.
  *
  * Records are already sanitized by the logger (absolute paths become
- * `[REDACTED_PATH]\name.ext` or `[REDACTED_PATH]/name.ext`). With the
- * "Redact paths" setting on, the panel also hides those remaining file names
- * ("a file").
+ * `[REDACTED_PATH]\name.ext`, `[REDACTED_PATH]\\name.ext` inside JSON text,
+ * or `[REDACTED_PATH]/name.ext`). With the "Redact paths" setting on, the
+ * panel also hides those remaining file names ("a file").
  */
 
 /**
  * The entry shape is the batch payload built by the main-process feed.
  * @typedef {import('../../../main/services/liveLogFeed').LiveLogEntry} LiveLogEntry
  * @typedef {import('../../../main/services/liveLogFeed').LiveActivity} LiveActivity
- * @typedef {'activity' | 'raw'} LiveActivityTab
+ * @typedef {import('./liveActivityPanelState').LiveActivityTab} LiveActivityTab
  */
 
 /** Minimum-level choices offered by the Raw tab. */
@@ -36,44 +36,114 @@ const LEVEL_RANK = Object.freeze({
   fatal: 60
 });
 
+/** A name never runs into the next redacted-path token. */
+const NOT_NEXT_TOKEN = String.raw`(?!\[REDACTED_PATH\])`;
 /**
- * A file name after `[REDACTED_PATH]\`, matched the way sanitizeLogData in
+ * A file name after a run of backslashes (`[REDACTED_PATH]\` in a message,
+ * `[REDACTED_PATH]\\` in JSON text), matched the way sanitizeLogData in
  * src/shared/logger.js wrote it: it runs to a character Windows forbids in
  * names, so spaces, brackets and parentheses are part of it (hiding a few
  * trailing words too is acceptable). It stops before the " => " the app
  * writes between two paths (`>` cannot be in a name) and before the next
- * redacted-path token, so one name never swallows the token after it.
- * Inside JSON text the name ends at the closing quote, which the class
- * already excludes.
+ * token. In JSON text it ends at the closing quote, which the class excludes.
  */
-const NOT_NEXT_TOKEN = String.raw`(?!\[REDACTED_PATH\])`;
-const WINDOWS_NAME = String.raw`(?:(?! =>)${NOT_NEXT_TOKEN}[^\\/:*?"<>|\r\n])+`;
+const BACKSLASH_NAME = String.raw`(?:(?! =>)${NOT_NEXT_TOKEN}[^\\/:*?"<>|\r\n])+`;
 /**
- * A file name after `[REDACTED_PATH]/`: the logger stops POSIX names at
- * whitespace or `/`. A JSON escape (`\"`, `\\`) stays inside the name, and a
- * `"` ends it only where it closes a JSON string (followed by `,` `:` `}`
+ * A file name after a separator run with a `/`. The logger writes both
+ * forward-slash drive paths (`C:/Users/...`, whose names keep their spaces)
+ * and POSIX paths (cut at whitespace) this way, and the two cannot be told
+ * apart, so it is read like a Windows name: a POSIX name errs toward hiding
+ * the words after it. A JSON escape (`\"`, `\\`) stays inside the name, and
+ * a `"` ends it only where it closes a JSON string (followed by `,` `:` `}`
  * `]`, a cut mark or the end), so dataText keeps its structure while a quote
- * inside a name in a plain message is still hidden. Like the Windows name,
- * it stops before the next redacted-path token.
+ * inside a POSIX name in a plain message is still hidden.
  */
-const POSIX_NAME = String.raw`(?:${NOT_NEXT_TOKEN}(?:\\.|"(?![,:}\]]|${CUT_MARK}|$)|[^"\\/\s]))+`;
-/**
- * The name after a redacted-path token, in a plain message (`\` or `/`) or in
- * JSON text where a Windows `\` is escaped as `\\` (tried first).
- */
+const SLASH_NAME = String.raw`(?:(?! =>)${NOT_NEXT_TOKEN}(?:\\.|"(?![,:}\]]|${CUT_MARK}|$)|[^"\\/:*?<>|\r\n]))+`;
+/** The name after each redacted-path token and its separator run. */
 const REDACTED_PATH_NAME = new RegExp(
-  String.raw`\[REDACTED_PATH\](?:\\\\${WINDOWS_NAME}|\\${WINDOWS_NAME}|\/${POSIX_NAME})`,
+  String.raw`\[REDACTED_PATH\](?:\\+${BACKSLASH_NAME}|\\*\/[\\/]*${SLASH_NAME})`,
   'g'
 );
 
 /**
- * String values of JSON fields that hold a file name or a path: `file`,
- * `path`, `fileName`/`filename`, the move/copy endpoints, the suggested name,
- * and any camelCase key ending in Path, File or FileName (`oldPath`,
- * `originalFileName`, ...). Empty values are left as they are.
+ * One JSON string token: its body (escapes kept), its closing quote (empty
+ * when a cut ended the text inside it), and the `:` after it when it is a
+ * key. Scanning left to right keeps the matches aligned to JSON strings.
  */
-const FILE_FIELD_VALUE =
-  /("(?:file|path|fileName|filename|source|destination|from|to|suggestedName|[a-z][A-Za-z]*(?:Path|File|FileName|Filename))"\s*:\s*")((?:[^"\\]|\\.)+)(")/g;
+const JSON_STRING = /"((?:[^"\\]|\\[\s\S]|\\$)*)("|$)(\s*:)?/g;
+/**
+ * Keys whose string values hold a file name or a path, as the main process
+ * logs them (e.g. `{ original, raw, final }` in ipc/analysis.js, `{ name }`
+ * in ipc/semantic.js, `{ dest }` in FilePathCoordinator.js).
+ */
+const FILE_KEYS = new Set([
+  'file',
+  'files',
+  'path',
+  'paths',
+  'fileName',
+  'filename',
+  'fileNames',
+  'name',
+  'newName',
+  'oldName',
+  'originalName',
+  'suggestedName',
+  'original',
+  'final',
+  'raw',
+  'source',
+  'destination',
+  'dest',
+  'target',
+  'from',
+  'to',
+  'entry'
+]);
+/** camelCase keys ending in Path, File or FileName (`oldPath`, `originalFileName`, ...). */
+const FILE_KEY_SUFFIX = /^[a-z][A-Za-z]*(?:Path|File|FileName|Filename)s?$/;
+/**
+ * Keys whose values are codes, types or names of app parts, never user
+ * files: the file-name heuristic leaves them alone (so `storage.full` or a
+ * model file name stays readable). File keys above still win.
+ */
+const NON_FILE_KEYS = new Set([
+  'code',
+  'type',
+  'kind',
+  'level',
+  'event',
+  'eventType',
+  'channel',
+  'status',
+  'state',
+  'phase',
+  'severity',
+  'subsystem',
+  'context',
+  'service',
+  'serviceName',
+  'mimeType',
+  'mime',
+  'contentType',
+  'model',
+  'modelName',
+  'modelId',
+  'provider',
+  'providerName',
+  'host',
+  'hostname',
+  'method',
+  'operation'
+]);
+/**
+ * A string that ends like a file name: a dot, a letter, then up to seven
+ * letters or digits ("report.pdf", "IMG_2041.HEIC"). Versions ("1.2.3") and
+ * plain words survive; so do strings past MAX_FILE_LIKE_CHARS.
+ */
+const FILE_LIKE_ENDING = /\.[A-Za-z][A-Za-z0-9]{0,7}$/;
+const MAX_FILE_LIKE_CHARS = 300;
+const WORD_CHAR = /[\p{L}\p{N}]/u;
 
 /**
  * Rank of a log level; unknown levels count as info.
@@ -130,8 +200,20 @@ export function listContexts(entries) {
 }
 
 /**
- * Length of the longest end of `body` that is the start of `name` (0 when
- * none). This is how much of a name survived a cut at the end of a line.
+ * True when a name starting at `start` in `body` starts a word: at the
+ * start, after a non-word character, or with a non-word character itself.
+ * @param {string} body
+ * @param {number} start
+ */
+function startsWord(body, start) {
+  return start === 0 || !WORD_CHAR.test(body[start - 1]) || !WORD_CHAR.test(body[start]);
+}
+
+/**
+ * Length of the longest end of `body` that starts a word and is the start
+ * of `name` (0 when none). This is how much of a name survived a cut at the
+ * end of a line; requiring a word start keeps "…folder…" from losing its "r"
+ * to "report.pdf".
  * @param {string} body
  * @param {string} name
  * @returns {number}
@@ -140,7 +222,11 @@ function cutNameLength(body, name) {
   if (!name) return 0;
   const first = name.charCodeAt(0);
   for (let start = Math.max(0, body.length - name.length); start < body.length; start += 1) {
-    if (body.charCodeAt(start) === first && name.startsWith(body.slice(start))) {
+    if (
+      body.charCodeAt(start) === first &&
+      startsWord(body, start) &&
+      name.startsWith(body.slice(start))
+    ) {
       return body.length - start;
     }
   }
@@ -174,46 +260,107 @@ function replaceSpans(text, spans) {
 }
 
 /**
- * Activity text with `activity.file` hidden when `redact` is on. Every
- * occurrence of the name is hidden, overlapping ones included. The
- * classifier cuts its text at 300 characters (ending in "…") but keeps
- * `file` whole, so a long name can run past the cut: the start of the name
- * left just before the "…" is hidden as well.
+ * The distinct non-empty names an activity says its text mentions: `file`
+ * and every entry of a Problem line's `files`.
+ * @param {LiveActivity} activity
+ * @returns {string[]}
+ */
+function activityFileNames(activity) {
+  const listed = Array.isArray(activity.files) ? activity.files : [];
+  return [...new Set([activity.file, ...listed])].filter(
+    /** @returns {name is string} */ (/** @type {unknown} */ name) =>
+      typeof name === 'string' && name !== ''
+  );
+}
+
+/**
+ * Activity text with every file name it mentions hidden when `redact` is
+ * on: `file` and each of `files`, at every occurrence (overlapping ones
+ * included). The classifier cuts its text at 300 characters (ending in "…")
+ * but keeps names whole, so a long name can run past the cut: the start of
+ * a name left just before the "…" is hidden as well, when it starts a word.
+ * That holds even if the same name also appears whole earlier ("Failed to
+ * move X to X…").
  * @param {LiveActivity} activity
  * @param {boolean} redact
  * @returns {string}
  */
 export function redactActivityText(activity, redact) {
-  const { text, file } = activity;
-  if (!redact || !file) return text;
+  const { text } = activity;
+  if (!redact) return text;
+  const names = activityFileNames(activity);
+  if (names.length === 0) return text;
+  const cut = text.endsWith(CUT_MARK);
+  const body = cut ? text.slice(0, -CUT_MARK.length) : text;
   /** @type {Array<[number, number]>} */
   const spans = [];
-  for (let at = text.indexOf(file); at !== -1; at = text.indexOf(file, at + 1)) {
-    spans.push([at, at + file.length]);
-  }
-  if (text.endsWith(CUT_MARK)) {
-    const body = text.slice(0, -CUT_MARK.length);
-    // The feed may have cut `file` too; only its uncut start can match.
-    const name = file.endsWith(CUT_MARK) ? file.slice(0, -CUT_MARK.length) : file;
-    const kept = cutNameLength(body, name);
-    if (kept > 0) spans.push([body.length - kept, body.length]);
+  for (const name of names) {
+    for (let at = text.indexOf(name); at !== -1; at = text.indexOf(name, at + 1)) {
+      spans.push([at, at + name.length]);
+    }
+    if (cut) {
+      // The feed may have cut the name too; only its uncut start can match.
+      const start = name.endsWith(CUT_MARK) ? name.slice(0, -CUT_MARK.length) : name;
+      const kept = cutNameLength(body, start);
+      if (kept > 0) spans.push([body.length - kept, body.length]);
+    }
   }
   return spans.length > 0 ? replaceSpans(text, spans) : text;
 }
 
 /**
+ * Whether a JSON string value under `key` holds a file name: a file key, or
+ * (outside the code/type keys) a value that ends like a file name.
+ * @param {string} key
+ * @param {string} value - the string's body, escapes kept
+ */
+function isFileValue(key, value) {
+  if (value === '' || value === REDACTED_FILE_LABEL) return false;
+  if (FILE_KEYS.has(key) || FILE_KEY_SUFFIX.test(key)) return true;
+  if (NON_FILE_KEYS.has(key)) return false;
+  return value.length <= MAX_FILE_LIKE_CHARS && FILE_LIKE_ENDING.test(value);
+}
+
+/**
+ * JSON string values that hold a file name become "a file" (a value cut at
+ * the end of the text keeps its "…"). Keys stay; an array's values belong
+ * to the key before it.
+ * @param {string} text
+ * @returns {string}
+ */
+function redactJsonFileValues(text) {
+  let key = '';
+  return text.replace(
+    JSON_STRING,
+    (
+      /** @type {string} */ match,
+      /** @type {string} */ body,
+      /** @type {string} */ close,
+      /** @type {string | undefined} */ colon
+    ) => {
+      if (colon) {
+        key = body;
+        return match;
+      }
+      if (!isFileValue(key, body)) return match;
+      const cutMark = close === '' && body.endsWith(CUT_MARK) ? CUT_MARK : '';
+      return `"${REDACTED_FILE_LABEL}${cutMark}${close}`;
+    }
+  );
+}
+
+/**
  * Raw text (a message or dataText JSON) with file names hidden when `redact`
  * is on: the name after each redacted-path token is dropped (the token
- * stays), and file/path fields in JSON become "a file".
+ * stays), and quoted values that hold a file name (by key, or by looking
+ * like one) become "a file".
  * @param {string} text
  * @param {boolean} redact
  * @returns {string}
  */
 export function redactRawText(text, redact) {
   if (!redact || !text) return text;
-  return text
-    .replace(REDACTED_PATH_NAME, REDACTED_PATH)
-    .replace(FILE_FIELD_VALUE, `$1${REDACTED_FILE_LABEL}$3`);
+  return redactJsonFileValues(text.replace(REDACTED_PATH_NAME, REDACTED_PATH));
 }
 
 /**

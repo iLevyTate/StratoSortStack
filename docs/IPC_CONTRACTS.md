@@ -47,7 +47,9 @@ The Live Activity panel streams sanitized log records from `src/main/services/li
 
 Both invoke channels act on the calling window (`event.sender`). Each entry is
 `{ id, time, level, context, msg, dataText, activity }`, where `activity` is
-`{ kind, icon, tone, text, file? }` or `null` and `tone` is `info | success | warn | error`.
+`{ kind, icon, tone, text, file?, files? }` or `null` and `tone` is `info | success | warn | error`.
+A Problem activity lists every file name its message mentions in `files` (the first is also `file`)
+so the panel's redact mode can hide all of them.
 
 Unlike the events above, `system:live-log:batch` is validated **only in main**, by `safeSend`
 against `liveLogBatchSchema`; the renderer receives it through the preload bridge and does not
@@ -56,7 +58,8 @@ bounds before sending, and no single log line can get a batch blocked:
 
 - At most 200 entries per batch.
 - Entry `msg` 2000 characters, `dataText` 1500, `context` 120, `time` 40.
-- Activity `kind` 64 characters, `icon` 32, `text` 2000, `file` 2000. An unknown `tone` becomes
+- Activity `kind` 64 characters, `icon` 32, `text` 2000, `file` 2000; `files` at most 8 names of
+  2000 characters each (non-string items and empty names are dropped). An unknown `tone` becomes
   `info`; an activity without a string `kind` and `text` becomes `null`.
 - `dropped` is a non-negative integer: entries discarded since this window's previous batch,
   including any batch whose send was refused.

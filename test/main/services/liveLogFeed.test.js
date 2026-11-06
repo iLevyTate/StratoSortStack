@@ -20,7 +20,8 @@ const {
   MAX_ACTIVITY_KIND_CHARS,
   MAX_ACTIVITY_ICON_CHARS,
   MAX_ACTIVITY_TEXT_CHARS,
-  MAX_ACTIVITY_FILE_CHARS
+  MAX_ACTIVITY_FILE_CHARS,
+  MAX_ACTIVITY_FILES
 } = require('../../../src/main/services/liveLogFeed');
 const { IPC_CHANNELS } = require('../../../src/shared/constants');
 const { validateEventPayload } = require('../../../src/shared/ipcEventSchemas');
@@ -1018,6 +1019,34 @@ describe('liveLogFeed', () => {
         tone: 'info',
         text: 'y'
       });
+    });
+
+    test('files keeps the first MAX_ACTIVITY_FILES string names, each cut like file', () => {
+      const names = Array.from({ length: 12 }, (_, i) => `n${i}.pdf`);
+      const result = activityOf({
+        kind: 'problem',
+        icon: 'alert',
+        tone: 'warn',
+        text: 'Problem',
+        file: 'n0.pdf',
+        files: ['f'.repeat(5000), 7, null, '', 'a\u0001b.pdf', ...names]
+      });
+      expect(MAX_ACTIVITY_FILES).toBe(8);
+      expect(result.files).toHaveLength(MAX_ACTIVITY_FILES);
+      expect(result.files[0]).toHaveLength(MAX_ACTIVITY_FILE_CHARS);
+      expect(result.files[0].endsWith('…')).toBe(true);
+      // Non-strings are skipped, empty names dropped, controls stripped.
+      expect(result.files.slice(1)).toEqual(['ab.pdf', ...names.slice(0, 6)]);
+    });
+
+    test.each([
+      ['not an array', 'a.pdf'],
+      ['an empty array', []],
+      ['only non-strings and empties', [1, '', null]]
+    ])('files that is %s is left out', (_label, files) => {
+      expect(
+        activityOf({ kind: 'problem', icon: 'alert', tone: 'warn', text: 'P', files })
+      ).toEqual({ kind: 'problem', icon: 'alert', tone: 'warn', text: 'P' });
     });
 
     test('only the known fields are kept, and an empty or non-string file is left out', () => {

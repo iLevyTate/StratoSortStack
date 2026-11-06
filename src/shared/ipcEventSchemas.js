@@ -481,7 +481,8 @@ const schemas = z
        * test/ipcEventSchemas.liveLog.test.js pins each bound to the feed's
        * exported constant (MAX_BATCH_ENTRIES, MAX_MSG_CHARS,
        * MAX_DATA_TEXT_CHARS, MAX_CONTEXT_CHARS, MAX_TIME_CHARS and the
-       * MAX_ACTIVITY_* caps) and runs real feed output through it.
+       * MAX_ACTIVITY_* caps, MAX_ACTIVITY_FILES included) and runs real feed
+       * output through it.
        */
       const LIVE_LOG_MAX_ENTRIES = 200;
       const LIVE_LOG_MAX_MSG_CHARS = 2000;
@@ -492,12 +493,17 @@ const schemas = z
       const LIVE_LOG_MAX_ACTIVITY_ICON_CHARS = 32;
       const LIVE_LOG_MAX_ACTIVITY_TEXT_CHARS = 2000;
       const LIVE_LOG_MAX_ACTIVITY_FILE_CHARS = 2000;
+      const LIVE_LOG_MAX_ACTIVITY_FILES = 8;
 
       const liveLogActivitySchema = z.object({
         kind: z.string().max(LIVE_LOG_MAX_ACTIVITY_KIND_CHARS),
         icon: z.string().max(LIVE_LOG_MAX_ACTIVITY_ICON_CHARS),
         text: z.string().max(LIVE_LOG_MAX_ACTIVITY_TEXT_CHARS),
         file: z.string().max(LIVE_LOG_MAX_ACTIVITY_FILE_CHARS).optional(),
+        files: z
+          .array(z.string().max(LIVE_LOG_MAX_ACTIVITY_FILE_CHARS))
+          .max(LIVE_LOG_MAX_ACTIVITY_FILES)
+          .optional(),
         tone: z.enum(['info', 'success', 'warn', 'error'])
       });
 

@@ -28,8 +28,9 @@
  *   is an invoke result preload does not sanitize. Backlog and batch entries
  *   therefore carry the same text.
  * - The classifier's activity is clamped to the batch schema's bounds
- *   (src/shared/ipcEventSchemas.js liveLogBatchSchema): kind, icon, text and
- *   file are cut, an unknown tone becomes 'info', unknown fields are dropped,
+ *   (src/shared/ipcEventSchemas.js liveLogBatchSchema): kind, icon, text,
+ *   file and each of a Problem line's `files` (at most MAX_ACTIVITY_FILES)
+ *   are cut, an unknown tone becomes 'info', unknown fields are dropped,
  *   and anything that is not an object with a string kind and text becomes
  *   null. No single log line can make the schema reject (and safeSend block)
  *   a whole batch.
@@ -67,6 +68,8 @@ const MAX_ACTIVITY_KIND_CHARS = 64;
 const MAX_ACTIVITY_ICON_CHARS = 32;
 const MAX_ACTIVITY_TEXT_CHARS = MAX_MSG_CHARS;
 const MAX_ACTIVITY_FILE_CHARS = MAX_MSG_CHARS;
+/** Most file names an activity lists in `files` (the classifier lists at most this many). */
+const MAX_ACTIVITY_FILES = 8;
 /** @type {Set<string>} */
 const ACTIVITY_TONES = new Set(['info', 'success', 'warn', 'error']);
 /** Placeholder for an object or array the data budget has no room left for. */
@@ -269,6 +272,20 @@ function clampActivity(value) {
   const file =
     typeof source.file === 'string' ? cleanText(source.file, MAX_ACTIVITY_FILE_CHARS) : '';
   if (file !== '') activity.file = file;
+  // `files` is what redact mode hides; keep every usable name it can (the
+  // first MAX_ACTIVITY_FILES strings, each cut like `file`, empties dropped)
+  // rather than dropping the list for one bad item.
+  if (Array.isArray(source.files)) {
+    /** @type {string[]} */
+    const files = [];
+    for (const name of source.files) {
+      if (files.length === MAX_ACTIVITY_FILES) break;
+      if (typeof name !== 'string') continue;
+      const cleaned = cleanText(name, MAX_ACTIVITY_FILE_CHARS);
+      if (cleaned !== '') files.push(cleaned);
+    }
+    if (files.length > 0) activity.files = files;
+  }
   return activity;
 }
 
@@ -561,6 +578,7 @@ module.exports = {
   MAX_ACTIVITY_ICON_CHARS,
   MAX_ACTIVITY_TEXT_CHARS,
   MAX_ACTIVITY_FILE_CHARS,
+  MAX_ACTIVITY_FILES,
   ACTIVITY_MERGE_WINDOW_MS,
   MERGEABLE_KINDS
 };

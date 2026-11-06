@@ -1135,7 +1135,8 @@ describe('activityFromLogRecord', () => {
       icon: 'alert',
       tone: 'warn',
       text: 'Problem: Could not move statement.pdf: EBUSY',
-      file: 'statement.pdf'
+      file: 'statement.pdf',
+      files: ['statement.pdf']
     });
     expect(
       activityFromLogRecord({
@@ -1148,7 +1149,8 @@ describe('activityFromLogRecord', () => {
       icon: 'alert',
       tone: 'error',
       text: 'Problem: Copy a.txt => b.txt failed',
-      file: 'a.txt'
+      file: 'a.txt',
+      files: ['a.txt', 'b.txt failed']
     });
   });
 
@@ -1163,11 +1165,24 @@ describe('activityFromLogRecord', () => {
       'My Invoice.pdf failed',
       'Problem: Cannot read My Invoice.pdf failed'
     ],
-    // POSIX: the logger's redaction stops at whitespace, and so does the name.
+    // After `/` the name is read the same way: a forward-slash drive path
+    // (C:/Users/...) keeps its spaces, so a POSIX name (which the logger cuts
+    // at whitespace) errs toward hiding the words after it.
     [
       'Cannot read [REDACTED_PATH]/notes.txt because it is locked',
-      'notes.txt',
+      'notes.txt because it is locked',
       'Problem: Cannot read notes.txt because it is locked'
+    ],
+    [
+      'open [REDACTED_PATH]/report [final] (2).pdf',
+      'report [final] (2).pdf',
+      'Problem: open report [final] (2).pdf'
+    ],
+    // JSON-escaped Windows separator.
+    [
+      String.raw`payload {"from":"[REDACTED_PATH]\\Lab results.pdf"}`,
+      'Lab results.pdf',
+      'Problem: payload {"from":"Lab results.pdf"}'
     ]
   ])('a redacted path in %j names the file %j', (msg, file, text) => {
     expect(activityFromLogRecord({ level: 'warn', context: 'X', msg })).toEqual({
@@ -1175,7 +1190,8 @@ describe('activityFromLogRecord', () => {
       icon: 'alert',
       tone: 'warn',
       text,
-      file
+      file,
+      files: [file]
     });
   });
 
@@ -1193,6 +1209,52 @@ describe('activityFromLogRecord', () => {
     });
     expect(result.file).toBe(name);
     expect(result.text.includes(result.file)).toBe(true);
+  });
+
+  test('a Problem line lists every file name, the first also as file', () => {
+    const result = activityFromLogRecord({
+      level: 'error',
+      context: 'FileOps',
+      msg: String.raw`Failed to move [REDACTED_PATH]\alpha secret.pdf to [REDACTED_PATH]\beta secret.pdf: EBUSY`
+    });
+    expect(result.text).toBe('Problem: Failed to move alpha secret.pdf to beta secret.pdf: EBUSY');
+    // Windows names keep their spaces, so "to" is over-captured into the
+    // first name; the name stops before the next token.
+    expect(result.file).toBe('alpha secret.pdf to');
+    expect(result.files).toEqual(['alpha secret.pdf to', 'beta secret.pdf']);
+    for (const name of result.files) expect(result.text.includes(name)).toBe(true);
+  });
+
+  test('Problem names are trimmed, deduped, capped, and cover every separator form', () => {
+    expect(
+      activityFromLogRecord({
+        level: 'warn',
+        context: 'X',
+        msg: String.raw`Copy [REDACTED_PATH]\a.pdf, [REDACTED_PATH]/b.pdf; [REDACTED_PATH]\\c.pdf and [REDACTED_PATH]\a.pdf.`
+      }).files
+    ).toEqual(['a.pdf', 'b.pdf', 'c.pdf and']);
+    const many = Array.from({ length: 12 }, (_, i) => `[REDACTED_PATH]\\f${i}.txt`).join(' => ');
+    const result = activityFromLogRecord({ level: 'warn', context: 'X', msg: `Lost ${many}` });
+    expect(result.files).toHaveLength(8);
+    expect(result.files[0]).toBe('f0.txt');
+    expect(result.file).toBe('f0.txt');
+  });
+
+  test('a quote ends a Windows name but not a name after "/"', () => {
+    expect(
+      activityFromLogRecord({
+        level: 'warn',
+        context: 'X',
+        msg: String.raw`Open "[REDACTED_PATH]\a b.pdf" now`
+      }).files
+    ).toEqual(['a b.pdf']);
+    expect(
+      activityFromLogRecord({
+        level: 'warn',
+        context: 'X',
+        msg: 'Open [REDACTED_PATH]/my"file.pdf'
+      }).files
+    ).toEqual(['my"file.pdf']);
   });
 
   test('a bare redacted-path token is removed from Problem text', () => {
@@ -1221,7 +1283,8 @@ describe('activityFromLogRecord', () => {
       icon: 'alert',
       tone: 'warn',
       text: 'Problem: scan.pdf could not be read',
-      file: 'scan.pdf'
+      file: 'scan.pdf could not be read',
+      files: ['scan.pdf could not be read']
     });
   });
 
@@ -1238,7 +1301,8 @@ describe('activityFromLogRecord', () => {
       icon: 'alert',
       tone: 'error',
       text: 'Problem: Cannot open index.db',
-      file: 'index.db'
+      file: 'index.db',
+      files: ['index.db']
     });
   });
 

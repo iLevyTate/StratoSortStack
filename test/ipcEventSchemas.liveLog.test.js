@@ -16,7 +16,8 @@ const {
   MAX_ACTIVITY_KIND_CHARS,
   MAX_ACTIVITY_ICON_CHARS,
   MAX_ACTIVITY_TEXT_CHARS,
-  MAX_ACTIVITY_FILE_CHARS
+  MAX_ACTIVITY_FILE_CHARS,
+  MAX_ACTIVITY_FILES
 } = require('../src/main/services/liveLogFeed');
 
 const CHANNEL = IPC_CHANNELS.SYSTEM.LIVE_LOG_BATCH;
@@ -150,6 +151,23 @@ describe('system:live-log:batch event schema', () => {
     });
   });
 
+  describe('activity files: MAX_ACTIVITY_FILES names of MAX_ACTIVITY_FILE_CHARS', () => {
+    const problemWith = (files) => ({
+      activity: { kind: 'problem', icon: 'alert', tone: 'warn', text: 'Problem', files }
+    });
+
+    test('accepts up to the cap and rejects one more', () => {
+      expect(oneEntryValid(problemWith(Array(MAX_ACTIVITY_FILES).fill('a.pdf')))).toBe(true);
+      expect(oneEntryValid(problemWith(Array(MAX_ACTIVITY_FILES + 1).fill('a.pdf')))).toBe(false);
+    });
+
+    test('bounds each name and requires strings', () => {
+      expect(oneEntryValid(problemWith(['a'.repeat(MAX_ACTIVITY_FILE_CHARS)]))).toBe(true);
+      expect(oneEntryValid(problemWith(['a'.repeat(MAX_ACTIVITY_FILE_CHARS + 1)]))).toBe(false);
+      expect(oneEntryValid(problemWith([1]))).toBe(false);
+    });
+  });
+
   describe('real liveLogFeed output passes the schema', () => {
     /** Run records through a real feed (real classifier) and return the batches it sends. */
     function feedBatches(records) {
@@ -250,6 +268,31 @@ describe('system:live-log:batch event schema', () => {
       const degraded = entries.find((e) => e.context === 'DegradedStateTracker');
       expect(degraded.activity.kind).toBe('problem');
       expect(degraded.activity.file.length).toBeGreaterThan(1000);
+    });
+
+    test('a Problem line naming many files ships every name within the files bounds', () => {
+      const names = Array.from({ length: 12 }, (_, i) => `secret ${i} ${'z'.repeat(100)}.pdf`);
+      const batches = feedBatches([
+        {
+          time: '2026-11-05T09:00:00.000Z',
+          level: 'error',
+          context: 'FileOps',
+          msg: `Failed to move ${names.map((n) => `[REDACTED_PATH]\\${n}`).join(' => ')}`
+        },
+        {
+          time: '2026-11-05T09:00:00.000Z',
+          level: 'warn',
+          context: 'FileOps',
+          msg: String.raw`Failed to move [REDACTED_PATH]\alpha secret.pdf to [REDACTED_PATH]\beta secret.pdf`
+        }
+      ]);
+      expectAllValid(batches);
+      const [many, two] = batches.flatMap((b) => b.entries).map((e) => e.activity);
+      expect(many.files).toHaveLength(MAX_ACTIVITY_FILES);
+      // The feed cuts msg to MAX_MSG_CHARS first; 12 names of ~115 characters fit.
+      expect(many.files).toEqual(names.slice(0, MAX_ACTIVITY_FILES));
+      expect(two.files).toEqual(['alpha secret.pdf to', 'beta secret.pdf']);
+      expect(two.file).toBe('alpha secret.pdf to');
     });
 
     test('a flood beyond the batch caps ships a bounded batch with a dropped count', () => {
