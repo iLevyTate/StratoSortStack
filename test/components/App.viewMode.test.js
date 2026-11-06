@@ -38,10 +38,19 @@ jest.mock('../../src/renderer/components/AppProviders', () => ({
   default: ({ children }) => <>{children}</>
 }));
 
-jest.mock('../../src/renderer/components/ErrorBoundary', () => ({
-  __esModule: true,
-  default: ({ children }) => <>{children}</>
-}));
+// Pass-through by default; the live-activity crash test flips this to the
+// real boundary so it can prove a panel crash stays contained.
+let mockUseRealErrorBoundary = false;
+jest.mock('../../src/renderer/components/ErrorBoundary', () => {
+  const RealErrorBoundary = jest.requireActual(
+    '../../src/renderer/components/ErrorBoundary'
+  ).default;
+  return {
+    __esModule: true,
+    default: (props) =>
+      mockUseRealErrorBoundary ? <RealErrorBoundary {...props} /> : <>{props.children}</>
+  };
+});
 
 jest.mock('../../src/renderer/components/NavigationBar', () => ({
   __esModule: true,
@@ -98,17 +107,30 @@ jest.mock('../../src/renderer/components/SettingsPanel', () => ({
   default: () => <div data-testid="settings-panel" />
 }));
 
+// Mocked so App-level tests never stand up react-window / ResizeObserver or
+// the live-log IPC feed; the panel itself is covered by its own suite.
+let mockPanelThrows = false;
+jest.mock('../../src/renderer/components/diagnostics/LiveActivityPanel', () => ({
+  __esModule: true,
+  default: () => {
+    if (mockPanelThrows) throw new Error('live activity panel boom');
+    return <div data-testid="live-activity-panel" />;
+  }
+}));
+
 import App from '../../src/renderer/App';
+import { logger as mockLogger } from '../../src/shared/logger';
 
 function setupState({
   currentPhase = 'discover',
   viewMode = 'phased',
   smartFolders = [],
   selectedTheme = 'primary',
-  showSettings = false
+  showSettings = false,
+  settings = null
 } = {}) {
   mockState = {
-    ui: { currentPhase, viewMode, selectedTheme, showSettings },
+    ui: { currentPhase, viewMode, selectedTheme, showSettings, settings },
     files: { smartFolders }
   };
 }
@@ -200,5 +222,88 @@ describe('App theme application', () => {
     render(<App />);
 
     expect(document.documentElement.getAttribute('data-theme')).toBe('primary');
+  });
+});
+
+describe('App live activity panel', () => {
+  beforeEach(() => {
+    mockDispatch.mockClear();
+    mockPanelThrows = false;
+    mockUseRealErrorBoundary = false;
+    setupState();
+  });
+
+  afterEach(() => {
+    mockPanelThrows = false;
+    mockUseRealErrorBoundary = false;
+  });
+
+  test('is not mounted before settings load', async () => {
+    render(<App />);
+    expect(await screen.findByTestId('phase-renderer')).toBeInTheDocument();
+    expect(screen.queryByTestId('live-activity-panel')).not.toBeInTheDocument();
+  });
+
+  test('is not mounted while showLiveActivity is off', async () => {
+    setupState({ settings: { showLiveActivity: false } });
+    render(<App />);
+    expect(await screen.findByTestId('phase-renderer')).toBeInTheDocument();
+    expect(screen.queryByTestId('live-activity-panel')).not.toBeInTheDocument();
+  });
+
+  test('is not mounted for a truthy non-boolean flag', async () => {
+    setupState({ settings: { showLiveActivity: 'true' } });
+    render(<App />);
+    expect(await screen.findByTestId('phase-renderer')).toBeInTheDocument();
+    expect(screen.queryByTestId('live-activity-panel')).not.toBeInTheDocument();
+  });
+
+  test('mounts exactly one panel when showLiveActivity is on, on either surface', async () => {
+    setupState({ settings: { showLiveActivity: true } });
+    const { unmount } = render(<App />);
+    expect(await screen.findByTestId('live-activity-panel')).toBeInTheDocument();
+    expect(screen.getAllByTestId('live-activity-panel')).toHaveLength(1);
+    unmount();
+
+    setupState({
+      viewMode: 'dashboard',
+      smartFolders: [{ id: 'sf-1' }],
+      settings: { showLiveActivity: true }
+    });
+    render(<App />);
+    expect(await screen.findByTestId('dashboard-view')).toBeInTheDocument();
+    expect(await screen.findByTestId('live-activity-panel')).toBeInTheDocument();
+    expect(screen.getAllByTestId('live-activity-panel')).toHaveLength(1);
+  });
+
+  test('unmounts when the setting is turned off', async () => {
+    setupState({ settings: { showLiveActivity: true } });
+    const { rerender } = render(<App />);
+    expect(await screen.findByTestId('live-activity-panel')).toBeInTheDocument();
+
+    setupState({ settings: { showLiveActivity: false } });
+    rerender(<App />);
+    expect(screen.queryByTestId('live-activity-panel')).not.toBeInTheDocument();
+  });
+
+  test('a crashing panel is dropped and logged once without taking down the app', async () => {
+    mockUseRealErrorBoundary = true;
+    mockPanelThrows = true;
+    mockLogger.error.mockClear();
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      setupState({ settings: { showLiveActivity: true } });
+      render(<App />);
+
+      expect(await screen.findByTestId('phase-renderer')).toBeInTheDocument();
+      expect(screen.getByTestId('navbar')).toBeInTheDocument();
+      expect(screen.queryByTestId('live-activity-panel')).not.toBeInTheDocument();
+      const panelErrors = mockLogger.error.mock.calls.filter(([message]) =>
+        String(message).includes('LiveActivityPanel')
+      );
+      expect(panelErrors).toHaveLength(1);
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });

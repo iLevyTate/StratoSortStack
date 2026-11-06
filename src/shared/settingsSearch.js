@@ -283,6 +283,21 @@ const SETTINGS_SECTION_INDEX = [
   },
   {
     id: 'settings-diagnostics',
+    title: 'Live activity',
+    advancedOnly: true,
+    keywords: [
+      'live activity',
+      'activity panel',
+      'floating panel',
+      'live log',
+      'real time',
+      'what the app is doing',
+      'ctrl+shift+l',
+      'cmd+shift+l'
+    ]
+  },
+  {
+    id: 'settings-diagnostics',
     title: 'External AI clients',
     advancedOnly: true,
     keywords: ['mcp', 'external', 'claude desktop', 'cursor', 'api test', 'integration']

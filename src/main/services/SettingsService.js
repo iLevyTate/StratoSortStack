@@ -34,8 +34,12 @@ const { safeSend } = require('../ipc/ipcWrappers');
 const logger = typeof createLogger === 'function' ? createLogger('SettingsService') : baseLogger;
 
 // Settings keys whose save takes no pre-save backup: per-session UI
-// bookkeeping, not configuration a user would want to restore.
-const BACKUP_EXEMPT_KEYS = new Set(['lastBrowsedPath']);
+// bookkeeping, not configuration a user would want to restore. A save that
+// touches any other key still takes one. showLiveActivity is flipped by
+// Ctrl/Cmd+Shift+L and the Live Activity panel's Close button; a snapshot per
+// toggle would push meaningful ones out of the rotation.
+// Pinned by test/SettingsService.save.test.js.
+const BACKUP_EXEMPT_KEYS = new Set(['lastBrowsedPath', 'showLiveActivity']);
 if (typeof createLogger !== 'function' && logger?.setContext) {
   logger.setContext('SettingsService');
 }

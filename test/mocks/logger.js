@@ -26,5 +26,9 @@ const logger = createLoggerMock();
 module.exports = {
   logger,
   createLogger: jest.fn(() => logger),
-  createLoggerMock
+  createLoggerMock,
+  // Live Activity hook (src/shared/logger.js); main-process code requires
+  // these when it starts streaming log records.
+  addLiveRecordListener: jest.fn(),
+  removeLiveRecordListener: jest.fn()
 };

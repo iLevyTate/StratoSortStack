@@ -235,6 +235,58 @@ describe('Batch Organize Handler', () => {
     expect(batchLockManager.releaseBatchLock).toHaveBeenCalled();
   });
 
+  test('logs one "Move completed" info line per moved file outside development', async () => {
+    // The Live Activity feed reads this line; it used to be dev-trace only.
+    expect(process.env.NODE_ENV).not.toBe('development');
+    await handleBatchOrganize(params);
+
+    const moveLines = mockLogger.info.mock.calls.filter(
+      ([msg]) => msg === '[FILE-OPS] Move completed'
+    );
+    expect(moveLines).toHaveLength(2);
+    expect(moveLines.map(([, data]) => data)).toEqual([
+      expect.objectContaining({ index: 0, source: 'doc1.pdf', destination: 'doc1.pdf' }),
+      expect.objectContaining({ index: 1, source: 'doc2.pdf', destination: 'doc2.pdf' })
+    ]);
+    // File names and timing only: no folders (POSIX redaction stops at a
+    // space) and no file content ride along.
+    for (const [, data] of moveLines) {
+      expect(Object.keys(data).sort()).toEqual(
+        ['batchId', 'destination', 'durationMs', 'index', 'source'].sort()
+      );
+    }
+  });
+
+  test('logs one "Move skipped (duplicate)" info line per skipped file outside development', async () => {
+    // The Live Activity feed reads this line; it used to be dev-trace only.
+    expect(process.env.NODE_ENV).not.toBe('development');
+    fileDedup.handleDuplicateMove.mockImplementation(async ({ sourcePath }) =>
+      sourcePath === '/src/doc1.pdf'
+        ? { skipped: true, destination: '/dest/doc1.pdf', reason: 'duplicate' }
+        : null
+    );
+    try {
+      await handleBatchOrganize(params);
+    } finally {
+      fileDedup.handleDuplicateMove.mockReset().mockResolvedValue(null);
+    }
+
+    const skipLines = mockLogger.info.mock.calls.filter(
+      ([msg]) => msg === '[FILE-OPS] Move skipped (duplicate)'
+    );
+    expect(skipLines).toHaveLength(1);
+    // File names only: no folders and no file content ride along.
+    expect(skipLines[0][1]).toEqual({
+      batchId: expect.any(String),
+      source: 'doc1.pdf',
+      destination: 'doc1.pdf'
+    });
+    const moveLines = mockLogger.info.mock.calls.filter(
+      ([msg]) => msg === '[FILE-OPS] Move completed'
+    );
+    expect(moveLines.map(([, data]) => data.source)).toEqual(['doc2.pdf']);
+  });
+
   test('decides every landing folder once, before the lock, and moves nothing into a refused one', async () => {
     const policy = require('../src/main/ipc/files/destinationPolicy');
     policy.authorizeDestinations.mockResolvedValueOnce(new Map());

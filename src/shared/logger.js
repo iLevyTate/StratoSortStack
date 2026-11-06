@@ -464,6 +464,54 @@ function redactPathValue(value) {
 // eslint-disable-next-line no-control-regex
 const LOG_CONTROL_CHAR_PATTERN = /[\u0000-\u0008\u000A-\u001F\u007F]/g;
 
+// Windows absolute-path redaction (drive and UNC), reduced to
+// `[REDACTED_PATH]<sep>basename` where <sep> is the separator the path used
+// before its last segment, so a JSON-escaped path (`C:\\Users\\x.pdf`) stays
+// valid JSON as `[REDACTED_PATH]\\x.pdf`.
+//
+// A path segment runs to a character Windows forbids in names, so names with
+// spaces, brackets and parentheses stay whole. It also stops before the next
+// drive (`D:\`, `D:/`): otherwise the last segment of the first path in
+// `move C:\a\x.pdf to D:\b\x.pdf` swallows " to D" and the second path is left
+// raw, user folders and all.
+//
+// A path keeps the separator style it starts with (captured as group 1 and
+// matched again by back-reference): `C:\...` continues only on single `\`,
+// JSON-escaped `C:\\...` only on `\\`, and `C:/...` only on `/`. A later `/`
+// on the same line therefore ends a backslash path instead of extending it:
+// `Moved C:\a\x.pdf to Finance/Taxes` keeps " to Finance/Taxes" after the
+// name rather than collapsing to `[REDACTED_PATH]/Taxes`. Segments never
+// contain `\` or `/`, so segment and separator are disjoint and matching
+// stays linear.
+const PATH_SEGMENT = String.raw`(?:(?![A-Za-z]:[\\/])[^\\/:*?"<>|\r\n])+`;
+// A drive letter preceded by a letter or digit is not a drive: it is the tail
+// of a URL scheme (`https://`) or a word, which the POSIX pass handles.
+const WINDOWS_DRIVE_PATH_PATTERN = new RegExp(
+  String.raw`(?<![A-Za-z0-9])[A-Za-z]:(\\+|\/)(?:${PATH_SEGMENT}\1)*${PATH_SEGMENT}`,
+  'g'
+);
+// `\\server\share\...` (or `\\\\server\\share\\...` once JSON-escaped): the
+// prefix is the separator written twice. Only backslashes open it, so `//` in
+// a URL never does. A server and at least one more segment are required. It
+// only starts at the first backslash of a run, and the separator is at most
+// four backslashes, so a long run is never retried from every position.
+const WINDOWS_UNC_PATH_PATTERN = new RegExp(
+  String.raw`(?<!\\)(\\{1,4})\1${PATH_SEGMENT}(?:\1${PATH_SEGMENT})+`,
+  'g'
+);
+// The last separator run and the basename of a matched Windows path.
+const WINDOWS_PATH_TAIL_PATTERN = /([\\/]+)([^\\/]+)$/;
+
+/**
+ * @param {string} matched A whole drive or UNC path matched above.
+ */
+function redactWindowsPathMatch(matched) {
+  const tail = matched.match(WINDOWS_PATH_TAIL_PATTERN);
+  // Both patterns end in a separator followed by a segment, so this holds.
+  if (!tail) return '[REDACTED_PATH]';
+  return `[REDACTED_PATH]${tail[1]}${tail[2]}`;
+}
+
 /**
  * @param {any} value
  */
@@ -512,10 +560,8 @@ function sanitizeLogData(data, _depth = 0, _seen = undefined) {
       nodeInternalSentinels.push(match);
       return `__STRATOSORT_NODEINTERNAL_${idx}__`;
     });
-    sanitized = sanitized.replace(
-      /[A-Za-z]:\\(?:[^\\/:*?"<>|\r\n]+\\)*([^\\/:*?"<>|\r\n]+)/g,
-      (_match, filename) => `[REDACTED_PATH]\\${filename}`
-    );
+    sanitized = sanitized.replace(WINDOWS_DRIVE_PATH_PATTERN, redactWindowsPathMatch);
+    sanitized = sanitized.replace(WINDOWS_UNC_PATH_PATTERN, redactWindowsPathMatch);
     sanitized = sanitized.replace(
       /(?<!:)\/(?:[^/\s]+\/)+([^/\s]+)/g,
       (_match, filename) => `[REDACTED_PATH]/${filename}`
@@ -657,6 +703,37 @@ function normalizeBrowserTransmit(messages = []) {
     message: util.format(...messages),
     data: {}
   };
+}
+
+/**
+ * One sanitized log record as the Live Activity feed sees it.
+ * @typedef {{ time: string, level: string, context: string, msg: string, data?: any }} LiveLogRecord
+ */
+
+/**
+ * Opt-in observers of every record this process writes. Only the main
+ * process registers here (src/main/services/liveLogFeed.js, while a window
+ * is subscribed to the Live Activity panel). Empty by default, so logging
+ * pays nothing for the feature until someone listens.
+ * @type {Set<(record: LiveLogRecord) => void>}
+ */
+const _liveRecordListeners = new Set();
+
+/**
+ * True while listeners are being handed a record. A listener that logs
+ * synchronously would otherwise recurse (log -> listener -> log -> ...) until
+ * the stack overflows; its own line is still written, just not re-announced.
+ */
+let _emittingLiveRecord = false;
+
+/** @param {(record: LiveLogRecord) => void} listener */
+function addLiveRecordListener(listener) {
+  if (typeof listener === 'function') _liveRecordListeners.add(listener);
+}
+
+/** @param {(record: LiveLogRecord) => void} listener */
+function removeLiveRecordListener(listener) {
+  _liveRecordListeners.delete(listener);
 }
 
 class Logger {
@@ -915,6 +992,52 @@ class Logger {
       } else {
         throw err; // Re-throw non-transport errors
       }
+    }
+    // Announce only records that were actually written (pino or the console
+    // fallback), and only after the write, so a listener can never alter what
+    // pino serializes.
+    if (_liveRecordListeners.size > 0) {
+      this._emitLiveRecord(level, sanitizedMessage, sanitized);
+    }
+  }
+
+  /**
+   * Hand one sanitized record to the live listeners, only at levels this
+   * logger would write. Never throws: a broken listener must not break the
+   * log call it is observing, and a listener that logs is not re-entered.
+   * @param {string} level
+   * @param {any} message
+   * @param {any} data
+   */
+  _emitLiveRecord(level, message, data) {
+    if (_emittingLiveRecord) return;
+    _emittingLiveRecord = true;
+    try {
+      const _pino = /** @type {any} */ (this.pino);
+      if (_pino && typeof _pino.isLevelEnabled === 'function' && !_pino.isLevelEnabled(level)) {
+        return;
+      }
+      /** @type {LiveLogRecord} */
+      const record = {
+        time: new Date().toISOString(),
+        level,
+        context: this.context || '',
+        // A non-string message (e.g. logger.error(err)) reaches here
+        // unsanitized; redact its string form before it leaves the logger.
+        msg: typeof message === 'string' ? message : sanitizeLogData(String(message)),
+        data
+      };
+      for (const listener of _liveRecordListeners) {
+        try {
+          listener(record);
+        } catch {
+          // A listener failure never reaches the caller of the log method.
+        }
+      }
+    } catch {
+      // The live feed is best-effort; logging continues regardless.
+    } finally {
+      _emittingLiveRecord = false;
     }
   }
 
@@ -1250,6 +1373,8 @@ module.exports = {
   createSafeLogger,
   sanitizeLogData,
   stripLogControlChars,
+  addLiveRecordListener,
+  removeLiveRecordListener,
   _normalizeLogCall: normalizeLogCall,
   _normalizeBrowserTransmit: normalizeBrowserTransmit,
   configureFileLogging,

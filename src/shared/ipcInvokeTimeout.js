@@ -8,6 +8,14 @@ const { IPC_CHANNELS } = require('./constants');
 const { LIMITS: PERF_LIMITS, TIMEOUTS } = require('./performanceConstants');
 
 /**
+ * Live Activity subscribe/unsubscribe only touch an in-memory registry in
+ * main. The renderer chains each new subscription behind the previous
+ * unsubscribe, so a stuck release must fail fast instead of holding a
+ * reconnect for the 330 s default.
+ */
+const LIVE_LOG_INVOKE_TIMEOUT_MS = 5000;
+
+/**
  * @param {string} channel
  * @returns {number} Timeout in milliseconds
  */
@@ -83,6 +91,12 @@ function getIpcInvokeTimeout(channel) {
     channel === IPC_CHANNELS.SYSTEM.EXPORT_LOGS
   ) {
     timeout = TIMEOUTS.USER_DIALOG || 600000;
+  }
+  if (
+    channel === IPC_CHANNELS.SYSTEM.LIVE_LOG_SUBSCRIBE ||
+    channel === IPC_CHANNELS.SYSTEM.LIVE_LOG_UNSUBSCRIBE
+  ) {
+    timeout = LIVE_LOG_INVOKE_TIMEOUT_MS;
   }
   return timeout;
 }

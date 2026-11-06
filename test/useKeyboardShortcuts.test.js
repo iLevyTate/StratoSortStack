@@ -90,9 +90,14 @@ jest.mock('../src/shared/constants', () => ({
   }
 }));
 
+jest.mock('../src/renderer/store/thunks/liveActivityThunks', () => ({
+  toggleShowLiveActivity: jest.fn(() => ({ type: 'test/toggleShowLiveActivity' }))
+}));
+
 // Import after mocks
 import { useKeyboardShortcuts } from '../src/renderer/hooks/useKeyboardShortcuts';
 import { hasActiveOverlay } from '../src/renderer/utils/overlayStack';
+import { toggleShowLiveActivity } from '../src/renderer/store/thunks/liveActivityThunks';
 
 describe('useKeyboardShortcuts', () => {
   let keydownHandler;
@@ -134,6 +139,9 @@ describe('useKeyboardShortcuts', () => {
       metaKey: modifiers.meta || false,
       shiftKey: modifiers.shift || false,
       altKey: modifiers.alt || false,
+      repeat: modifiers.repeat || false,
+      code: modifiers.code,
+      target: modifiers.target,
       preventDefault: jest.fn()
     };
     if (keydownHandler) keydownHandler(event);
@@ -201,6 +209,97 @@ describe('useKeyboardShortcuts', () => {
         fireKey('z', { ctrl: true, shift: true });
       });
       expect(mockRedo).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Ctrl/Cmd+Shift+L (Live activity)', () => {
+    test('Ctrl+Shift+L toggles the live activity panel', () => {
+      renderShortcuts();
+      const event = fireKey('L', { ctrl: true, shift: true });
+      expect(event.preventDefault).toHaveBeenCalled();
+      expect(toggleShowLiveActivity).toHaveBeenCalledTimes(1);
+      expect(mockDispatch).toHaveBeenCalledWith({ type: 'test/toggleShowLiveActivity' });
+    });
+
+    test('Cmd+Shift+L works on macOS', () => {
+      renderShortcuts();
+      fireKey('l', { meta: true, shift: true });
+      expect(mockDispatch).toHaveBeenCalledWith({ type: 'test/toggleShowLiveActivity' });
+    });
+
+    test('matches the physical L key on non-Latin layouts', () => {
+      renderShortcuts();
+      fireKey('Д', { ctrl: true, shift: true, code: 'KeyL' });
+      expect(toggleShowLiveActivity).toHaveBeenCalledTimes(1);
+    });
+
+    test('the physical L key does not toggle when the layout types another Latin letter', () => {
+      // Dvorak: the KeyL position types "n" — Ctrl+Shift+N must not toggle.
+      renderShortcuts();
+      const event = fireKey('n', { ctrl: true, shift: true, code: 'KeyL' });
+      expect(event.preventDefault).not.toHaveBeenCalled();
+      expect(toggleShowLiveActivity).not.toHaveBeenCalled();
+    });
+
+    test('the L the layout types toggles wherever the key sits', () => {
+      // Dvorak: "l" is typed from the KeyP position.
+      renderShortcuts();
+      fireKey('L', { ctrl: true, shift: true, code: 'KeyP' });
+      expect(toggleShowLiveActivity).toHaveBeenCalledTimes(1);
+    });
+
+    test('holding the keys toggles once (auto-repeat is ignored)', () => {
+      renderShortcuts();
+      fireKey('L', { ctrl: true, shift: true });
+      const repeat1 = fireKey('L', { ctrl: true, shift: true, repeat: true });
+      const repeat2 = fireKey('L', { ctrl: true, shift: true, repeat: true });
+      expect(toggleShowLiveActivity).toHaveBeenCalledTimes(1);
+      // Repeats are still claimed so nothing else acts on them.
+      expect(repeat1.preventDefault).toHaveBeenCalled();
+      expect(repeat2.preventDefault).toHaveBeenCalled();
+    });
+
+    test('works while an overlay is open', () => {
+      hasActiveOverlay.mockReturnValue(true);
+      renderShortcuts();
+      fireKey('L', { ctrl: true, shift: true });
+      expect(mockDispatch).toHaveBeenCalledWith({ type: 'test/toggleShowLiveActivity' });
+    });
+
+    test('works while Settings is open', () => {
+      mockShowSettings = true;
+      renderShortcuts();
+      fireKey('L', { ctrl: true, shift: true });
+      expect(toggleShowLiveActivity).toHaveBeenCalledTimes(1);
+    });
+
+    test('works from inside a text field, like Ctrl+, (it has no text-editing meaning)', () => {
+      renderShortcuts();
+      const input = document.createElement('input');
+      const textarea = document.createElement('textarea');
+      fireKey('L', { ctrl: true, shift: true, target: input });
+      fireKey('L', { ctrl: true, shift: true, target: textarea });
+      expect(toggleShowLiveActivity).toHaveBeenCalledTimes(2);
+    });
+
+    test('Ctrl+L without Shift does nothing', () => {
+      renderShortcuts();
+      const event = fireKey('l', { ctrl: true });
+      expect(event.preventDefault).not.toHaveBeenCalled();
+      expect(toggleShowLiveActivity).not.toHaveBeenCalled();
+    });
+
+    test('Shift+L without Ctrl/Cmd does nothing', () => {
+      renderShortcuts();
+      const event = fireKey('L', { shift: true });
+      expect(event.preventDefault).not.toHaveBeenCalled();
+      expect(toggleShowLiveActivity).not.toHaveBeenCalled();
+    });
+
+    test('Ctrl+Alt+Shift+L does nothing', () => {
+      renderShortcuts();
+      fireKey('L', { ctrl: true, shift: true, alt: true });
+      expect(toggleShowLiveActivity).not.toHaveBeenCalled();
     });
   });
 

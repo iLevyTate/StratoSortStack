@@ -259,6 +259,135 @@ describe('Logger', () => {
       // must not double-escape backslashes or alter basename output.
       expect(sanitized).toBe('regular log message with path [REDACTED_PATH]\\file.txt');
     });
+
+    describe('every absolute path in one line', () => {
+      test.each([' to ', ', ', ' -> ', ' => '])(
+        'redacts both Windows paths joined by %j, leaving no directory of either',
+        (joiner) => {
+          const raw = String.raw`Failed to move C:\Users\jdoe\Documents\Inbox\Lab results.pdf${joiner}D:\Users\jdoe\Documents\Medical\Lab results.pdf: EBUSY`;
+          const sanitized = sanitizeLogData(raw);
+          expect(sanitized).toBe(
+            String.raw`Failed to move [REDACTED_PATH]\Lab results.pdf${joiner}[REDACTED_PATH]\Lab results.pdf: EBUSY`
+          );
+          expect(sanitized).not.toMatch(/jdoe|Users|Documents|Inbox|Medical/);
+        }
+      );
+
+      test('redacts the asyncFileOps move line with the same drive twice', () => {
+        const sanitized = sanitizeLogData(
+          String.raw`Failed to move C:\Users\jdoe\a.pdf to C:\Users\jdoe\Medical\a.pdf: EPERM`
+        );
+        expect(sanitized).toBe(
+          String.raw`Failed to move [REDACTED_PATH]\a.pdf to [REDACTED_PATH]\a.pdf: EPERM`
+        );
+      });
+
+      test('redacts a UNC path to its basename', () => {
+        const sanitized = sanitizeLogData(String.raw`copy \\server\share\dir\file.pdf done`);
+        expect(sanitized).toBe(String.raw`copy [REDACTED_PATH]\file.pdf done`);
+        expect(sanitized).not.toMatch(/server|share|dir\\/);
+      });
+
+      test('redacts JSON-escaped Windows paths inside a string, keeping the escape', () => {
+        const raw = JSON.stringify({
+          from: 'C:\\Users\\jdoe\\x.pdf',
+          to: '\\\\nas\\home\\jdoe\\y.pdf'
+        });
+        const sanitized = sanitizeLogData(`payload ${raw}`);
+        expect(sanitized).toBe(
+          String.raw`payload {"from":"[REDACTED_PATH]\\x.pdf","to":"[REDACTED_PATH]\\y.pdf"}`
+        );
+        expect(sanitized).not.toMatch(/Users|jdoe|nas|home/);
+        // The redacted text is still valid JSON.
+        expect(JSON.parse(sanitized.slice('payload '.length))).toEqual({
+          from: '[REDACTED_PATH]\\x.pdf',
+          to: '[REDACTED_PATH]\\y.pdf'
+        });
+      });
+
+      test('redacts forward-slash drive paths, including the drive and first folder', () => {
+        const sanitized = sanitizeLogData('open C:/Users/jdoe/x.pdf then D:/Users/jdoe/y.pdf');
+        expect(sanitized).toBe('open [REDACTED_PATH]/x.pdf then [REDACTED_PATH]/y.pdf');
+        expect(sanitized).not.toMatch(/Users|jdoe|C:|D:/);
+      });
+
+      test.each([
+        [
+          String.raw`Moved C:\Users\Bob\a.pdf to Finance/Taxes`,
+          String.raw`Moved [REDACTED_PATH]\a.pdf to Finance/Taxes`
+        ],
+        [
+          String.raw`Loaded C:\Models\qwen.gguf in 300ms (gpu=yes, 50% layers/offload)`,
+          String.raw`Loaded [REDACTED_PATH]\qwen.gguf in 300ms (gpu=yes, 50% layers/offload)`
+        ],
+        [
+          String.raw`[FILE-OPS] Move completed C:\Users\Bob\Inbox\a.pdf -> C:\Users\Bob\Finance\a.pdf (12/40)`,
+          String.raw`[FILE-OPS] Move completed [REDACTED_PATH]\a.pdf -> [REDACTED_PATH]\a.pdf (12/40)`
+        ],
+        [
+          String.raw`payload {"from":"C:\\Users\\Bob\\a.pdf","note":"12/40"}`,
+          String.raw`payload {"from":"[REDACTED_PATH]\\a.pdf","note":"12/40"}`
+        ]
+      ])('a backslash path stops at its own separators, not a later slash: %s', (raw, expected) => {
+        expect(sanitizeLogData(raw)).toBe(expected);
+      });
+
+      test('keeps basenames with spaces, brackets and parentheses whole', () => {
+        expect(sanitizeLogData(String.raw`C:\Users\jdoe\My Docs\report [final] (2).pdf`)).toBe(
+          String.raw`[REDACTED_PATH]\report [final] (2).pdf`
+        );
+        expect(sanitizeLogData('C:/Users/jdoe/My Docs/report [final] (2).pdf')).toBe(
+          '[REDACTED_PATH]/report [final] (2).pdf'
+        );
+      });
+
+      test('leaves POSIX paths, ratios, times and URLs as they were', () => {
+        expect(sanitizeLogData('/home/me/a.pdf')).toBe('[REDACTED_PATH]/a.pdf');
+        expect(sanitizeLogData('ratio 3:4 at 10:30')).toBe('ratio 3:4 at 10:30');
+        // URLs: the scheme's single trailing letter is not a drive, so the
+        // drive-path pass must not touch them (the POSIX pass already
+        // reduced their path to the last segment before this change).
+        expect(sanitizeLogData('see https://x/y')).toBe('see https:/[REDACTED_PATH]/y');
+        expect(sanitizeLogData('GET http://localhost:8080/api/v1/models')).toBe(
+          'GET http:/[REDACTED_PATH]/models'
+        );
+      });
+
+      test('keeps the line and column of a stack frame and node:internal frames', () => {
+        expect(
+          sanitizeLogData(
+            String.raw`at foo (C:\app\src\x.js:10:5) at node:internal/process/task_queues:104:5`
+          )
+        ).toBe(
+          String.raw`at foo ([REDACTED_PATH]\x.js:10:5) at node:internal/process/task_queues:104:5`
+        );
+      });
+
+      test('stays linear on long hostile inputs', () => {
+        const hostile = [
+          'C:\\' + 'a'.repeat(50000),
+          'C:\\a'.repeat(12500),
+          '\\\\' + 'a\\'.repeat(25000),
+          'C:/' + 'a/'.repeat(25000) + ' ',
+          'x' + 'aC:'.repeat(16000),
+          'C:\\' + ' to C'.repeat(10000) + ':',
+          '\\\\'.repeat(25000) + 'x',
+          'C:' + '\\'.repeat(50000),
+          '\\\\a:'.repeat(12500),
+          'C:\\' + 'C:\\'.repeat(16000),
+          'C:' + '\\'.repeat(25000) + 'a' + '\\'.repeat(24999) + 'a',
+          'C:\\\\a\\'.repeat(10000),
+          '\\\\\\\\a\\\\\\'.repeat(6000),
+          'C:/a\\'.repeat(10000)
+        ];
+        for (const input of hostile) {
+          const start = Date.now();
+          const out = sanitizeLogData(input);
+          expect(typeof out).toBe('string');
+          expect(Date.now() - start).toBeLessThan(500);
+        }
+      });
+    });
   });
 
   describe('logging methods', () => {

@@ -44,6 +44,18 @@ describe('z-index layering (styles.css)', () => {
     expect(token('--z-tooltip')).toBeLessThan(token('--z-modal'));
   });
 
+  test('the live activity panel floats above page overlays, below tooltips, modals and toasts', () => {
+    expect(token('--z-floating-panel')).toBe(300);
+    expect(token('--z-floating-panel')).toBeGreaterThan(token('--z-overlay'));
+    expect(token('--z-floating-panel')).toBeLessThan(token('--z-tooltip'));
+    expect(token('--z-floating-panel')).toBeLessThan(token('--z-modal'));
+    expect(token('--z-floating-panel')).toBeLessThan(token('--z-toast'));
+  });
+
+  test('the floating-panel layer has its @utility class', () => {
+    expect(css).toMatch(/@utility z-floating-panel\s*\{\s*z-index:\s*var\(--z-floating-panel\)/);
+  });
+
   test('tooltip-enhanced uses the tooltip token, not the toast token', () => {
     const tooltipBlock = css.match(/\.tooltip-enhanced\s*\{[^}]+\}/);
     expect(tooltipBlock).not.toBeNull();
@@ -58,7 +70,7 @@ describe('z-index layering (styles.css)', () => {
     // sat at z-auto from PR #349 until the utilities were added).
     const srcDir = path.join(process.cwd(), 'src/renderer');
     const classRe =
-      /className[^\n]*?\bz-(modal-consent|modal|toast|header|overlay|tooltip|skip-link)\b/;
+      /className[^\n]*?\bz-(modal-consent|modal|toast|header|overlay|tooltip|skip-link|floating-panel)\b/;
     const usedTokens = new Set();
     const walk = (dir) => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

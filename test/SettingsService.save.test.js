@@ -118,6 +118,41 @@ describe('SettingsService.save (mutex/backups/retries)', () => {
     );
   });
 
+  describe('UI bookkeeping keys take no pre-save backup', () => {
+    // Each snapshot pushes an older, meaningful one out of the automatic
+    // rotation, so a save that only touches these keys skips it.
+    async function saveWith(partial) {
+      const SettingsService = loadService();
+      const service = new SettingsService();
+      const backupAndReplace = getBackupAndReplace();
+      service._loadRaw = jest.fn().mockResolvedValue({ confidenceThreshold: 0.5 });
+      service.createBackup = jest.fn().mockResolvedValue({ success: true, path: 'C:\\b.json' });
+      backupAndReplace.mockResolvedValue({ success: true });
+      const res = await service.save(partial);
+      return { service, res, backupAndReplace };
+    }
+
+    test.each([
+      ['lastBrowsedPath', { lastBrowsedPath: 'C:\\Users\\me\\Documents' }],
+      ['showLiveActivity (the Live Activity toggle)', { showLiveActivity: true }],
+      ['both together', { lastBrowsedPath: 'C:\\Users\\me\\Documents', showLiveActivity: false }]
+    ])('saving only %s writes the settings without a backup', async (_label, partial) => {
+      const { service, res, backupAndReplace } = await saveWith(partial);
+
+      expect(service.createBackup).not.toHaveBeenCalled();
+      expect(res.backupCreated).toBe(false);
+      expect(backupAndReplace).toHaveBeenCalledWith(service.settingsPath, expect.any(String));
+      expect(res.settings).toEqual(expect.objectContaining(partial));
+    });
+
+    test('an exempt key saved with a configuration key still takes a backup', async () => {
+      const { service, res } = await saveWith({ showLiveActivity: true, textModel: 'y' });
+
+      expect(service.createBackup).toHaveBeenCalledTimes(1);
+      expect(res.backupCreated).toBe(true);
+    });
+  });
+
   test('save retries backup creation with exponential backoff on exception', async () => {
     const SettingsService = loadService();
     const service = new SettingsService();

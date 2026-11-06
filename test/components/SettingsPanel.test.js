@@ -429,6 +429,139 @@ describe('SettingsPanel regression guards', () => {
     });
   });
 
+  describe('showLiveActivity belongs to the live-activity thunks, not the panel', () => {
+    // Ctrl/Cmd+Shift+L, the Diagnostics switch and the Live Activity panel's
+    // Close button each save just that key (liveActivityThunks). The panel
+    // must not treat such a toggle as an external change, save it, or write
+    // it to the store — or "Keep local edits" / the next auto-save would put
+    // an old value back.
+    const shortcutToggle = (rerender, showLiveActivity, renderKey) => {
+      mockState = {
+        ...mockState,
+        ui: {
+          ...mockState.ui,
+          settings: { ...mockState.ui.settings, showLiveActivity }
+        }
+      };
+      rerender(<SettingsPanel __testForceRender={renderKey} />);
+    };
+    const storeWritesOfShowLiveActivity = () =>
+      mockUpdateSettings.mock.calls.filter(
+        ([payload]) => payload && Object.prototype.hasOwnProperty.call(payload, 'showLiveActivity')
+      );
+
+    beforeEach(() => {
+      mockState = {
+        ui: {
+          settings: {
+            language: 'en',
+            defaultSmartFolderLocation: 'C:/Initial',
+            showLiveActivity: false
+          }
+        }
+      };
+      mockSettingsGet.mockResolvedValue({
+        language: 'en',
+        defaultSmartFolderLocation: 'C:/Initial',
+        showLiveActivity: false
+      });
+    });
+
+    test('a toggle while edits are unsaved raises no conflict', async () => {
+      const { rerender } = render(<SettingsPanel />);
+      await waitFor(() => expect(mockSettingsGet).toHaveBeenCalled());
+      await screen.findByRole('searchbox', { name: /search settings/i });
+
+      fireEvent.click(screen.getByTestId('local-edit'));
+      shortcutToggle(rerender, true, 1);
+
+      await waitFor(() => {
+        expect(screen.queryByText('External update detected')).not.toBeInTheDocument();
+      });
+      expect(mockAddNotification).not.toHaveBeenCalledWith(
+        expect.any(String),
+        'warning',
+        expect.anything(),
+        'settings-conflict'
+      );
+      // The pending save of the user's edit is not frozen either.
+      expect(mockDebouncedAutoSave.cancel).not.toHaveBeenCalled();
+    });
+
+    test("the panel's later save leaves the toggled value alone", async () => {
+      // The save answers with a stale on-disk value (a thunk save still in
+      // flight) — the panel must not copy it into the store either.
+      mockSettingsSave.mockResolvedValue({
+        success: true,
+        settings: {
+          language: 'local',
+          defaultSmartFolderLocation: 'C:/Initial',
+          showLiveActivity: false
+        }
+      });
+      const { rerender } = render(<SettingsPanel />);
+      await waitFor(() => expect(mockSettingsGet).toHaveBeenCalled());
+      await screen.findByRole('searchbox', { name: /search settings/i });
+
+      fireEvent.click(screen.getByTestId('local-edit'));
+      shortcutToggle(rerender, true, 1);
+
+      await mockAutoSaveCapture.current();
+
+      expect(mockSettingsSave).toHaveBeenCalledTimes(1);
+      const payload = mockSettingsSave.mock.calls[0][0];
+      expect(payload).toEqual(expect.objectContaining({ language: 'local' }));
+      expect(payload).not.toHaveProperty('showLiveActivity');
+      // Neither the initial load nor the save's answer wrote it to the store.
+      expect(storeWritesOfShowLiveActivity()).toEqual([]);
+    });
+
+    test('a toggle alone (no unsaved edits) does not trigger a save', async () => {
+      const { rerender } = render(<SettingsPanel />);
+      await waitFor(() => expect(mockSettingsGet).toHaveBeenCalled());
+      await screen.findByRole('searchbox', { name: /search settings/i });
+
+      shortcutToggle(rerender, true, 1);
+      await mockAutoSaveCapture.current();
+
+      expect(mockSettingsSave).not.toHaveBeenCalled();
+    });
+
+    test('"Reload external settings" does not replay a stale showLiveActivity', async () => {
+      const { rerender } = render(<SettingsPanel />);
+      await waitFor(() => expect(mockSettingsGet).toHaveBeenCalled());
+      await screen.findByRole('searchbox', { name: /search settings/i });
+
+      fireEvent.click(screen.getByTestId('local-edit'));
+      // A real external change (with the panel on) raises the conflict card…
+      mockState = {
+        ...mockState,
+        ui: {
+          ...mockState.ui,
+          settings: {
+            language: 'external',
+            defaultSmartFolderLocation: 'C:/External',
+            showLiveActivity: true
+          }
+        }
+      };
+      rerender(<SettingsPanel __testForceRender={1} />);
+      expect(await screen.findByText('External update detected')).toBeInTheDocument();
+
+      // …then the shortcut turns the panel off while the card is open.
+      shortcutToggle(rerender, false, 2);
+      mockUpdateSettings.mockClear();
+      fireEvent.click(screen.getByRole('button', { name: 'Reload external settings' }));
+
+      await waitFor(() =>
+        expect(mockUpdateSettings).toHaveBeenCalledWith(
+          expect.objectContaining({ language: 'external' })
+        )
+      );
+      expect(storeWritesOfShowLiveActivity()).toEqual([]);
+    });
+  });
+
   test('simple mode hides advanced settings until advanced mode is selected', async () => {
     mockState = {
       ui: {
