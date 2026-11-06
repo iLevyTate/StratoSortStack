@@ -5,17 +5,22 @@
  * Subscribes while `enabled` (the panel stays subscribed when minimized so
  * its activity dot keeps working), merges the backlog and pushed batches by
  * entry id, keeps at most MAX_RENDERER_ENTRIES, and while paused holds new
- * entries aside (counted, not shown) until resume. Unsubscribes on unmount.
+ * entries aside (counted, not shown; the held list and its count both stop
+ * at MAX_RENDERER_ENTRIES) until resume. Unsubscribes on unmount.
+ * Supports one consumer per window: main keeps one subscription per window,
+ * so a second mounted hook's unmount would end the first one's feed.
  *
  * Ordering:
  * - The batch listener is registered before subscribing, so a batch pushed
  *   before the subscribe reply is kept; it is applied after the backlog
  *   (ids only grow, so the backlog must go first) and overlaps are dropped
  *   by id.
- * - Main keeps one subscription per window. A new subscription waits for the
- *   previous one's unsubscribe to settle (`previousRelease`, shared by every
- *   mount), so a fresh view never inherits the old one's dropped carry, and
- *   an unmount while subscribe is pending unsubscribes once it settles.
+ * - A new subscription waits for the previous one's unsubscribe to settle
+ *   (`previousRelease`, shared by every mount), so a fresh view never
+ *   inherits the old one's dropped carry, and an unmount while subscribe is
+ *   pending unsubscribes once it settles. Batches that arrive during that
+ *   wait belong to the old subscription (they share one ordered IPC pipe
+ *   with the unsubscribe reply) and are ignored.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { systemIpc } from '../services/ipc';
@@ -39,6 +44,11 @@ export const RECENT_ACTIVITY_MS = 3000;
 let previousRelease = Promise.resolve();
 
 function noop() {}
+
+/** Test hook: forget any release still pending from an earlier test. */
+export function __resetLiveLogFeedForTests() {
+  previousRelease = Promise.resolve();
+}
 
 /**
  * Best-effort unsubscribe that never throws or rejects.
@@ -116,6 +126,8 @@ export function useLiveLogFeed({ enabled = true } = {}) {
   const pausedRef = useRef(false);
   const lastSeenIdRef = useRef(-1);
   const heldRef = useRef(/** @type {LiveLogEntry[]} */ ([]));
+  /** Batches pushed before the subscribe reply; emptied by clear(). */
+  const earlyRef = useRef(/** @type {ValidBatch[]} */ ([]));
   const activityTimerRef = useRef(/** @type {ReturnType<typeof setTimeout> | null} */ (null));
 
   const markActive = useCallback(() => {
@@ -136,7 +148,7 @@ export function useLiveLogFeed({ enabled = true } = {}) {
       markActive();
       if (pausedRef.current) {
         heldRef.current = capEntries(heldRef.current.concat(fresh));
-        setPausedCount((count) => count + fresh.length);
+        setPausedCount((count) => Math.min(MAX_RENDERER_ENTRIES, count + fresh.length));
         return;
       }
       setEntries((list) => capEntries(list.concat(fresh)));
@@ -160,6 +172,7 @@ export function useLiveLogFeed({ enabled = true } = {}) {
 
   const clear = useCallback(() => {
     heldRef.current = [];
+    earlyRef.current.length = 0;
     setEntries([]);
     setPausedCount(0);
     setDropped(0);
@@ -172,8 +185,12 @@ export function useLiveLogFeed({ enabled = true } = {}) {
     }
     let cancelled = false;
     let ready = false;
+    /** @type {Promise<unknown> | null} */
+    let subscribing = null;
+    let settled = false;
     /** @type {ValidBatch[]} */
     const early = [];
+    earlyRef.current = early;
     setStatus('connecting');
 
     /** @type {() => void} */
@@ -184,6 +201,9 @@ export function useLiveLogFeed({ enabled = true } = {}) {
         // line comes back as a feed entry, and the handler runs again.
         try {
           if (cancelled) return;
+          // Still waiting on the previous release: this batch is the old
+          // subscription's.
+          if (!subscribing) return;
           const batch = asBatch(payload);
           if (!batch) return;
           if (!ready) {
@@ -201,10 +221,6 @@ export function useLiveLogFeed({ enabled = true } = {}) {
         cancelled = true;
       };
     }
-
-    /** @type {Promise<unknown> | null} */
-    let subscribing = null;
-    let settled = false;
 
     const start = async () => {
       await previousRelease;

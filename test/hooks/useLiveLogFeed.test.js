@@ -23,6 +23,7 @@ jest.mock('../../src/renderer/services/ipc', () => ({
 import {
   MAX_RENDERER_ENTRIES,
   RECENT_ACTIVITY_MS,
+  __resetLiveLogFeedForTests,
   capEntries,
   selectFreshEntries,
   useLiveLogFeed
@@ -88,6 +89,7 @@ describe('selectFreshEntries / capEntries', () => {
 describe('useLiveLogFeed', () => {
   beforeEach(() => {
     jest.useFakeTimers();
+    __resetLiveLogFeedForTests();
     mockSubscribe.mockReset();
     mockUnsubscribe.mockReset();
     mockUnsubscribe.mockResolvedValue(undefined);
@@ -120,6 +122,8 @@ describe('useLiveLogFeed', () => {
     const pending = deferred();
     mockSubscribe.mockReturnValue(pending.promise);
     const { result } = renderHook(() => useLiveLogFeed());
+    await settle();
+    expect(mockSubscribe).toHaveBeenCalledTimes(1);
 
     act(() => mockBatchListener({ entries: [entry(3)], dropped: 0 }));
     await act(async () => {
@@ -133,6 +137,7 @@ describe('useLiveLogFeed', () => {
     const pending = deferred();
     mockSubscribe.mockReturnValue(pending.promise);
     const { result } = renderHook(() => useLiveLogFeed());
+    await settle();
 
     act(() => mockBatchListener({ entries: [entry(2), entry(3)], dropped: 1 }));
     await act(async () => {
@@ -224,6 +229,72 @@ describe('useLiveLogFeed', () => {
     expect(ids(result.current.entries)).toEqual([1, 2, 3]);
   });
 
+  test('pausedCount and the held entries stop at 500; resume shows the newest 500', async () => {
+    mockSubscribe.mockResolvedValue({ entries: [entry(1)] });
+    const { result } = renderHook(() => useLiveLogFeed());
+    await settle();
+
+    act(() => result.current.pause());
+    act(() => mockBatchListener({ entries: range(2, 401), dropped: 0 }));
+    act(() => mockBatchListener({ entries: range(402, 701), dropped: 0 }));
+    expect(result.current.pausedCount).toBe(MAX_RENDERER_ENTRIES);
+    expect(ids(result.current.entries)).toEqual([1]);
+
+    act(() => result.current.resume());
+    expect(result.current.pausedCount).toBe(0);
+    expect(result.current.entries).toHaveLength(MAX_RENDERER_ENTRIES);
+    expect(result.current.entries[0].id).toBe(202);
+    expect(result.current.entries[MAX_RENDERER_ENTRIES - 1].id).toBe(701);
+  });
+
+  test('an overlapping batch while paused does not inflate pausedCount', async () => {
+    mockSubscribe.mockResolvedValue({ entries: [entry(1)] });
+    const { result } = renderHook(() => useLiveLogFeed());
+    await settle();
+
+    act(() => result.current.pause());
+    act(() => mockBatchListener({ entries: [entry(1), entry(2), entry(3)], dropped: 0 }));
+    act(() => mockBatchListener({ entries: [entry(2), entry(3), entry(4)], dropped: 0 }));
+    expect(result.current.pausedCount).toBe(3);
+
+    act(() => result.current.resume());
+    expect(ids(result.current.entries)).toEqual([1, 2, 3, 4]);
+  });
+
+  test('clear while paused drops the held entries and stays paused', async () => {
+    mockSubscribe.mockResolvedValue({ entries: [entry(1)] });
+    const { result } = renderHook(() => useLiveLogFeed());
+    await settle();
+
+    act(() => result.current.pause());
+    act(() => mockBatchListener({ entries: [entry(2), entry(3)], dropped: 0 }));
+    act(() => result.current.clear());
+    expect(result.current.pausedCount).toBe(0);
+    expect(result.current.paused).toBe(true);
+    expect(result.current.entries).toEqual([]);
+
+    act(() => mockBatchListener({ entries: [entry(4)], dropped: 0 }));
+    expect(result.current.pausedCount).toBe(1);
+    act(() => result.current.resume());
+    expect(ids(result.current.entries)).toEqual([4]);
+  });
+
+  test('clear while connecting also discards batches held for after the backlog', async () => {
+    const pending = deferred();
+    mockSubscribe.mockReturnValue(pending.promise);
+    const { result } = renderHook(() => useLiveLogFeed());
+    await settle();
+
+    act(() => mockBatchListener({ entries: [entry(3)], dropped: 2 }));
+    act(() => result.current.clear());
+    await act(async () => {
+      pending.resolve({ entries: [entry(1), entry(2)] });
+    });
+
+    expect(ids(result.current.entries)).toEqual([1, 2]);
+    expect(result.current.dropped).toBe(0);
+  });
+
   test('clear empties the list and old entries do not come back', async () => {
     mockSubscribe.mockResolvedValue({ entries: [entry(1)] });
     const { result } = renderHook(() => useLiveLogFeed());
@@ -289,9 +360,8 @@ describe('useLiveLogFeed', () => {
     const { result } = renderHook(() => useLiveLogFeed(), { wrapper: React.StrictMode });
     await settle();
 
-    const subscribed = mockSubscribe.mock.calls.length;
-    const unsubscribed = mockUnsubscribe.mock.calls.length;
-    expect(subscribed - unsubscribed).toBe(1);
+    expect(mockSubscribe).toHaveBeenCalledTimes(1);
+    expect(mockUnsubscribe).not.toHaveBeenCalled();
     expect(result.current.status).toBe('live');
     expect(ids(result.current.entries)).toEqual([1]);
 
@@ -345,6 +415,33 @@ describe('useLiveLogFeed', () => {
     });
     expect(mockSubscribe).toHaveBeenCalledTimes(2);
     expect(second.result.current.status).toBe('live');
+  });
+
+  test('a batch from the old subscription during the release wait never reaches the new view', async () => {
+    mockSubscribe.mockResolvedValue({ entries: [] });
+    const releaseUnsubscribe = deferred();
+    mockUnsubscribe.mockReturnValue(releaseUnsubscribe.promise);
+    const first = renderHook(() => useLiveLogFeed());
+    await settle();
+    first.unmount();
+
+    const second = renderHook(() => useLiveLogFeed());
+    await settle();
+    // Still in flight from the old subscription, ahead of the unsubscribe reply.
+    act(() => mockBatchListener({ entries: [entry(5)], dropped: 7 }));
+
+    mockSubscribe.mockResolvedValue({ entries: [entry(6)] });
+    await act(async () => {
+      releaseUnsubscribe.resolve(undefined);
+    });
+
+    expect(mockSubscribe).toHaveBeenCalledTimes(2);
+    expect(ids(second.result.current.entries)).toEqual([6]);
+    expect(second.result.current.dropped).toBe(0);
+
+    act(() => mockBatchListener({ entries: [entry(7)], dropped: 1 }));
+    expect(ids(second.result.current.entries)).toEqual([6, 7]);
+    expect(second.result.current.dropped).toBe(1);
   });
 
   test('a rejected unsubscribe does not block the next subscription', async () => {
