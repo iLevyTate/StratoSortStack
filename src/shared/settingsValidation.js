@@ -476,6 +476,11 @@ const VALIDATION_RULES = {
     type: 'boolean',
     required: false
   },
+  // Live Activity panel on/off (Settings → Diagnostics, Ctrl/Cmd+Shift+L).
+  showLiveActivity: {
+    type: 'boolean',
+    required: false
+  },
   // Advanced-mode values parked while Simple mode is on (see
   // experienceMode.carryAdvancedValuesAcrossModeSwitch). A plain object whose
   // keys are a subset of SIMPLE_MODE_ENFORCED_VALUES, each value valid under

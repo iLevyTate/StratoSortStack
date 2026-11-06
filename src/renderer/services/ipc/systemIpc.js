@@ -63,6 +63,47 @@ export const systemIpc = {
     }
     return api.dismissDegradedFlag(code);
   },
+  /** @returns {Promise<{ entries: any[] }>} */
+  async subscribeLiveLog() {
+    const api = requireElectronAPI().system;
+    if (typeof api.subscribeLiveLog !== 'function') {
+      throw new Error('Live activity is unavailable in this build');
+    }
+    const result = await api.subscribeLiveLog();
+    if (result && typeof result === 'object' && result.success === false) {
+      // The main handler fails with createErrorResponse ({ error: { code, message } });
+      // the preload result validator's fallback uses a plain string `error`.
+      const message = typeof result.error === 'string' ? result.error : result.error?.message;
+      throw new Error(message || 'Failed to start live activity');
+    }
+    return { entries: Array.isArray(result?.entries) ? result.entries : [] };
+  },
+  /**
+   * Best-effort: an error response (`{ success: false }`) is not surfaced and
+   * a missing bridge is a no-op. Main also drops a window's subscription when
+   * it is destroyed, crashes or navigates. Only a rejected invoke (e.g. an
+   * IPC timeout) rejects.
+   * @returns {Promise<void>}
+   */
+  async unsubscribeLiveLog() {
+    const api = requireElectronAPI().system;
+    if (typeof api.unsubscribeLiveLog !== 'function') return;
+    await api.unsubscribeLiveLog();
+  },
+  /**
+   * Registers nothing (and returns a no-op cleanup) when `callback` is not a
+   * function: preload's safeOn would log an error for every batch, and that
+   * log line would itself come back as a feed entry, once per batch.
+   * @param {(payload: any) => void} callback
+   * @returns {() => void}
+   */
+  onLiveLogBatch(callback) {
+    if (typeof callback !== 'function') return () => {};
+    const api = requireElectronAPI().system;
+    if (typeof api.onLiveLogBatch !== 'function') return () => {};
+    const off = api.onLiveLogBatch(callback);
+    return typeof off === 'function' ? off : () => {};
+  },
   async getMetrics() {
     const api = requireElectronAPI().system;
     if (typeof api.getMetrics !== 'function') {

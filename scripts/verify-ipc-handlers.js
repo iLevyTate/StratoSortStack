@@ -50,6 +50,9 @@ const KNOWN_EVENT_ONLY_CHANNELS = new Set([
   // once the constants were promoted into IPC_CHANNELS.
   'DOWNLOADS.TRIAGE_SCAN_PROGRESS',
   'DOWNLOADS.TRIAGE_SESSION_INVALIDATED',
+  // Live Activity panel log batches, pushed by src/main/services/liveLogFeed.js
+  // via safeSend to windows that invoked SYSTEM.LIVE_LOG_SUBSCRIBE.
+  'SYSTEM.LIVE_LOG_BATCH',
   // Fire-and-forget listener registered in simple-main.js via ipcMain.on() (not in src/main/ipc/)
   'SYSTEM.RENDERER_ERROR_REPORT',
   // Preload -> main abort signal for in-flight invokes on IPC timeout; listener

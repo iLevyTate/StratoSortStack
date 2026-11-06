@@ -101,6 +101,45 @@ describe('OramaVectorService saves only what changed', () => {
     expect(wrote('folders.json')).toBe(false);
   });
 
+  test('a save that writes logs "Persisted databases" at info outside development', async () => {
+    // The Live Activity feed only sees enabled levels; production runs at
+    // info, so a debug-only line would never reach it.
+    expect(process.env.NODE_ENV).not.toBe('development');
+    const logger = require('../src/shared/logger').logger;
+    await save();
+    await service.upsertFile({ id: 'file:a', vector: vector(), meta: { path: '/nowhere/a.txt' } });
+    logger.info.mockClear();
+    logger.debug.mockClear();
+    await save();
+
+    expect(logger.info).toHaveBeenCalledWith('[OramaVectorService] Persisted databases', {
+      collections: ['files'],
+      full: false,
+      durationMs: expect.any(Number)
+    });
+    expect(logger.debug).not.toHaveBeenCalledWith(
+      '[OramaVectorService] Persisted databases',
+      expect.anything()
+    );
+  });
+
+  test('a save with nothing to write keeps "Persisted databases" at debug', async () => {
+    const logger = require('../src/shared/logger').logger;
+    await save();
+    logger.info.mockClear();
+    logger.debug.mockClear();
+    await save();
+
+    expect(logger.info).not.toHaveBeenCalledWith(
+      '[OramaVectorService] Persisted databases',
+      expect.anything()
+    );
+    expect(logger.debug).toHaveBeenCalledWith(
+      '[OramaVectorService] Persisted databases',
+      expect.objectContaining({ collections: [] })
+    );
+  });
+
   test('a save with nothing changed writes nothing', async () => {
     await save();
     writes.length = 0;

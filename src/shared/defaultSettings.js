@@ -159,6 +159,9 @@ const DEFAULT_SETTINGS = {
   // Off by default: each video adds ffmpeg scene detection plus up to six
   // vision-model calls (tens of seconds on CPU). Settings → Processing limits.
   captionVideoKeyframes: false,
+  // Floating Live Activity panel (Settings → Diagnostics, Ctrl/Cmd+Shift+L).
+  // Off by default: nothing is streamed from the logger while it is closed.
+  showLiveActivity: false,
   // Advanced-mode values parked while Simple mode is on. Simple mode
   // enforces SIMPLE_MODE_ENFORCED_VALUES over five hidden controls; the
   // user's own choices for those controls are kept here and put back when

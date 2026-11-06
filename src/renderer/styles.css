@@ -99,6 +99,9 @@
   /* Z-Index */
   --z-header: 100;
   --z-overlay: 200;
+  /* Live Activity panel: floats above page content and overlays, below
+     tooltips, modal dialogs and toasts. Guarded by test/ux/zIndexLayering. */
+  --z-floating-panel: 300;
   /* Page tooltips sit below modal scrims (an open dialog should mask them). */
   --z-tooltip: 500;
   --z-modal: 600;
@@ -2050,6 +2053,9 @@
    read the theme variable directly. Guarded by test/ux/zIndexLayering. */
 @utility z-overlay {
   z-index: var(--z-overlay);
+}
+@utility z-floating-panel {
+  z-index: var(--z-floating-panel);
 }
 @utility z-modal {
   z-index: var(--z-modal);

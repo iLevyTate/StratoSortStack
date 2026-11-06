@@ -92,7 +92,6 @@ const VERIFY_MAX_DELAY_MS = RETRY?.FILE_OPERATION?.maxDelay ?? 5000;
 
 const MAX_RESULTS_PER_CHUNK = 100; // Max results per IPC message chunk
 const YIELD_EVERY_N_OPS = 10; // Yield to event loop every N operations
-const ENABLE_BATCH_TRACE_LOGS = process.env.NODE_ENV === 'development';
 
 // Cap for the dry-run preview's check-then-walk collision search. Lower than
 // MAX_NUMERIC_RETRIES (5000) because the preview enumerates serially via
@@ -790,13 +789,16 @@ async function handleBatchOrganize(params) {
                 reason: moveResult.reason
               });
 
-              if (ENABLE_BATCH_TRACE_LOGS) {
-                log.info('[FILE-OPS] Move skipped (duplicate)', {
-                  batchId,
-                  source: op.source,
-                  destination: resolvedDestination
-                });
-              }
+              // One info line per skipped file in every build: the Live
+              // Activity feed shows "Skipped <name> (already in place)". File
+              // names only, never folders or content: the logger's POSIX path
+              // redaction stops at the first space, so a full path could leak
+              // folder names such as "Medical Records" into the log.
+              log.info('[FILE-OPS] Move skipped (duplicate)', {
+                batchId,
+                source: path.basename(op.source),
+                destination: path.basename(resolvedDestination)
+              });
 
               // Verify state is consistent (dest exists, source gone)
               await verifyMoveCompletion(op.source, resolvedDestination, log);
@@ -844,15 +846,16 @@ async function handleBatchOrganize(params) {
               }
             }
 
-            if (ENABLE_BATCH_TRACE_LOGS) {
-              log.info('[FILE-OPS] Move completed', {
-                batchId,
-                index: i,
-                source: op.source,
-                destination: op.destination,
-                durationMs: Date.now() - opStart
-              });
-            }
+            // One info line per moved file in every build (not trace-only):
+            // the Live Activity feed turns it into "Filed <name>". File names
+            // only, never folders or content (see the skipped line above).
+            log.info('[FILE-OPS] Move completed', {
+              batchId,
+              index: i,
+              source: path.basename(op.source),
+              destination: path.basename(op.destination),
+              durationMs: Date.now() - opStart
+            });
 
             // Post-move verification: ensure destination exists and source is gone
             await verifyMoveCompletion(op.source, op.destination, log);

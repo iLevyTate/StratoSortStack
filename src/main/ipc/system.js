@@ -426,6 +426,50 @@ function registerSystemIpc(servicesOrParams) {
     })
   );
 
+  // Live Activity panel. The feed streams to the calling window
+  // (event.sender) until it unsubscribes, or its page is destroyed, crashes
+  // or navigates away.
+  // Lazy require keeps the feed (and its logger listener) out of startup.
+  safeHandle(
+    ipcMain,
+    IPC_CHANNELS.SYSTEM.LIVE_LOG_SUBSCRIBE,
+    createHandler({
+      logger,
+      context,
+      schema: schemas?.ipcVoidPayload,
+      handler: async (/** @type {any} */ event) => {
+        try {
+          const { getLiveLogFeed } = require('../services/liveLogFeed');
+          const { entries } = getLiveLogFeed().subscribe(event?.sender);
+          return { success: true, entries };
+        } catch (error) {
+          logger.error('Failed to subscribe to the live log feed:', error);
+          return createErrorResponse(error);
+        }
+      }
+    })
+  );
+
+  safeHandle(
+    ipcMain,
+    IPC_CHANNELS.SYSTEM.LIVE_LOG_UNSUBSCRIBE,
+    createHandler({
+      logger,
+      context,
+      schema: schemas?.ipcVoidPayload,
+      handler: async (/** @type {any} */ event) => {
+        try {
+          const { getLiveLogFeed } = require('../services/liveLogFeed');
+          getLiveLogFeed().unsubscribe(event?.sender);
+          return { success: true };
+        } catch (error) {
+          logger.error('Failed to unsubscribe from the live log feed:', error);
+          return createErrorResponse(error);
+        }
+      }
+    })
+  );
+
   safeHandle(
     ipcMain,
     IPC_CHANNELS.SYSTEM.APPLY_UPDATE,

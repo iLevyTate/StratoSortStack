@@ -32,6 +32,9 @@ const PhaseErrorBoundary = /** @type {any} */ (_PhaseErrorBoundary);
 // streams in alongside the active phase chunk.
 const PhaseRenderer = lazy(() => import('./components/PhaseRenderer'));
 const DashboardView = lazy(() => import('./components/dashboard/DashboardView'));
+// Live Activity panel: lazy so its code (virtualized rows, icons) only loads
+// once someone turns it on (Settings → Diagnostics or Ctrl/Cmd+Shift+L).
+const LiveActivityPanel = lazy(() => import('./components/diagnostics/LiveActivityPanel'));
 // The settings overlay mounts HERE — not inside PhaseRenderer — because the
 // dashboard surface replaces PhaseRenderer entirely. When it lived in
 // PhaseRenderer, the gear on the dashboard flipped ui.showSettings with no
@@ -54,6 +57,13 @@ function AppContent() {
   const effectiveDashboard = viewMode === 'dashboard' && smartFoldersConfigured;
   const selectedTheme = useAppSelector((/** @type {any} */ state) => state.ui.selectedTheme);
   const showSettings = useAppSelector((/** @type {any} */ state) => state.ui.showSettings);
+  // Strict `=== true`: settings may be null (nothing persisted yet) or the
+  // copy restored from localStorage at startup (store/index.js), so the panel
+  // mounts from that restored value and follows the settings load after it;
+  // a missing or non-boolean value never mounts it.
+  const showLiveActivity = useAppSelector(
+    (/** @type {any} */ state) => state.ui.settings?.showLiveActivity === true
+  );
   const settingsEventsEnabled =
     typeof window !== 'undefined' && window.electronAPI?.events?.onSettingsChanged;
 
@@ -180,6 +190,22 @@ function AppContent() {
       <ErrorBoundary contextName="TooltipManager" fallback={noopFallback}>
         <TooltipManager />
       </ErrorBoundary>
+
+      {/* One instance only: the live-log feed supports a single consumer per
+          window. Own boundary + Suspense with null fallbacks so a panel crash
+          (or a failed chunk load) just drops the panel. Chunk recovery is off:
+          an optional diagnostics panel must never trigger a window reload. */}
+      {showLiveActivity && (
+        <ErrorBoundary
+          contextName="LiveActivityPanel"
+          fallback={noopFallback}
+          enableChunkRecovery={false}
+        >
+          <Suspense fallback={null}>
+            <LiveActivityPanel />
+          </Suspense>
+        </ErrorBoundary>
+      )}
     </>
   );
 }
