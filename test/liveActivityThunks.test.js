@@ -174,13 +174,58 @@ describe('live activity thunks', () => {
       first.reject(new Error('IPC timeout'));
       await expect(Promise.all([a, b])).resolves.toEqual([true, true]);
 
-      // No rollback action: the store only ever saw the two requests.
-      expect(store.actions).toEqual([
-        { type: 'ui/updateSettings', payload: { showLiveActivity: true } },
-        { type: 'ui/updateSettings', payload: { showLiveActivity: false } }
+      // No rollback to the first request's "previous" (or to `true`): after
+      // the two requests the store only ever hears the newer value again.
+      expect(store.actions.map((action) => action.payload.showLiveActivity)).toEqual([
+        true,
+        false,
+        false
       ]);
       expect(store.current()).toBe(false);
       expect(persistedAfter(['fail', 'ok'])).toBe(false);
+    });
+
+    test('a failed later save rolls back to the value the earlier save stored', async () => {
+      const first = deferred();
+      settingsIpc.save
+        .mockReturnValueOnce(first.promise)
+        .mockRejectedValueOnce(new Error('IPC timeout'));
+      const store = makeStore(false);
+
+      const a = store.dispatch(setShowLiveActivity(true));
+      const b = store.dispatch(setShowLiveActivity(false));
+
+      first.resolve({ success: true });
+      await expect(Promise.all([a, b])).resolves.toEqual([false, false]);
+
+      expect(settingsIpc.save).toHaveBeenCalledTimes(2);
+      expect(settingsIpc.save).toHaveBeenLastCalledWith({ showLiveActivity: false });
+      // `true` is what is saved now, not the store's value before the run.
+      expect(store.current()).toBe(true);
+      expect(persistedAfter(['ok', 'fail'])).toBe(true);
+    });
+
+    test("a finished save's settings broadcast cannot flip a newer toggle back", async () => {
+      const first = deferred();
+      const second = deferred();
+      settingsIpc.save.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+      const store = makeStore(false);
+
+      const a = store.dispatch(setShowLiveActivity(true));
+      const b = store.dispatch(setShowLiveActivity(false));
+
+      // Main broadcasts the full settings after save A (older value `true`);
+      // the broadcast reaches the store before A's reply does.
+      store.dispatch({ type: 'ui/updateSettings', payload: { showLiveActivity: true } });
+      first.resolve({ success: true });
+      await flush();
+
+      expect(settingsIpc.save).toHaveBeenCalledTimes(2);
+      expect(store.current()).toBe(false);
+
+      second.resolve({ success: true });
+      await expect(Promise.all([a, b])).resolves.toEqual([true, true]);
+      expect(store.current()).toBe(false);
     });
 
     test('when both saves fail the store ends on the value that is actually saved', async () => {

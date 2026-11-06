@@ -14,7 +14,9 @@
  * save answers, the newest wanted value is saved next if it differs. A failed
  * save is put back only when nothing newer was asked for, and it goes back to
  * the last value known to be saved — never to a value that was only ever
- * optimistic — so the store and the saved setting cannot drift apart.
+ * optimistic. Whatever mismatch is left after that (a save that timed out in
+ * the renderer but landed in main) is reconciled by main's settings-changed
+ * broadcast, which App.js copies into the store.
  */
 import { updateSettings } from '../slices/uiSlice';
 import { settingsIpc } from '../../services/ipc';
@@ -69,16 +71,21 @@ async function saveUntilSettled(sync, dispatch) {
         ok = true;
       } catch (error) {
         logger.warn('[LiveActivity] Could not save the live activity setting', {
+          value: target,
           error: /** @type {any} */ (error)?.message
         });
       }
       if (sync.wanted !== target) {
-        // Asked for something else while this save was in flight.
+        // Asked for something else while this save was in flight. Main's
+        // settings-changed broadcast for the save that just finished (full
+        // settings, older value) reaches the store before this reply and
+        // overwrites the newer value until the next save's broadcast; put the
+        // newer value back now so the panel doesn't flip in the meantime.
         target = sync.wanted;
+        dispatch(updateSettings({ showLiveActivity: target }));
         continue;
       }
       if (ok) return true;
-      sync.wanted = sync.saved;
       dispatch(updateSettings({ showLiveActivity: sync.saved }));
       return false;
     }
