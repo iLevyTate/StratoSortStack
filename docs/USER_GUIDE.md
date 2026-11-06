@@ -203,7 +203,8 @@ See [MCP_SERVER.md](MCP_SERVER.md).
 - **License**: commercial key status. Every feature works without a key.
 - **About** and **Third-party notices**.
 - Settings backup/restore (Advanced).
-- Troubleshooting logs live under **Diagnostics** (Advanced): snapshot, open/export logs, API tests.
+- Troubleshooting logs live under **Diagnostics** (Advanced): snapshot, open/export logs, API tests,
+  and the **Show live activity** switch (see [Need to see logs](#need-to-see-logs)).
 
 ### Analysis history
 
@@ -278,6 +279,25 @@ Then run a small batch first and review outcomes before scaling up.
 
 - Open **Settings -> Diagnostics** (Advanced) and use **Open Folder** or **Export Logs**.
 - Use **Open Folder** to browse logs or **Export Logs** to create a shareable file.
+- To watch what the app is doing as it happens, turn on **Settings -> Diagnostics -> Show live
+  activity** or press **Ctrl+Shift+L** (**Cmd+Shift+L** on Mac); the shortcut works in Simple mode
+  too. A small panel floats over the app:
+  - **Activity** lists events in plain words ("Analyzing receipt.jpg", "Vision model ready", "Filed
+    invoice.pdf", "Saved search index").
+  - **Raw** shows the log lines themselves, with a minimum-level filter and a context filter. Click
+    a line to see it in full.
+  - Drag it by its title bar, resize it from the bottom-right corner, or focus the title bar and use
+    the arrow keys (Shift+arrow keys resize). Minimize it to a small pill, pause it (new lines are
+    counted and shown when you resume), copy the visible lines, or clear it. Its position, size and
+    tab are remembered on this computer.
+  - It shows the same cleaned-up lines the log file holds: folder paths are already removed, leaving
+    file names. When paths are hidden for a demo or recording (`STRATOSORT_REDACT_PATHS=1`), the
+    panel also shows file names as "a file". This is best effort: it can hide some words that only
+    look like file names (such as `simple-main.js` or a web address), it can show the part of a file
+    name before its last space, and a name inside a web link or ending in `.com`, `.co` or `.io` can
+    still show. The context column (which part of the app wrote the line) is never hidden.
+  - Turning it on or off does not create a settings backup. While it is closed, nothing is collected
+    for it.
 
 ---
 

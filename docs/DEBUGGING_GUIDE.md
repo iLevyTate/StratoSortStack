@@ -443,6 +443,67 @@ virtualized CPUs, so prefer a model under roughly 500 MB there; and models must 
 models directory (`~/.config/StratoSort Stack/models/` on Linux, with the space), which is where
 `LlamaService` looks, not the lowercase legacy path.
 
+## Live activity panel
+
+### Watching log lines without opening the log file
+
+Turn on **Settings → Diagnostics → Show live activity** (Advanced mode) or press Ctrl/Cmd+Shift+L
+(any mode). The **Raw** tab shows every record the main-process logger writes at the current level,
+already sanitized (debug lines only appear when the level is debug, as in `npm run dev`). The
+**Activity** tab is a plain-language view built by `src/main/services/liveLogActivity.js`. When a
+source log message changes, update its rule there and its row in
+`test/main/services/liveLogActivity.test.js`, or the event only shows in **Raw**.
+
+Three log lines feed that view and are written at `info` in every build:
+
+- `[OramaVectorService] Persisted databases` when a search index save wrote at least one collection
+  (a save with nothing to write stays at `debug`). Saves are already spaced 5 s to 2 min apart.
+- `[FILE-OPS] Move completed` and `[FILE-OPS] Move skipped (duplicate)`, one per file in a batch
+  organize (`src/main/ipc/files/batchOrganizeHandler.js`). They used to be development-only
+  (`ENABLE_BATCH_TRACE_LOGS`, now removed). They carry paths, never file content.
+
+The feed (`src/main/services/liveLogFeed.js`) listens to the logger only while a window is
+subscribed, keeps the last 500 records as the backlog a newly opened panel starts with, and ignores
+records logged while it is sending a batch, so a failing send cannot feed itself. The panel's
+position, size, minimized state and tab live in `localStorage` under
+`stratosort_live_activity_panel`; delete that key in DevTools to reset the panel's layout. Toggling
+`showLiveActivity` takes no settings backup (`BACKUP_EXEMPT_KEYS` in
+`src/main/services/SettingsService.js`).
+
+### Absolute paths in log lines
+
+`sanitizeLogData()` in `src/shared/logger.js` reduces every absolute path in a string to
+`[REDACTED_PATH]<separator>name.ext`, for the log file and the panel alike: drive paths written with
+`\`, `/` (`C:/Users/...`) or JSON-escaped `\\` separators, UNC paths (`\\server\share\...`) and
+POSIX paths. That includes a second path in the same line: before, `move C:\a\x.pdf to D:\b\x.pdf`
+left the second path raw. Windows file names keep their spaces. A POSIX path is still cut at its
+first whitespace, so `/Users/me/My Drive/passport.pdf` is written as
+`[REDACTED_PATH]/My Drive/passport.pdf`.
+
+With `STRATOSORT_REDACT_PATHS=1` (`npm run dev:demo`) the panel also replaces those names with "a
+file" (`redactActivityText` / `redactRawText` in
+`src/renderer/components/diagnostics/liveActivityFormat.js`). That pass is a heuristic with known
+gaps: it also hides some code-like names and domains (`simple-main.js`, `example.com`); it can leave
+the part of a file name before its last space visible; a name inside a web URL, or one ending in a
+host-like extension (`.com`, `.co`, `.io`), can still show; and the context column is never
+redacted.
+
+### The panel says "Live activity unavailable"
+
+**Cause.** The `system:live-log:subscribe` invoke failed or timed out: a preload built before the
+bridge existed, or the handler in `src/main/ipc/system.js` was not registered. Subscribe and
+unsubscribe time out after 5 s (`src/shared/ipcInvokeTimeout.js`) instead of the 330 s default,
+because a new subscription waits for the previous unsubscribe to settle.
+
+**Fix.** Run `npm run generate:channels:check` and `npm run verify:ipc-handlers`, then restart
+`npm run dev` so preload and main are rebuilt together.
+
+### "N skipped (too fast)"
+
+The feed sends at most 200 entries (and 256,000 characters of text) every 250 ms. During a burst the
+oldest entries of that window are left out of the panel, never out of the log file; a batch the
+window failed to receive is counted the same way. Use **Open folder** for the full log.
+
 ## Tests
 
 ### Test passes standalone but fails in the full suite

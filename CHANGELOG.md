@@ -16,7 +16,9 @@ Cloud analysis now covers audio and video, and video frames are sent only with y
 "Describe video keyframes" setting. When the disk fills up, the app says so and stops analyzing
 until it can save again. Exact duplicates are found without a manual step, and Find Duplicates can
 keep a whole set. A batch of images no longer restarts the vision model for every image, and much
-less is rewritten to disk while a batch runs. Contributors now need Node 24.
+less is rewritten to disk while a batch runs. A new Live Activity panel shows what the app is doing
+as it happens, and log lines no longer leave a second file path in the clear. Contributors now need
+Node 24.
 
 Changes you will notice:
 
@@ -28,6 +30,14 @@ Changes you will notice:
   some embedding activity shortly after startup (capped per launch).
 - Building from source needs Node 24 (`.nvmrc` 24.22.1). The installed app is unaffected; it already
   ran on the Node inside Electron.
+
+### Known issues
+
+- **Hiding file names in the Live Activity panel is best effort.** With paths hidden for demos
+  (`STRATOSORT_REDACT_PATHS=1`), the panel also hides some words that only look like file names,
+  such as `simple-main.js`, and web domains. It can show the part of a file name before its last
+  space. A name inside a web link, or one ending in `.com`, `.co` or `.io`, can still show. The name
+  of the part of the app that wrote a line (the context column) is never hidden.
 
 ### Privacy
 
@@ -46,6 +56,11 @@ Changes you will notice:
 - Settings routing text, the keyframe switch, About and Diagnostics say what each operation sends.
   `PRIVACY.md` and `docs/AI_PROVIDERS.md` (new "Video frames" and "Consent versions" sections) are
   updated to match.
+- **Log lines hide every folder path.** The logger already cut a Windows path down to its file name,
+  but only the first one in a line: in `move C:\Users\…\a.pdf to D:\Archive\…\a.pdf` the second path
+  was written in full. Every absolute path in a line is now reduced to its file name, including
+  network paths (`\\server\share\…`), paths written with forward slashes (`C:/Users/…`) and paths
+  inside JSON text. This applies to the log files and to the new Live Activity panel.
 
 ### Added
 
@@ -72,6 +87,17 @@ Changes you will notice:
   its contents, so **Exact duplicates** and Downloads triage's "already in a smart folder" check
   work without running Settings → **Reindex file hashes**. That action is now only a backfill for
   files indexed by an older version.
+- **Live Activity panel.** Settings → Diagnostics → **Show live activity** (Advanced) or
+  Ctrl+Shift+L (Cmd+Shift+L on macOS, in any mode) opens a small floating panel that shows what the
+  app is doing as it happens. **Activity** says it in plain words ("Analyzing receipt.jpg", "Vision
+  model ready", "Filed invoice.pdf", "Saved search index"); **Raw** shows the log lines, with a
+  minimum-level filter, a context filter and a details box for the selected line. Drag it by its
+  title bar, resize it from the corner, move or resize it with the arrow keys, minimize it to a pill
+  that pulses when new lines arrive, and pause, copy or clear it. Its position, size and tab are
+  remembered on this computer. It shows the same cleaned-up lines the log file gets (folder paths
+  removed), and when paths are hidden for demos (`STRATOSORT_REDACT_PATHS=1`) it also shows file
+  names as "a file", with the limits listed under Known issues. Off by default; nothing is collected
+  for it while it is closed, and turning it on or off does not create a settings backup.
 
 ### Changed
 
@@ -101,6 +127,11 @@ Changes you will notice:
   need work on disk. Status polling pauses while the window is hidden, the Atlas rebuild poll backs
   off from 3 s to 1 min, the metrics push skips a minimized window, and the memory heartbeat logs
   only when memory use changes (at least every 5 min).
+- **More in the log at the default level.** A search index save that wrote something
+  (`Persisted databases`) and each file moved or skipped as a duplicate by Organize
+  (`[FILE-OPS] Move completed`, `Move skipped (duplicate)`) are now logged at info in every build,
+  so the Live Activity panel can show them. The move lines were only written in development builds
+  before. They hold paths with the folders removed, never file content.
 - The keyword index used for naming context is rebuilt at most every 2 minutes during a batch,
   instead of before every file. Search keeps its own freshness check.
 - **Organize** checks for duplicates on each move with the stored fingerprints instead of reading
