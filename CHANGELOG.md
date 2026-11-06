@@ -17,8 +17,8 @@ Cloud analysis now covers audio and video, and video frames are sent only with y
 until it can save again. Exact duplicates are found without a manual step, and Find Duplicates can
 keep a whole set. A batch of images no longer restarts the vision model for every image, and much
 less is rewritten to disk while a batch runs. A new Live Activity panel shows what the app is doing
-as it happens, and log lines no longer leave a second file path in the clear. Contributors now need
-Node 24.
+as it happens, and in most cases (see Known issues) log lines no longer leave a second file path, or
+a macOS or Linux folder with a space in its name, in the clear. Contributors now need Node 24.
 
 Changes you will notice:
 
@@ -38,6 +38,14 @@ Changes you will notice:
   such as `simple-main.js`, and web domains. It can show the part of a file name before its last
   space. A name inside a web link, or one ending in `.com`, `.co` or `.io`, can still show. The name
   of the part of the app that wrote a line (the context column) is never hidden.
+- **Some macOS and Linux folder names can still reach the log.** A path that starts somewhere other
+  than the usual places for files (for example `/data/My Files/x.pdf`) is still cleaned up only to
+  its first space, so the folders after it can appear. A folder name with two spaces in a row, or
+  with `"`, `:`, `;`, `=` and some other punctuation after a space (see `docs/DEBUGGING_GUIDE.md`),
+  also ends the cleanup early. The file name is kept on purpose; when it contains a space, only the
+  part before the space is marked as the name. A word that looks like a file name ends the path, so
+  `Moved /Users/a/x.pdf to Finance/Taxes` keeps "x.pdf to Finance/Taxes" readable, but a folder
+  whose name has such a word before a space (`notes.txt and more`) shows from that word on.
 
 ### Privacy
 
@@ -60,10 +68,15 @@ Changes you will notice:
   file name, but only the first one in a line: in `move C:\Users\…\a.pdf to D:\Archive\…\a.pdf` the
   second path was written in full. Every Windows path in a line is now reduced to its file name:
   drive-letter paths (also written with forward slashes, `C:/Users/…`), network paths
-  (`\\server\share\…`) and paths escaped inside JSON text. macOS and Linux paths are handled as
-  before: they are still cut at the first space, so the folders after a space (such as
-  `/Users/me/Mobile Documents/…`) can still appear. This applies to the log files and to the new
-  Live Activity panel.
+  (`\\server\share\…`) and paths escaped inside JSON text.
+- **Log lines hide macOS and Linux folders whose names contain spaces.** A macOS or Linux path used
+  to be cleaned up only to its first space, so in
+  `/Users/me/Library/Mobile Documents/…/Medical Records/scan.pdf` the folders after the space were
+  written in full. In most cases (see Known issues), a path that starts in a usual place for files
+  (`/Users`, `/home`, `/Volumes`, `/media`, `/mnt`, `/tmp`, `~/` and similar) is now reduced to its
+  file name even when its folders have spaces, and two paths in one line stay apart. That includes
+  the app's own lower-case file ids on macOS (`file:/users/…`). Both changes apply to the log files
+  and to the new Live Activity panel.
 
 ### Added
 

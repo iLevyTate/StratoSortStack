@@ -21,8 +21,9 @@ The first non-goal held only in part. Beyond the panel itself, these shipped:
 
 - **Logger path redaction rewritten** (`sanitizeLogData` in `src/shared/logger.js`): every Windows
   path in a line is reduced to its file name, including a second path, UNC, JSON-escaped and `C:/`
-  forms; before, only the first drive path in a line was. POSIX paths are unchanged (still cut at
-  the first space).
+  forms; before, only the first drive path in a line was. A follow-up (`fix/posix-path-redaction`)
+  extended this to POSIX folder names with spaces under well-known roots (`/Users`, `/home`,
+  `/Volumes`, `~/`, ...); other POSIX paths are still cut at the first space.
 - **Three log lines promoted to `info` in every build**, so the Activity feed can show them:
   `[OramaVectorService] Persisted databases` (only when a save wrote something) and
   `[FILE-OPS] Move completed` / `Move skipped (duplicate)` (were development-only, and now log file
