@@ -533,9 +533,13 @@ function redactWindowsPathMatch(matched) {
 // because it starts with a space and `/`. The first word of a folder name
 // takes anything the old rule took, except a `"` that closes a JSON string
 // (followed by `, : } ]`), so a JSON array of paths keeps each file name.
-// A relative path written right after an absolute one on the same line
-// (`/Users/a/x.pdf to Finance/Taxes`) is read as part of it: hiding too much
-// is the safe direction.
+// A word that looks like a file name (`x.pdf`) followed by a space ends the
+// path at that word, so in `Moved /Users/a/x.pdf to Finance/Taxes` the name
+// and the relative destination after it stay readable. The cost: a folder
+// name with a file-like word before a space (`notes.txt and more`) ends
+// protection there and the rest of the path shows. A relative path after a
+// path whose last word does not look like a file name is still read as part
+// of it, hiding too much, which is the safe direction.
 //
 // The rooted path may follow the start of the text, whitespace, a quote,
 // opening punctuation, `= , ; | < >`, or `file://` (an unencoded file URL).
@@ -567,7 +571,11 @@ const POSIX_FIRST_WORD = String.raw`(?:[^\s/"]|"(?![,:}\]]))+`;
 const POSIX_WORD_CHAR = String.raw`[^\s/\\"\x60:;=<>|*?]`;
 const POSIX_WORD_CORE = String.raw`[^\s/\\"\x60:;=<>|*?([{']`;
 const POSIX_LATER_WORD = String.raw`(?!\[REDACTED_PATH\])[([{']*${POSIX_WORD_CORE}${POSIX_WORD_CHAR}*`;
-const POSIX_FOLDER = String.raw`${POSIX_FIRST_WORD}(?: ${POSIX_LATER_WORD})*`;
+// A word that ends like a file name (`.` + a letter + up to 7 letters or
+// digits: `x.pdf`, `scan.JPG`; not `v1.2` or `1.2.3`) cannot be followed by
+// a space inside a folder name, so the path ends at that word.
+const POSIX_NOT_AFTER_FILE_NAME = String.raw`(?<!\.[A-Za-z][A-Za-z0-9]{0,7})`;
+const POSIX_FOLDER = String.raw`${POSIX_FIRST_WORD}(?:${POSIX_NOT_AFTER_FILE_NAME} ${POSIX_LATER_WORD})*`;
 // Group 1: the basename of a rooted path. Group 2: the basename of any other
 // path (the old rule, which never starts right after `:` so `https://` and
 // `file://` keep their scheme).

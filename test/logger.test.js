@@ -534,12 +534,25 @@ describe('Logger', () => {
         expect(sanitizeLogData(raw)).toBe(expected);
       });
 
-      test('a relative path after an absolute one is hidden with it (errs toward hiding)', () => {
-        // "x.pdf to Finance" could be a folder name, so the absolute path
-        // runs on to the last slash before whitespace.
-        expect(sanitizeLogData('Moved /Users/a/x.pdf to Finance/Taxes')).toBe(
-          'Moved [REDACTED_PATH]/Taxes'
-        );
+      test.each([
+        // A word that looks like a file name, followed by a space, ends the
+        // path there, so a relative destination after it stays readable.
+        ['Moved /Users/a/x.pdf to Finance/Taxes', 'Moved [REDACTED_PATH]/x.pdf to Finance/Taxes'],
+        [
+          'Moved /Users/a/My Docs/scan.JPG to Photos/2024',
+          'Moved [REDACTED_PATH]/scan.JPG to Photos/2024'
+        ],
+        [
+          '/Users/a/x.pdf to /Users/a/My Docs/y.pdf',
+          '[REDACTED_PATH]/x.pdf to [REDACTED_PATH]/y.pdf'
+        ],
+        // Version numbers are not file names, so the folder runs on.
+        ['/Users/a/release 1.2.3 notes/x.pdf', '[REDACTED_PATH]/x.pdf'],
+        ['/Users/a/build v1.2 final/x.pdf', '[REDACTED_PATH]/x.pdf'],
+        // Known gap: a folder name with a file-like word ends protection there.
+        ['/Users/a/notes.txt and more/x.pdf', '[REDACTED_PATH]/notes.txt and more/x.pdf']
+      ])('a file-like word ends a rooted path: %s', (raw, expected) => {
+        expect(sanitizeLogData(raw)).toBe(expected);
       });
 
       test('stays linear on long hostile inputs', () => {
@@ -558,7 +571,8 @@ describe('Logger', () => {
           '/Users/a/' + 'a'.repeat(50000),
           '/Users/a/' + "'(a '".repeat(8000) + 'x',
           ' /Users'.repeat(7000) + '/',
-          "'/home/" + '"a, '.repeat(12000)
+          "'/home/" + '"a, '.repeat(12000),
+          '/Users/a/' + 'x.pdf '.repeat(8000) + '/'
         ];
         for (const input of hostile) {
           const start = Date.now();

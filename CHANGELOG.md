@@ -42,9 +42,10 @@ Changes you will notice:
   than the usual places for files (for example `/data/My Files/x.pdf`) is still cleaned up only to
   its first space, so the folders after it can appear. A folder name with two spaces in a row, or
   with `"`, `:`, `;` or `=` after a space, also ends the cleanup early. The file name is kept on
-  purpose; when it contains a space, only the part before the space is marked as the name. In the
-  other direction, a relative folder written right after a path in the same line
-  (`… x.pdf to Finance/Taxes`) is hidden along with it.
+  purpose; when it contains a space, only the part before the space is marked as the name. A word
+  that looks like a file name ends the path, so `Moved /Users/a/x.pdf to Finance/Taxes` keeps "x.pdf
+  to Finance/Taxes" readable, but a folder whose name has such a word before a space
+  (`notes.txt and more`) shows from that word on.
 
 ### Privacy
 

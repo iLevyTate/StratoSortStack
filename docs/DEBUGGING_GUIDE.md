@@ -497,8 +497,13 @@ where a path ends, so the rest is a compromise:
   `=`, `<`, `>`, `|`, `*`, `?` or a backtick, or is only opening punctuation, ends the folder early,
   which can leave the rest of the path visible. These rules keep two paths in one line apart.
 - `, ` is allowed inside a folder name (`Smith, John`); a second path after `, ` still splits.
-- A relative path written right after a rooted one (`/Users/a/x.pdf to Finance/Taxes`) is read as
-  part of it and hidden (`[REDACTED_PATH]/Taxes`).
+- A word that looks like a file name (`.` + a letter + up to 7 letters or digits: `x.pdf`,
+  `scan.JPG`; not `v1.2` or `1.2.3`) followed by a space ends the path at that word, so
+  `Moved /Users/a/x.pdf to Finance/Taxes` becomes `Moved [REDACTED_PATH]/x.pdf to Finance/Taxes`.
+  The cost: a folder name with such a word before a space ends protection there
+  (`/Users/a/notes.txt and more/x.pdf` becomes `[REDACTED_PATH]/notes.txt and more/x.pdf`). A
+  relative path after a path whose last word does not look like a file name is still read as part of
+  it and hidden.
 - JSON text keeps its shape: a `"` that closes a string ends the path. `JSON.stringify` does not
   escape `/`, so `\/`-escaped paths are not handled. `file://` URLs keep their scheme, encoded
   (`%20`) or not.
