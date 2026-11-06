@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-06T20:24:32.281Z",
+  "generatedAt": "2026-11-06T20:44:56.404Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
@@ -9842,7 +9842,7 @@
     },
     {
       "packageName": "@testing-library/jest-dom",
-      "version": "6.9.1",
+      "version": "7.0.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
