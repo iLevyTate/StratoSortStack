@@ -475,22 +475,28 @@ const LOG_CONTROL_CHAR_PATTERN = /[\u0000-\u0008\u000A-\u001F\u007F]/g;
 // `move C:\a\x.pdf to D:\b\x.pdf` swallows " to D" and the second path is left
 // raw, user folders and all.
 //
-// Separators are runs of `\` or `/` so single, JSON-escaped (`\\`) and
-// forward-slash (`C:/Users/...`) spellings are all covered. Segment and
-// separator classes are disjoint, which keeps matching linear.
+// A path keeps the separator style it starts with (captured as group 1 and
+// matched again by back-reference): `C:\...` continues only on single `\`,
+// JSON-escaped `C:\\...` only on `\\`, and `C:/...` only on `/`. A later `/`
+// on the same line therefore ends a backslash path instead of extending it:
+// `Moved C:\a\x.pdf to Finance/Taxes` keeps " to Finance/Taxes" after the
+// name rather than collapsing to `[REDACTED_PATH]/Taxes`. Segments never
+// contain `\` or `/`, so segment and separator are disjoint and matching
+// stays linear.
 const PATH_SEGMENT = String.raw`(?:(?![A-Za-z]:[\\/])[^\\/:*?"<>|\r\n])+`;
 // A drive letter preceded by a letter or digit is not a drive: it is the tail
 // of a URL scheme (`https://`) or a word, which the POSIX pass handles.
 const WINDOWS_DRIVE_PATH_PATTERN = new RegExp(
-  String.raw`(?<![A-Za-z0-9])[A-Za-z]:[\\/]+(?:${PATH_SEGMENT}[\\/]+)*${PATH_SEGMENT}`,
+  String.raw`(?<![A-Za-z0-9])[A-Za-z]:(\\+|\/)(?:${PATH_SEGMENT}\1)*${PATH_SEGMENT}`,
   'g'
 );
-// `\\server\share\...` (or `\\\\server\\share\\...` once JSON-escaped). Only
-// backslashes open it, so `//` in a URL never does. A server and at least one
-// more segment are required. It only starts at the first backslash of a run:
-// starting inside a long run would retry the whole run from every position.
+// `\\server\share\...` (or `\\\\server\\share\\...` once JSON-escaped): the
+// prefix is the separator written twice. Only backslashes open it, so `//` in
+// a URL never does. A server and at least one more segment are required. It
+// only starts at the first backslash of a run, and the separator is at most
+// four backslashes, so a long run is never retried from every position.
 const WINDOWS_UNC_PATH_PATTERN = new RegExp(
-  String.raw`(?<!\\)\\{2,}${PATH_SEGMENT}(?:[\\/]+${PATH_SEGMENT})+`,
+  String.raw`(?<!\\)(\\{1,4})\1${PATH_SEGMENT}(?:\1${PATH_SEGMENT})+`,
   'g'
 );
 // The last separator run and the basename of a matched Windows path.

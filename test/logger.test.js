@@ -311,6 +311,27 @@ describe('Logger', () => {
         expect(sanitized).not.toMatch(/Users|jdoe|C:|D:/);
       });
 
+      test.each([
+        [
+          String.raw`Moved C:\Users\Bob\a.pdf to Finance/Taxes`,
+          String.raw`Moved [REDACTED_PATH]\a.pdf to Finance/Taxes`
+        ],
+        [
+          String.raw`Loaded C:\Models\qwen.gguf in 300ms (gpu=yes, 50% layers/offload)`,
+          String.raw`Loaded [REDACTED_PATH]\qwen.gguf in 300ms (gpu=yes, 50% layers/offload)`
+        ],
+        [
+          String.raw`[FILE-OPS] Move completed C:\Users\Bob\Inbox\a.pdf -> C:\Users\Bob\Finance\a.pdf (12/40)`,
+          String.raw`[FILE-OPS] Move completed [REDACTED_PATH]\a.pdf -> [REDACTED_PATH]\a.pdf (12/40)`
+        ],
+        [
+          String.raw`payload {"from":"C:\\Users\\Bob\\a.pdf","note":"12/40"}`,
+          String.raw`payload {"from":"[REDACTED_PATH]\\a.pdf","note":"12/40"}`
+        ]
+      ])('a backslash path stops at its own separators, not a later slash: %s', (raw, expected) => {
+        expect(sanitizeLogData(raw)).toBe(expected);
+      });
+
       test('keeps basenames with spaces, brackets and parentheses whole', () => {
         expect(sanitizeLogData(String.raw`C:\Users\jdoe\My Docs\report [final] (2).pdf`)).toBe(
           String.raw`[REDACTED_PATH]\report [final] (2).pdf`
@@ -353,7 +374,11 @@ describe('Logger', () => {
           '\\\\'.repeat(25000) + 'x',
           'C:' + '\\'.repeat(50000),
           '\\\\a:'.repeat(12500),
-          'C:\\' + 'C:\\'.repeat(16000)
+          'C:\\' + 'C:\\'.repeat(16000),
+          'C:' + '\\'.repeat(25000) + 'a' + '\\'.repeat(24999) + 'a',
+          'C:\\\\a\\'.repeat(10000),
+          '\\\\\\\\a\\\\\\'.repeat(6000),
+          'C:/a\\'.repeat(10000)
         ];
         for (const input of hostile) {
           const start = Date.now();
