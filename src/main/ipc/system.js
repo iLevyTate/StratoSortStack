@@ -427,7 +427,8 @@ function registerSystemIpc(servicesOrParams) {
   );
 
   // Live Activity panel. The feed streams to the calling window
-  // (event.sender) until it unsubscribes or its webContents is destroyed.
+  // (event.sender) until it unsubscribes, or its page is destroyed, crashes
+  // or navigates away.
   // Lazy require keeps the feed (and its logger listener) out of startup.
   safeHandle(
     ipcMain,

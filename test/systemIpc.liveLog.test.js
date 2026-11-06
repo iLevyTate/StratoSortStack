@@ -38,10 +38,14 @@ describe('system live log handlers', () => {
   const { IPC_CHANNELS } = require('../src/shared/constants');
   let handlers;
   let mockIpcMain;
+  let logger;
 
   beforeEach(() => {
     jest.resetModules();
     jest.clearAllMocks();
+    mockFeed.subscribe.mockReset();
+    mockFeed.unsubscribe.mockReset();
+    logger = { info: jest.fn(), debug: jest.fn(), warn: jest.fn(), error: jest.fn() };
     handlers = {};
     mockIpcMain = {
       handle: jest.fn((channel, handler) => {
@@ -52,7 +56,7 @@ describe('system live log handlers', () => {
     registerSystemIpc({
       ipcMain: mockIpcMain,
       IPC_CHANNELS,
-      logger: { info: jest.fn(), debug: jest.fn(), warn: jest.fn(), error: jest.fn() },
+      logger,
       systemAnalytics: { collectMetrics: jest.fn() },
       getServiceIntegration: () => ({})
     });
@@ -70,7 +74,8 @@ describe('system live log handlers', () => {
 
     const result = await handlers[IPC_CHANNELS.SYSTEM.LIVE_LOG_SUBSCRIBE]({ sender });
 
-    expect(mockFeed.subscribe).toHaveBeenCalledWith(sender);
+    expect(mockFeed.subscribe).toHaveBeenCalledTimes(1);
+    expect(mockFeed.subscribe.mock.calls[0][0]).toBe(sender);
     expect(result).toEqual({ success: true, entries: [{ id: 1 }, { id: 2 }] });
   });
 
@@ -82,6 +87,10 @@ describe('system live log handlers', () => {
     const result = await handlers[IPC_CHANNELS.SYSTEM.LIVE_LOG_SUBSCRIBE]({ sender: {} });
 
     expect(result).toEqual({ success: false, error: 'feed unavailable' });
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('live log feed'),
+      expect.objectContaining({ message: 'feed unavailable' })
+    );
   });
 
   test('unsubscribe stops streaming to the sender', async () => {
@@ -89,7 +98,8 @@ describe('system live log handlers', () => {
 
     const result = await handlers[IPC_CHANNELS.SYSTEM.LIVE_LOG_UNSUBSCRIBE]({ sender });
 
-    expect(mockFeed.unsubscribe).toHaveBeenCalledWith(sender);
+    expect(mockFeed.unsubscribe).toHaveBeenCalledTimes(1);
+    expect(mockFeed.unsubscribe.mock.calls[0][0]).toBe(sender);
     expect(result).toEqual({ success: true });
   });
 
@@ -101,5 +111,9 @@ describe('system live log handlers', () => {
     const result = await handlers[IPC_CHANNELS.SYSTEM.LIVE_LOG_UNSUBSCRIBE]({ sender: {} });
 
     expect(result).toEqual({ success: false, error: 'already gone' });
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining('live log feed'),
+      expect.objectContaining({ message: 'already gone' })
+    );
   });
 });
