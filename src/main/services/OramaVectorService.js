@@ -2506,11 +2506,19 @@ class OramaVectorService extends EventEmitter {
       // (and raises storage-full when the disk is out of room) instead of
       // clearing the flag while part of the round never reached disk.
       if (sidecarError) throw sidecarError;
-      logger.debug('[OramaVectorService] Persisted databases', {
-        collections: toSave,
-        full: fullSave,
-        durationMs: this._lastPersistDurationMs
-      });
+      // Info when something was written: the Live Activity feed shows it as
+      // "Saved search index". Saves are throttled (5 s–2 min apart), so this
+      // stays quiet. A round with nothing to write stays at debug so the feed
+      // never claims a save that did not happen.
+      (toSave.length > 0 ? logger.info : logger.debug).call(
+        logger,
+        '[OramaVectorService] Persisted databases',
+        {
+          collections: toSave,
+          full: fullSave,
+          durationMs: this._lastPersistDurationMs
+        }
+      );
       this._clearStorageFull();
     } catch (error) {
       // Nothing from this round reached disk for certain: mark it all again.

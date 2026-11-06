@@ -262,6 +262,8 @@ const SETTINGS_VALIDATION = {
     'smartFolderWatchEnabled',
     // Vision captions for video keyframes (Settings → Processing limits)
     'captionVideoKeyframes',
+    // Live Activity panel on/off (Settings → Diagnostics)
+    'showLiveActivity',
     // Advanced-mode values parked while Simple mode is on (internal-only)
     'advancedModeValues'
   ]),
@@ -360,7 +362,9 @@ const ALLOWED_RECEIVE_CHANNELS = [
   // were workaround-using raw ipcRenderer.on, which bypassed listener
   // tracking and the channel allowlist.
   IPC_CHANNELS.AI_PROVIDER?.STATUS_CHANGED,
-  IPC_CHANNELS.MCP?.STATUS_CHANGED
+  IPC_CHANNELS.MCP?.STATUS_CHANGED,
+  // Live Activity panel log batches (main → subscribed window).
+  IPC_CHANNELS.SYSTEM?.LIVE_LOG_BATCH
 ].filter(Boolean);
 
 /**

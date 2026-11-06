@@ -52,4 +52,12 @@ describe('getIpcInvokeTimeout', () => {
       expect(getIpcInvokeTimeout(channel)).toBe(600000);
     }
   });
+
+  test('maps live-log subscribe/unsubscribe to a 5 s budget, not the default', () => {
+    // The renderer waits for the previous unsubscribe before subscribing again;
+    // a stuck release must not hold a reconnect for the full default budget.
+    expect(getIpcInvokeTimeout(IPC_CHANNELS.SYSTEM.LIVE_LOG_SUBSCRIBE)).toBe(5000);
+    expect(getIpcInvokeTimeout(IPC_CHANNELS.SYSTEM.LIVE_LOG_UNSUBSCRIBE)).toBe(5000);
+    expect(getIpcInvokeTimeout(IPC_CHANNELS.SYSTEM.GET_METRICS)).toBe(1000);
+  });
 });

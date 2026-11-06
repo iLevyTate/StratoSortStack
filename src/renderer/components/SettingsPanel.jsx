@@ -29,6 +29,19 @@ function settingsWithoutAiBlob(settings) {
   const { ai: _ai, ...rest } = settings;
   return rest;
 }
+
+/**
+ * showLiveActivity belongs to the live-activity thunks: the Diagnostics
+ * switch, Ctrl/Cmd+Shift+L and the Live Activity panel's Close button each
+ * save just that key. The panel never compares, saves or stores it, so a
+ * toggle while edits are unsaved is not an "external change", and neither
+ * "Keep local edits" nor the next auto-save can put an old value back.
+ */
+function settingsWithoutLiveActivity(settings) {
+  if (!settings || typeof settings !== 'object') return settings;
+  const { showLiveActivity: _showLiveActivity, ...rest } = settings;
+  return rest;
+}
 import {
   EXPERIENCE_MODES,
   isSimpleExperienceMode,
@@ -106,13 +119,16 @@ const isElectronAPIAvailable = () => {
 /**
  * Canonical persisted-settings snapshot: exactly what autoSaveSettings sends
  * to settings:save (sanitized, `ai` blob stripped — AI provider config
- * persists via its own IPC). EVERY snapshot store/compare must use this one
- * shape: mixing ai-full and ai-free shapes left a permanently "dirty"
- * snapshot after Redux sync, firing a phantom no-op settings:save (+
- * settings-changed broadcast) on every Settings open.
+ * persists via its own IPC — and showLiveActivity stripped, see above).
+ * EVERY snapshot store/compare must use this one shape: mixing ai-full and
+ * ai-free shapes left a permanently "dirty" snapshot after Redux sync,
+ * firing a phantom no-op settings:save (+ settings-changed broadcast) on
+ * every Settings open.
  */
 const computeSettingsSnapshot = (value) =>
-  stableStringify(settingsWithoutAiBlob(sanitizeSettings(value || {})));
+  stableStringify(
+    settingsWithoutLiveActivity(settingsWithoutAiBlob(sanitizeSettings(value || {})))
+  );
 
 const EXPERIENCE_MODE_COPY = {
   [EXPERIENCE_MODES.SIMPLE]:
@@ -537,7 +553,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
         skipAutoSaveRef.current += 1;
         applySettingsUpdate(mergedSettings);
       }
-      dispatch(updateSettings(mergedSettings));
+      dispatch(updateSettings(settingsWithoutLiveActivity(mergedSettings)));
       updateLastSavedSnapshot(mergedSettings);
       setSettingsLoaded(true);
       settingsLoadedRef.current = true;
@@ -548,7 +564,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
       });
       skipAutoSaveRef.current += 1;
       applySettingsUpdate({ ...DEFAULT_SETTINGS });
-      dispatch(updateSettings({ ...DEFAULT_SETTINGS }));
+      dispatch(updateSettings(settingsWithoutLiveActivity({ ...DEFAULT_SETTINGS })));
       updateLastSavedSnapshot(DEFAULT_SETTINGS);
       setSettingsLoaded(true);
       settingsLoadedRef.current = true;
@@ -792,7 +808,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
     cancelAutoSaveRef.current?.();
     skipAutoSaveRef.current += 1;
     applySettingsUpdate(pendingExternalSettings);
-    dispatch(updateSettings(pendingExternalSettings));
+    dispatch(updateSettings(settingsWithoutLiveActivity(pendingExternalSettings)));
     updateLastSavedSnapshot(pendingExternalSettings);
     pendingExternalSnapshotRef.current = null;
     setPendingExternalSettings(null);
@@ -819,7 +835,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
       const normalizedSettings = sanitizeSettings({
         ...currentSettings
       });
-      const toSave = settingsWithoutAiBlob(normalizedSettings);
+      const toSave = settingsWithoutLiveActivity(settingsWithoutAiBlob(normalizedSettings));
       const nextSnapshot = stableStringify(toSave);
       if (nextSnapshot === lastSavedSnapshotRef.current) {
         setIsSaving(false);
@@ -845,7 +861,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
         return;
       }
       const savedSettings = res?.settings || normalizedSettings;
-      dispatch(updateSettings(savedSettings));
+      dispatch(updateSettings(settingsWithoutLiveActivity(savedSettings)));
       updateLastSavedSnapshot(savedSettings);
       setLastSavedAt(Date.now());
       setLastSaveError(null);

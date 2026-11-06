@@ -122,8 +122,9 @@ describe('ipcEnforcement', () => {
     // addition. It shrank to 22 when the dead/redundant EMBEDDINGS.CLEAR_STORE
     // bridge was retired (F-019) — a justified removal, so the pinned count was
     // bumped down to match.
-    test('EVENT_ONLY_CHANNELS has 8 entries', () => {
-      expect(ipcEnforcement.EVENT_ONLY_CHANNELS.size).toBe(8);
+    // Grew to 9 with SYSTEM.LIVE_LOG_BATCH (Live Activity panel push channel).
+    test('EVENT_ONLY_CHANNELS has 9 entries', () => {
+      expect(ipcEnforcement.EVENT_ONLY_CHANNELS.size).toBe(9);
     });
 
     test('CONCURRENCY_LIMITED_CHANNELS has 22 entries', () => {

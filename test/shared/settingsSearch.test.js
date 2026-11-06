@@ -43,6 +43,17 @@ describe('settingsSearch', () => {
     expect(sectionMatchesQuery(entry, 'describe video')).toBe(true);
   });
 
+  test('finds the Show live activity switch under Diagnostics', () => {
+    const { sectionIds, revealAdvanced } = matchSettingsSections('live activity');
+    expect(sectionIds.has('settings-diagnostics')).toBe(true);
+    expect(revealAdvanced).toBe(true);
+    const entry = SETTINGS_SECTION_INDEX.find((s) => s.title === 'Live activity');
+    expect(sectionMatchesQuery(entry, 'real time log')).toBe(true);
+    expect(sectionMatchesQuery(entry, 'what is the app doing')).toBe(true);
+    expect(sectionMatchesQuery(entry, 'ctrl+shift+l')).toBe(true);
+    expect(sectionMatchesQuery(entry, 'cmd+shift+l')).toBe(true);
+  });
+
   test('returns empty set for nonsense query', () => {
     const { sectionIds } = matchSettingsSections('xyzzy plugh');
     expect(sectionIds.size).toBe(0);
