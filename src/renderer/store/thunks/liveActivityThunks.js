@@ -1,13 +1,13 @@
 // @ts-check
 /**
- * Live Activity panel on/off from anywhere in the app (the panel's Close
- * button and Ctrl/Cmd+Shift+L). The Settings → Diagnostics switch goes
- * through SettingsPanel's own local-state auto-save instead.
+ * Live Activity panel on/off from anywhere in the app: the Settings →
+ * Diagnostics switch, the panel's Close button and Ctrl/Cmd+Shift+L.
  *
  * The store is updated first so the panel opens or closes immediately; only
- * the one key is saved (settings:save merges partial objects). An open
- * SettingsPanel adopts the new value from the store like any other external
- * settings change.
+ * the one key is saved (settings:save merges partial objects). SettingsPanel
+ * leaves showLiveActivity out of its draft, its auto-save and its
+ * external-change check, so a toggle while it has unsaved edits raises no
+ * conflict and its next save cannot put an old value back.
  *
  * Rapid toggles: one save runs at a time per store. A request made while a
  * save is in flight only updates the store and the wanted value; when the
