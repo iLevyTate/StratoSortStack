@@ -53,12 +53,16 @@ const BACKSLASH_NAME = String.raw`(?:(?! =>)${NOT_NEXT_TOKEN}[^\\/:*?"<>|\r\n])+
  * forward-slash drive paths (`C:/Users/...`, whose names keep their spaces)
  * and POSIX paths (cut at whitespace) this way, and the two cannot be told
  * apart, so it is read like a Windows name: a POSIX name errs toward hiding
- * the words after it. A JSON escape (`\"`, `\\`) stays inside the name, and
- * a `"` ends it only where it closes a JSON string (followed by `,` `:` `}`
- * `]`, a cut mark or the end), so dataText keeps its structure while a quote
- * inside a POSIX name in a plain message is still hidden.
+ * the words after it. It also runs across further `/`: the logger cuts a
+ * POSIX path at the first whitespace, so `/Users/me/My Drive/passport.pdf`
+ * reaches the panel as `[REDACTED_PATH]/My Drive/passport.pdf`, and the
+ * rest of the path is part of what must be hidden. A JSON escape (`\"`,
+ * `\\`) stays inside the name, and a `"` ends it only where it closes a JSON
+ * string (followed by `,` `:` `}` `]`, a cut mark or the end), so dataText
+ * keeps its structure while a quote inside a POSIX name in a plain message
+ * is still hidden.
  */
-const SLASH_NAME = String.raw`(?:(?! =>)${NOT_NEXT_TOKEN}(?:\\.|"(?![,:}\]]|${CUT_MARK}|$)|[^"\\/:*?<>|\r\n]))+`;
+const SLASH_NAME = String.raw`(?:(?! =>)${NOT_NEXT_TOKEN}(?:\\.|"(?![,:}\]]|${CUT_MARK}|$)|[^"\\:*?<>|\r\n]))+`;
 /** The name after each redacted-path token and its separator run. */
 const REDACTED_PATH_NAME = new RegExp(
   String.raw`\[REDACTED_PATH\](?:\\+${BACKSLASH_NAME}|\\*\/[\\/]*${SLASH_NAME})`,
@@ -133,6 +137,12 @@ const NON_FILE_KEYS = new Set([
   'providerName',
   'host',
   'hostname',
+  'domain',
+  'url',
+  'uri',
+  'href',
+  'endpoint',
+  'baseUrl',
   'method',
   'operation'
 ]);

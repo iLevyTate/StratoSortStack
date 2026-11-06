@@ -57,11 +57,16 @@ const MAX_PROBLEM_FILES = 8;
  * same way: a forward-slash drive path keeps its spaces, and a POSIX name
  * (which the logger cuts at whitespace) errs toward hiding the words after
  * it. A name stops before the " => " the app writes between two paths and
- * before the next token. After `/` a `"` stays in the name (POSIX allows
- * it); after backslashes it ends the name (Windows forbids it).
+ * before the next token. After `/` the name also runs across further `/`
+ * (the logger cuts a POSIX path at the first whitespace, so
+ * `/Users/me/My Drive/passport.pdf` arrives as
+ * `[REDACTED_PATH]/My Drive/passport.pdf`) and a `"` stays in it (POSIX
+ * allows it); after backslashes `/` and `"` end the name (Windows forbids
+ * them). Groups: 1 backslash separator, 2 its name; 3 slash separator, 4 its
+ * name.
  */
 const REDACTED_PATH_NAMES =
-  /\[REDACTED_PATH\]([\\/]+)((?:(?! =>)(?!\[REDACTED_PATH\])[^\\/:*?<>|\r\n])+)/g;
+  /\[REDACTED_PATH\](?:(\\+)((?:(?! =>)(?!\[REDACTED_PATH\])[^\\/:*?<>|\r\n])+)|(\\*\/[\\/]*)((?:(?! =>)(?!\[REDACTED_PATH\])[^\\:*?<>|\r\n])+))/g;
 
 /** @param {string} value */
 function escapeRegExp(value) {
@@ -194,8 +199,8 @@ function redactedFileNames(message) {
   /** @type {string[]} */
   const names = [];
   for (const match of message.matchAll(REDACTED_PATH_NAMES)) {
-    let name = match[2];
-    if (!match[1].includes('/')) {
+    let name = match[2] ?? match[4] ?? '';
+    if (match[2] !== undefined) {
       const quote = name.indexOf('"');
       if (quote !== -1) name = name.slice(0, quote);
     }

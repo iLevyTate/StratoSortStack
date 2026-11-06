@@ -1257,6 +1257,25 @@ describe('activityFromLogRecord', () => {
     ).toEqual(['my"file.pdf']);
   });
 
+  test('a name after "/" runs across further folders, but a backslash name does not', () => {
+    // The logger cuts a POSIX path at the first whitespace, so the rest of a
+    // path through a folder with a space follows the token.
+    expect(
+      activityFromLogRecord({
+        level: 'warn',
+        context: 'X',
+        msg: 'Moved [REDACTED_PATH]/My Drive/passport.pdf => [REDACTED_PATH]/Tax Returns/b.pdf ok'
+      }).files
+    ).toEqual(['My Drive/passport.pdf', 'Tax Returns/b.pdf ok']);
+    expect(
+      activityFromLogRecord({
+        level: 'warn',
+        context: 'X',
+        msg: String.raw`Moved [REDACTED_PATH]\a.pdf/b`
+      }).files
+    ).toEqual(['a.pdf']);
+  });
+
   test('a bare redacted-path token is removed from Problem text', () => {
     expect(
       activityFromLogRecord({ level: 'error', context: 'X', msg: 'Cannot open [REDACTED_PATH]' })

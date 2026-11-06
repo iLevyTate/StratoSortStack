@@ -358,11 +358,31 @@ describe('liveActivityFormat', () => {
         '{"version":"1.2.3","level":"info","mimeType":"image/jpeg","model":"Qwen2.5-7B-Instruct-Q4_K_M.gguf","code":"storage.full","host":"api.example.com","collections":["files"],"note":"done."}'
       ],
       [
+        'hosts and addresses survive',
+        '{"url":"example.com","uri":"x.example.org","href":"docs.example.net","host":"a.io","hostname":"b.io","domain":"c.io","endpoint":"api.example.com","baseUrl":"llm.local"}',
+        '{"url":"example.com","uri":"x.example.org","href":"docs.example.net","host":"a.io","hostname":"b.io","domain":"c.io","endpoint":"api.example.com","baseUrl":"llm.local"}'
+      ],
+      [
         // Pinned over-redaction: any other value that ends like a file name
-        // (a domain, a sentence ending in one) is hidden whole.
+        // (a sentence ending in one, a domain under another key) is hidden whole.
         'over-hides other values that end like a file name',
-        '{"url":"example.com","detail":"see config.json"}',
-        '{"url":"a file","detail":"a file"}'
+        '{"detail":"see config.json","server":"example.com"}',
+        '{"detail":"a file","server":"a file"}'
+      ],
+      [
+        'a name after "/" runs across further folders',
+        'Moved [REDACTED_PATH]/My Drive/passport.pdf ok',
+        'Moved [REDACTED_PATH]'
+      ],
+      [
+        'a name after "/" still stops before " => " and the next token',
+        'Copy [REDACTED_PATH]/Tax Returns/a.pdf => [REDACTED_PATH]/My Drive/b.pdf: EBUSY',
+        'Copy [REDACTED_PATH] => [REDACTED_PATH]: EBUSY'
+      ],
+      [
+        'a name after "/" with folders inside JSON stays valid JSON',
+        '{"error":"cannot open [REDACTED_PATH]/My Drive/passport.pdf","code":"EBUSY"}',
+        '{"error":"cannot open [REDACTED_PATH]","code":"EBUSY"}'
       ],
       [
         'a file field cut at the end of dataText',
@@ -396,7 +416,11 @@ describe('liveActivityFormat', () => {
       String.raw`copy \\nas\home\jdoe\${name} done`,
       `payload ${JSON.stringify({ from: `C:\\Users\\jdoe\\${name}` })}`,
       `open C:/Users/jdoe/${name} now`,
-      `/home/jdoe/docs/${name} could not be read`
+      `/home/jdoe/docs/${name} could not be read`,
+      // The logger cuts a POSIX path at the first whitespace, so a folder
+      // with a space leaves the rest of the path after the token.
+      `Moved /Users/me/Library/CloudStorage/GoogleDrive-x/My Drive/${name} ok`,
+      `/home/me/Documents/Tax Returns/${name}`
     ];
 
     /** @param {string} output @param {string} name */
@@ -428,7 +452,35 @@ describe('liveActivityFormat', () => {
         })
       );
       expectHidden(redactRawText(dataText, true), name);
+      expect(() => JSON.parse(redactRawText(dataText, true))).not.toThrow();
     });
+
+    const SPACED_FOLDER_PATHS = [
+      ['/Users/me/Library/CloudStorage/GoogleDrive-x/My Drive/passport.pdf', 'passport'],
+      ['/home/me/Documents/Tax Returns/2024 return.pdf', 'return.pdf']
+    ];
+
+    test.each(SPACED_FOLDER_PATHS)(
+      'Raw tab: a file inside a folder with a space (%s) is hidden',
+      (filePath, word) => {
+        const msg = sanitizeLogData(`[FILE-OPS] Moved ${filePath} ok`);
+        expect(msg).toContain(word); // the logger alone leaves it visible
+        const shown = redactRawText(msg, true);
+        expect(shown).toBe('[FILE-OPS] Moved [REDACTED_PATH]');
+        const dataText = JSON.stringify(sanitizeLogData({ error: `cannot open ${filePath}` }));
+        expect(redactRawText(dataText, true)).toBe('{"error":"cannot open [REDACTED_PATH]"}');
+      }
+    );
+
+    test.each(SPACED_FOLDER_PATHS)(
+      'Activity tab: a file inside a folder with a space (%s) is hidden',
+      (filePath, word) => {
+        const msg = sanitizeLogData(`[FILE-OPS] Moved ${filePath} ok`);
+        const activity = activityFromLogRecord({ level: 'warn', context: 'FileOps', msg });
+        expect(activity.text).toContain(word);
+        expect(redactActivityText(activity, true)).toBe('Problem: Moved a file');
+      }
+    );
   });
 
   describe('icons', () => {
