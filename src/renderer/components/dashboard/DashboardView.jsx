@@ -164,7 +164,7 @@ function HeroBand({ status, greeting, summary, onImport, onAdd }) {
               {greeting}
             </span>
           </Heading>
-          <Text variant="small" className="mt-1">
+          <Text variant="small" className="dashboard-hero-summary mt-1">
             {summary}
           </Text>
         </div>
@@ -262,7 +262,7 @@ function PipelineStage({ icon: Icon, label, value, tone, isEntryHint, onClick })
         <Icon className="h-5 w-5" aria-hidden="true" />
       </span>
       <div
-        className={`mt-2 font-mono text-3xl font-semibold leading-none tracking-tight tabular-nums ${valueClass}`}
+        className={`dashboard-stage-value mt-2 font-mono text-3xl font-semibold leading-none tracking-tight tabular-nums ${valueClass}`}
       >
         <AnimatedCount value={value} />
       </div>
@@ -322,48 +322,50 @@ function PipelineCard({
           spans icon-center to icon-center (each of three equal columns centers
           its icon at 1/6, 1/2, 5/6 of the width); the success-tinted fill grows
           toward the Organized node as work completes. */}
-      <div className="relative mt-4 rounded-xl border border-border-soft/50 bg-system-gray-100/25 p-4">
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute left-[16.66%] right-[16.66%] top-9 h-0.5 -translate-y-1/2 overflow-hidden rounded-full bg-system-gray-200/80"
-        >
-          <motion.div
-            className="relative h-full overflow-hidden rounded-full bg-gradient-to-r from-stratosort-warning/70 via-stratosort-blue/80 to-stratosort-success"
-            initial={reduceMotion ? false : { width: '0%' }}
-            animate={{ width: `${railPct}%` }}
-            transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+      <div className="mt-[var(--dash-section-gap)] rounded-xl border border-border-soft/50 bg-system-gray-100/25 p-[var(--dash-inner-pad)] lg:flex lg:flex-1 lg:flex-col lg:justify-center">
+        <div className="relative">
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute left-[16.66%] right-[16.66%] top-5 h-0.5 -translate-y-1/2 overflow-hidden rounded-full bg-system-gray-200/80"
           >
-            {/* Travelling sheen only while work is actually moving — silenced under
+            <motion.div
+              className="relative h-full overflow-hidden rounded-full bg-gradient-to-r from-stratosort-warning/70 via-stratosort-blue/80 to-stratosort-success"
+              initial={reduceMotion ? false : { width: '0%' }}
+              animate={{ width: `${railPct}%` }}
+              transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+            >
+              {/* Travelling sheen only while work is actually moving — silenced under
                 reduced motion by the utility's own media query (styles.css). */}
-            {inFlight > 0 ? <span aria-hidden="true" className="pipeline-rail-sheen" /> : null}
-          </motion.div>
-        </div>
-        <div className="relative z-10 flex items-start justify-between gap-compact">
-          <PipelineStage
-            icon={Sparkles}
-            label="Awaiting analysis"
-            value={stats.pending}
-            tone="warning"
-            isEntryHint={isEmpty}
-            onClick={onPendingStage}
-          />
-          <PipelineStage
-            icon={FolderInput}
-            label="Ready to organize"
-            value={stats.ready}
-            tone="accent"
-            onClick={onReadyStage}
-          />
-          <PipelineStage
-            icon={CheckCircle2}
-            label="Organized"
-            value={organizedCount}
-            tone="success"
-            onClick={onOrganizedStage}
-          />
+              {inFlight > 0 ? <span aria-hidden="true" className="pipeline-rail-sheen" /> : null}
+            </motion.div>
+          </div>
+          <div className="relative z-10 flex items-start justify-between gap-compact">
+            <PipelineStage
+              icon={Sparkles}
+              label="Awaiting analysis"
+              value={stats.pending}
+              tone="warning"
+              isEntryHint={isEmpty}
+              onClick={onPendingStage}
+            />
+            <PipelineStage
+              icon={FolderInput}
+              label="Ready to organize"
+              value={stats.ready}
+              tone="accent"
+              onClick={onReadyStage}
+            />
+            <PipelineStage
+              icon={CheckCircle2}
+              label="Organized"
+              value={organizedCount}
+              tone="success"
+              onClick={onOrganizedStage}
+            />
+          </div>
         </div>
       </div>
-      <div className="mt-4 flex items-center justify-between gap-cozy lg:mt-auto lg:pt-4">
+      <div className="mt-[var(--dash-section-gap)] flex items-center justify-between gap-cozy lg:mt-auto lg:pt-[var(--dash-section-gap)]">
         <Text variant="tiny">{`${inFlight} of ${stats.total} files in flight`}</Text>
         {stats.failed > 0 ? (
           <Button variant="ghost" size="sm" onClick={onReviewFailed}>
@@ -412,11 +414,11 @@ function SmartFoldersCard({ folders, onManage, className }) {
           Quick-actions card via lg:items-stretch), so a handful of folders read
           as substantial cards instead of short pills floated at the top.
           min-h keeps a floor for the many-folders case. */}
-      <div className="mt-4 grid flex-1 auto-rows-fr grid-cols-2 gap-compact lg:grid-cols-3">
+      <div className="mt-[var(--dash-section-gap)] grid flex-1 auto-rows-fr grid-cols-2 gap-compact lg:grid-cols-3">
         {visible.map((folder) => (
           <div
             key={folder.id || folder.name}
-            className="flex min-h-[2.75rem] items-center gap-compact rounded-xl border border-border-soft/50 bg-system-gray-100/40 px-3 py-2 text-sm font-medium"
+            className="dashboard-chip flex min-h-[2.75rem] items-center gap-compact rounded-xl border border-border-soft/50 bg-system-gray-100/40 px-3 py-2 text-sm font-medium"
             title={folder.name}
           >
             <FolderTree className="h-4 w-4 shrink-0 text-stratosort-warning" aria-hidden="true" />
@@ -424,7 +426,7 @@ function SmartFoldersCard({ folders, onManage, className }) {
           </div>
         ))}
         {overflow > 0 ? (
-          <div className="flex min-h-[2.75rem] items-center justify-center rounded-xl border border-dashed border-border-soft/50 px-3 py-2 text-sm text-system-gray-600">
+          <div className="dashboard-chip flex min-h-[2.75rem] items-center justify-center rounded-xl border border-dashed border-border-soft/50 px-3 py-2 text-sm text-system-gray-600">
             {`+${overflow} more`}
           </div>
         ) : null}
@@ -446,9 +448,9 @@ function QuickActionTile({ icon: Icon, title, description, onClick, tone }) {
       type="button"
       variant="interactive"
       onClick={onClick}
-      className="group/tile interactive-lift text-left w-full h-full focus-visible:ring-2 focus-visible:ring-stratosort-blue focus-visible:ring-offset-2 focus-visible:outline-none"
+      className="dashboard-tile group/tile interactive-lift flex items-center text-left w-full h-full focus-visible:ring-2 focus-visible:ring-stratosort-blue focus-visible:ring-offset-2 focus-visible:outline-none"
     >
-      <div className="flex items-start gap-cozy">
+      <div className="flex w-full items-start gap-cozy">
         <span
           className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-transform duration-150 ease-out group-hover/tile:scale-105 ${
             ACTION_TONE[tone] || ACTION_TONE.blue
@@ -510,7 +512,7 @@ function ActivityCard({
             icon={FolderTree}
             title="No activity yet"
             description="Organized files will show up here as you confirm suggestions."
-            className="mt-4 lg:mt-0"
+            className="mt-[var(--dash-section-gap)] lg:mt-0"
             action={
               <Button variant="subtle" size="sm" onClick={onAddFiles}>
                 Add files to start
@@ -543,7 +545,7 @@ function ActivityCard({
               );
             })}
           </Stack>
-          <div className="mt-4 lg:mt-auto lg:pt-4">
+          <div className="mt-[var(--dash-section-gap)] lg:mt-auto lg:pt-[var(--dash-section-gap)]">
             <Button variant="ghost" size="sm" onClick={onViewQueue}>
               {queue.some((file) => file.status === 'ready')
                 ? 'Review ready files'
@@ -553,7 +555,7 @@ function ActivityCard({
         </>
       ) : (
         <>
-          <Stack gap="compact" className="mt-4">
+          <Stack gap="compact" className="mt-[var(--dash-section-gap)]">
             {recent.map((file, idx) => (
               <div
                 key={`${file.originalPath || file.newName || 'file'}-${idx}`}
@@ -571,7 +573,7 @@ function ActivityCard({
               </div>
             ))}
           </Stack>
-          <div className="mt-4 lg:mt-auto lg:pt-4">
+          <div className="mt-[var(--dash-section-gap)] lg:mt-auto lg:pt-[var(--dash-section-gap)]">
             <Button variant="ghost" size="sm" onClick={onViewAll}>
               View all results
             </Button>
@@ -746,7 +748,7 @@ export default function DashboardView() {
   return (
     <div
       {...dragProps}
-      className={`relative flex w-full flex-col rounded-2xl transition-shadow ${
+      className={`dashboard-view relative flex w-full flex-col rounded-2xl lg:flex-1 transition-shadow ${
         isDragging ? 'ring-2 ring-stratosort-blue/40 ring-offset-2' : ''
       }`}
     >
@@ -775,7 +777,7 @@ export default function DashboardView() {
         variants={STAGGER_VARIANTS}
         initial="hidden"
         animate="show"
-        className="relative z-10 flex flex-col gap-default"
+        className="relative z-10 flex flex-col gap-[var(--dash-gap)] lg:flex-1"
       >
         <motion.div variants={blockVariants}>
           <HeroBand
@@ -787,14 +789,17 @@ export default function DashboardView() {
           />
         </motion.div>
 
-        <motion.div variants={blockVariants} className="flex flex-col gap-default">
+        <motion.div
+          variants={blockVariants}
+          className="flex flex-col gap-[var(--dash-gap)] lg:flex-1"
+        >
           {isAnalyzing && progress && <AnalysisProgress progress={progress} />}
 
           {/* Live-status zone — the two surfaces that answer "what's happening?".
               The pipeline holds the aggregate counts; the activity rail holds the
               individual items behind those counts, so they are paired and share a
               height via items-stretch rather than living in separate columns. */}
-          <div className="grid grid-cols-1 gap-default lg:grid-cols-[2fr_1fr] lg:items-stretch">
+          <div className="grid grid-cols-1 gap-[var(--dash-gap)] lg:grow lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:items-stretch">
             <PipelineCard
               stats={stats}
               organizedCount={organizedCount}
@@ -827,10 +832,10 @@ export default function DashboardView() {
           {/* Get-things-done zone — shortcuts to the working surfaces paired with
               the smart-folder destinations they feed. Same 2fr/1fr split as the
               status row above so the column gutter lines up down the page. */}
-          <div className="grid grid-cols-1 gap-default lg:grid-cols-[2fr_1fr] lg:items-stretch">
+          <div className="grid grid-cols-1 gap-[var(--dash-gap)] lg:grow lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:items-stretch">
             <Card variant="default" className="h-full lg:flex lg:flex-col">
               <SectionLabel>Quick actions</SectionLabel>
-              <div className="mt-4 grid grid-cols-1 gap-cozy sm:grid-cols-3 sm:items-stretch lg:flex-1">
+              <div className="mt-[var(--dash-section-gap)] grid grid-cols-1 gap-cozy sm:grid-cols-3 sm:items-stretch lg:flex-1">
                 <QuickActionTile
                   icon={FolderPlus}
                   title="Add & analyze files"
@@ -865,7 +870,7 @@ export default function DashboardView() {
           {/* Knowledge layer — a pride-surface summary of every file the local
               AI has processed. Sits at the foot of the board so it reads as a
               reward / closing thought after the pipeline and quick-action rows. */}
-          <KnowledgeStatsCard />
+          <KnowledgeStatsCard className="lg:flex lg:grow lg:flex-col" />
         </motion.div>
       </motion.div>
     </div>
