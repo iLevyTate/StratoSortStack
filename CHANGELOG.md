@@ -126,6 +126,11 @@ Changes you will notice:
   - Search index saves write only the collections that changed, refresh the `.bak` copy at most
     every 30 minutes, and are spaced by how long a save takes (5 s to 2 min). On a large library one
     save had been about 785 MB.
+  - Each search index file now holds only the documents, which is all a restart reads back. The
+    index structures Orama rebuilds on load, including a second copy of every embedding, were more
+    than half of each file. Files written by earlier versions still load, and earlier versions can
+    read the new files.
+  - A write that landed during a save no longer starts a second save right after the first one.
   - Analysis history saves wait for 2 s of quiet and are at least 10 s apart, holding a change for
     at most about 10 s; quitting writes at once. A crash can lose at most those last seconds of
     entries.
@@ -167,6 +172,18 @@ Changes you will notice:
 
 ### Fixed
 
+- **A search index too large to save is reported instead of silently not saving.** A collection is
+  saved as one block of text, and V8 cannot build one longer than about 537 million characters. Past
+  that, every save failed, was retried as if the disk had hiccuped, and new passages were lost at
+  each restart. Now the app shows an error naming the index, saves everything else, and does not
+  retry that index until files are removed from it. It warns in the log once a save passes 85% of
+  the limit.
+- **A search index file too large to read is no longer renamed as corrupt.** It is left on disk as
+  it is and never saved over, so no data is lost, and an error says search results are incomplete.
+  Resetting that index clears the error.
+- **Half-written search index files are cleaned up.** A save interrupted by a crash or a full disk
+  left its temporary file behind (hundreds of MB each on a large library). Startup now removes those
+  older than an hour from the search index folder.
 - **Startup repair re-embeds missing vectors under default settings.** The file-vector backfill
   asked whether embedding was allowed after organizing, which is refused under the default "during
   analysis" timing, so missing file vectors were never rebuilt and the file was marked skipped.

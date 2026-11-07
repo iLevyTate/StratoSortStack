@@ -59,6 +59,7 @@ const { createSingletonHelpers } = require('../../shared/singletonFactory');
 const { AI_DEFAULTS, IPC_CHANNELS } = require('../../shared/constants');
 const { ERROR_CODES } = require('../../shared/errorCodes');
 const { isDiskFullError } = require('../../shared/errorClassifier');
+const { sweepOrphanUserDataTmpFiles } = require('./userDataTmpSweeper');
 const { attachErrorCode } = require('../../shared/errorHandlingUtils');
 const { replaceFileWithRetry } = require('../../shared/atomicFile');
 const { tryParse: safeJsonTryParse } = require('../../shared/safeJsonOps');
@@ -131,6 +132,46 @@ const STORAGE_FULL_RETRY_MS = 60_000;
 
 const PERSIST_COMPRESSION_ENABLED =
   String(process.env.STRATOSORT_ORAMA_COMPRESS || 'true').toLowerCase() !== 'false';
+
+// The longest string V8 can build. A collection's saved JSON is one string,
+// so past this the save throws instead of writing. Warn well before it.
+const MAX_SAVED_JSON_CHARS = require('buffer').constants.MAX_STRING_LENGTH;
+const SAVED_JSON_WARN_RATIO = 0.85;
+
+/**
+ * Whether an error is V8 refusing to build a string that long: a save whose
+ * JSON outgrew MAX_SAVED_JSON_CHARS, or a restore whose file decompresses
+ * past it. Neither means the data on disk is damaged.
+ * @param {any} error
+ * @returns {boolean}
+ */
+function isStringTooLongError(error) {
+  if (!error) return false;
+  if (error.code === 'ERR_STRING_TOO_LONG') return true;
+  return error instanceof RangeError && /invalid string length/i.test(String(error.message));
+}
+
+/**
+ * The saved form of a collection: its documents and nothing else.
+ *
+ * Restore reads only `docs.docs` and rebuilds every index by inserting the
+ * documents again (_createOrRestoreDatabase; every release since v2.0.0 does
+ * the same, so older builds still read this). Orama's full export also holds
+ * the vector index, a second copy of every embedding, plus the text and sort
+ * indexes: more than half of each save, written and parsed every time and
+ * never read back.
+ *
+ * @param {any} db
+ * @returns {Promise<string>}
+ */
+async function serializeCollectionForDisk(db) {
+  const docsStore = db?.data?.docs;
+  if (!docsStore || typeof docsStore.docs !== 'object' || docsStore.docs === null) {
+    // Not a full Orama instance: keep the full export rather than guess.
+    return /** @type {any} */ (await persist(db, 'json'));
+  }
+  return JSON.stringify({ docs: { docs: docsStore.docs, count: docsStore.count } });
+}
 
 const writeFileAtomic = async (/** @type {any} */ filePath, /** @type {any} */ data) => {
   const tempPath = `${filePath}.tmp.${require('crypto').randomUUID()}`;
@@ -298,6 +339,24 @@ class OramaVectorService extends EventEmitter {
     this._savedSidecarSizes = new Map();
     /** @type {Map<string, number>} when each collection's .bak was last refreshed */
     this._bakRotatedAt = new Map();
+    /**
+     * Collections whose saved JSON outgrew MAX_SAVED_JSON_CHARS, with their
+     * document count at the time. Their save is skipped until the count drops
+     * below it, instead of re-running a multi-second stringify that must fail.
+     * @type {Map<string, number>}
+     */
+    this._tooLargeToSave = new Map();
+    /**
+     * Collections whose file was too large to read at startup, with the
+     * empty collection that stood in for them. While that stand-in is still
+     * the live collection, neither its blob nor its sidecar is saved: either
+     * would overwrite the unread data on disk. A reset or rebuild replaces
+     * it, and saving resumes.
+     * @type {Map<string, object>}
+     */
+    this._tooLargeToRead = new Map();
+    /** @type {Set<string>} collections already warned about nearing the limit */
+    this._nearSizeLimitWarned = new Set();
     this._lastFullPersistAt = 0;
     this._forceFullPersist = false;
     this._lastPersistDurationMs = 0;
@@ -1394,6 +1453,16 @@ class OramaVectorService extends EventEmitter {
 
         this._dataPath = await this._resolveVectorDataPath();
         await fs.mkdir(this._dataPath, { recursive: true });
+        // Saves interrupted by a crash or a full disk leave hundreds of MB of
+        // half-written temp files here. Nothing in this process has written
+        // one yet, and the sweep only takes files over an hour old.
+        await sweepOrphanUserDataTmpFiles({ userDataDir: this._dataPath, logger }).catch(
+          (/** @type {any} */ error) => {
+            logger.debug('[OramaVectorService] Temp file sweep failed', { error: error?.message });
+          }
+        );
+        this._tooLargeToSave.clear();
+        this._tooLargeToRead.clear();
 
         await this._refreshEmbeddingDimension({ reason: 'initialize' });
 
@@ -1673,13 +1742,18 @@ class OramaVectorService extends EventEmitter {
       let data;
       let usedCompressed = false;
       let dataSource = null; // tracks where `data` came from for accurate quarantine
+      // A file that decompresses past the longest string V8 can build is not
+      // damaged; it is only too large for this reader. Never quarantine it.
+      let tooLargeToRead = false;
       try {
         const compressed = await fs.readFile(compressedPath);
         data = (await uncompress(compressed)).toString('utf8');
         usedCompressed = true;
         dataSource = compressedPath;
       } catch (error) {
-        if (error?.code !== 'ENOENT') {
+        if (isStringTooLongError(error)) {
+          tooLargeToRead = true;
+        } else if (error?.code !== 'ENOENT') {
           // LZ4 file exists but is corrupt — back it up so it can be inspected,
           // then fall through to the uncompressed JSON fallback.
           logger.error('[OramaVectorService] Compressed persistence corrupt, backing up', {
@@ -1702,7 +1776,9 @@ class OramaVectorService extends EventEmitter {
           data = await fs.readFile(persistPath, 'utf-8');
           dataSource = persistPath;
         } catch (jsonError) {
-          if (jsonError?.code !== 'ENOENT') {
+          if (isStringTooLongError(jsonError)) {
+            tooLargeToRead = true;
+          } else if (jsonError?.code !== 'ENOENT') {
             logger.warn('[OramaVectorService] Uncompressed primary read failed', {
               name,
               error: jsonError.message
@@ -1729,7 +1805,9 @@ class OramaVectorService extends EventEmitter {
             `[OramaVectorService] Restored ${name} from .bak rolling backup; primary was unreadable`
           );
         } catch (bakError) {
-          if (bakError?.code !== 'ENOENT') {
+          if (isStringTooLongError(bakError)) {
+            tooLargeToRead = true;
+          } else if (bakError?.code !== 'ENOENT') {
             logger.debug(`[OramaVectorService] .bak fallback failed for ${name}`, {
               error: bakError.message
             });
@@ -1741,6 +1819,17 @@ class OramaVectorService extends EventEmitter {
       // This is the expected state on a fresh install — return a clean DB
       // without logging error noise.
       if (!data) {
+        if (tooLargeToRead) {
+          // Start empty for this session, but never save it: an empty
+          // collection written over the unread file would lose it for good.
+          const standIn = await create({
+            schema,
+            components: { tokenizer: ORAMA_TOKENIZER_CONFIG }
+          });
+          this._tooLargeToRead.set(name, standIn);
+          this._raiseCollectionTooLarge(name, 'read');
+          return standIn;
+        }
         return await create({ schema, components: { tokenizer: ORAMA_TOKENIZER_CONFIG } });
       }
 
@@ -2149,8 +2238,8 @@ class OramaVectorService extends EventEmitter {
       // Handle compression format migration
       if (!PERSIST_COMPRESSION_ENABLED && usedCompressed) {
         try {
-          const json = await persist(/** @type {any} */ (db), 'json');
-          await writeFileAtomic(persistPath, /** @type {any} */ (json));
+          const json = await serializeCollectionForDisk(db);
+          await writeFileAtomic(persistPath, json);
           await fs.rename(compressedPath, `${compressedPath}.legacy.${Date.now()}`);
           logger.info(`[OramaVectorService] Migrated ${name} persistence to JSON`);
         } catch (migrateError) {
@@ -2266,6 +2355,80 @@ class OramaVectorService extends EventEmitter {
   }
 
   /**
+   * Tell the user a collection has outgrown what one save file can hold.
+   * Logged once per occurrence and raised as a degraded flag, so the size
+   * limit is a visible error rather than a save that silently stops.
+   * @private
+   * @param {string} name
+   * @param {'save' | 'read'} phase
+   * @param {Record<string, any>} [detail]
+   */
+  _raiseCollectionTooLarge(name, phase, detail = {}) {
+    logger.error(
+      phase === 'save'
+        ? `[OramaVectorService] ${name} is too large to save as one file; new changes to it are kept only until the app closes`
+        : `[OramaVectorService] ${name} is too large to read; it is left untouched on disk and not saved over`,
+      { collection: name, limitChars: MAX_SAVED_JSON_CHARS, ...detail }
+    );
+    const tracker = getDegradedStateTrackerSafe();
+    if (!tracker) return;
+    tracker.raise({
+      code: `orama.too-large:${name}`,
+      subsystem: 'vector-db',
+      severity: 'error',
+      message:
+        phase === 'save'
+          ? `The search index "${name}" has grown past what can be saved. Changes to it are lost when the app closes. Removing files from the library frees space.`
+          : `The search index "${name}" was too large to load. It was left on disk unchanged, and search results will be incomplete.`,
+      detail: { collection: name, phase, limitChars: MAX_SAVED_JSON_CHARS, ...detail }
+    });
+  }
+
+  /**
+   * Whether a collection is still the empty stand-in for a file too large to
+   * read. Once a reset or rebuild replaces it, the block lifts.
+   * @private
+   * @param {string} name
+   * @returns {boolean}
+   */
+  _isUnreadStandIn(name) {
+    const standIn = this._tooLargeToRead.get(name);
+    if (!standIn) return false;
+    if (standIn === this._databases[name]) return true;
+    this._tooLargeToRead.delete(name);
+    this._clearCollectionTooLarge(name);
+    return false;
+  }
+
+  /**
+   * @private
+   * @param {string} name
+   */
+  _clearCollectionTooLarge(name) {
+    logger.info(`[OramaVectorService] ${name} fits in one save file again; saving resumed`);
+    getDegradedStateTrackerSafe()?.clear?.(`orama.too-large:${name}`);
+  }
+
+  /**
+   * Warn once per launch when a collection's saved JSON passes
+   * SAVED_JSON_WARN_RATIO of the limit, while there is still room to act.
+   * @private
+   * @param {string} name
+   * @param {number} chars
+   */
+  _warnIfNearSizeLimit(name, chars) {
+    if (chars < MAX_SAVED_JSON_CHARS * SAVED_JSON_WARN_RATIO) return;
+    if (this._nearSizeLimitWarned.has(name)) return;
+    this._nearSizeLimitWarned.add(name);
+    logger.warn(`[OramaVectorService] ${name} is nearing the largest size one save file can hold`, {
+      collection: name,
+      chars,
+      limitChars: MAX_SAVED_JSON_CHARS,
+      percent: Math.round((chars / MAX_SAVED_JSON_CHARS) * 100)
+    });
+  }
+
+  /**
    * One save attempt per STORAGE_FULL_RETRY_MS while the disk is full. The
    * retry counter is left one short of the limit, so each attempt that fails
    * schedules exactly one more instead of a fast round of five.
@@ -2349,7 +2512,7 @@ class OramaVectorService extends EventEmitter {
       !this._lastFullPersistAt ||
       saveStartedAt - this._lastFullPersistAt >= FULL_PERSIST_INTERVAL_MS;
     const toSave = Object.keys(this._databases).filter(
-      (name) => fullSave || this._collectionNeedsSave(name)
+      (name) => !this._isUnreadStandIn(name) && (fullSave || this._collectionNeedsSave(name))
     );
     // Unmark before serializing: a write that lands while this save runs marks
     // its collection again, so the next save picks it up.
@@ -2364,6 +2527,8 @@ class OramaVectorService extends EventEmitter {
     /** @type {any} */
     let sidecarError = null;
     let blobsWritten = false;
+    /** @type {Set<string>} collections whose blob was over the size limit this round */
+    const oversized = new Set();
 
     try {
       // Persist embedding sidecar maps before Orama JSON blobs so we always
@@ -2414,7 +2579,24 @@ class OramaVectorService extends EventEmitter {
         const db = this._databases[name];
         const persistPath = path.join(this._dataPath, `${name}.json`);
         const compressedPath = `${persistPath}.lz4`;
-        const data = /** @type {any} */ (await persist(db, 'json'));
+        const docCount = Number(db?.data?.docs?.count);
+        const failedAtCount = this._tooLargeToSave.get(name);
+        if (failedAtCount !== undefined && !(docCount < failedAtCount)) {
+          oversized.add(name);
+          continue;
+        }
+        let data;
+        try {
+          data = await serializeCollectionForDisk(db);
+        } catch (error) {
+          if (!isStringTooLongError(error)) throw error;
+          this._tooLargeToSave.set(name, Number.isFinite(docCount) ? docCount : 0);
+          this._raiseCollectionTooLarge(name, 'save', { documents: docCount });
+          oversized.add(name);
+          continue;
+        }
+        if (this._tooLargeToSave.delete(name)) this._clearCollectionTooLarge(name);
+        this._warnIfNearSizeLimit(name, data.length);
         // Keep a single-generation `.bak` of the active persistence. Previously
         // the rotation `rename(active → active.bak)` happened BEFORE
         // writeFileAtomic, opening a window where neither the active file nor
@@ -2516,7 +2698,8 @@ class OramaVectorService extends EventEmitter {
         {
           collections: toSave,
           full: fullSave,
-          durationMs: this._lastPersistDurationMs
+          durationMs: this._lastPersistDurationMs,
+          ...(oversized.size > 0 ? { tooLargeToSave: [...oversized] } : {})
         }
       );
       this._clearStorageFull();
@@ -2563,6 +2746,9 @@ class OramaVectorService extends EventEmitter {
       // fired during our run was dropped (guard on line 368). Reschedule so
       // those writes are not silently orphaned.
       if (this._persistPending && !this._isShuttingDown) {
+        // A write during the save armed its own debounce timer. Replace it,
+        // or both fire and the second save starts right after this one.
+        if (this._persistTimer) clearTimeout(this._persistTimer);
         this._persistTimer = setTimeout(() => {
           if (!this._isPersisting) {
             this._currentPersistPromise = this._doPersist();
