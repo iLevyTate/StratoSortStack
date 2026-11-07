@@ -59,17 +59,22 @@ function isoToYear(iso) {
  * @param {{ icon: React.ElementType, value: string, label: string }} props
  */
 function StatTile({ icon: Icon, value, label }) {
+  // dashboard-stat / dashboard-stat-text: on short windows the dashboard
+  // density rules (styles.css, .dashboard-view) lay the chip beside the
+  // value instead of above it, saving roughly 50px of height.
   return (
-    <div className="flex flex-col items-center text-center">
-      <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-stratosort-blue/12 text-stratosort-blue">
+    <div className="dashboard-stat flex flex-col items-center text-center">
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-stratosort-blue/12 text-stratosort-blue">
         <Icon className="h-5 w-5" aria-hidden="true" />
       </span>
-      <div className="mt-2 font-mono text-2xl font-semibold leading-none tracking-tight tabular-nums text-stratosort-blue">
-        {value}
+      <div className="dashboard-stat-text mt-2">
+        <div className="font-mono text-2xl font-semibold leading-none tracking-tight tabular-nums text-stratosort-blue">
+          {value}
+        </div>
+        <Text variant="tiny" className="mt-1">
+          {label}
+        </Text>
       </div>
-      <Text variant="tiny" className="mt-1">
-        {label}
-      </Text>
     </div>
   );
 }

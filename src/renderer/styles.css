@@ -2763,4 +2763,81 @@
   .chat-input {
     background-color: var(--surface-primary);
   }
+
+  /*
+   * Dashboard vertical density. The dashboard is a single-screen overview, so
+   * on short windows it tightens its vertical rhythm instead of scrolling.
+   * DashboardView reads these vars for its row gaps and internal spacing; the
+   * card/hero/tile padding overrides live here because Card bakes in
+   * `p-4 sm:p-6` (hero `p-6 sm:p-8`) and a className can't reliably out-rank a
+   * responsive utility. Two-class selectors win on specificity inside this
+   * layer, no !important needed. Below `sm` the Card defaults already apply.
+   */
+  .dashboard-view {
+    --dash-gap: 1rem;
+    --dash-section-gap: 1rem;
+    --dash-inner-pad: 1rem;
+    --dash-card-pad: 1.5rem;
+    --dash-hero-pad: 2rem;
+    --dash-tile-pad: 1.5rem;
+  }
+
+  @media (max-height: 900px) {
+    .dashboard-view {
+      --dash-gap: 0.75rem;
+      --dash-section-gap: 0.75rem;
+      --dash-inner-pad: 0.75rem;
+      --dash-card-pad: 1rem;
+      --dash-hero-pad: 1.25rem;
+      --dash-tile-pad: 1rem;
+    }
+    /* Knowledge stats: chip beside the value instead of stacked above it. */
+    .dashboard-view .dashboard-stat {
+      flex-direction: row;
+      justify-content: center;
+      gap: 0.75rem;
+      text-align: left;
+    }
+    .dashboard-view .dashboard-stat-text {
+      margin-top: 0;
+    }
+    .dashboard-view h1 {
+      font-size: 1.875rem;
+      line-height: 2.25rem;
+    }
+    .dashboard-view .dashboard-stage-value {
+      font-size: 1.5rem;
+    }
+    .dashboard-view .dashboard-chip {
+      min-height: 2.25rem;
+    }
+  }
+
+  @media (max-height: 760px) {
+    .dashboard-view {
+      --dash-gap: 0.5rem;
+      --dash-section-gap: 0.5rem;
+      --dash-inner-pad: 0.5rem;
+      --dash-card-pad: 0.75rem;
+      --dash-hero-pad: 1rem;
+      --dash-tile-pad: 0.75rem;
+    }
+    /* The hero summary repeats what the pipeline and smart-folder cards
+       already show, so it is the first thing to give up on very short windows. */
+    .dashboard-view .dashboard-hero-summary {
+      display: none;
+    }
+  }
+
+  @media (min-width: 640px) {
+    .dashboard-view .surface-card {
+      padding: var(--dash-card-pad);
+    }
+    .dashboard-view .glass-panel {
+      padding: var(--dash-hero-pad);
+    }
+    .dashboard-view .dashboard-tile {
+      padding: var(--dash-tile-pad);
+    }
+  }
 }
