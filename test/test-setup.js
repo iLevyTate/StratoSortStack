@@ -4,7 +4,15 @@
  */
 
 // Import jest-dom for React Testing Library matchers (toBeInTheDocument, etc.)
-require('@testing-library/jest-dom');
+// Loaded in an isolated registry: jest-dom 7 eagerly requires
+// @testing-library/dom, which requires 'fs' at load time. Outside isolation
+// that instantiates the memfs mock below into the shared mock registry, and a
+// test file's own jest.mock('fs', factory) is then ignored (the cached memfs
+// wins), so fs.x.mockResolvedValue is undefined. expect.extend() is global,
+// so the matchers survive the isolated registry being discarded.
+jest.isolateModules(() => {
+  require('@testing-library/jest-dom');
+});
 
 const { vol, fs: memfs } = require('memfs');
 const path = require('path');

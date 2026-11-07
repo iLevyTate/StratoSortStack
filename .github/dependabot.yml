@@ -107,10 +107,17 @@ updates:
 
       # ─── Node >= 22 majors: holds lifted 2026-11-04 ──────────────────────
       # better-sqlite3, @testing-library/jest-dom and cssnano majors were held
-      # while the host toolchain was Node 20.19 (jest-dom 7 broke 43 suites;
-      # cssnano 8 calls Set.prototype.difference). The toolchain is Node 24
-      # now, so their majors arrive as ordinary Dependabot PRs again; each
-      # still has to pass `npm run ci` on its own.
+      # while the host toolchain was Node 20.19 (cssnano 8 calls
+      # Set.prototype.difference). The toolchain is Node 24 now, so their
+      # majors arrive as ordinary Dependabot PRs again; each still has to
+      # pass `npm run ci` on its own.
+      #
+      # jest-dom 7's suite breakage was NOT the Node version: it still broke
+      # 54 suites on Node 24 (#86). jest-dom 7 eagerly requires
+      # @testing-library/dom, which requires 'fs' at load, so loading it from
+      # test/test-setup.js cached the memfs `fs` mock and silently overrode
+      # every test file's own jest.mock('fs', factory). test-setup.js now
+      # loads jest-dom inside jest.isolateModules; keep it there.
       #
       # better-sqlite3 needs more than `npm run ci`: Jest never loads the
       # native module (shouldUseSqliteBackend defaults to false under Jest,
