@@ -2813,7 +2813,7 @@
     }
   }
 
-  @media (max-height: 760px) {
+  @media (max-height: 800px) {
     .dashboard-view {
       --dash-gap: 0.5rem;
       --dash-section-gap: 0.5rem;

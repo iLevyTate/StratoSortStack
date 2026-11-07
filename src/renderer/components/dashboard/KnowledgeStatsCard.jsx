@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import PropTypes from 'prop-types';
 import { CalendarRange, Archive, HardDrive, Tags } from 'lucide-react';
 import { formatBytes } from '../../utils/format';
 import { isIsoDateOnly } from '../../../shared/contentDateSanity';
@@ -83,8 +84,11 @@ function StatTile({ icon: Icon, value, label }) {
  * KnowledgeStatsCard — a "pride-surface" summary of everything the user's
  * local AI has seen. Fetches once on mount via the preload bridge; no Redux
  * dependency (all data comes from analysisHistory, not the file pipeline).
+ *
+ * @param {{ className?: string }} props - className lets the dashboard make the
+ *   card fill its row (the stats row then centers in the extra height).
  */
-export default function KnowledgeStatsCard() {
+export default function KnowledgeStatsCard({ className = '' }) {
   const [stats, setStats] = useState(/** @type {KnowledgeStats | null} */ (null));
   const [error, setError] = useState(false);
 
@@ -113,7 +117,7 @@ export default function KnowledgeStatsCard() {
   // API unavailable or thrown
   if (error) {
     return (
-      <Card variant="default">
+      <Card variant="default" className={className}>
         <SectionLabel>Your knowledge layer</SectionLabel>
         <Text variant="tiny" className="mt-compact block text-system-gray-500" role="alert">
           Knowledge stats unavailable.
@@ -125,7 +129,7 @@ export default function KnowledgeStatsCard() {
   // Loading
   if (stats === null) {
     return (
-      <Card variant="default">
+      <Card variant="default" className={className}>
         <SectionLabel>Your knowledge layer</SectionLabel>
         <div role="status" className="mt-compact text-micro text-system-gray-500">
           Loading…
@@ -142,7 +146,7 @@ export default function KnowledgeStatsCard() {
   // banner carries the detail).
   if (stats.isEmpty === undefined && stats.totalFiles === undefined) {
     return (
-      <Card variant="default">
+      <Card variant="default" className={className}>
         <SectionLabel>Your knowledge layer</SectionLabel>
         <Text variant="tiny" className="mt-compact block text-system-gray-500" role="alert">
           Knowledge stats unavailable.
@@ -154,7 +158,7 @@ export default function KnowledgeStatsCard() {
   // Empty state — explicit zero-entry stats only (see the degraded guard above).
   if (stats.isEmpty || !(Number(stats.totalFiles) > 0)) {
     return (
-      <Card variant="default">
+      <Card variant="default" className={className}>
         <SectionLabel>Your knowledge layer</SectionLabel>
         <Text variant="small" className="mt-compact block text-system-gray-600">
           Analyze files to build your knowledge layer.
@@ -200,10 +204,10 @@ export default function KnowledgeStatsCard() {
   );
 
   return (
-    <Card variant="default">
+    <Card variant="default" className={className}>
       <SectionLabel>Your knowledge layer</SectionLabel>
       <div
-        className={`mt-cozy grid grid-cols-2 gap-cozy ${
+        className={`mt-cozy grid grid-cols-2 gap-cozy lg:flex-1 lg:content-center ${
           tiles.length === 4 ? 'sm:grid-cols-4' : 'sm:grid-cols-3'
         }`}
       >
@@ -214,3 +218,7 @@ export default function KnowledgeStatsCard() {
     </Card>
   );
 }
+
+KnowledgeStatsCard.propTypes = {
+  className: PropTypes.string
+};
