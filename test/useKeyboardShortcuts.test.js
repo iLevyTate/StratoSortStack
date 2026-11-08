@@ -11,6 +11,7 @@ const mockDispatch = jest.fn();
 const mockUndo = jest.fn().mockResolvedValue(undefined);
 const mockRedo = jest.fn().mockResolvedValue(undefined);
 const mockAddNotification = jest.fn();
+const mockShowInfo = jest.fn();
 let mockCurrentPhase = 'discover';
 let mockShowSettings = false;
 let mockViewMode = 'phased';
@@ -46,11 +47,19 @@ jest.mock('../src/renderer/store/slices/uiSlice', () => ({
     type: 'ui/setCameFromDashboard',
     payload: value
   })),
-  canTransitionTo: jest.fn(() => true)
+  getPhaseNavigation: jest.fn(() => ({ allowed: true, reason: null }))
+}));
+
+// The phase-rule inputs come from the real store shape; this file only checks
+// that the hook passes them through (see useKeyboardShortcuts.phaseGating.test.js
+// for the rule itself against real state).
+const mockNavContext = { hasSmartFolders: true, hasAnalyzedFiles: true };
+jest.mock('../src/renderer/utils/phaseNavigation', () => ({
+  selectPhaseNavigationContext: () => mockNavContext
 }));
 
 jest.mock('../src/renderer/contexts/NotificationContext', () => ({
-  useNotification: () => ({ addNotification: mockAddNotification })
+  useNotification: () => ({ addNotification: mockAddNotification, showInfo: mockShowInfo })
 }));
 
 jest.mock('../src/renderer/components/UndoRedoSystem', () => ({
@@ -98,6 +107,7 @@ jest.mock('../src/renderer/store/thunks/liveActivityThunks', () => ({
 import { useKeyboardShortcuts } from '../src/renderer/hooks/useKeyboardShortcuts';
 import { hasActiveOverlay } from '../src/renderer/utils/overlayStack';
 import { toggleShowLiveActivity } from '../src/renderer/store/thunks/liveActivityThunks';
+import { getPhaseNavigation } from '../src/renderer/store/slices/uiSlice';
 
 describe('useKeyboardShortcuts', () => {
   let keydownHandler;
@@ -363,6 +373,23 @@ describe('useKeyboardShortcuts', () => {
       const event = fireKey('ArrowLeft', { alt: true });
       expect(event.preventDefault).toHaveBeenCalled();
       expect(mockDispatch).toHaveBeenCalledWith({ type: 'ui/setPhase', payload: 'welcome' });
+    });
+
+    test('asks the phase rule with the navigation context, and stays put with its reason', () => {
+      mockCurrentPhase = 'discover';
+      getPhaseNavigation.mockReturnValueOnce({
+        allowed: false,
+        reason: 'Analyze at least one file first.'
+      });
+      renderShortcuts();
+      const event = fireKey('ArrowRight', { alt: true });
+      expect(event.preventDefault).toHaveBeenCalled();
+      expect(getPhaseNavigation).toHaveBeenCalledWith('discover', 'organize', mockNavContext);
+      expect(mockDispatch).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'ui/setPhase' })
+      );
+      expect(mockShowInfo).toHaveBeenCalledWith('Analyze at least one file first.', 5200);
+      expect(mockAddNotification).not.toHaveBeenCalled();
     });
 
     test('does not navigate past the last phase', () => {

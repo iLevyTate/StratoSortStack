@@ -8,7 +8,7 @@
  * @module phases/discover/useDiscoverState
  */
 
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useAppSelector, useAppDispatch } from '../../store/hooks';
 import {
   setSelectedFiles as setSelectedFilesAction,
@@ -25,7 +25,7 @@ import {
   setAnalysisResults as setAnalysisResultsAction,
   resetAnalysisState as resetAnalysisStateAction
 } from '../../store/slices/analysisSlice';
-import { setPhase } from '../../store/slices/uiSlice';
+import { setPhase, saveNamingDefaults, selectNamingDefaults } from '../../store/slices/uiSlice';
 import { selectFileStats } from '../../store/selectors';
 import { createLogger } from '../../../shared/logger';
 import { serializeData } from '../../utils/serialization';
@@ -54,10 +54,10 @@ export function useDiscoverState() {
   const namingConventionState = useAppSelector(
     (/** @type {any} */ state) => state.files.namingConvention
   );
-  const normalizedNaming = useMemo(
-    () => normalizeNamingConventionState(namingConventionState),
-    [namingConventionState]
-  );
+  // The naming default is the persisted setting Settings -> File naming
+  // defaults edits (selectNamingDefaults); files.namingConvention only mirrors
+  // it for localStorage and early startup.
+  const normalizedNaming = useAppSelector(selectNamingDefaults);
 
   // Destructure naming convention
   const namingConvention = normalizedNaming.convention;
@@ -165,23 +165,42 @@ export function useDiscoverState() {
     [dispatch]
   );
 
+  // Keep the mirror equal to the persisted default, whichever side changed it.
+  useEffect(() => {
+    const mirror = normalizeNamingConventionState(namingConventionState);
+    if (
+      mirror.convention !== normalizedNaming.convention ||
+      mirror.separator !== normalizedNaming.separator ||
+      mirror.dateFormat !== normalizedNaming.dateFormat ||
+      mirror.caseConvention !== normalizedNaming.caseConvention
+    ) {
+      dispatch(setNamingConventionAction({ ...normalizedNaming }));
+    }
+  }, [dispatch, namingConventionState, normalizedNaming]);
+
+  // Discover's naming dialog changes the default itself (saved to settings),
+  // so Settings shows the same value and it survives a restart.
   const setNamingConvention = useCallback(
-    (/** @type {any} */ val) => dispatch(setNamingConventionAction({ convention: val })),
+    (/** @type {any} */ val) =>
+      dispatch(/** @type {any} */ (saveNamingDefaults({ convention: val }))),
     [dispatch]
   );
 
   const setDateFormat = useCallback(
-    (/** @type {any} */ val) => dispatch(setNamingConventionAction({ dateFormat: val })),
+    (/** @type {any} */ val) =>
+      dispatch(/** @type {any} */ (saveNamingDefaults({ dateFormat: val }))),
     [dispatch]
   );
 
   const setCaseConvention = useCallback(
-    (/** @type {any} */ val) => dispatch(setNamingConventionAction({ caseConvention: val })),
+    (/** @type {any} */ val) =>
+      dispatch(/** @type {any} */ (saveNamingDefaults({ caseConvention: val }))),
     [dispatch]
   );
 
   const setSeparator = useCallback(
-    (/** @type {any} */ val) => dispatch(setNamingConventionAction({ separator: val })),
+    (/** @type {any} */ val) =>
+      dispatch(/** @type {any} */ (saveNamingDefaults({ separator: val }))),
     [dispatch]
   );
 
@@ -254,7 +273,9 @@ export function useDiscoverState() {
         if (key === 'currentAnalysisFile') setCurrentAnalysisFile(value);
         if (key === 'selectedFiles') setSelectedFiles(value);
         if (key === 'analysisResults') setAnalysisResults(value);
-        if (key === 'namingConvention') dispatch(setNamingConventionAction(value));
+        if (key === 'namingConvention') {
+          dispatch(/** @type {any} */ (saveNamingDefaults(normalizeNamingConventionState(value))));
+        }
         if (key === 'fileStates') setFileStates(value);
         if (key === 'failedFileCount') {
           logger.debug('Failed file count updated', { count: value });

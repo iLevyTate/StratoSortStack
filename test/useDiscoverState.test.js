@@ -68,7 +68,10 @@ jest.mock('../src/renderer/store/slices/analysisSlice', () => ({
 }));
 
 jest.mock('../src/renderer/store/slices/uiSlice', () => ({
-  setPhase: jest.fn((payload) => ({ type: 'ui/setPhase', payload }))
+  setPhase: jest.fn((payload) => ({ type: 'ui/setPhase', payload })),
+  saveNamingDefaults: jest.fn((payload) => ({ type: 'ui/saveNamingDefaults', payload })),
+  selectNamingDefaults: jest.requireActual('../src/renderer/store/slices/uiSlice')
+    .selectNamingDefaults
 }));
 
 describe('useDiscoverState', () => {

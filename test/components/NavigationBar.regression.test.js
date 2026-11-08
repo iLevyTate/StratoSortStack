@@ -18,8 +18,7 @@ jest.mock('../../src/renderer/store/slices/uiSlice', () => ({
   setViewMode: jest.fn((mode) => ({ type: 'ui/setViewMode', payload: mode })),
   openSettings: jest.fn(() => ({ type: 'ui/openSettings' })),
   toggleSettings: jest.fn(() => ({ type: 'ui/toggleSettings' })),
-  canTransitionTo: jest.fn(() => true),
-  getTransitionBlockReason: jest.fn(() => null)
+  getPhaseNavigation: jest.fn(() => ({ allowed: true, reason: null }))
 }));
 
 const mockFetchAiConfig = jest.fn(() => ({ type: 'aiProvider/fetch' }));

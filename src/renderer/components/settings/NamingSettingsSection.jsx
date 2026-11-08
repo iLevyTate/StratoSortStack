@@ -7,9 +7,10 @@ import SettingsCard from './SettingsCard';
 import { normalizeSeparator } from '../../../shared/namingConventions';
 
 /**
- * NamingSettingsSection - Settings section for file naming conventions
- * Allows users to configure default naming patterns for auto-organized files.
- * These settings are used by DownloadWatcher and SmartFolderWatcher.
+ * NamingSettingsSection - Settings section for the default naming convention.
+ * The same persisted keys Discover's naming dialog edits (uiSlice
+ * saveNamingDefaults); used by Discover, DownloadWatcher, SmartFolderWatcher
+ * and Reanalyze All Files.
  */
 function NamingSettingsSection({ settings, setSettings }) {
   const separatorValue = normalizeSeparator(settings.separator ?? '-');
@@ -47,7 +48,7 @@ function NamingSettingsSection({ settings, setSettings }) {
   return (
     <SettingsCard
       title="File naming defaults"
-      description="Configure how files are renamed by Download Watcher, Smart Folder Watcher, and Reanalyze All Files. These settings do not affect the Discover phase."
+      description="How files are renamed in Discover, by Download Watcher and Smart Folder Watcher, and by Reanalyze All Files. Discover's naming dialog changes these same defaults."
     >
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-relaxed">
         <SettingRow layout="col" label="Convention" className="h-full">

@@ -507,13 +507,14 @@ const persistenceMiddleware = (/** @type {any} */ store) => {
           // may be significantly outdated by the time this callback fires.
           const freshState = store.getState();
 
-          // IMPORTANT: Naming conventions are now separated into two independent systems:
-          // 1. Discover phase (Redux state.files.namingConvention) - Session-based, UI-only
-          // 2. Settings (persisted settings.namingConvention) - Persistent, used by watchers/reanalysis
-          //
-          // We do NOT sync Discover phase naming to Settings anymore. This ensures:
-          // - Settings naming conventions control: DownloadWatcher, SmartFolderWatcher, Reanalyze
-          // - Discover naming conventions control: Manual file analysis in Discover phase only
+          // Naming: there is one default naming convention, the persisted
+          // settings keys (namingConvention, dateFormat, caseConvention,
+          // separator). Settings saves it with the other settings, Discover's
+          // naming dialog through uiSlice.saveNamingDefaults; watchers,
+          // Reanalyze and Discover all read it (Discover via
+          // selectNamingDefaults). The files.namingConvention saved in this
+          // snapshot is only a renderer mirror, used until settings load;
+          // this middleware never writes naming to settings.
 
           const stateToSave = buildStateSnapshot(freshState, { prioritizeFileStates: true });
 

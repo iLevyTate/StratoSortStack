@@ -42,7 +42,9 @@ const NamingSettingsModal = memo(function NamingSettingsModal({
     >
       <Stack gap="default">
         <Text variant="small" className="text-system-gray-600">
-          Configure how StratoSort will rename your files during analysis.
+          This changes your default naming convention, the same one shown in Settings → File naming
+          defaults. Changes save right away: suggested names here update to match, and the watchers
+          and Reanalyze All Files use the new default too.
         </Text>
 
         <NamingSettings

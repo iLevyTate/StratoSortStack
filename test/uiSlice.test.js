@@ -58,7 +58,10 @@ import uiReducer, {
   NAVIGATION_RULES,
   isValidPhase,
   canTransitionTo,
-  getTransitionBlockReason
+  canReachPhase,
+  getTransitionBlockReason,
+  getPhaseNavigation,
+  PHASE_PREREQUISITE_REASONS
 } from '../src/renderer/store/slices/uiSlice';
 
 const { settingsIpc } = require('../src/renderer/services/ipc');
@@ -138,6 +141,15 @@ describe('uiSlice', () => {
 
       expect(result.currentPhase).toBe('welcome');
       expect(result.navigationError).toContain('Invalid phase transition');
+    });
+
+    test('accepts any step back, including ones the graph omits', () => {
+      for (const from of ['organize', 'complete']) {
+        const result = uiReducer({ ...initialState, currentPhase: from }, setPhase('setup'));
+        expect(result.currentPhase).toBe('setup');
+        expect(result.previousPhase).toBe(from);
+        expect(result.navigationError).toBeNull();
+      }
     });
 
     test('recovers from invalid current phase and applies requested valid phase', () => {
@@ -683,7 +695,13 @@ describe('uiSlice', () => {
       test('names the step a blocked phase opens from', () => {
         expect(getTransitionBlockReason('welcome', 'organize')).toMatch(/from Discover/);
         expect(getTransitionBlockReason('discover', 'complete')).toMatch(/from Organize/);
-        expect(getTransitionBlockReason('organize', 'setup')).toMatch(/from the Welcome step/);
+      });
+
+      test('never blocks a step back', () => {
+        expect(getTransitionBlockReason('organize', 'setup')).toBeNull();
+        expect(getTransitionBlockReason('complete', 'setup')).toBeNull();
+        expect(canReachPhase('organize', 'setup')).toBe(true);
+        expect(canReachPhase('welcome', 'organize')).toBe(false);
       });
 
       test('does not claim a file prerequisite the graph does not check', () => {
@@ -695,6 +713,90 @@ describe('uiSlice', () => {
         ]) {
           expect(getTransitionBlockReason(from, to)).not.toMatch(/analyze|at least one/i);
         }
+      });
+    });
+
+    // One rule for the phase tabs and the in-phase Continue buttons.
+    describe('getPhaseNavigation', () => {
+      const PHASES_IN_ORDER = ['welcome', 'setup', 'discover', 'organize', 'complete'];
+
+      test('always allows staying put and going back, whatever the files say', () => {
+        PHASES_IN_ORDER.forEach((from, fromIndex) => {
+          PHASES_IN_ORDER.slice(0, fromIndex + 1).forEach((to) => {
+            expect(getPhaseNavigation(from, to, {})).toEqual({ allowed: true, reason: null });
+          });
+        });
+      });
+
+      test('Setup is always reachable from Welcome', () => {
+        expect(getPhaseNavigation('welcome', 'setup', {}).allowed).toBe(true);
+      });
+
+      test('Welcome -> Discover needs a destination folder', () => {
+        expect(getPhaseNavigation('welcome', 'discover', {})).toEqual({
+          allowed: false,
+          reason: PHASE_PREREQUISITE_REASONS.needsDestination
+        });
+        expect(
+          getPhaseNavigation('welcome', 'discover', { hasDestinationFolder: true }).allowed
+        ).toBe(true);
+      });
+
+      test('Setup -> Discover uses Setup Continue (any smart folder)', () => {
+        expect(getPhaseNavigation('setup', 'discover', {})).toEqual({
+          allowed: false,
+          reason: PHASE_PREREQUISITE_REASONS.needsSmartFolder
+        });
+        expect(getPhaseNavigation('setup', 'discover', { hasSmartFolders: true }).allowed).toBe(
+          true
+        );
+      });
+
+      test('Discover -> Organize uses Discover Continue', () => {
+        expect(getPhaseNavigation('discover', 'organize', {}).reason).toBe(
+          PHASE_PREREQUISITE_REASONS.needsAnalyzedFile
+        );
+        expect(getPhaseNavigation('discover', 'organize', { hasFailedFiles: true }).reason).toBe(
+          PHASE_PREREQUISITE_REASONS.allAnalysisFailed
+        );
+        expect(getPhaseNavigation('discover', 'organize', { hasAnalyzedFiles: true }).allowed).toBe(
+          true
+        );
+      });
+
+      test('Organize -> Results uses View results', () => {
+        expect(getPhaseNavigation('organize', 'complete', {}).reason).toBe(
+          PHASE_PREREQUISITE_REASONS.needsProcessedFile
+        );
+        expect(
+          getPhaseNavigation('organize', 'complete', { hasProcessedFiles: true }).allowed
+        ).toBe(true);
+      });
+
+      test('a forward jump off the graph stays closed with the graph reason', () => {
+        const everything = {
+          hasDestinationFolder: true,
+          hasSmartFolders: true,
+          hasAnalyzedFiles: true,
+          hasProcessedFiles: true
+        };
+        expect(getPhaseNavigation('welcome', 'organize', everything)).toEqual({
+          allowed: false,
+          reason: getTransitionBlockReason('welcome', 'organize')
+        });
+      });
+
+      test('every closed tab has a reason', () => {
+        PHASES_IN_ORDER.forEach((from) => {
+          PHASES_IN_ORDER.forEach((to) => {
+            const result = getPhaseNavigation(from, to, {});
+            if (!result.allowed) expect(typeof result.reason).toBe('string');
+          });
+        });
+      });
+
+      test('rejects invalid phases', () => {
+        expect(getPhaseNavigation('nope', 'setup', {})).toEqual({ allowed: false, reason: null });
       });
     });
   });

@@ -33,6 +33,7 @@ jest.mock('../../src/renderer/store/slices/uiSlice', () => ({
   closeSettings: (...args) => mockCloseSettings(...args),
   openSettings: (...args) => mockOpenSettings(...args),
   canTransitionTo: (...args) => mockCanTransitionTo(...args),
+  getPhaseNavigation: (from, to) => ({ allowed: mockCanTransitionTo(from, to), reason: null }),
   goBack: jest.fn(() => ({ type: 'ui/goBack' })),
   setLoading: jest.fn((v) => ({ type: 'ui/setLoading', payload: v })),
   setOrganizing: jest.fn((v) => ({ type: 'ui/setOrganizing', payload: v }))
