@@ -282,6 +282,22 @@ describe('ServiceIntegration', () => {
     expect(service.initialized).toBe(false);
   });
 
+  test('initialize after shutdown began resolves skipped without resolving services (startup-4)', async () => {
+    mockContainer.shutdown.mockResolvedValueOnce();
+    await service.shutdown();
+    mockContainer.resolve.mockClear();
+
+    const result = await service.initialize();
+
+    expect(result).toEqual(
+      expect.objectContaining({ success: false, shuttingDown: true, initialized: [] })
+    );
+    expect(mockContainer.resolve).not.toHaveBeenCalled();
+    expect(analysisHistory.initialize).not.toHaveBeenCalled();
+    expect(vectorService.initialize).not.toHaveBeenCalled();
+    expect(service.initialized).toBe(false);
+  });
+
   test('configureSmartFolderWatcher wires dependencies and triggers auto-start', () => {
     const watcher = { start: jest.fn() };
     mockContainer.resolve.mockImplementationOnce(() => watcher);

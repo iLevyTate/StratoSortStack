@@ -37,7 +37,9 @@ let lifecycleConfig = {
   setChildProcessListeners: null,
   getGlobalProcessListeners: null,
   setGlobalProcessListeners: null,
-  setIsQuitting: null
+  setIsQuitting: null,
+  // (reason) => boolean: aborts a coordinated startup still in flight
+  abortStartup: null
 };
 
 /**
@@ -155,6 +157,16 @@ async function handleBeforeQuit(/** @type {any} */ event) {
   _quitCleanupStarted = true;
 
   lifecycleConfig.setIsQuitting?.(true);
+
+  // Stop a startup that is still running (quit within the first seconds) so
+  // service integration does not initialise against services being shut down.
+  try {
+    if (lifecycleConfig.abortStartup?.('Application quitting')) {
+      logger.info('[SHUTDOWN] Aborted startup still in progress');
+    }
+  } catch (abortError) {
+    logger.warn('[SHUTDOWN] Could not abort startup:', abortError?.message);
+  }
 
   // This must happen before any cleanup to prevent handlers accessing destroyed services
   try {

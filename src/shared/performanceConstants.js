@@ -65,6 +65,15 @@ const TIMEOUTS = {
   HEALTH_CHECK: 5000,
   AXIOS_DEFAULT: 5000,
   SERVICE_STARTUP: 30000,
+  // Coordinated startup (StartupManager services, then ServiceIntegration).
+  // At the soft timeout the app reports a degraded start but lets a startup
+  // that is still running finish: on a large library loading the vector index
+  // and the model can outlast it, and aborting then tore down services that
+  // were about to be ready. The hard cap aborts a startup that is genuinely
+  // stuck; it is a multiple of the slowest single step (MODEL_LOAD) so slow
+  // disks still finish.
+  COORDINATED_STARTUP_SOFT: 45000,
+  COORDINATED_STARTUP_HARD_CAP: 180000,
   SERVICE_INIT_WAIT: 2000, // Wait for service initialization
   DATABASE_INIT: 15000,
   MODEL_LOAD: 60000,
@@ -98,8 +107,12 @@ const TIMEOUTS = {
   WINDOW_SHOW_FALLBACK: 4000,
   // Heavyweight coordinated startup waits for the first paint (show or
   // did-finish-load) before it starts, capped here so a headless or stuck
-  // renderer still initialises services.
-  FIRST_PAINT_GATE: 3000,
+  // renderer still initialises services. The cap must outlast
+  // WINDOW_SHOW_FALLBACK plus the ~100 ms show delay after a late
+  // ready-to-show: a shorter cap released on 'timeout' first and started
+  // synchronous startup work that blocked the fallback timer, so a slow
+  // renderer kept the window hidden even longer.
+  FIRST_PAINT_GATE: 5100,
   // First show can wait on GPU model warmup + renderer bootstrap; mutex must not expire early.
   WINDOW_CREATION_READY: 60000,
   // Bound on each stat/mkdir of the Uncategorized folder before the window is
