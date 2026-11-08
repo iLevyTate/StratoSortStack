@@ -65,6 +65,10 @@ const _moduleLogger = createLogger('semantic-ipc');
 // vector, GET_STATS reports `embeddingCoverageLow` (F-197).
 const MIN_HEALTHY_FILE_EMBEDDING_COVERAGE = 0.95;
 
+// Degraded-state flag for a full rebuild whose index stayed in memory only
+// (the save to disk failed). Cleared by the next rebuild that does reach disk.
+const REBUILD_NOT_PERSISTED_CODE = 'embeddings.rebuild-not-persisted';
+
 /** @typedef {import('./ipcWrappers').LoggerLike} LoggerLike */
 /**
  * Invoke event as delivered by ipcRegistry: Electron's IpcMainInvokeEvent plus
@@ -2656,7 +2660,15 @@ async function handleFullRebuild(
 
     // Step 2: Clear all vector DB collections
     logger.info('[EMBEDDINGS] Clearing all vector DB collections...');
-    await getOramaService().resetAll();
+    // resetAll() does not reject on a failed save: the clear then lives in
+    // memory only and the old index is still on disk (G2).
+    const resetSave = await getOramaService().resetAll();
+    const resetPersisted = resetSave?.persisted !== false;
+    if (!resetPersisted) {
+      logger.warn('[EMBEDDINGS] Cleared index could not be saved; rebuilding in memory', {
+        error: resetSave?.error?.message || (resetSave?.error ? String(resetSave.error) : null)
+      });
+    }
 
     // Step 3: Rebuild folder embeddings
     logger.info('[EMBEDDINGS] Rebuilding folder embeddings...');
@@ -2929,22 +2941,73 @@ async function handleFullRebuild(
       results.errors.push({ type: 'bm25', error: e.message });
     }
 
+    // The reset's save failed, so nothing says the rebuilt index is on disk
+    // either: save it once more now and report what happened, instead of
+    // telling the renderer the rebuild fully succeeded.
+    let persisted = true;
+    if (!resetPersisted) {
+      try {
+        const finalSave = await getOramaService().persistAll();
+        persisted = finalSave?.success !== false;
+        if (!persisted) {
+          results.errors.push({
+            type: 'persist',
+            error: finalSave?.error?.message || 'Saving the rebuilt index to disk failed'
+          });
+        }
+      } catch (saveError) {
+        persisted = false;
+        results.errors.push({
+          type: 'persist',
+          error: saveError?.message || 'Saving the rebuilt index to disk failed'
+        });
+      }
+      (persisted ? logger.info : logger.warn).call(
+        logger,
+        persisted
+          ? '[EMBEDDINGS] Rebuilt index saved after the reset save failed'
+          : '[EMBEDDINGS] Rebuilt index is in memory only; saving it to disk failed'
+      );
+    }
+
     logger.info('[EMBEDDINGS] Full rebuild complete', {
       folders: results.folders,
       files: results.files,
       chunks: results.chunks,
-      bm25: results.bm25
+      bm25: results.bm25,
+      persisted
     });
 
     // Clear the rebuildInProgress marker only after everything else succeeded.
     // If we crashed before this line, startup will see the flag still set and
     // prompt the user to rebuild rather than trusting the torn index.
+    // When the rebuilt index never reached disk, the disk still holds the OLD
+    // index: keep the marker so the next startup asks for a rebuild instead of
+    // trusting it, and raise a banner so the user sees more than a toast.
+    if (persisted) {
+      try {
+        await clearRebuildInProgress();
+      } catch (metaError) {
+        logger.warn('[EMBEDDINGS] Failed to clear rebuildInProgress flag', {
+          error: metaError?.message
+        });
+      }
+    }
     try {
-      await clearRebuildInProgress();
-    } catch (metaError) {
-      logger.warn('[EMBEDDINGS] Failed to clear rebuildInProgress flag', {
-        error: metaError?.message
-      });
+      const tracker = require('../services/DegradedStateTracker').getInstance();
+      if (persisted) {
+        tracker.clear(REBUILD_NOT_PERSISTED_CODE);
+      } else {
+        tracker.raise({
+          code: REBUILD_NOT_PERSISTED_CODE,
+          subsystem: 'vector-db',
+          severity: 'warning',
+          message:
+            'The rebuilt search index could not be saved to disk. Search works for now, but after a restart StratoSort will ask you to rebuild it again. Check that the disk has free space.'
+        });
+      }
+    } catch {
+      // Tracker is best-effort; the warning above is already logged.
     }
 
     rebuildSucceeded = true;
@@ -2972,7 +3035,16 @@ async function handleFullRebuild(
       // 50 stays well under IPC payload limits. Per-file logger.warn lines
       // above are the source of truth for the full failure list.
       errors: results.errors.slice(0, 50),
-      message: `Full rebuild complete: ${results.folders.success} folders, ${results.files.success} files, ${results.chunks.success} chunks`
+      // false: the rebuilt index lives in memory only (the save to disk
+      // failed; a background retry may still land it). Optional field.
+      persisted,
+      ...(persisted
+        ? {}
+        : {
+            warning:
+              'The rebuilt index could not be saved to disk. Search works for now, but the old index may come back after a restart.'
+          }),
+      message: `Full rebuild complete: ${results.folders.success} folders, ${results.files.success} files, ${results.chunks.success} chunks${persisted ? '' : ' (not saved to disk)'}`
     };
   } catch (e) {
     logger.error('[EMBEDDINGS] Full rebuild failed:', e);

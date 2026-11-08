@@ -184,18 +184,29 @@ class FolderMatchingService {
                       to: newModel
                     }
                   );
+                  // Both resolve (never reject) when the reset's save fails;
+                  // false means the old-model index is still on disk.
+                  let resetPersisted = null;
                   if (typeof this.vectorDbService.handleEmbeddingModelChange === 'function') {
-                    await this.vectorDbService.handleEmbeddingModelChange({
+                    const changed = await this.vectorDbService.handleEmbeddingModelChange({
                       previousModel,
                       newModel,
                       source: 'FolderMatchingService'
                     });
+                    resetPersisted = changed?.resetPersisted ?? null;
                   } else if (typeof this.vectorDbService.resetAll === 'function') {
-                    await this.vectorDbService.resetAll();
+                    const reset = await this.vectorDbService.resetAll();
+                    resetPersisted = reset?.persisted ?? null;
                   }
-                  logger.info(
-                    '[FolderMatchingService] Vector DB collections reset after model change'
-                  );
+                  if (resetPersisted === false) {
+                    logger.warn(
+                      '[FolderMatchingService] Vector DB collections reset after model change in memory only; saving the reset failed'
+                    );
+                  } else {
+                    logger.info(
+                      '[FolderMatchingService] Vector DB collections reset after model change'
+                    );
+                  }
                 } catch (vectorDbError) {
                   logger.error(
                     '[FolderMatchingService] Failed to reset vector DB collections:',
@@ -801,7 +812,13 @@ class FolderMatchingService {
             logger.warn(
               '[FolderMatchingService] Folder embedding dimension mismatch detected; resetting folders collection and retrying once'
             );
-            await this.vectorDbService.resetFolders();
+            const reset = await this.vectorDbService.resetFolders();
+            if (reset?.persisted === false) {
+              // The retried upsert below schedules its own save.
+              logger.warn(
+                '[FolderMatchingService] Folders collection reset in memory only; saving it failed'
+              );
+            }
             upsertResult = await this.vectorDbService.batchUpsertFolders(payloads);
           } catch (resetError) {
             logger.warn(
