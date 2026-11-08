@@ -167,6 +167,48 @@ Changes you will notice:
 
 ### Fixed
 
+- **Organize no longer overwrites a file when two moves pick the same numbered name.** When a batch
+  moved `report.pdf` and `report_1.pdf` into a folder that already held `report.pdf`, both moves
+  could land on `report_1.pdf` and one file was lost. Every mover in the app (organize, single move,
+  Downloads, undo, rollback) now claims a destination name one at a time.
+- **A batch that was rolled back no longer shows as organized.** Restored files are reported as not
+  moved, no undo entry is recorded for them, and a file whose restore failed is named in the error.
+- One file held by antivirus or the indexer (permission denied) fails only that file instead of
+  undoing the whole batch. Repeated permission failures still stop the batch.
+- A destination folder deleted during a batch is recreated instead of reported as a missing source.
+- A cross-drive move that loses a name race walks to the next free name instead of failing.
+- After a crash, a move that had already landed on a numbered or fallback name is found and kept in
+  undo and search.
+- **A large library no longer starts in degraded mode.** A startup that is slow but still working
+  keeps going: the 45 s mark reports a warning, the services are no longer shut down after they
+  finish, and the warning clears once startup completes. A hard cap still stops a hung startup.
+- Quitting while the vector store is still saving waits for that save instead of exiting halfway
+  through it. Saving the index now tells its callers when it did not reach disk, and a full rebuild
+  that could not be saved says so.
+- A transient read error at launch no longer replaces the organize and analysis journal with an
+  empty one, and restoring settings from a backup no longer files the default settings as the newest
+  automatic backup.
+- Search stays responsive while the keyword index rebuilds after an analysis.
+- Find Duplicates checks the whole library, not only the first 1,000 files.
+- Chat treats documents found by keyword as keyword matches, with their text, instead of telling the
+  model they were 0% relevant. A local answer cut off at the output limit says so instead of showing
+  a raw fragment. Cancelling a cloud chat no longer returns the partial answer as complete, and no
+  longer falls back to the local model.
+- Map-reduce summaries honor local-only processing, so text from a local-only file is not sent to a
+  cloud provider.
+- A provider address with a user name or password in it is refused, and errors never repeat it.
+- The smart-folder and Downloads watchers do not follow a link or junction out of the watched
+  folder. Stopping a watcher cancels its running analysis, including transcription, and failed
+  analyses retry with a delay instead of three times in a row.
+- File paths are hidden in log keys as well as values, and a home folder no longer leaves your
+  account name visible.
+- Scanned PDFs are read past the first page (up to a page limit), large CSV files are read in part,
+  and a partial read is marked as partial in the file's details.
+- First run: choosing the dashboard with only the Uncategorized folder now sends you to add a
+  destination, and Welcome, Setup and Discover agree on what counts as one. Files dropped from a
+  pick for being unsupported or too large are named in the message.
+- Development: end-to-end tests no longer download AI models.
+
 - **Startup repair re-embeds missing vectors under default settings.** The file-vector backfill
   asked whether embedding was allowed after organizing, which is refused under the default "during
   analysis" timing, so missing file vectors were never rebuilt and the file was marked skipped.

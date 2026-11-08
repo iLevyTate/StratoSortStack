@@ -292,14 +292,17 @@ Then run a small batch first and review outcomes before scaling up.
     tab are remembered on this computer.
   - It shows the same cleaned-up lines the log file holds. Folder paths are removed, leaving file
     names, on Windows and in the usual places on macOS and Linux (your home folder, external drives,
-    `/tmp` and similar). A path that ends at a folder keeps that folder's own name. A macOS or Linux
-    path anywhere else is only cleaned up to its first space, so folder names after a space can
-    still show there; organize lines name only the file. When paths are hidden for a demo or
-    recording (`STRATOSORT_REDACT_PATHS=1`), the panel also shows file names as "a file". This is
-    best effort: it can hide some words that only look like file names (such as `simple-main.js` or
-    a web address), it can show the part of a file name before its last space, and a name inside a
-    web link or ending in `.com`, `.co` or `.io` can still show. The context column (which part of
-    the app wrote the line) is never hidden.
+    `/tmp` and similar). A path that ends at a folder keeps that folder's own name, except your home
+    folder itself (`C:\Users\<name>`, `/Users/<name>`, `/home/<name>`): its name is your account
+    name, so it is hidden too. A Windows path that mixes `\` and `/` is cleaned up as one path. A
+    macOS or Linux path anywhere else is only cleaned up to its first space, unless that space is in
+    its first folder (`/Shared Drives/...`), so folder names after a space can still show there;
+    organize lines name only the file. When paths are hidden for a demo or recording
+    (`STRATOSORT_REDACT_PATHS=1`), the panel also shows file names as "a file". This is best effort:
+    it can hide some words that only look like file names (such as `simple-main.js` or a web
+    address), it can show the part of a file name before its last space, and a name inside a web
+    link or ending in `.com`, `.co` or `.io` can still show. The context column (which part of the
+    app wrote the line) is never hidden.
   - Turning it on or off does not create a settings backup. While it is closed, nothing is collected
     for it.
 

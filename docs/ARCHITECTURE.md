@@ -176,9 +176,10 @@ Orchestrates the boot sequence with progress reporting to the splash screen:
   Linux keeps forcing both, as earlier releases did (`getForcedRasterSwitches()`).
 - **First-paint gate** (`core/firstPaintGate.js`): coordinated startup and `runBackgroundSetup()`
   wait until the window has been shown or its document has finished loading, capped at
-  `TIMEOUTS.FIRST_PAINT_GATE` (3 s), so the synchronous stretches of AI bring-up (node-llama-cpp
-  import, GPU probing) are deferred past document load and, in the normal case, past the first
-  visible frame instead of competing with it on the main-process thread.
+  `TIMEOUTS.FIRST_PAINT_GATE` (5.1 s, longer than `WINDOW_SHOW_FALLBACK` plus the show delay, so a
+  late `ready-to-show` is not cut off by the gate), so the synchronous stretches of AI bring-up
+  (node-llama-cpp import, GPU probing) are deferred past document load and, in the normal case, past
+  the first visible frame instead of competing with it on the main-process thread.
 - **Last-known-good AI backend**: `LlamaService` hands `initLlamaWithBackend()`
   (`utils/llamaBackendSelector.js`) a record from `utils/llamaBackendCache.js`, stored as
   `userData/gpu-backend-cache.json`. When the record's fingerprint (platform, arch, app version,
@@ -194,9 +195,16 @@ Orchestrates the boot sequence with progress reporting to the splash screen:
 - **Phases** (progress reported to splash): Starting (0%) -> Preflight checks (10%) -> Migration
   (12%) -> Services -> Models -> App Services -> Ready (100%). See `reportProgress(...)` calls in
   `StartupManagerCore.js` for the authoritative sequence.
-- **Timeout**: the coordinated startup timer in `simple-main.js` aborts after 45s
-  (`SERVICE_STARTUP` + 15s) via `AbortController`; every phase checks `signal.aborted` before
-  proceeding. `StartupManagerCore`'s own 60s `startupTimeout` is a backstop that never fires first.
+- **Timeout**: `runCoordinatedStartupInBackground()` in `simple-main.js` has two limits. At
+  `TIMEOUTS.COORDINATED_STARTUP_SOFT` (45 s) it logs
+  `[STARTUP] Coordinated startup still running after soft timeout; continuing`, raises the
+  `startup.still-starting` warning and lets startup keep running, because loading a large vector
+  index and the model can outlast it. At `TIMEOUTS.COORDINATED_STARTUP_HARD_CAP` (180 s) it aborts
+  through `AbortController`; every phase checks `signal.aborted` before proceeding. A late
+  completion clears both `startup.still-starting` and `startup.coordinated-failure` and runs the
+  deferred wiring (`finishLateCoordinatedStartup()`); a late failure or the hard cap swaps the
+  warning for the `startup.coordinated-failure` restart error. `StartupManagerCore`'s own
+  `startupTimeout` is set to the same hard cap.
 - **Health monitoring**: After startup completes, a 2-minute interval polls service health.
 
 ### 7. IPC Handlers
