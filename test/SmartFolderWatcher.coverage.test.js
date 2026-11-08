@@ -1666,6 +1666,49 @@ describe('SmartFolderWatcher', () => {
       expect(watcher._scanDirectory).not.toHaveBeenCalled();
     });
 
+    describe('with real pacing values', () => {
+      beforeEach(() => {
+        jest.useFakeTimers();
+        watcher.startupScanDelayMs = 2 * 60_000;
+        watcher.startupScanBatchGapMs = 30_000;
+        watcher.startupScanPollMs = 1000;
+      });
+
+      afterEach(() => {
+        jest.useRealTimers();
+      });
+
+      test('keeps handing over batches while live files keep arriving between them', async () => {
+        const run = watcher._runStartupDeltaScan();
+        // A live drop every 20 s that takes 5 s to analyze.
+        let elapsed = 0;
+        const live = { filePath: '/docs/live.pdf' };
+        const tick = async (ms) => {
+          for (let t = 0; t < ms; t += 1000) {
+            elapsed += 1000;
+            const phase = elapsed % 20_000;
+            watcher._inFlightItems.clear();
+            if (phase > 0 && phase <= 5000) watcher._inFlightItems.set(live.filePath, live);
+            await jest.advanceTimersByTimeAsync(1000);
+            // The scan's own batch is analyzed within 10 s of being queued.
+            if (watcher.analysisQueue.length > 0 && phase === 10_000) {
+              watcher.analysisQueue.length = 0;
+            }
+          }
+        };
+
+        await tick(2 * 60_000 + 1000);
+        expect(watcher._enqueueAnalysisItem).toHaveBeenCalledTimes(25);
+        await tick(3 * 60_000);
+        expect(watcher._enqueueAnalysisItem).toHaveBeenCalledTimes(60);
+
+        watcher.analysisQueue.length = 0;
+        watcher._inFlightItems.clear();
+        await jest.advanceTimersByTimeAsync(60_000);
+        await expect(run).resolves.toEqual({ scanned: 60, queued: 60 });
+      });
+    });
+
     test('a folder added by the user is still scanned in one go', async () => {
       await expect(watcher.scanFolderForUnanalyzedFiles('/docs')).resolves.toEqual({
         scanned: 60,
