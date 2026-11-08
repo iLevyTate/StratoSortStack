@@ -26,6 +26,8 @@ Changes you will notice:
   Until you do, no video frame is sent.
 - Video frames are extracted and sent only with **Describe video keyframes** on.
 - A full disk shows a banner, and the smart-folder and Downloads watchers wait until it can save.
+- Files added to smart folders while the app was closed start analyzing about 2 minutes after
+  launch, 25 at a time, instead of all at once.
 - The first launch after updating may re-embed files whose search vectors were missing, so expect
   some embedding activity shortly after startup (capped per launch).
 - Building from source needs Node 24 (`.nvmrc` 24.22.1). The installed app is unaffected; it already
@@ -126,6 +128,11 @@ Changes you will notice:
   - Search index saves write only the collections that changed, refresh the `.bak` copy at most
     every 30 minutes, and are spaced by how long a save takes (5 s to 2 min). On a large library one
     save had been about 785 MB.
+  - Each search index file now holds only the documents, which is all a restart reads back. The
+    index structures Orama rebuilds on load, including a second copy of every embedding, were more
+    than half of each file. Files written by earlier versions still load, and earlier versions can
+    read the new files.
+  - A write that landed during a save no longer starts a second save right after the first one.
   - Analysis history saves wait for 2 s of quiet and are at least 10 s apart, holding a change for
     at most about 10 s; quitting writes at once. A crash can lose at most those last seconds of
     entries.
@@ -133,6 +140,18 @@ Changes you will notice:
     flushed on quit.
   - While analysis runs, the window's saved state (results, file states, selection) is written at
     most every 30 s instead of every 1 to 5 s.
+- **Launch no longer stalls while the app catches up.**
+  - Reading the search index back at startup is about six times faster. The check that keeps
+    `__proto__` and `constructor` keys out of a loaded file had run once for every number in every
+    embedding; it now runs once per object after a normal parse. On a 253 MB test index the read
+    went from about 40 s to about 6 s.
+  - Files added to a smart folder while the app was closed are picked up 2 minutes after launch, 25
+    at a time, and the next 25 wait until the previous ones are analyzed. They had all been queued
+    at once while the window was still opening. A file not reached before you quit is found again on
+    the next launch. A folder you add while the app runs is still scanned at once.
+  - The search service warms up only after the window is on screen. It had started on a 1 s timer,
+    and the rest of startup's heavy work had been released as soon as the page loaded, which is
+    before the window is shown.
 - **Each analyzed file is indexed once.** The smart-folder and Downloads watchers no longer embed a
   document's passages or an image's vector a second time after analysis already queued them.
 - **OCR after vision uses Tesseract only.** When Tesseract finds no text in an image that vision has
@@ -167,6 +186,18 @@ Changes you will notice:
 
 ### Fixed
 
+- **A search index too large to save is reported instead of silently not saving.** A collection is
+  saved as one block of text, and V8 cannot build one longer than about 537 million characters. Past
+  that, every save failed, was retried as if the disk had hiccuped, and new passages were lost at
+  each restart. Now the app shows an error naming the index, saves everything else, and retries that
+  index every 30 minutes, when files are removed from it, and once more at quit. It warns in the log
+  once a save passes 85% of the limit.
+- **A search index file too large to read is no longer renamed as corrupt.** It is left on disk as
+  it is and never saved over, so no data is lost, and an error says search results are incomplete.
+  Resetting that index clears the error.
+- **Half-written search index files are cleaned up.** A save interrupted by a crash or a full disk
+  left its temporary file behind (hundreds of MB each on a large library). Startup now removes those
+  older than an hour from the search index folder.
 - **Organize no longer overwrites a file when two moves pick the same numbered name.** When a batch
   moved `report.pdf` and `report_1.pdf` into a folder that already held `report.pdf`, both moves
   could land on `report_1.pdf` and one file was lost. Every mover in the app (organize, single move,
@@ -208,7 +239,6 @@ Changes you will notice:
   destination, and Welcome, Setup and Discover agree on what counts as one. Files dropped from a
   pick for being unsupported or too large are named in the message.
 - Development: end-to-end tests no longer download AI models.
-
 - **Startup repair re-embeds missing vectors under default settings.** The file-vector backfill
   asked whether embedding was allowed after organizing, which is refused under the default "during
   analysis" timing, so missing file vectors were never rebuilt and the file was marked skipped.

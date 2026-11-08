@@ -132,9 +132,10 @@ result and the GPU fallback decision at module load) are not in the file.
       screen through the normal path.
    8. `[WINDOW] GPU status after first show` with `shownVia` (`ready-to-show` or `fallback`),
       `featureStatus` and `devices`.
-   9. `[STARTUP] First-paint gate released` with `reason` (`shown`, `did-finish-load`, `timeout` or
-      `no-window`) and `uptimeS`. Heavyweight startup, and the old-log and crash-dump cleanup, begin
-      right after this line.
+   9. `[STARTUP] First-paint gate released` with `reason` (`shown`, `timeout` or `no-window`) and
+      `uptimeS`. Heavyweight startup, the old-log and crash-dump cleanup, and (1 s later) the
+      semantic search warm-up begin right after this line. Earlier builds could also log
+      `did-finish-load`, which released the gate before the window was shown.
    10. `[STARTUP] Phase 1: Starting AI services...`, then `[LlamaService] Initializing...`, then
        `[LlamaService] System GPU detected` with `type` and `name`.
    11. `[LlamaService] Llama backend candidates ordered by cached selection` with `cachedBackend`,
