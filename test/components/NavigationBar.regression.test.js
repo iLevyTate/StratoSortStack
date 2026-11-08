@@ -400,6 +400,26 @@ describe('NavigationBar regression guards', () => {
     ).toBeInTheDocument();
   });
 
+  // Main seeds Uncategorized on every profile; it is a catch-all, not a
+  // destination, so it must not unlock the dashboard (App.js agrees).
+  test('keeps the Dashboard toggle and breadcrumb off when only Uncategorized exists', () => {
+    mockState.ui.cameFromDashboard = true;
+    mockState.files.smartFolders = [
+      {
+        id: 'default-uncategorized',
+        name: 'Uncategorized',
+        category: 'uncategorized',
+        isDefault: true
+      }
+    ];
+    render(<NavigationBar />);
+
+    const toggleGroup = screen.getByRole('group', { name: /view mode/i });
+    const dashboardButton = within(toggleGroup).getByText('Dashboard').closest('button');
+    expect(dashboardButton).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.queryByRole('button', { name: /back to dashboard/i })).not.toBeInTheDocument();
+  });
+
   test('enables the Dashboard toggle once a smart folder exists', () => {
     mockState.files.smartFolders = [{ id: 'sf-1' }];
     render(<NavigationBar />);

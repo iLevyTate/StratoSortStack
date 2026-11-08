@@ -22,6 +22,7 @@ import Modal from '../components/ui/Modal';
 import { Stack } from '../components/layout';
 import ModelSetupWizard from '../components/ModelSetupWizard';
 import { isForceModelWizardEnabled } from '../utils/debugFlags';
+import { hasDestinationFolder } from '../utils/smartFolderDestinations';
 
 const MODEL_CHECK_ESCAPE_MS = 8000;
 
@@ -43,17 +44,6 @@ async function persistModelAutoDownloadSkipped(skipped) {
   }
 }
 
-/**
- * The catch-all folder: `category: 'uncategorized'` on the canonical one, or
- * named Uncategorized.
- * @param {{ category?: string, name?: string }} folder
- */
-function isUncategorizedBucket(folder) {
-  const category = typeof folder?.category === 'string' ? folder.category.toLowerCase() : '';
-  const name = typeof folder?.name === 'string' ? folder.name.trim().toLowerCase() : '';
-  return category === 'uncategorized' || name === 'uncategorized';
-}
-
 function WelcomePhase() {
   const dispatch = useAppDispatch();
   const { addNotification } = useNotification();
@@ -63,9 +53,7 @@ function WelcomePhase() {
   // failure this guards against). Checking `!isDefault` instead also rejected
   // the seven folders "Reset to Defaults" creates (all isDefault), so those
   // users were sent back to Setup on every click.
-  const hasSmartFolders = Array.isArray(smartFolders)
-    ? smartFolders.some((folder) => folder && !isUncategorizedBucket(folder))
-    : false;
+  const hasSmartFolders = hasDestinationFolder(smartFolders);
   const [showFlowsModal, setShowFlowsModal] = useState(false);
   const [showModelSetupWizard, setShowModelSetupWizard] = useState(false);
   const [wizardStep, setWizardStep] = useState('checking');
@@ -275,6 +263,17 @@ function WelcomePhase() {
     );
   }, [addNotification]);
 
+  // "Close and keep downloading": the user leaves the wizard while a download
+  // they started is still running. That is not a decline, so the consent
+  // handleWizardStepChange recorded stays as it is (persisting the skip here
+  // would stop background setup resuming the download after a restart).
+  const handleModelSetupDismiss = useCallback(() => {
+    modelCheckLockedRef.current = true;
+    setShowModelSetupWizard(false);
+    setWizardStep('checking');
+    setModelCheckState('downloading');
+  }, []);
+
   // Mirrors the wizard's internal step for modal chrome decisions, and treats
   // an explicit download start as consent: it clears the persisted skip so
   // background setup may resume core-model provisioning on later launches.
@@ -350,17 +349,29 @@ function WelcomePhase() {
   // flow — choosing Dashboard does NOT jump straight to it, because the dashboard
   // is empty (and its actions are dead ends) until at least one smart folder
   // exists. So dashboard-pickers start in Setup; App.js auto-swaps to the
-  // dashboard once a folder lands. Guided-pickers begin at Discover as usual.
+  // dashboard once a folder lands. Guided-pickers begin at Discover once a
+  // destination exists, and at Setup before that (same guard as the
+  // "Organize files now" button, F-206/CP-21).
   const chooseMode = useCallback(
     (mode) => {
       dispatch(setViewMode(mode));
+      if (mode !== 'dashboard' && !hasSmartFolders) {
+        addNotification(
+          'Add at least one smart folder first so files have somewhere to go.',
+          'info',
+          5000,
+          'organize-needs-folders'
+        );
+      }
       dispatch(
         setPhase(
-          mode === 'dashboard' ? (PHASES?.SETUP ?? 'setup') : (PHASES?.DISCOVER ?? 'discover')
+          mode === 'dashboard' || !hasSmartFolders
+            ? (PHASES?.SETUP ?? 'setup')
+            : (PHASES?.DISCOVER ?? 'discover')
         )
       );
     },
-    [dispatch]
+    [dispatch, hasSmartFolders, addNotification]
   );
 
   const flowSteps = [
@@ -625,6 +636,7 @@ function WelcomePhase() {
           embedded
           onComplete={handleModelSetupComplete}
           onSkip={handleModelSetupSkip}
+          onDismiss={handleModelSetupDismiss}
           onStepChange={handleWizardStepChange}
         />
       </Modal>

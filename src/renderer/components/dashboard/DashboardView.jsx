@@ -42,6 +42,7 @@ import Stack from '../layout/Stack';
 import { Heading, Text, Caption } from '../ui/Typography';
 import AnalysisProgress from '../discover/AnalysisProgress';
 import KnowledgeStatsCard from './KnowledgeStatsCard';
+import { countDestinationFolders } from '../../utils/smartFolderDestinations';
 
 const RECENT_LIMIT = 4;
 const QUEUE_PREVIEW_LIMIT = 4;
@@ -718,7 +719,9 @@ export default function DashboardView() {
   }, [stats.failed, stats.pending, stats.ready]);
 
   const summary = useMemo(() => {
-    const folderCount = smartFolders.length;
+    // The Uncategorized catch-all main seeds on every profile is not a
+    // destination; count only folders files can actually be routed to.
+    const folderCount = countDestinationFolders(smartFolders);
     const folderNoun = folderCount === 1 ? 'smart folder' : 'smart folders';
     const inFlight = stats.pending + stats.ready;
 
@@ -737,7 +740,7 @@ export default function DashboardView() {
       parts.push(`${stats.ready} ready to organize`);
     }
     return `${folderCount} ${folderNoun} ready · ${parts.join(', ')}`;
-  }, [smartFolders.length, stats.pending, stats.ready, organizedCount]);
+  }, [smartFolders, stats.pending, stats.ready, organizedCount]);
 
   const reduceMotion = useReducedMotion();
   const blockVariants = reduceMotion ? BLOCK_VARIANTS_REDUCED : BLOCK_VARIANTS;

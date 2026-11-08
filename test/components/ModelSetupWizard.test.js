@@ -250,6 +250,216 @@ describe('ModelSetupWizard', () => {
     expect(screen.queryByText('The operation was aborted')).not.toBeInTheDocument();
   });
 
+  test('leaving the downloading step while a download runs dismisses instead of skipping', async () => {
+    const baseProfile = INSTALL_MODEL_PROFILES?.BASE_SMALL?.models || {};
+    const embeddingModel = baseProfile.EMBEDDING;
+    const textModel = baseProfile.TEXT_ANALYSIS;
+    const visionModel = baseProfile.IMAGE_ANALYSIS;
+
+    let progressListener;
+    window.electronAPI = {
+      llama: {
+        getConfig: jest.fn(async () => ({ embeddingModel, textModel, visionModel })),
+        getModels: jest.fn(async () => ({ models: [] })),
+        getDownloadStatus: jest.fn(async () => ({
+          status: {
+            downloads: [
+              { filename: embeddingModel, progress: 10 },
+              { filename: textModel, progress: 10 },
+              { filename: visionModel, progress: 10 }
+            ]
+          }
+        })),
+        downloadModel: jest.fn(async () => ({ success: true, started: true })),
+        cancelDownload: jest.fn(async () => ({ success: true }))
+      },
+      events: {
+        onOperationProgress: jest.fn((cb) => {
+          progressListener = cb;
+          return jest.fn();
+        })
+      }
+    };
+
+    const onSkip = jest.fn();
+    const onDismiss = jest.fn();
+    render(<ModelSetupWizard onComplete={jest.fn()} onSkip={onSkip} onDismiss={onDismiss} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Choose AI Models/i)).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Download Models/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/Downloading Models/i)).toBeInTheDocument();
+    });
+    await act(async () => {
+      progressListener({ type: 'model-download', model: textModel, percent: 40 });
+    });
+
+    // Leaving while bytes are still moving must not read as "do not download".
+    expect(
+      screen.queryByRole('button', { name: /Continue with limited AI/i })
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Close and keep downloading/i }));
+    await waitFor(() => expect(onDismiss).toHaveBeenCalledTimes(1));
+    expect(onSkip).not.toHaveBeenCalled();
+    expect(window.electronAPI.llama.cancelDownload).not.toHaveBeenCalled();
+
+    // Once nothing is transferring any more, the exit is a real skip again.
+    await act(async () => {
+      for (const model of [embeddingModel, textModel, visionModel]) {
+        progressListener({ type: 'model-download-error', model, error: 'network' });
+      }
+    });
+    fireEvent.click(await screen.findByRole('button', { name: /Continue with limited AI/i }));
+    expect(onSkip).toHaveBeenCalledTimes(1);
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  test('closing while a download runs saves the chosen profile so the download is put to use', async () => {
+    const baseProfile = INSTALL_MODEL_PROFILES?.BASE_SMALL?.models || {};
+    const qualityProfile = INSTALL_MODEL_PROFILES?.BETTER_QUALITY?.models || {};
+    expect(qualityProfile.TEXT_ANALYSIS).not.toBe(baseProfile.TEXT_ANALYSIS);
+    expect(qualityProfile.EMBEDDING).not.toBe(baseProfile.EMBEDDING);
+
+    const updateConfig = jest.fn(async () => ({ success: true }));
+    let progressListener;
+    window.electronAPI = {
+      llama: {
+        // Base is configured and nothing is on disk yet (first run).
+        getConfig: jest.fn(async () => ({
+          embeddingModel: baseProfile.EMBEDDING,
+          textModel: baseProfile.TEXT_ANALYSIS,
+          visionModel: baseProfile.IMAGE_ANALYSIS
+        })),
+        getModels: jest.fn(async () => ({ models: [] })),
+        getDownloadStatus: jest.fn(async () => ({
+          status: {
+            downloads: [qualityProfile.EMBEDDING, qualityProfile.TEXT_ANALYSIS]
+              .concat(qualityProfile.IMAGE_ANALYSIS ? [qualityProfile.IMAGE_ANALYSIS] : [])
+              .map((filename) => ({ filename, progress: 10 }))
+          }
+        })),
+        downloadModel: jest.fn(async () => ({ success: true, started: true })),
+        cancelDownload: jest.fn(async () => ({ success: true })),
+        updateConfig
+      },
+      embeddings: { getStats: jest.fn(async () => ({ success: true, files: 0 })) },
+      events: {
+        onOperationProgress: jest.fn((cb) => {
+          progressListener = cb;
+          return jest.fn();
+        })
+      }
+    };
+
+    const onSkip = jest.fn();
+    const onDismiss = jest.fn();
+    render(<ModelSetupWizard onComplete={jest.fn()} onSkip={onSkip} onDismiss={onDismiss} />);
+    await waitFor(() => {
+      expect(screen.getByText(/Choose AI Models/i)).toBeInTheDocument();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Better Quality/i }));
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Download Models/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/Downloading Models/i)).toBeInTheDocument();
+    });
+    await act(async () => {
+      progressListener({
+        type: 'model-download',
+        model: qualityProfile.TEXT_ANALYSIS,
+        percent: 40
+      });
+    });
+    expect(updateConfig).not.toHaveBeenCalled();
+
+    // Closing records consent to keep downloading, so the configured models
+    // must be the ones being downloaded; otherwise the next launch downloads
+    // the old defaults the user never picked.
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Close and keep downloading/i }));
+    });
+    await waitFor(() => expect(onDismiss).toHaveBeenCalledTimes(1));
+    expect(updateConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        textModel: qualityProfile.TEXT_ANALYSIS,
+        embeddingModel: qualityProfile.EMBEDDING
+      })
+    );
+    expect(updateConfig.mock.invocationCallOrder[0]).toBeLessThan(
+      onDismiss.mock.invocationCallOrder[0]
+    );
+    expect(onSkip).not.toHaveBeenCalled();
+    expect(window.electronAPI.llama.cancelDownload).not.toHaveBeenCalled();
+  });
+
+  test('closing while a download runs stays open when the chosen profile cannot be saved', async () => {
+    const baseProfile = INSTALL_MODEL_PROFILES?.BASE_SMALL?.models || {};
+    const qualityProfile = INSTALL_MODEL_PROFILES?.BETTER_QUALITY?.models || {};
+    const updateConfig = jest.fn(async () => ({ success: false, error: 'config locked' }));
+    let progressListener;
+    window.electronAPI = {
+      llama: {
+        getConfig: jest.fn(async () => ({
+          embeddingModel: baseProfile.EMBEDDING,
+          textModel: baseProfile.TEXT_ANALYSIS,
+          visionModel: baseProfile.IMAGE_ANALYSIS
+        })),
+        getModels: jest.fn(async () => ({ models: [] })),
+        getDownloadStatus: jest.fn(async () => ({
+          status: {
+            downloads: [qualityProfile.EMBEDDING, qualityProfile.TEXT_ANALYSIS].map((filename) => ({
+              filename,
+              progress: 10
+            }))
+          }
+        })),
+        downloadModel: jest.fn(async () => ({ success: true, started: true })),
+        cancelDownload: jest.fn(async () => ({ success: true })),
+        updateConfig
+      },
+      embeddings: { getStats: jest.fn(async () => ({ success: true, files: 0 })) },
+      events: {
+        onOperationProgress: jest.fn((cb) => {
+          progressListener = cb;
+          return jest.fn();
+        })
+      }
+    };
+
+    const onSkip = jest.fn();
+    const onDismiss = jest.fn();
+    render(<ModelSetupWizard onComplete={jest.fn()} onSkip={onSkip} onDismiss={onDismiss} />);
+    await waitFor(() => {
+      expect(screen.getByText(/Choose AI Models/i)).toBeInTheDocument();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Better Quality/i }));
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Download Models/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/Downloading Models/i)).toBeInTheDocument();
+    });
+    await act(async () => {
+      progressListener({
+        type: 'model-download',
+        model: qualityProfile.TEXT_ANALYSIS,
+        percent: 40
+      });
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Close and keep downloading/i }));
+    });
+    await waitFor(() => expect(updateConfig).toHaveBeenCalled());
+    expect(await screen.findByText(/config locked/)).toBeInTheDocument();
+    expect(onDismiss).not.toHaveBeenCalled();
+    expect(onSkip).not.toHaveBeenCalled();
+    expect(screen.getByText(/Downloading Models/i)).toBeInTheDocument();
+  });
+
   test('asks about an embedding switch during the system check, and the check does not time out while asking', async () => {
     jest.useFakeTimers();
     const baseProfile = INSTALL_MODEL_PROFILES?.BASE_SMALL?.models || {};

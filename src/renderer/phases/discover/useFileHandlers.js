@@ -60,6 +60,48 @@ const buildMissingPathWarning = (/** @type {any} */ count) =>
   `Skipped ${count} item${count > 1 ? 's' : ''} because no stable absolute path was available`;
 
 /**
+ * The file picker offers "All Files", and main leaves unsupported, oversized
+ * and unreadable picks out of `files`, listing them in `skippedFiles` with a
+ * reason. Summarize them as e.g. "1 unsupported file type, 1 over the 200 MB
+ * size limit" (counts only, no paths).
+ * @param {unknown} skippedFiles
+ * @returns {string}
+ */
+const summarizeSkippedPicks = (skippedFiles) => {
+  const entries = Array.isArray(skippedFiles) ? skippedFiles : [];
+  let unsupported = 0;
+  let tooLarge = 0;
+  let unreadable = 0;
+  /** @type {Set<string>} */
+  const limits = new Set();
+  for (const entry of entries) {
+    const reason = entry?.reason;
+    if (reason === 'unsupported_extension' || reason === 'no_extension') {
+      unsupported += 1;
+    } else if (reason === 'file_too_large') {
+      tooLarge += 1;
+      if (entry?.limitMB != null) limits.add(String(entry.limitMB));
+    } else {
+      unreadable += 1;
+    }
+  }
+  const parts = [];
+  if (unsupported > 0) {
+    parts.push(`${unsupported} unsupported file type${unsupported !== 1 ? 's' : ''}`);
+  }
+  if (tooLarge > 0) {
+    const [onlyLimit] = limits;
+    parts.push(
+      limits.size === 1
+        ? `${tooLarge} over the ${onlyLimit} MB size limit`
+        : `${tooLarge} over the size limit`
+    );
+  }
+  if (unreadable > 0) parts.push(`${unreadable} could not be read`);
+  return parts.join(', ');
+};
+
+/**
  * Custom hook for file handling operations
  * @param {any} options
  * @returns {Record<string, any>} File handler functions and state
@@ -437,6 +479,29 @@ export function useFileHandlers({
       }
       const result = await window.electronAPI.files.select();
 
+      // Picks main left out (unsupported type, too large, unreadable). A
+      // cancelled dialog returns success:false, so it never lands here.
+      const skippedPickCount =
+        result?.success === true
+          ? Number(result?.skippedCount) ||
+            (Array.isArray(result?.skippedFiles) ? result.skippedFiles.length : 0)
+          : 0;
+      if (skippedPickCount > 0) {
+        const summary = summarizeSkippedPicks(result?.skippedFiles);
+        const noneAdded = !(result?.files?.length > 0);
+        const lead = noneAdded
+          ? skippedPickCount === 1
+            ? 'The selected file cannot be added'
+            : `None of the ${skippedPickCount} selected files can be added`
+          : `${skippedPickCount} selected file${skippedPickCount !== 1 ? 's' : ''} skipped`;
+        addNotification(
+          summary ? `${lead}: ${summary}` : lead,
+          'warning',
+          5000,
+          'file-selection-skipped'
+        );
+      }
+
       if (result?.success && result?.files?.length > 0) {
         const absoluteFiles = (result.files || []).map((/** @type {any} */ f) => {
           const rawPath = typeof f === 'string' ? f : f?.path;
@@ -495,7 +560,7 @@ export function useFileHandlers({
           typeof f === 'string' ? f : f.path
         );
         enrichSelectedFiles(filePaths, 'file_selection');
-      } else {
+      } else if (skippedPickCount === 0) {
         addNotification('No files selected', 'info', 2000, 'file-selection');
       }
     } catch (error) {

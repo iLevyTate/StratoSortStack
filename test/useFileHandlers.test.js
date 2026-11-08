@@ -139,6 +139,90 @@ describe('useFileHandlers', () => {
       );
     });
 
+    // The picker offers "All Files", and main drops unsupported or oversized
+    // picks into skippedFiles. A pick where every file was skipped is not
+    // "no files selected", and a mixed pick must say what was left out.
+    test('explains why when every picked file was skipped', async () => {
+      mockElectronAPI.files.select.mockResolvedValue({
+        success: true,
+        files: [],
+        count: 0,
+        skippedFiles: [
+          { path: '/home/me/data.xyz', reason: 'unsupported_extension' },
+          {
+            path: '/home/me/movie.mp4',
+            reason: 'file_too_large',
+            sizeMB: '2500.0',
+            limitMB: '2048'
+          }
+        ],
+        skippedCount: 2
+      });
+
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      await act(async () => {
+        await result.current.handleFileSelection();
+      });
+
+      expect(mockAddNotification).not.toHaveBeenCalledWith(
+        'No files selected',
+        expect.anything(),
+        expect.anything(),
+        expect.anything()
+      );
+      expect(mockAddNotification).toHaveBeenCalledWith(
+        'None of the 2 selected files can be added: 1 unsupported file type, 1 over the 2048 MB size limit',
+        'warning',
+        5000,
+        'file-selection-skipped'
+      );
+      expect(mockAddSelectedFiles).not.toHaveBeenCalled();
+    });
+
+    test('reports skipped files next to the ones that were added', async () => {
+      mockElectronAPI.files.select.mockResolvedValue({
+        success: true,
+        files: [{ path: '/home/me/doc.pdf', name: 'doc.pdf' }],
+        skippedFiles: [{ path: '/home/me/notes', reason: 'no_extension' }],
+        skippedCount: 1
+      });
+
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      await act(async () => {
+        await result.current.handleFileSelection();
+      });
+
+      expect(mockAddSelectedFiles).toHaveBeenCalledWith([
+        expect.objectContaining({ path: '/home/me/doc.pdf' })
+      ]);
+      expect(mockAddNotification).toHaveBeenCalledWith(
+        '1 selected file skipped: 1 unsupported file type',
+        'warning',
+        5000,
+        'file-selection-skipped'
+      );
+    });
+
+    test('a cancelled picker still reads as no files selected', async () => {
+      mockElectronAPI.files.select.mockResolvedValue({ success: false, files: [] });
+
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      await act(async () => {
+        await result.current.handleFileSelection();
+      });
+
+      expect(mockAddNotification).toHaveBeenCalledWith(
+        'No files selected',
+        'info',
+        2000,
+        'file-selection'
+      );
+      expect(mockAddNotification).toHaveBeenCalledTimes(1);
+    });
+
     test('adds new files when files are selected', async () => {
       mockElectronAPI.files.select.mockResolvedValue({
         success: true,

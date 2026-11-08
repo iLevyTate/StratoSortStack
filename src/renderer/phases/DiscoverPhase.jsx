@@ -881,15 +881,18 @@ function DiscoverPhase() {
                 >
                   Clear and try again
                 </Button>
+                {/* No "skip to Organize": Organize only lists analyzed files, so
+                    with every analysis failed it would open empty and send the
+                    user straight back here. Offer recovery instead. */}
                 <Button
                   onClick={() => {
                     setTotalAnalysisFailure(false);
-                    actions.advancePhase(PHASES?.ORGANIZE ?? 'organize');
+                    retryFailedFiles();
                   }}
-                  variant="secondary"
+                  variant="primary"
                   size="sm"
                 >
-                  Skip to Organize phase →
+                  Retry failed files
                 </Button>
               </div>
             </div>
@@ -916,8 +919,10 @@ function DiscoverPhase() {
 
         {(() => {
           // Gate on Redux ready count (not raw analysisResults length) so a
-          // failed-only list cannot look clickable while onClick no-ops.
-          const canContinue = visibleReadyCount > 0 || totalAnalysisFailure;
+          // failed-only list cannot look clickable while onClick no-ops. A
+          // total analysis failure does not unlock it: Organize needs at least
+          // one analyzed file, so there would be nothing to organize there.
+          const canContinue = visibleReadyCount > 0;
           const disabledBecauseAnalyzing = isAnalyzing;
           const disabledBecauseNoReady = !canContinue;
 
@@ -927,8 +932,8 @@ function DiscoverPhase() {
           } else if (disabledBecauseNoReady) {
             disabledReason =
               visibleFailedCount > 0
-                ? 'All files failed analysis. Use recovery options or continue without analysis when offered.'
-                : 'Analyze files or continue without analysis.';
+                ? 'All files failed analysis. Retry them, or clear the queue and try again.'
+                : 'Analyze at least one file first.';
           }
 
           return (
@@ -938,10 +943,10 @@ function DiscoverPhase() {
                   addNotification('Please wait for analysis to complete', 'warning', 3000);
                   return;
                 }
-                if (visibleReadyCount === 0 && !totalAnalysisFailure) {
+                if (!canContinue) {
                   addNotification(
                     visibleFailedCount > 0
-                      ? 'All files failed analysis. Use the recovery options above or click "Continue without analysis".'
+                      ? 'All files failed analysis. Retry them, or clear the queue and try again.'
                       : 'Please analyze files first',
                     'warning',
                     4000
@@ -953,13 +958,13 @@ function DiscoverPhase() {
                 }
                 actions.advancePhase(PHASES?.ORGANIZE ?? 'organize');
               }}
-              variant={totalAnalysisFailure ? 'secondary' : 'primary'}
+              variant="primary"
               size="md"
               className="w-full sm:w-auto min-w-[180px]"
               disabled={isAnalyzing || !canContinue}
               title={disabledReason || undefined}
             >
-              {totalAnalysisFailure ? 'Continue without analysis →' : 'Continue to Organize →'}
+              Continue to Organize →
             </Button>
           );
         })()}

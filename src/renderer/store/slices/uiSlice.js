@@ -28,17 +28,20 @@ function canTransitionTo(/** @type {any} */ fromPhase, /** @type {any} */ toPhas
 }
 
 // Disabled-tab tooltips. Keys are the *blocked target* phase the user is
-// trying to reach; the message describes the prerequisite step they're
-// missing. Surfaced on `aria-disabled` tabs in NavigationBar so users learn
-// why a tab is unavailable instead of bouncing off it silently.
+// trying to reach. Surfaced on `aria-disabled` tabs in NavigationBar so users
+// learn why a tab is unavailable instead of bouncing off it silently.
+//
+// Tabs are gated by PHASE_TRANSITIONS alone (no file counts), so each message
+// names the step the phase opens from. A state prerequisite here ("analyze a
+// file first") would be wrong whenever it is already met.
 //
 // Returns null when the transition is permitted (caller falls back to its
 // usual descriptive tooltip).
 const TRANSITION_BLOCK_REASONS = {
   [PHASES.SETUP]: 'Open Setup from the Welcome step.',
-  [PHASES.DISCOVER]: 'Add files in Discover to get started.',
-  [PHASES.ORGANIZE]: 'Analyze a file in Discover first.',
-  [PHASES.COMPLETE]: 'Organize at least one file to see results.'
+  [PHASES.DISCOVER]: 'Open Discover from the Welcome step.',
+  [PHASES.ORGANIZE]: 'Organize opens from Discover. Go to Discover first.',
+  [PHASES.COMPLETE]: 'Results open from Organize. Go to Organize first.'
 };
 
 function getTransitionBlockReason(/** @type {any} */ fromPhase, /** @type {any} */ toPhase) {
@@ -73,8 +76,10 @@ const NAVIGATION_RULES = {
         // Setup requires at least one smart folder (context provides this)
         return context.hasSmartFolders === true;
       case PHASES?.DISCOVER ?? 'discover':
-        // Discover requires files to be analyzed (or total failure acknowledged)
-        return context.hasAnalyzedFiles || context.totalAnalysisFailure;
+        // Discover requires at least one analyzed file. A total analysis
+        // failure does not unlock it: Organize lists only analyzed files, so
+        // there would be nothing to organize (matches DiscoverPhase's footer).
+        return Boolean(context.hasAnalyzedFiles);
       case PHASES?.ORGANIZE ?? 'organize':
         // Organize requires at least one processed file to view results
         return context.hasProcessedFiles;

@@ -35,6 +35,7 @@ import { Button, IconButton } from './ui';
 import { Text } from './ui/Typography';
 import { isMac } from '../utils/platform';
 import { useUndoRedo } from './UndoRedoSystem';
+import { hasDestinationFolder } from '../utils/smartFolderDestinations';
 
 const logger = createLogger('NavigationBar');
 // =============================================================================
@@ -350,7 +351,9 @@ const ViewModeToggle = memo(function ViewModeToggle() {
   // control honest: it never highlights Dashboard while the rendered surface
   // stays phased. Same aria-disabled + tooltip treatment as the phase tabs, so
   // the title still surfaces on hover (a native `disabled` would swallow it).
-  const dashboardAvailable = useAppSelector((state) => state.files.smartFolders.length > 0);
+  const dashboardAvailable = useAppSelector((state) =>
+    hasDestinationFolder(state.files.smartFolders)
+  );
 
   // Single stable handler reads the target mode off the button's data-* attr,
   // avoiding a fresh inline closure per option in the render loop.
@@ -610,7 +613,9 @@ function NavigationBar() {
   const cameFromDashboard = useAppSelector((state) => state.ui.cameFromDashboard);
   // Mirror App.js' dashboard gate so the "Back to dashboard" affordance never
   // dead-ends: returning is only offered when the dashboard would actually render.
-  const dashboardAvailable = useAppSelector((state) => state.files?.smartFolders?.length > 0);
+  const dashboardAvailable = useAppSelector((state) =>
+    hasDestinationFolder(state.files?.smartFolders)
+  );
   const isOrganizing = useAppSelector((state) => state.ui.isOrganizing);
   const { isExecuting: isUndoRedoExecuting, executionStatus } = useUndoRedo();
   const isLoading = useAppSelector((state) => state.ui.isLoading);

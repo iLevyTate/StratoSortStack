@@ -159,6 +159,29 @@ describe('App view-mode routing', () => {
     expect(screen.queryByTestId('dashboard-view')).not.toBeInTheDocument();
   });
 
+  test('stays on the phased flow when the only smart folder is the Uncategorized fallback', async () => {
+    // Main seeds Uncategorized on every fresh profile, so it is in Redux before
+    // Welcome renders. It is not a destination: a Dashboard pick on first run
+    // must still go through Setup instead of landing on the dashboard.
+    setupState({
+      viewMode: 'dashboard',
+      currentPhase: 'setup',
+      smartFolders: [
+        {
+          id: 'uncat',
+          name: 'Uncategorized',
+          category: 'uncategorized',
+          isDefault: true,
+          path: 'C:/x/Uncategorized'
+        }
+      ]
+    });
+    render(<App />);
+
+    expect(await screen.findByTestId('phase-renderer')).toBeInTheDocument();
+    expect(screen.queryByTestId('dashboard-view')).not.toBeInTheDocument();
+  });
+
   test('renders the phased flow when viewMode is phased even with smart folders configured', async () => {
     setupState({ viewMode: 'phased', smartFolders: [{ id: 'sf-1' }] });
     render(<App />);

@@ -324,6 +324,20 @@ describe('DashboardView', () => {
       render(<DashboardView />);
       expect(screen.getByText('1 smart folder ready · 1 awaiting analysis')).toBeInTheDocument();
     });
+
+    test('summary does not count the Uncategorized catch-all as a smart folder (onboarding-ux-1)', () => {
+      setupState({
+        fileStats: { total: 0, ready: 0, failed: 0, pending: 0 },
+        smartFolders: [
+          { id: 'u', name: 'Uncategorized', category: 'uncategorized', isDefault: true },
+          { id: 'a', name: 'Financial' }
+        ]
+      });
+      render(<DashboardView />);
+      expect(
+        screen.getByText('1 smart folder ready · add files to get started')
+      ).toBeInTheDocument();
+    });
   });
 
   describe('adaptive status badge', () => {

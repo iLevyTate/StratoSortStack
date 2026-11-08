@@ -57,7 +57,8 @@ import uiReducer, {
   fetchSettings,
   NAVIGATION_RULES,
   isValidPhase,
-  canTransitionTo
+  canTransitionTo,
+  getTransitionBlockReason
 } from '../src/renderer/store/slices/uiSlice';
 
 const { settingsIpc } = require('../src/renderer/services/ipc');
@@ -589,9 +590,21 @@ describe('uiSlice', () => {
         ).toBe(true);
       });
 
-      test('allows totalAnalysisFailure for discover phase', () => {
+      // onboarding-ux-3: Organize lists only analyzed files, so a total
+      // analysis failure leaves nothing to organize there. Matches the
+      // Discover footer, which no longer offers "Continue without analysis".
+      test('does not unlock discover on totalAnalysisFailure alone', () => {
         expect(
           NAVIGATION_RULES.canGoNext({ currentPhase: 'discover' }, { totalAnalysisFailure: true })
+        ).toBe(false);
+        expect(
+          NAVIGATION_RULES.canGoNext({ currentPhase: 'discover' }, { hasAnalyzedFiles: false })
+        ).toBe(false);
+        expect(
+          NAVIGATION_RULES.canGoNext(
+            { currentPhase: 'discover' },
+            { hasAnalyzedFiles: true, totalAnalysisFailure: true }
+          )
         ).toBe(true);
       });
 
@@ -655,6 +668,33 @@ describe('uiSlice', () => {
       test('rejects invalid phases', () => {
         expect(canTransitionTo('invalid', 'setup')).toBe(false);
         expect(canTransitionTo('welcome', 'invalid')).toBe(false);
+      });
+    });
+
+    // Tabs are gated by the transition graph alone, so a blocked tab's
+    // tooltip names the step it opens from rather than a file-count
+    // prerequisite that may already be met.
+    describe('getTransitionBlockReason', () => {
+      test('returns null for a permitted transition', () => {
+        expect(getTransitionBlockReason('welcome', 'discover')).toBeNull();
+        expect(getTransitionBlockReason('organize', 'organize')).toBeNull();
+      });
+
+      test('names the step a blocked phase opens from', () => {
+        expect(getTransitionBlockReason('welcome', 'organize')).toMatch(/from Discover/);
+        expect(getTransitionBlockReason('discover', 'complete')).toMatch(/from Organize/);
+        expect(getTransitionBlockReason('organize', 'setup')).toMatch(/from the Welcome step/);
+      });
+
+      test('does not claim a file prerequisite the graph does not check', () => {
+        for (const [from, to] of [
+          ['welcome', 'organize'],
+          ['setup', 'organize'],
+          ['welcome', 'complete'],
+          ['discover', 'complete']
+        ]) {
+          expect(getTransitionBlockReason(from, to)).not.toMatch(/analyze|at least one/i);
+        }
       });
     });
   });

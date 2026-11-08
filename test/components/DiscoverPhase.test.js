@@ -294,4 +294,62 @@ describe('DiscoverPhase premium guidance', () => {
     expect(analyze).toBeEnabled();
     expect(analyze.getAttribute('title') || '').not.toMatch(/license|trial/i);
   });
+
+  // Organize only lists files that have an analysis, so when every analysis
+  // failed there is nothing it can organize. Discover must offer recovery
+  // instead of sending the user to an empty Organize screen.
+  test('when every analysis failed, Discover offers recovery and does not advance to Organize', () => {
+    const { useDiscoverState, useAnalysis } = require('../../src/renderer/phases/discover');
+    const defaults = useDiscoverState();
+    const originalDiscoverState = useDiscoverState.getMockImplementation();
+    const originalAnalysis = useAnalysis.getMockImplementation();
+    const advancePhase = jest.fn();
+    let analysisArgs;
+    useDiscoverState.mockImplementation(() => ({
+      ...defaults,
+      analysisResults: [
+        {
+          path: '/tmp/example.pdf',
+          name: 'example.pdf',
+          analysis: null,
+          error: 'Model failed to load',
+          status: 'error'
+        }
+      ],
+      fileStates: { '/tmp/example.pdf': { state: 'error' } },
+      fileStats: { total: 1, ready: 0, failed: 1, pending: 0 },
+      readySelectedFilesCount: 0,
+      actions: { setPhaseData: jest.fn(), advancePhase }
+    }));
+    useAnalysis.mockImplementation((args) => {
+      analysisArgs = args;
+      return originalAnalysis(args);
+    });
+
+    try {
+      render(<DiscoverPhase />);
+      act(() => {
+        analysisArgs.actions.setPhaseData('totalAnalysisFailure', true);
+      });
+
+      expect(screen.getByText('All file analyses failed')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Skip to Organize/i })).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: /Continue without analysis/i })
+      ).not.toBeInTheDocument();
+
+      const footer = screen.getByRole('button', { name: /Continue to Organize/i });
+      expect(footer).toBeDisabled();
+      expect(footer.getAttribute('title') || '').not.toMatch(/without analysis/i);
+      fireEvent.click(footer);
+      expect(advancePhase).not.toHaveBeenCalledWith('organize');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Retry failed files' }));
+      expect(mockRetryFailedFiles).toHaveBeenCalledTimes(1);
+      expect(advancePhase).not.toHaveBeenCalledWith('organize');
+    } finally {
+      useDiscoverState.mockImplementation(originalDiscoverState);
+      useAnalysis.mockImplementation(originalAnalysis);
+    }
+  });
 });
