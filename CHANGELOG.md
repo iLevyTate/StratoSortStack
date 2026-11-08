@@ -120,6 +120,9 @@ Changes you will notice:
 
 ### Changed
 
+- **StratoSort no longer registers itself as a viewer for PDF, Word, Excel, PowerPoint, text and
+  Markdown files.** Opening a file that way did nothing, so the entry in "Open with" is gone.
+  Existing installs drop it on the next install or update.
 - **The vision model stays loaded across a batch of images.** On a GPU with little memory, it was
   shut down and restarted after every image to make room for the embedding model. During a vision
   batch the embedding model now runs on the CPU beside it (without raising the "running on CPU"
@@ -198,6 +201,24 @@ Changes you will notice:
 - **Half-written search index files are cleaned up.** A save interrupted by a crash or a full disk
   left its temporary file behind (hundreds of MB each on a large library). Startup now removes those
   older than an hour from the search index folder.
+- **A vector repair at startup no longer wipes the file's details.** When the index restored a
+  file's missing vector from its backup copy, it replaced the whole entry with the vector alone, so
+  the file lost its name, path, tags and hash from search. The repair now keeps the full entry.
+- **Large libraries keep every file's vector.** Past 10,000 files the app dropped stored vectors
+  from its backup copy, so those files were re-embedded on every launch and could drop out of
+  search. The limit is gone; it saved well under 1 MB per 10,000 files.
+- **Loading the search index no longer freezes the window.** The index is read and parsed on a
+  background thread, so the app stays responsive while a large library loads.
+- **Typing a new search cancels the previous one** instead of letting it run ahead of the new query.
+  Cancelling a search affects only that search.
+- **Phase tabs, Alt+arrow keys and dashboard links follow one rule.** A tab that is blocked says why
+  in its tooltip and when clicked, going back is always allowed, and all of them pause while
+  analysis or file moves run.
+- **File naming has one setting.** Changing the naming convention in Discover changes the default in
+  Settings, and the other way round.
+- **Creating a folder through a link that points outside your allowed locations** is refused with a
+  message that says so, instead of a generic "cannot access that path".
+
 - **Organize no longer overwrites a file when two moves pick the same numbered name.** When a batch
   moved `report.pdf` and `report_1.pdf` into a folder that already held `report.pdf`, both moves
   could land on `report_1.pdf` and one file was lost. Every mover in the app (organize, single move,
