@@ -253,6 +253,72 @@ describe('mediaAnalyzerAdapter', () => {
       expect(receivedSignal.aborted).toBe(true);
     });
 
+    test('a caller AbortSignal (watcher timeout/stop) reaches analyzeMediaFile', async () => {
+      // SmartFolderWatcher passes its per-item timeout controller as
+      // `{ abortSignal, signal }`. Aborting it must cancel the transcription,
+      // otherwise a timed-out Whisper run keeps going and is analyzed again.
+      let receivedSignal;
+      let release;
+      mockAnalyzeMediaFile.mockImplementation((_p, _d, opts) => {
+        receivedSignal = opts.signal;
+        return new Promise((resolve) => {
+          release = resolve;
+        });
+      });
+      const whisper = { transcribeMedia: jest.fn() };
+      const adapter = createMediaAnalyzerAdapter({ whisperService: whisper });
+      const controller = new AbortController();
+      const inflight = adapter('/tmp/a.mp3', [], {
+        abortSignal: controller.signal,
+        signal: controller.signal
+      });
+      await Promise.resolve();
+      expect(receivedSignal).toBeInstanceOf(AbortSignal);
+      expect(receivedSignal.aborted).toBe(false);
+      controller.abort();
+      expect(receivedSignal.aborted).toBe(true);
+      release({});
+      await inflight;
+    });
+
+    test('a caller AbortSignal and an isCancelled callback are both honoured', async () => {
+      let receivedSignal;
+      let release;
+      mockAnalyzeMediaFile.mockImplementation((_p, _d, opts) => {
+        receivedSignal = opts.signal;
+        return new Promise((resolve) => {
+          release = resolve;
+        });
+      });
+      const whisper = { transcribeMedia: jest.fn() };
+      const adapter = createMediaAnalyzerAdapter({ whisperService: whisper });
+      const controller = new AbortController();
+      const inflight = adapter('/tmp/a.mp3', [], {
+        isCancelled: () => false,
+        abortSignal: controller.signal
+      });
+      await Promise.resolve();
+      expect(receivedSignal.aborted).toBe(false);
+      controller.abort();
+      expect(receivedSignal.aborted).toBe(true);
+      release({});
+      await inflight;
+    });
+
+    test('an already-aborted caller signal is passed through aborted', async () => {
+      let abortedDuringCall;
+      mockAnalyzeMediaFile.mockImplementation((_p, _d, opts) => {
+        abortedDuringCall = opts.signal?.aborted;
+        return Promise.resolve({});
+      });
+      const whisper = { transcribeMedia: jest.fn() };
+      const adapter = createMediaAnalyzerAdapter({ whisperService: whisper });
+      const controller = new AbortController();
+      controller.abort();
+      await adapter('/tmp/a.mp3', [], { signal: controller.signal });
+      expect(abortedDuringCall).toBe(true);
+    });
+
     test('when isCancelled is omitted, signal is undefined', async () => {
       let receivedSignal = 'unset';
       mockAnalyzeMediaFile.mockImplementation((_p, _d, opts) => {

@@ -14,7 +14,11 @@ jest.mock('fs', () => ({
     stat: jest.fn(),
     readFile: jest.fn(),
     access: jest.fn(),
-    readdir: jest.fn()
+    readdir: jest.fn(),
+    // The watcher refuses links out of a smart folder (lstat + realpath);
+    // these tests use plain paths.
+    lstat: jest.fn(async () => ({ isSymbolicLink: () => false })),
+    realpath: jest.fn(async (p) => p)
   }
 }));
 
@@ -126,7 +130,9 @@ jest.mock('../src/shared/fileOperationTracker', () => ({
 
 jest.mock('../src/shared/pathSanitization', () => ({
   normalizePathForIndex: jest.fn((p) => p),
-  getCanonicalFileId: jest.fn((p) => p.toLowerCase())
+  getCanonicalFileId: jest.fn((p) => p.toLowerCase()),
+  // Link containment resolves the file and its root; no links in these tests.
+  resolveRealPaths: jest.fn(async (targets) => targets.map((p) => ({ path: p })))
 }));
 
 jest.mock('../src/shared/fileIdUtils', () => ({

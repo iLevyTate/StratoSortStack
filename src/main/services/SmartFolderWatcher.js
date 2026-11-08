@@ -54,7 +54,11 @@ const {
 } = require('../../shared/performanceConstants');
 const { findUserExclusion } = require('./watcherExclusions');
 const { getInstance: getFileOperationTracker } = require('../../shared/fileOperationTracker');
-const { normalizePathForIndex, getCanonicalFileId } = require('../../shared/pathSanitization');
+const {
+  normalizePathForIndex,
+  getCanonicalFileId,
+  resolveRealPaths
+} = require('../../shared/pathSanitization');
 const { isImagePath, isMediaPath } = require('../../shared/fileIdUtils');
 const { isUNCPath } = require('../../shared/crossPlatformUtils');
 const { normalizeKeywords } = require('../../shared/normalization');
@@ -80,6 +84,27 @@ if (typeof createLogger !== 'function' && logger?.setContext) {
 
 // Limit how many times a file is retried after transient failures (timeouts, embed errors)
 const MAX_ANALYSIS_RETRIES = RETRY.MAX_ATTEMPTS_MEDIUM;
+// A failed analysis waits before its retry: 15 s, 1 min, 4 min. The usual
+// causes (model memory budget, a running vision batch, a file locked by an AV
+// scan) are transient, and an immediate retry hit the same condition, so all
+// attempts failed within seconds and the file was recorded as failed.
+const ANALYSIS_RETRY_BASE_DELAY_MS = 15_000;
+const ANALYSIS_RETRY_MAX_DELAY_MS = 10 * 60 * 1000;
+// stop() waits this long for the analysis in flight (after aborting it); a
+// shutdown waits less, so the watcher's stop stays well inside lifecycle's
+// 20 s serviceIntegration phase and the services shut down after it get time.
+const STOP_IN_FLIGHT_WAIT_MS = 30_000;
+const SHUTDOWN_IN_FLIGHT_WAIT_MS = 5_000;
+
+/**
+ * Delay before retry number `retryCount` (1-based) of a failed analysis.
+ * @param {number} retryCount
+ * @returns {number}
+ */
+function analysisRetryDelayMs(retryCount) {
+  const exponent = Math.max(0, (Number(retryCount) || 1) - 1);
+  return Math.min(ANALYSIS_RETRY_MAX_DELAY_MS, ANALYSIS_RETRY_BASE_DELAY_MS * 4 ** exponent);
+}
 
 // CRITICAL: Prevent unbounded memory growth under heavy file activity (e.g., large archive extraction).
 // We bound the analysis queue and apply light deduplication by filePath.
@@ -217,6 +242,11 @@ class SmartFolderWatcher {
     // stay dead or a queued restart/late chokidar error re-creates the
     // watcher past app shutdown. Reset only by an explicit start().
     this._shutdownRequested = false;
+    // Bumped by every stop(). A queue pass remembers the value it started
+    // under, so work from before a stop is recognised as stopped even after
+    // stop() has returned and cleared _isStopping (its in-flight wait is
+    // bounded, and an aborted analysis may unwind later than that).
+    this._stopEpoch = 0;
 
     // Restart machinery for chokidar 'error' recovery. Without this the
     // previous behavior was: log + bump errors counter, isRunning stays
@@ -253,6 +283,10 @@ class SmartFolderWatcher {
     // they'd be absent from the durable record for that whole window.
     /** @type {Map<string, any>} */
     this._inFlightItems = new Map();
+    // Abort controllers of the analyses running now, so stop() can cancel
+    // them instead of waiting them out.
+    /** @type {Set<AbortController>} */
+    this._inFlightControllers = new Set();
     // Restored items whose smart folder is configured but not currently
     // watched (unmounted USB, SMB share before the VPN). Deliberately its OWN
     // list, not part of _pendingReanalyzeItems: forceReanalyzeAll resets the
@@ -749,6 +783,7 @@ class SmartFolderWatcher {
   async stop() {
     logger.info('[SMART-FOLDER-WATCHER] Stopping...');
     this._isStopping = true;
+    this._stopEpoch++;
 
     // K-07: flush before anything clears the queue below, so a shutdown
     // mid-reanalysis leaves the remaining work on disk for the next start.
@@ -761,6 +796,13 @@ class SmartFolderWatcher {
       logger.warn('[SMART-FOLDER-WATCHER] Queue flush did not complete during stop', {
         error: /** @type {any} */ (flushErr)?.message
       });
+    }
+
+    // Cancel the analyses in flight. Their items are in the snapshot just
+    // flushed, so the next start redoes them; _handleAnalysisError does not
+    // count an abort during stop as a failed attempt.
+    for (const controller of this._inFlightControllers) {
+      controller.abort();
     }
 
     // Cancel any pending restart so a stop()→start() cycle isn't surprised
@@ -784,10 +826,12 @@ class SmartFolderWatcher {
       this._storageFullHoldTimer = null;
     }
 
-    // Wait for in-flight queue processing to finish (up to 30s)
+    // Wait for in-flight queue processing to finish (bounded; shorter on shutdown)
     if (this.isProcessingQueue) {
       logger.debug('[SMART-FOLDER-WATCHER] Waiting for in-flight queue processing to finish...');
-      const deadline = Date.now() + 30000;
+      const deadline =
+        Date.now() +
+        (this._shutdownRequested ? SHUTDOWN_IN_FLIGHT_WAIT_MS : STOP_IN_FLIGHT_WAIT_MS);
       while (this.isProcessingQueue && Date.now() < deadline) {
         await delay(200);
       }
@@ -1266,6 +1310,15 @@ class SmartFolderWatcher {
     try {
       // Verify file still exists
       await fs.access(filePath);
+      // ...and is not a link out of the smart folder.
+      const linkEscape = await this._linkEscapeReason(filePath);
+      if (linkEscape) {
+        logger.warn('[SMART-FOLDER-WATCHER] Not following a link out of the smart folder', {
+          filePath,
+          reason: linkEscape
+        });
+        return;
+      }
 
       // If this is a move/rename within smart folders, update paths instead of re-analysis
       if (eventType === 'add') {
@@ -1506,6 +1559,57 @@ class SmartFolderWatcher {
     const p = normalizePathForIndex(filePath);
     if (!p) return false;
     return roots.some((root) => p === root || p.startsWith(`${root}/`));
+  }
+
+  /**
+   * Why the watcher must not read `filePath`, or null when it may. fs.stat
+   * and every extractor follow links, so a file symlink, or a file reached
+   * through a junction / directory link, would hand the analyzer content from
+   * anywhere on disk under a smart-folder path. The startup scan skips links
+   * (_scanDirectory); this applies the same rule to the live and queued
+   * paths. A file symlink is refused outright, like the scan and the IPC
+   * analyze path do. Any other path must resolve inside the real path of the
+   * smart folder that contains it (the folder itself may sit behind a link).
+   * A path under no smart folder (bulk reanalysis of files analyzed
+   * elsewhere) has no root to escape and is only checked for being a link.
+   * A missing file rejects with the lstat error, as fs.stat did. Fails
+   * closed when the real path cannot be resolved by either the native
+   * resolver or the JS walk (see resolveRealPaths).
+   * @private
+   * @param {string} filePath
+   * @returns {Promise<'symlink' | 'outside-root' | 'unresolved' | null>}
+   */
+  async _linkEscapeReason(filePath) {
+    const linkStats = await fs.lstat(filePath);
+    if (linkStats.isSymbolicLink()) return 'symlink';
+
+    /** @type {any[]} */
+    let configured = [];
+    try {
+      const folders = this.getSmartFolders?.() || [];
+      if (Array.isArray(folders)) configured = folders.map((/** @type {any} */ f) => f?.path);
+    } catch {
+      // No configured list: the watched roots still apply.
+    }
+    // The roots as the user spelled them; realpath needs the real spelling.
+    const containing = [...new Set([...this.watchedPaths, ...configured])].filter(
+      (root) =>
+        typeof root === 'string' &&
+        root.length > 0 &&
+        this._isUnderRoots(filePath, this._normalizedRoots([root]))
+    );
+    if (containing.length === 0) return null;
+
+    // One realpath implementation for the file and its roots (native, or the
+    // JS walk where native fails on the volume), compared case-insensitively
+    // on Windows/macOS by _isUnderRoots.
+    const [fileResult, ...rootResults] = await resolveRealPaths([filePath, ...containing]);
+    if (fileResult.error !== undefined) {
+      if (isNotFoundError(fileResult.error)) throw fileResult.error;
+      return 'unresolved';
+    }
+    const realRoots = this._normalizedRoots(rootResults.map((r) => r.path));
+    return this._isUnderRoots(fileResult.path, realRoots) ? null : 'outside-root';
   }
 
   /**
@@ -1965,6 +2069,7 @@ class SmartFolderWatcher {
    */
   async _analyzeWithTimeout(item) {
     const controller = new AbortController();
+    this._inFlightControllers.add(controller);
     try {
       return await withTimeout(
         this._analyzeFile(item, controller.signal),
@@ -1974,6 +2079,8 @@ class SmartFolderWatcher {
     } catch (error) {
       controller.abort();
       throw error;
+    } finally {
+      this._inFlightControllers.delete(controller);
     }
   }
 
@@ -2082,7 +2189,16 @@ class SmartFolderWatcher {
    * @private
    */
   async _processQueue() {
-    if (this._isStopping || this.isProcessingQueue || this.analysisQueue.length === 0) {
+    if (this._isStopping || this.isProcessingQueue) {
+      return;
+    }
+    // The overflow buffer is otherwise only drained at the end of a cycle, so
+    // once the main queue emptied (e.g. a folder removal purged it) the
+    // overflow items would never move in.
+    if (this.analysisQueue.length === 0) {
+      this._fillFromPendingReanalyze();
+    }
+    if (this.analysisQueue.length === 0) {
       return;
     }
 
@@ -2107,16 +2223,17 @@ class SmartFolderWatcher {
     }
 
     this.isProcessingQueue = true;
+    const epoch = this._stopEpoch;
 
     try {
-      // Find the first available item that is NOT currently being processed.
-      // Compare by canonical dedupKey so case-variant duplicates are caught.
+      // Find the first available item that is NOT currently being processed
+      // and is not waiting out a retry delay. Compare by canonical dedupKey so
+      // case-variant duplicates are caught.
       const procKey = (/** @type {any} */ item) => item.dedupKey || item.filePath;
-      const firstAvailableIndex = this.analysisQueue.findIndex(
-        (item) => !this.processingFiles.has(procKey(item))
-      );
+      const isRunnable = this._makeRunnableCheck();
+      const firstAvailableIndex = this.analysisQueue.findIndex(isRunnable);
 
-      // If all queued items are currently processing, wait for next tick
+      // If all queued items are processing or waiting, wait for the queue timer
       if (firstAvailableIndex === -1) {
         return;
       }
@@ -2133,7 +2250,7 @@ class SmartFolderWatcher {
 
         while (i < this.analysisQueue.length && batch.length < maxImageBatch) {
           const item = this.analysisQueue[i];
-          if (!this.processingFiles.has(procKey(item)) && isImagePath(item.filePath)) {
+          if (isRunnable(item) && isImagePath(item.filePath)) {
             batch.push(item);
             this.analysisQueue.splice(i, 1);
             // Keep the item in the durable record while it is off both queues.
@@ -2177,11 +2294,15 @@ class SmartFolderWatcher {
         try {
           await runInBatch(async () => {
             for (const item of batch) {
+              // A stop since this pass began ends the batch: the remaining
+              // items are in the snapshot stop() flushed. Checked by epoch,
+              // not only _isStopping, because stop() may already have returned.
+              if (this._isStopping || epoch !== this._stopEpoch) break;
               try {
                 await this._analyzeWithTimeout(item);
               } catch (error) {
                 try {
-                  this._handleAnalysisError(item, error);
+                  this._handleAnalysisError(item, error, epoch);
                 } catch (handlerError) {
                   // A throw here would abort the whole sequential batch and leak
                   // every remaining _inFlightItems entry.
@@ -2222,7 +2343,7 @@ class SmartFolderWatcher {
 
         while (i < this.analysisQueue.length && batch.length < batchSize) {
           const item = this.analysisQueue[i];
-          if (!this.processingFiles.has(procKey(item)) && !isImagePath(item.filePath)) {
+          if (isRunnable(item) && !isImagePath(item.filePath)) {
             batch.push(item);
             this.analysisQueue.splice(i, 1);
             // Keep the item in the durable record while it is off both queues.
@@ -2237,7 +2358,7 @@ class SmartFolderWatcher {
           batch.map((/** @type {any} */ item) =>
             this._analyzeWithTimeout(item)
               .catch((/** @type {any} */ error) => {
-                this._handleAnalysisError(item, error);
+                this._handleAnalysisError(item, error, epoch);
               })
               .finally(() => this._inFlightItems.delete(procKey(item)))
           )
@@ -2262,7 +2383,15 @@ class SmartFolderWatcher {
       // re-entry through the timers phase instead, which gives queued
       // `setTimeout` / `setInterval` callbacks a chance to interleave.
       // The extra nominal delay is <1ms in practice.
-      if (this.analysisQueue.length > 0 && !this._isStopping && this.isRunning) {
+      //
+      // Only when some queued item can run now: one still analyzed by an
+      // earlier pass (processingFiles) or waiting out its retry delay would
+      // turn this into a setTimeout(0) spin; the queue timer picks those up.
+      if (
+        !this._isStopping &&
+        this.isRunning &&
+        this.analysisQueue.some(this._makeRunnableCheck())
+      ) {
         // Per-cycle re-entry timer is intentionally NOT .unref()'d. The
         // queueTimer interval already keeps the loop alive when idle; this
         // re-entry guarantees we keep the process alive while there's still
@@ -2273,6 +2402,18 @@ class SmartFolderWatcher {
         }, 0);
       }
     }
+  }
+
+  /**
+   * Predicate for queued items _processQueue may take now: not still being
+   * analyzed by an earlier pass and not waiting out a retry delay.
+   * @private
+   * @returns {(item: any) => boolean}
+   */
+  _makeRunnableCheck() {
+    const now = Date.now();
+    return (item) =>
+      !this.processingFiles.has(item.dedupKey || item.filePath) && !(item.notBefore > now);
   }
 
   /**
@@ -2307,7 +2448,21 @@ class SmartFolderWatcher {
    * Handle analysis error for a single item — retry or give up
    * @private
    */
-  _handleAnalysisError(/** @type {any} */ item, /** @type {any} */ error) {
+  _handleAnalysisError(
+    /** @type {any} */ item,
+    /** @type {any} */ error,
+    /** @type {number=} */ epoch
+  ) {
+    if (this._isStopping || (epoch !== undefined && epoch !== this._stopEpoch)) {
+      // stop() aborted it (or it ended after a stop that has since returned).
+      // The item is in the queue snapshot stop() flushed, so the next start
+      // redoes it; this is not a failed attempt.
+      logger.debug('[SMART-FOLDER-WATCHER] Analysis ended by stop; left for the next start', {
+        filePath: item.filePath,
+        error: error?.message
+      });
+      return;
+    }
     logger.warn('[SMART-FOLDER-WATCHER] Analysis timed out or failed', {
       filePath: item.filePath,
       error: error.message
@@ -2316,14 +2471,17 @@ class SmartFolderWatcher {
 
     const nextRetry = (item.retryCount || 0) + 1;
     if (nextRetry <= MAX_ANALYSIS_RETRIES) {
+      const retryDelayMs = analysisRetryDelayMs(nextRetry);
       this._enqueueAnalysisItem({
         ...item,
         retryCount: nextRetry,
+        notBefore: Date.now() + retryDelayMs,
         cachedAnalysis: item._lastAnalysis || item.cachedAnalysis || null
       });
       logger.debug('[SMART-FOLDER-WATCHER] Re-queued file after failure', {
         filePath: item.filePath,
         retryCount: nextRetry,
+        retryDelayMs,
         hasCachedAnalysis: !!(item._lastAnalysis || item.cachedAnalysis)
       });
     } else {
@@ -2427,6 +2585,18 @@ class SmartFolderWatcher {
     this.processingFiles.add(processingKey);
 
     try {
+      // Re-check links at read time: the path may have been swapped for one
+      // since it was queued, and restored/scanned items never passed the
+      // live-event check.
+      const linkEscape = await this._linkEscapeReason(filePath);
+      if (linkEscape) {
+        logger.warn('[SMART-FOLDER-WATCHER] Not analyzing a link out of the smart folder', {
+          filePath,
+          reason: linkEscape
+        });
+        return;
+      }
+
       // Verify file still exists and capture stats for reuse below
       const fileStats = await fs.stat(filePath);
 

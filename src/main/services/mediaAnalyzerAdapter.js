@@ -107,6 +107,24 @@ function isCancelledToSignal(/** @type {any} */ isCancelled) {
 }
 
 /**
+ * Merge the cancel-poll signal with any AbortSignal the caller passed
+ * (SmartFolderWatcher sends its per-item timeout/stop controller as both
+ * `abortSignal` and `signal`). Aborting any source aborts the result.
+ * @param {Array<AbortSignal|undefined>} sources
+ * @returns {AbortSignal|undefined}
+ */
+function combineSignals(sources) {
+  /** @type {AbortSignal[]} */
+  const unique = [];
+  for (const s of sources) {
+    if (s && typeof s.aborted === 'boolean' && !unique.includes(s)) unique.push(s);
+  }
+  if (unique.length === 0) return undefined;
+  if (unique.length === 1) return unique[0];
+  return AbortSignal.any(unique);
+}
+
+/**
  * Returns an analyzer with the dispatcher's signature
  * `(filePath, smartFolders, { isCancelled }) => Promise<analysisResult>`
  * that wraps `analyzeMediaFile` (which uses
@@ -156,7 +174,10 @@ function createMediaAnalyzerAdapter({ whisperService, captionKeyframes } = {}) {
     //   - any future option added on the dispatcher side would silently no-op
     //     for media until someone noticed.
     // We forward all known fields explicitly. New options must be added here.
+    // `signal` / `abortSignal` carry the caller's timeout or stop request;
+    // dropping them let a timed-out transcription keep running.
     const { isCancelled, bypassCache, smartFolderId } = dispatchOptions;
+    const callerSignals = [dispatchOptions.signal, dispatchOptions.abortSignal];
 
     if (!whisperService || typeof whisperService.transcribeMedia !== 'function') {
       logger.info('[MediaAdapter] Whisper unavailable; returning skip-shape', {
@@ -164,7 +185,8 @@ function createMediaAnalyzerAdapter({ whisperService, captionKeyframes } = {}) {
       });
       return buildSkipResult(filePath);
     }
-    const { signal, dispose } = isCancelledToSignal(isCancelled);
+    const { signal: cancelSignal, dispose } = isCancelledToSignal(isCancelled);
+    const signal = combineSignals([cancelSignal, ...callerSignals]);
     try {
       return await analyzeMediaFile(
         filePath,

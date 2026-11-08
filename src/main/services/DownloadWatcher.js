@@ -37,7 +37,8 @@ const { findContainingSmartFolder } = require('../../shared/folderUtils');
 const {
   getCanonicalFileId,
   validateFileOperationPath,
-  normalizePathForIndex
+  normalizePathForIndex,
+  resolveRealPaths
 } = require('../../shared/pathSanitization');
 const { getInstance: getFileOperationTracker } = require('../../shared/fileOperationTracker');
 const { isUNCPath } = require('../../shared/crossPlatformUtils');
@@ -143,6 +144,11 @@ class DownloadWatcher {
     // either drops events or spins).
     this._dirtyWhileProcessing = new Map(); // pathKey -> latest raw filePath
     this._inFlightHandles = new Set(); // Running handleFile promises, drained by stop()
+    // Abort controllers of the analyses running now, so stop() cancels them
+    // (a Whisper transcription can run for many minutes) instead of letting
+    // them finish and write after the watcher stopped.
+    /** @type {Set<AbortController>} */
+    this._inFlightControllers = new Set();
     // Downloads held while the disk is full, one entry per file however many
     // events it gets, with one shared recheck timer. stop() cancels the
     // timer but keeps the list, and the next start() hands the files back to
@@ -512,6 +518,12 @@ class DownloadWatcher {
       clearTimeout(this.restartTimer);
       this.restartTimer = null;
     }
+    // Only an external stop cancels the analyses in flight: the error-restart
+    // path tears down too, and chokidar (ignoreInitial) would never report
+    // a download it interrupted again.
+    for (const controller of this._inFlightControllers) {
+      controller.abort();
+    }
     await this._teardown();
   }
 
@@ -816,15 +828,23 @@ class DownloadWatcher {
         path: f.path
       }));
 
+      const controller = new AbortController();
+      this._inFlightControllers.add(controller);
+      // Both spellings: documents read `abortSignal`, images and media read `signal`.
+      const analysisOptions = { signal: controller.signal, abortSignal: controller.signal };
       try {
         if (isImage) {
-          analysisResult = await this.analyzeImageFile(filePath, folderCategories);
+          analysisResult = await this.analyzeImageFile(filePath, folderCategories, analysisOptions);
         } else if (isMedia && typeof this.analyzeMediaFile === 'function') {
           // Audio/video: route to media analyzer (Whisper + optional vision-LLM keyframe
           // captioning). Adapter returns a graceful skip result when Whisper is unavailable.
-          analysisResult = await this.analyzeMediaFile(filePath, folderCategories);
+          analysisResult = await this.analyzeMediaFile(filePath, folderCategories, analysisOptions);
         } else {
-          analysisResult = await this.analyzeDocumentFile(filePath, folderCategories);
+          analysisResult = await this.analyzeDocumentFile(
+            filePath,
+            folderCategories,
+            analysisOptions
+          );
         }
       } catch (e) {
         if (isNotFoundError(e)) {
@@ -835,7 +855,12 @@ class DownloadWatcher {
           return;
         }
         throw e; // Re-throw to be caught by outer catch
+      } finally {
+        this._inFlightControllers.delete(controller);
       }
+
+      // stop() cancelled it; nothing of a cancelled analysis is written.
+      if (controller.signal.aborted) return;
 
       if (analysisResult) {
         let finalPath = filePath;
@@ -1037,6 +1062,17 @@ class DownloadWatcher {
 
     // Files may be deleted quickly (e.g., git lock files)
     try {
+      // A link out of the Downloads folder would hand the analyzer (and the
+      // rename) a file from anywhere on disk under a Downloads path.
+      const linkEscape = await this._linkEscapeReason(filePath);
+      if (linkEscape) {
+        logger.warn('[DOWNLOAD-WATCHER] Not following a link out of the Downloads folder', {
+          filePath,
+          reason: linkEscape
+        });
+        return false;
+      }
+
       // Single atomic operation - stat provides both existence check and size
       const stats = await fs.stat(filePath);
       if (stats.size === 0) {
@@ -1070,6 +1106,50 @@ class DownloadWatcher {
     }
 
     return true;
+  }
+
+  /**
+   * Why the watcher must not read `filePath`, or null when it may. fs.stat,
+   * the extractors and the rename all follow links, so a file symlink, or a
+   * file reached through a junction / directory link, would be analyzed and
+   * renamed from anywhere on disk under a Downloads path. Same rule as
+   * SmartFolderWatcher._linkEscapeReason: a file symlink is refused outright;
+   * any other path under the watched folder must resolve inside that folder's
+   * real path (the folder itself may sit behind a link, e.g. Downloads moved
+   * to another drive with a junction). A path not under the watched folder has
+   * no root to escape and is only checked for being a link. A missing file
+   * rejects with the lstat error. Fails closed when the real path cannot be
+   * resolved by either the native resolver or the JS walk.
+   * @private
+   * @param {string} filePath
+   * @returns {Promise<'symlink' | 'outside-downloads' | 'unresolved' | null>}
+   */
+  async _linkEscapeReason(filePath) {
+    const linkStats = await fs.lstat(filePath);
+    if (linkStats.isSymbolicLink()) return 'symlink';
+
+    const root = this.downloadsPath;
+    if (typeof root !== 'string' || !root) return null;
+    /** @param {string} p */
+    const key = (p) => normalizePathForIndex(p).replace(/\/+$/, '');
+    /** @param {string} p @param {string} r */
+    const isUnder = (p, r) => {
+      const pk = key(p);
+      const rk = key(r);
+      return Boolean(pk && rk) && (pk === rk || pk.startsWith(`${rk}/`));
+    };
+    if (!isUnder(filePath, root)) return null;
+
+    // One realpath implementation for both (native, or the JS walk where
+    // native fails on the volume); compared case-insensitively on
+    // Windows/macOS by normalizePathForIndex.
+    const [fileResult, rootResult] = await resolveRealPaths([filePath, root]);
+    if (fileResult.error !== undefined) {
+      if (isNotFoundError(fileResult.error)) throw fileResult.error;
+      return 'unresolved';
+    }
+    if (rootResult.error !== undefined) return 'unresolved';
+    return isUnder(fileResult.path, rootResult.path) ? null : 'outside-downloads';
   }
 
   /**

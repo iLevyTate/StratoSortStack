@@ -10,7 +10,10 @@ const mockFs = {
   stat: jest.fn(),
   access: jest.fn(),
   mkdir: jest.fn().mockResolvedValue(undefined),
-  rename: jest.fn().mockResolvedValue(undefined)
+  rename: jest.fn().mockResolvedValue(undefined),
+  // The watcher refuses links out of Downloads (lstat + realpath); no links here.
+  lstat: jest.fn().mockResolvedValue({ isSymbolicLink: () => false }),
+  realpath: jest.fn(async (p) => p)
 };
 jest.mock('fs', () => ({
   promises: mockFs,
@@ -506,7 +509,9 @@ describe('DownloadWatcher', () => {
 
       expect(mockDependencies.analyzeDocumentFile).toHaveBeenCalledWith(
         '/downloads/document.pdf',
-        expect.any(Array)
+        expect.any(Array),
+        // stop() cancels the analysis through this signal.
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
       );
     });
 
@@ -515,7 +520,9 @@ describe('DownloadWatcher', () => {
 
       expect(mockDependencies.analyzeImageFile).toHaveBeenCalledWith(
         '/downloads/photo.jpg',
-        expect.any(Array)
+        expect.any(Array),
+        // stop() cancels the analysis through this signal.
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
       );
     });
 
@@ -526,7 +533,9 @@ describe('DownloadWatcher', () => {
 
       expect(mockDependencies.analyzeMediaFile).toHaveBeenCalledWith(
         '/downloads/podcast.mp3',
-        expect.any(Array)
+        expect.any(Array),
+        // stop() cancels the analysis through this signal.
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
       );
       expect(mockDependencies.analyzeDocumentFile).not.toHaveBeenCalled();
       expect(mockDependencies.analyzeImageFile).not.toHaveBeenCalled();
@@ -537,7 +546,9 @@ describe('DownloadWatcher', () => {
 
       expect(mockDependencies.analyzeMediaFile).toHaveBeenCalledWith(
         '/downloads/recording.mp4',
-        expect.any(Array)
+        expect.any(Array),
+        // stop() cancels the analysis through this signal.
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
       );
       expect(mockDependencies.analyzeDocumentFile).not.toHaveBeenCalled();
       expect(mockDependencies.analyzeImageFile).not.toHaveBeenCalled();

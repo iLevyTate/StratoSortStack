@@ -123,6 +123,9 @@ async function vetSmartFolderRoot({
 
 /** Upper bound on history entries consulted for a rename (well above any real store). */
 const FOLDER_RENAME_HISTORY_LIMIT = 50_000;
+// How long watcher-stop waits for stop() before replying "stopping". Below
+// the preload's 30 s default invoke timeout so the renderer gets a reply.
+const WATCHER_STOP_REPLY_WAIT_MS = 20_000;
 
 /**
  * Compare filesystem paths with platform-aware case sensitivity.
@@ -514,7 +517,31 @@ async function handleSmartFoldersWatcherStop({ logger, getSmartFolderWatcher }) 
       };
     }
 
-    smartFolderWatcher.stop();
+    // Await the stop so the reply carries the stopped state and a failed stop
+    // lands in the catch below. stop() can wait on in-flight analysis, so
+    // past WATCHER_STOP_REPLY_WAIT_MS (under the 30 s preload invoke timeout)
+    // reply "stopping" and keep logging the outcome.
+    const stopPromise = Promise.resolve(smartFolderWatcher.stop());
+    /** @type {any} */
+    let replyTimer;
+    const finished = await Promise.race([
+      stopPromise.then(() => true),
+      new Promise((resolve) => {
+        replyTimer = setTimeout(() => resolve(false), WATCHER_STOP_REPLY_WAIT_MS);
+        if (typeof replyTimer?.unref === 'function') replyTimer.unref();
+      })
+    ]).finally(() => clearTimeout(replyTimer));
+    if (!finished) {
+      stopPromise.catch((/** @type {any} */ err) =>
+        logger.error('[SMART-FOLDER-WATCHER] Failed to stop:', err)
+      );
+      return {
+        success: true,
+        stopping: true,
+        message: 'Smart folder watcher stopping',
+        status: smartFolderWatcher.getStatus()
+      };
+    }
     return {
       success: true,
       message: 'Smart folder watcher stopped',
@@ -1219,6 +1246,36 @@ async function refreshWatcherAfterFolderChange({
   const watcher = typeof getSmartFolderWatcher === 'function' ? getSmartFolderWatcher() : null;
   if (!watcher) return;
   try {
+    // A watcher that is not running (it found no folders at launch, or its
+    // folders were all removed) ignores updateWatchedFolders and has no queue
+    // processor, so scanning into it only parks files in memory. Start it
+    // instead: start() honours the watch-enabled setting and scans every
+    // folder itself. Fire-and-forget like the scans below. One that is
+    // already starting or stopping is left alone: a start in progress scans
+    // on its own, and a stop is either final or followed by such a start.
+    if (watcher.isRunning === false) {
+      if (
+        !watcher.isStarting &&
+        !watcher._isStopping &&
+        typeof watcher.start === 'function' &&
+        Array.isArray(folders) &&
+        folders.length > 0
+      ) {
+        Promise.resolve(watcher.start())
+          .then((/** @type {any} */ started) => {
+            logger.info('[SMART-FOLDERS] Started watcher after folder change', {
+              started: started === true
+            });
+            return started;
+          })
+          .catch((/** @type {any} */ err) => {
+            logger.warn('[SMART-FOLDERS] Watcher did not start after folder change', {
+              error: err?.message
+            });
+          });
+      }
+      return;
+    }
     if (typeof watcher.updateWatchedFolders === 'function') {
       await watcher.updateWatchedFolders(folders);
     }
