@@ -37,11 +37,11 @@ test.describe('Knowledge OS Atlas tab', () => {
 
   test.beforeAll(async () => {
     ({ app, window, e2eUserData } = await launchApp());
-    // Isolated E2E profiles have no models, so WelcomePhase auto-opens the
-    // "Set up on-device AI" wizard ~2s after ready; its aria-modal overlay would
-    // otherwise intercept the Atlas tab click (every other interaction spec skips
-    // it too). Dismiss before wiring up error capture so the CSP/error assertions
-    // reflect only the Atlas interaction, not wizard-dismissal noise.
+    // The default profile carries the limited-AI seed, so the "Set up on-device
+    // AI" wizard does not auto-open and this returns at once. It stays as a
+    // guard: the wizard's aria-modal overlay would intercept the Atlas tab
+    // click. It runs before error capture is wired up so the CSP/error
+    // assertions reflect only the Atlas interaction.
     await dismissModelSetupWizard(window);
     pageErrors = [];
     window.on('pageerror', (/** @type {Error} */ err) => {

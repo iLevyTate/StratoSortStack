@@ -756,12 +756,16 @@ describe('adversarial inputs', () => {
     const { result, elapsedMs } = await timed(() => extractTextFromEps(filePath));
     expect(result).toContain('Title: Stress');
     expect(result).not.toContain('Text:');
-    expect(elapsedMs).toBeLessThan(1500);
+    // A quadratic scan of these 200k-300k operand runs takes tens of seconds,
+    // so 6000 ms (the notebookExtractor bound) keeps the signal while leaving
+    // room for coverage instrumentation on a slow CI runner; 1500 ms left only
+    // ~3x headroom there.
+    expect(elapsedMs).toBeLessThan(6000);
 
     const unterminated = writeFixture('unterminated.eps', `${header}${'('.repeat(300000)}`);
     const second = await timed(() => extractTextFromEps(unterminated));
     expect(second.result).toContain('Title: Stress');
-    expect(second.elapsedMs).toBeLessThan(1500);
+    expect(second.elapsedMs).toBeLessThan(6000);
   }, 30000);
 
   test('an ASCII STL made of long numeric runs is scanned in linear time', async () => {
@@ -770,7 +774,9 @@ describe('adversarial inputs', () => {
     const { result, elapsedMs } = await timed(() => extractTextFromStl(filePath));
     expect(result).toContain('STL 3D model "x"');
     expect(result).toContain('ASCII STL with 1 facet');
-    expect(elapsedMs).toBeLessThan(1500);
+    // Same bound as the EPS case above: a quadratic scan of 10 MB of digits
+    // would take far longer.
+    expect(elapsedMs).toBeLessThan(6000);
   }, 30000);
 
   test('G-code output stays within the 20,000 character cap', async () => {

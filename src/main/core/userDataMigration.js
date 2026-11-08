@@ -1,6 +1,7 @@
 // @ts-check
 const { app } = require('electron');
-const fs = require('fs').promises;
+const fsSync = require('fs');
+const fs = fsSync.promises;
 const path = require('path');
 const { createLogger } = require('../../shared/logger');
 
@@ -34,6 +35,37 @@ const STATE_FILES = [
   { name: 'window-state.json', label: 'window state' }
 ];
 
+/**
+ * 'Electron' is Electron's default userData folder for ANY unpackaged Electron
+ * app on the machine, so it is a StratoSort profile only when it holds a file
+ * only StratoSort writes. Generic names other apps also use (settings.json,
+ * window-state.json, models/) prove nothing.
+ */
+const SHARED_ELECTRON_FOLDER = 'Electron';
+const STRATOSORT_PROFILE_MARKERS = [
+  'dependency-setup-complete.marker',
+  'custom-folders.json',
+  'analysis-history.json',
+  'analysis-index.json',
+  'analysis-config.json',
+  'processing-state.json',
+  'undo-actions.json',
+  'user-patterns.json',
+  'feedback-memory.json',
+  'knowledge-relationships.json'
+];
+
+function isStratoSortProfile(/** @type {string} */ folderPath) {
+  try {
+    return STRATOSORT_PROFILE_MARKERS.some((marker) =>
+      fsSync.existsSync(path.join(folderPath, marker))
+    );
+  } catch {
+    // Unknown provenance: never import from the shared folder.
+    return false;
+  }
+}
+
 function getUserDataRoot() {
   const currentUserDataPath = app.getPath('userData');
   return path.dirname(currentUserDataPath);
@@ -42,11 +74,11 @@ function getUserDataRoot() {
 function getLegacyUserDataPaths() {
   const baseDir = getUserDataRoot();
   const currentUserDataPath = path.resolve(app.getPath('userData'));
-  const candidates = LEGACY_USERDATA_FOLDERS.map((folder) => path.join(baseDir, folder));
   const uniquePaths = new Set();
-  for (const candidate of candidates) {
-    const resolved = path.resolve(candidate);
+  for (const folder of LEGACY_USERDATA_FOLDERS) {
+    const resolved = path.resolve(path.join(baseDir, folder));
     if (resolved === currentUserDataPath) continue;
+    if (folder === SHARED_ELECTRON_FOLDER && !isStratoSortProfile(resolved)) continue;
     uniquePaths.add(resolved);
   }
   return Array.from(uniquePaths);

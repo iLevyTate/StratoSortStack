@@ -22,6 +22,20 @@ const { launchApp, closeApp, waitForAppReady } = require('./helpers/electronApp'
 const { NavigationPage } = require('./helpers/pageObjects');
 const { PHASES } = require('./helpers/testFixtures');
 
+/**
+ * Open the Organize phase the way a user does. Organize is not reachable from
+ * Welcome (PHASE_TRANSITIONS.welcome lists only Setup and Discover), so the
+ * Organize tab stays disabled until the app is on Discover. Probing it from
+ * Welcome used to make every "requires navigation" test skip itself.
+ * goToPhase throws when a step is unreachable, so a real navigation
+ * regression fails these tests instead of skipping them.
+ */
+async function goToOrganize(nav, window) {
+  await nav.goToPhase(PHASES.DISCOVER);
+  await nav.goToPhase(PHASES.ORGANIZE);
+  await window.waitForTimeout(500);
+}
+
 test.describe('Organize Phase - Navigation', () => {
   let app;
   let window;
@@ -58,7 +72,6 @@ test.describe('Organize Phase - File Section (requires navigation)', () => {
   let app;
   let window;
   let nav;
-  let canNavigate = false;
 
   test.beforeEach(async () => {
     const result = await launchApp();
@@ -66,19 +79,7 @@ test.describe('Organize Phase - File Section (requires navigation)', () => {
     window = result.window;
     await waitForAppReady(window);
     nav = new NavigationPage(window);
-
-    // Try to navigate - may fail if button is disabled
-    const organizeButton = window.locator('button:has-text("Organize")');
-    const isDisabled = await organizeButton.isDisabled().catch(() => true);
-    if (!isDisabled) {
-      await nav.goToPhase(PHASES.ORGANIZE);
-      canNavigate = true;
-    } else {
-      console.log('[Test] Skipping - Organize button is disabled (no analyzed files)');
-    }
-    if (typeof window.isClosed !== 'function' || !window.isClosed()) {
-      await window.waitForTimeout(500);
-    }
+    await goToOrganize(nav, window);
   });
 
   test.afterEach(async () => {
@@ -86,7 +87,6 @@ test.describe('Organize Phase - File Section (requires navigation)', () => {
   });
 
   test('should have files ready section when on Organize phase', async () => {
-    test.skip(!canNavigate, 'Cannot navigate to Organize phase without analyzed files');
     const filesSectionHeading = window.locator('h2:has-text("Files ready for organization")');
     const isVisible = await filesSectionHeading.isVisible().catch(() => false);
     console.log('[Test] Files ready section visible:', isVisible);
@@ -94,7 +94,6 @@ test.describe('Organize Phase - File Section (requires navigation)', () => {
   });
 
   test('should show empty state when no files', async () => {
-    test.skip(!canNavigate, 'Cannot navigate to Organize phase without analyzed files');
     const emptyState = window.locator(
       ':has-text("No files ready yet"), :has-text("All files organized")'
     );
@@ -103,7 +102,6 @@ test.describe('Organize Phase - File Section (requires navigation)', () => {
   });
 
   test('should have back to Discovery button when on Organize phase', async () => {
-    test.skip(!canNavigate, 'Cannot navigate to Organize phase without analyzed files');
     const backButton = window.locator('button:has-text("Back to Discovery")');
     const isVisible = await backButton.isVisible().catch(() => false);
     console.log('[Test] Back to Discovery button visible:', isVisible);
@@ -111,7 +109,6 @@ test.describe('Organize Phase - File Section (requires navigation)', () => {
   });
 
   test('should have View Results button when on Organize phase', async () => {
-    test.skip(!canNavigate, 'Cannot navigate to Organize phase without analyzed files');
     const viewResultsButton = window.locator('button:has-text("View Results")');
     const isVisible = await viewResultsButton.isVisible().catch(() => false);
     console.log('[Test] View Results button visible:', isVisible);
@@ -123,7 +120,6 @@ test.describe('Organize Phase - Quick Access Toolbar (requires navigation)', () 
   let app;
   let window;
   let nav;
-  let canNavigate = false;
 
   test.beforeEach(async () => {
     const result = await launchApp();
@@ -131,14 +127,7 @@ test.describe('Organize Phase - Quick Access Toolbar (requires navigation)', () 
     window = result.window;
     await waitForAppReady(window);
     nav = new NavigationPage(window);
-
-    const organizeButton = window.locator('button:has-text("Organize")');
-    const isDisabled = await organizeButton.isDisabled().catch(() => true);
-    if (!isDisabled) {
-      await nav.goToPhase(PHASES.ORGANIZE);
-      canNavigate = true;
-    }
-    await window.waitForTimeout(500);
+    await goToOrganize(nav, window);
   });
 
   test.afterEach(async () => {
@@ -146,7 +135,6 @@ test.describe('Organize Phase - Quick Access Toolbar (requires navigation)', () 
   });
 
   test('should have status button when on Organize phase', async () => {
-    test.skip(!canNavigate, 'Cannot navigate to Organize phase without analyzed files');
     const statusButton = window.locator('button:has-text("Ready")');
     const isVisible = await statusButton.isVisible().catch(() => false);
     console.log('[Test] Status button visible:', isVisible);
@@ -154,7 +142,6 @@ test.describe('Organize Phase - Quick Access Toolbar (requires navigation)', () 
   });
 
   test('should have smart folders button when folders configured', async () => {
-    test.skip(!canNavigate, 'Cannot navigate to Organize phase without analyzed files');
     const foldersButton = window.locator('button:has-text("Smart Folders")');
     const count = await foldersButton.count();
     console.log('[Test] Smart Folders button count:', count);
@@ -165,7 +152,6 @@ test.describe('Organize Phase - Undo/Redo Integration (requires navigation)', ()
   let app;
   let window;
   let nav;
-  let canNavigate = false;
 
   test.beforeEach(async () => {
     const result = await launchApp();
@@ -173,14 +159,7 @@ test.describe('Organize Phase - Undo/Redo Integration (requires navigation)', ()
     window = result.window;
     await waitForAppReady(window);
     nav = new NavigationPage(window);
-
-    const organizeButton = window.locator('button:has-text("Organize")');
-    const isDisabled = await organizeButton.isDisabled().catch(() => true);
-    if (!isDisabled) {
-      await nav.goToPhase(PHASES.ORGANIZE);
-      canNavigate = true;
-    }
-    await window.waitForTimeout(500);
+    await goToOrganize(nav, window);
   });
 
   test.afterEach(async () => {
@@ -188,7 +167,6 @@ test.describe('Organize Phase - Undo/Redo Integration (requires navigation)', ()
   });
 
   test('should have undo/redo toolbar when on Organize phase', async () => {
-    test.skip(!canNavigate, 'Cannot navigate to Organize phase without analyzed files');
     const undoButton = window.locator('button[aria-label*="Undo"], button:has-text("Undo")');
     const redoButton = window.locator('button[aria-label*="Redo"], button:has-text("Redo")');
 
@@ -268,7 +246,6 @@ test.describe('Organize Phase - Modals (requires navigation)', () => {
   let app;
   let window;
   let nav;
-  let canNavigate = false;
 
   test.beforeEach(async () => {
     const result = await launchApp();
@@ -276,14 +253,7 @@ test.describe('Organize Phase - Modals (requires navigation)', () => {
     window = result.window;
     await waitForAppReady(window);
     nav = new NavigationPage(window);
-
-    const organizeButton = window.locator('button:has-text("Organize")');
-    const isDisabled = await organizeButton.isDisabled().catch(() => true);
-    if (!isDisabled) {
-      await nav.goToPhase(PHASES.ORGANIZE);
-      canNavigate = true;
-    }
-    await window.waitForTimeout(500);
+    await goToOrganize(nav, window);
   });
 
   test.afterEach(async () => {
@@ -291,7 +261,6 @@ test.describe('Organize Phase - Modals (requires navigation)', () => {
   });
 
   test('should open status overview modal', async () => {
-    test.skip(!canNavigate, 'Cannot navigate to Organize phase without analyzed files');
     const statusButton = window.locator('button:has-text("Ready")');
     if (await statusButton.isVisible().catch(() => false)) {
       await statusButton.click();
@@ -308,7 +277,6 @@ test.describe('Organize Phase - Modals (requires navigation)', () => {
   });
 
   test('should open smart folders modal when available', async () => {
-    test.skip(!canNavigate, 'Cannot navigate to Organize phase without analyzed files');
     const foldersButton = window.locator('button:has-text("Smart Folders")');
     if (await foldersButton.isVisible().catch(() => false)) {
       await foldersButton.click();

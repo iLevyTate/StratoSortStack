@@ -10,7 +10,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { BrowserWindow, app } = require('electron');
+const { BrowserWindow, app, net } = require('electron');
 const { IPC_EVENTS } = require('../../shared/constants');
 const { createLogger } = require('../../shared/logger');
 const { safeSend } = require('../ipc/ipcWrappers');
@@ -42,6 +42,21 @@ let initialized = false;
 let hasDownloadedUpdate = false;
 
 const UPDATER_DEGRADED_CODE = 'auto-updater.unavailable';
+
+/**
+ * True only when Chromium reports no network connection at all. Offline use
+ * is a supported mode, so a check that cannot reach the feed because the
+ * machine is offline is not an updater failure. Unknown (no `net`, or the
+ * probe throws) counts as online so real failures still surface.
+ * @returns {boolean}
+ */
+function isMachineOffline() {
+  try {
+    return typeof net?.isOnline === 'function' && net.isOnline() === false;
+  } catch {
+    return false;
+  }
+}
 
 function _maybeRaiseUpdaterUnavailable(/** @type {any} */ err) {
   try {
@@ -360,6 +375,11 @@ function handleError(err, getMainWindow) {
   // user who is not actively looking at the update UI can still tell that
   // future updates won't arrive. The success-path handlers below clear
   // the banner so a transient feed 503 doesn't leave the banner stuck.
+  // A machine that is simply offline is not a broken updater: no banner.
+  if (isMachineOffline()) {
+    logger.info('[UPDATER] Update check failed while offline; not raising the updater banner');
+    return;
+  }
   _maybeRaiseUpdaterUnavailable(err);
 }
 
@@ -514,6 +534,8 @@ async function initializeAutoUpdater(isDev, getMainWindow) {
         logger.info(
           '[UPDATER] Automatic startup update check skipped (autoUpdateCheck disabled by user)'
         );
+      } else if (isMachineOffline()) {
+        logger.info('[UPDATER] Automatic startup update check skipped (offline)');
       } else {
         let timeoutHandle;
         try {
@@ -551,6 +573,10 @@ async function initializeAutoUpdater(isDev, getMainWindow) {
       if (!periodicCheckTimer) {
         periodicCheckTimer = setInterval(() => {
           if (!areAutomaticUpdatesEnabled()) return;
+          if (isMachineOffline()) {
+            logger.debug('[UPDATER] Periodic update check skipped (offline)');
+            return;
+          }
           const capability = getUpdateTargetCapability();
           if (!capability.supported) return;
           autoUpdater.checkForUpdates().catch((/** @type {any} */ err) => {

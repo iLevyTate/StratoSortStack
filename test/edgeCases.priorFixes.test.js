@@ -5,7 +5,8 @@
  * applied during previous review passes:
  *
  * - SearchService._applyGraphExpansion: division-by-zero guard
- * - ChatService._isRelatedToQuery: ReDoS protection for long inputs
+ * - ChatService._isConversational: ReDoS protection for long inputs (the
+ *   length guard lives in chat/queryIntent.isConversational)
  * - llamaUtils.loadLlamaConfig: legacy Ollama model name detection
  */
 
@@ -163,44 +164,29 @@ describe('ChatService - ReDoS protection', () => {
     }));
   });
 
-  test('_isRelatedToQuery rejects inputs > 100 characters without regex', () => {
-    try {
-      ChatService = require('../src/main/services/ChatService');
-    } catch {
-      // Module may have complex deps - skip if can't load
-      return;
-    }
-
+  // No existence guards: if the method moves again these must fail, not
+  // silently pass (they once early-returned on a method that no longer existed).
+  test('_isConversational rejects inputs > 100 characters before any pattern runs', () => {
+    ChatService = require('../src/main/services/ChatService');
     const service = new ChatService({});
 
-    if (typeof service._isRelatedToQuery !== 'function') return;
-
+    // Normalizes to "hello" (an exact conversational phrase), so only the
+    // length guard can make this false.
+    const paddedGreeting = 'hello' + ' '.repeat(200);
+    expect(service._isConversational(paddedGreeting)).toBe(false);
     // A string designed to cause catastrophic backtracking in naive regex
-    const malicious = 'a'.repeat(200);
-    const start = Date.now();
-    const result = service._isRelatedToQuery(malicious);
-    const elapsed = Date.now() - start;
-
-    // Should complete in < 50ms (the regex would take seconds without the guard)
-    expect(elapsed).toBeLessThan(50);
-    expect(result).toBe(false);
+    expect(service._isConversational('a'.repeat(200))).toBe(false);
   });
 
-  test('_isRelatedToQuery still detects short conversational queries', () => {
-    try {
-      ChatService = require('../src/main/services/ChatService');
-    } catch {
-      return;
-    }
-
+  test('_isConversational still detects short conversational queries', () => {
+    ChatService = require('../src/main/services/ChatService');
     const service = new ChatService({});
 
-    if (typeof service._isRelatedToQuery !== 'function') return;
-
-    // Normal conversational inputs
-    expect(service._isRelatedToQuery('hello')).toBe(true);
-    expect(service._isRelatedToQuery('hi there!')).toBe(true);
-    expect(service._isRelatedToQuery('what can you do?')).toBe(true);
+    expect(service._isConversational('hello')).toBe(true);
+    expect(service._isConversational('thank you!')).toBe(true);
+    expect(service._isConversational('what can you do?')).toBe(true);
+    // Exactly at the guard boundary the patterns still run.
+    expect(service._isConversational('hello' + ' '.repeat(95))).toBe(true);
   });
 });
 

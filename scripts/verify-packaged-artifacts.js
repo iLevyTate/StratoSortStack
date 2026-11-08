@@ -7,6 +7,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { INTEGRITY_PROTECTED_PATHS } = require('./verify-electron-fuses-config');
 
 const REQUIRED_NATIVE_MODULE_PATHS = [
   ['sharp'],
@@ -264,6 +265,50 @@ function readAsarHeader(asarPath) {
   }
 }
 
+/** @type {string[] | null} */
+let workerBundleNamesCache = null;
+
+/**
+ * The worker bundles webpack emits next to dist/main.js (every main-config
+ * entry except `main`). worker_threads cannot start a worker from inside
+ * app.asar, so electron-builder.json asarUnpack must place each one under
+ * resources/app.asar.unpacked/dist, where workerPools.resolveWorkerPath looks
+ * first. Read from webpack.main.config.js so a renamed or added worker cannot
+ * drift away from this check.
+ */
+function getWorkerBundleNames() {
+  if (!workerBundleNamesCache) {
+    const configs = require('../webpack.main.config.js')({}, { mode: 'production' });
+    const mainConfig = (Array.isArray(configs) ? configs : [configs]).find(
+      (config) =>
+        config && config.entry && Object.prototype.hasOwnProperty.call(config.entry, 'main')
+    );
+    if (!mainConfig) {
+      throw new Error('webpack.main.config.js has no config with a "main" entry');
+    }
+    workerBundleNamesCache = Object.keys(mainConfig.entry).filter((name) => name !== 'main');
+  }
+  return workerBundleNamesCache;
+}
+
+function verifyUnpackedWorkerBundles(resources, labelPrefix, workerNames = getWorkerBundleNames()) {
+  workerNames.forEach((name) => {
+    ensureExists(
+      path.join(resources, 'app.asar.unpacked', 'dist', `${name}.js`),
+      `${labelPrefix} unpacked worker bundle ${name}.js (worker_threads cannot load it from app.asar; check asarUnpack in electron-builder.json)`
+    );
+  });
+}
+
+function findAsarEntry(header, relativePath) {
+  let entry = header;
+  for (const segment of relativePath.split('/')) {
+    entry = entry && entry.files ? entry.files[segment] : undefined;
+    if (!entry) return undefined;
+  }
+  return entry;
+}
+
 function verifyAsarContents(asarPath, label) {
   ensureExists(asarPath, label);
   let header;
@@ -290,6 +335,17 @@ function verifyAsarContents(asarPath, label) {
       `${label} contains files that are not part of the app: ${unexpected.sort().join(', ')}. ` +
         'Keep every "files" rule in the top-level list of electron-builder.json; a string list ' +
         'under win/mac/linux becomes its own matcher, which packs the whole project folder.'
+    );
+  }
+  // An unpacked file sits outside the asar integrity hash, so app code that
+  // lands there escapes enableEmbeddedAsarIntegrityValidation.
+  const unpackedProtected = INTEGRITY_PROTECTED_PATHS.filter(
+    (relativePath) => findAsarEntry(header, relativePath)?.unpacked === true
+  );
+  if (unpackedProtected.length > 0) {
+    throw new Error(
+      `${label} unpacked integrity-protected app code: ${unpackedProtected.sort().join(', ')}. ` +
+        'Narrow the matching asarUnpack pattern in electron-builder.json.'
     );
   }
 }
@@ -341,6 +397,56 @@ function verifyNativeModuleFolders(unpackedNodeModulesRoot) {
     const modulePath = path.join(unpackedNodeModulesRoot, ...segments);
     ensureExists(modulePath, `Unpacked native module ${segments.join('/')}`);
   });
+}
+
+/**
+ * lz4-napi binary shards (napi-rs triple) a build may load. The lz4-napi
+ * folder holds only the JS loader; it requires `./lz4-napi.<triple>.node`
+ * or the `@antoniomuso/lz4-napi-<triple>` optional package npm installs for
+ * the host platform/arch. When neither is there, src/shared/lz4Codec.js
+ * falls back to an identity codec and every .json.lz4 store reads as
+ * unreadable (orama-4), so the folder existing is not enough. Linux builds
+ * target glibc. An unknown macOS arch accepts either single-arch shard.
+ *
+ * @param {string} platform win32|darwin|linux (win/mac aliases accepted)
+ * @param {string} arch
+ * @returns {string[]} triples, any one of which satisfies the build
+ */
+function getLz4BindingTriples(platform, arch) {
+  const platformKey = String(platform || '').toLowerCase();
+  const archKey = String(arch || '').toLowerCase();
+  if (platformKey === 'win' || platformKey === 'win32') {
+    return [archKey === 'arm64' ? 'win32-arm64-msvc' : 'win32-x64-msvc'];
+  }
+  if (platformKey === 'mac' || platformKey === 'darwin') {
+    if (archKey === 'x64' || archKey === 'arm64') return [`darwin-${archKey}`];
+    return ['darwin-x64', 'darwin-arm64'];
+  }
+  if (platformKey === 'linux') {
+    return [archKey === 'arm64' ? 'linux-arm64-gnu' : 'linux-x64-gnu'];
+  }
+  return [];
+}
+
+function verifyLz4Binding(unpackedNodeModulesRoot, platform, arch) {
+  const triples = getLz4BindingTriples(platform, arch);
+  if (triples.length === 0) return;
+  const candidates = triples.flatMap((triple) => [
+    path.join(unpackedNodeModulesRoot, 'lz4-napi', `lz4-napi.${triple}.node`),
+    path.join(
+      unpackedNodeModulesRoot,
+      '@antoniomuso',
+      `lz4-napi-${triple}`,
+      `lz4-napi.${triple}.node`
+    )
+  ]);
+  if (candidates.some((candidate) => fs.existsSync(candidate))) return;
+  throw new Error(
+    `lz4-napi native binding for ${triples.join(' or ')} missing: looked for ${candidates.join(', ')}. ` +
+      'Without it the vector store, analysis history and embedding queue cannot read their ' +
+      'compressed files. Check that npm installed the @antoniomuso/lz4-napi-<triple> optional ' +
+      'dependency for the target and that asarUnpack keeps *.node files.'
+  );
 }
 
 function verifyNodeLlamaCppPayload(unpackedNodeModulesRoot) {
@@ -427,6 +533,7 @@ function verifyWindowsArtifacts(buildRoot, arch, version = readPackageVersion())
   verifyRequiredFiles(appRoot, REQUIRED_ELECTRON_RUNTIME_FILES, 'Windows runtime file');
   ensureExists(resources, 'Windows resources directory');
   verifyAsarContents(path.join(resources, 'app.asar'), 'Windows app.asar');
+  verifyUnpackedWorkerBundles(resources, 'Windows');
   ensureExists(
     path.join(resources, 'assets', 'runtime', 'llama-server.exe'),
     'Windows runtime binary'
@@ -441,6 +548,7 @@ function verifyWindowsArtifacts(buildRoot, arch, version = readPackageVersion())
     );
   }
   verifyNativeModuleFolders(unpackedModules);
+  verifyLz4Binding(unpackedModules, 'win32', isArm64 ? 'arm64' : 'x64');
   verifyNodeLlamaCppPayload(unpackedModules);
   verifyLlamaPrebuiltPackages(unpackedModules, 'win32', isArm64 ? 'arm64' : 'x64');
   verifyBetterSqlitePrebuilds(unpackedModules, 'win32', isArm64 ? 'arm64' : 'x64');
@@ -469,12 +577,14 @@ function verifyMacArtifacts(buildRoot, arch) {
       'macOS runtime file'
     );
     verifyAsarContents(path.join(resources, 'app.asar'), 'macOS app.asar');
+    verifyUnpackedWorkerBundles(resources, 'macOS');
     ensureExists(path.join(resources, 'assets', 'runtime', 'llama-server'), 'macOS runtime binary');
     ensureExecutable(
       path.join(resources, 'assets', 'runtime', 'ffmpeg', 'ffmpeg'),
       'macOS bundled FFmpeg binary'
     );
     verifyNativeModuleFolders(unpackedModules);
+    verifyLz4Binding(unpackedModules, 'darwin', arch);
     verifyNodeLlamaCppPayload(unpackedModules);
     verifyBetterSqlitePrebuilds(unpackedModules, 'darwin', arch);
     verifyWhisperVariantFolders(unpackedModules, 'darwin', arch);
@@ -493,12 +603,14 @@ function verifyLinuxArtifacts(buildRoot, arch) {
   verifyRequiredFiles(appRoot, REQUIRED_ELECTRON_RUNTIME_FILES, 'Linux runtime file');
   ensureExists(resources, 'Linux resources directory');
   verifyAsarContents(path.join(resources, 'app.asar'), 'Linux app.asar');
+  verifyUnpackedWorkerBundles(resources, 'Linux');
   ensureExists(path.join(resources, 'assets', 'runtime', 'llama-server'), 'Linux vision runtime');
   ensureExecutable(
     path.join(resources, 'assets', 'runtime', 'ffmpeg', 'ffmpeg'),
     'Linux bundled FFmpeg binary'
   );
   verifyNativeModuleFolders(unpackedModules);
+  verifyLz4Binding(unpackedModules, 'linux', isArm64 ? 'arm64' : 'x64');
   verifyNodeLlamaCppPayload(unpackedModules);
   verifyBetterSqlitePrebuilds(unpackedModules, 'linux', isArm64 ? 'arm64' : 'x64');
   verifyWhisperVariantFolders(unpackedModules, 'linux', isArm64 ? 'arm64' : 'x64');
@@ -545,10 +657,13 @@ module.exports = {
   getRequiredLlamaPrebuiltPackages,
   getForeignArchLlamaPrebuiltPackages,
   getBetterSqlitePrebuilds,
+  getLz4BindingTriples,
+  verifyLz4Binding,
   verifyBetterSqlitePrebuilds,
   getRequiredMacElectronRuntimeFiles,
   getRequiredWhisperVariantPackages,
   getWindowsZipArtifactName,
+  getWorkerBundleNames,
   MAC_V8_CONTEXT_SNAPSHOT_BY_ARCH,
   NODE_LLAMA_CPP_BUILD_ONLY_FILES,
   NODE_LLAMA_CPP_RUNTIME_FILES,
@@ -563,6 +678,7 @@ module.exports = {
   readAsarHeader,
   verifyAsarContents,
   verifyRequiredFiles,
+  verifyUnpackedWorkerBundles,
   verifyWhisperVariantFolders,
   verifyWindowsArtifacts
 };
