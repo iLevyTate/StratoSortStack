@@ -37,6 +37,10 @@ const analysisResultSchema = z
       mediaKind: z.string().nullable().optional(),
       keyEntities: z.array(z.string()).nullable().optional(),
       extractionMethod: z.string().nullable().optional(),
+      // True when the analysis saw only part of the file (head of an oversize
+      // text file, first pages of a long scan, a body cut at the extractor's
+      // cap). Undeclared keys are stripped, so it must be listed here.
+      partialContent: z.boolean().nullable().optional(),
       // Provenance (F-195): fallback-only results are provisional and carry a
       // bounded retry budget so the watcher can re-run them once the missing
       // capability (model) appears.

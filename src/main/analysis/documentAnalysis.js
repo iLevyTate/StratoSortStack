@@ -43,7 +43,8 @@ const {
   extractPlainTextFromRtf,
   extractPlainTextFromXml,
   extractPlainTextFromHtml,
-  readTextFileWithEncoding
+  readTextFileWithEncoding,
+  TEXT_TRUNCATION_MARKER
 } = require('./documentExtractors');
 const { analyzeTextWithLlama, normalizeCategoryToSmartFolders } = require('./documentLlm');
 const { getAnalysisLimits } = require('./analysisLimits');
@@ -408,8 +409,20 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
   try {
     /** @type {string | null} */
     let extractedText = null;
-    /** True when only the head of an oversize text file was read. */
+    /**
+     * True when the analysis saw only part of the file: the head of an
+     * oversize text file, the first pages of a long scan, or a body cut at
+     * the extractor's length cap. Stamped on the result as partialContent.
+     */
     let partialTextRead = false;
+    /** @type {{ pagesOcred?: number, totalPages?: number | null }} */
+    const ocrCoverage = {};
+    const ocrStoppedShort = () =>
+      Boolean(
+        ocrCoverage.totalPages &&
+        typeof ocrCoverage.pagesOcred === 'number' &&
+        ocrCoverage.pagesOcred < ocrCoverage.totalPages
+      );
     let pdfNoTextFallback = false;
     /** @type {any} */
     let pdfOriginalError = null;
@@ -421,8 +434,12 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
         });
 
         if (!extractedText || extractedText.trim().length === 0) {
-          const ocrText = await ocrPdfIfNeeded(filePath, { signal: options?.abortSignal });
+          const ocrText = await ocrPdfIfNeeded(filePath, {
+            signal: options?.abortSignal,
+            coverage: ocrCoverage
+          });
           extractedText = ocrText || '';
+          if (extractedText && ocrStoppedShort()) partialTextRead = true;
         }
       } catch (pdfError) {
         if (isCancellationError(pdfError)) throw pdfError;
@@ -454,9 +471,15 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
           });
         }
         try {
-          const ocrText = await ocrPdfIfNeeded(filePath, { signal: options?.abortSignal });
+          const ocrText = await ocrPdfIfNeeded(filePath, {
+            signal: options?.abortSignal,
+            // pdf.js already counted the pages; OCR need not probe again.
+            pageCount: pdfError?.metadata?.pageCount,
+            coverage: ocrCoverage
+          });
           if (ocrText && ocrText.trim().length > thinTextLayer.trim().length) {
             extractedText = ocrText;
+            if (ocrStoppedShort()) partialTextRead = true;
           } else if (pdfNoTextFallback) {
             extractedText = thinTextLayer;
           } else {
@@ -520,7 +543,9 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
       try {
         if (fileExtension === '.csv') {
           extractedText = await withTimeout(
-            extractTextFromCsv(filePath),
+            textReadLimit
+              ? extractTextFromCsv(filePath, { maxBytes: textReadLimit })
+              : extractTextFromCsv(filePath),
             TIMEOUTS.FILE_READ || 10000,
             'CSV extraction'
           );
@@ -832,6 +857,18 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
         type: 'document',
         options: { extractionMethod: 'filename', date: fileDate }
       });
+    }
+
+    // An extractor that hit its length cap appends a marker; it is not
+    // document content, so it is stripped here and recorded as a flag.
+    if (
+      typeof TEXT_TRUNCATION_MARKER === 'string' &&
+      TEXT_TRUNCATION_MARKER &&
+      typeof extractedText === 'string' &&
+      extractedText.endsWith(TEXT_TRUNCATION_MARKER)
+    ) {
+      extractedText = extractedText.slice(0, -TEXT_TRUNCATION_MARKER.length);
+      partialTextRead = true;
     }
 
     if (extractedText && extractedText.trim().length > 0) {

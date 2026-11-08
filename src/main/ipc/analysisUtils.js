@@ -304,6 +304,10 @@ async function recordAnalysisResult({
         : [],
       // Store extraction method for debugging
       extractionMethod: normalizeOptionalText(result.extractionMethod || null, { maxLength: 50 }),
+      // The analysis read only part of the file (head of an oversize text
+      // file, first pages of a long scan, body cut at the length cap).
+      // Omitted (not false) for a complete read, like transcriptSegmentsTruncated.
+      ...(result.partialContent === true ? { partialContent: true } : {}),
       // Image-specific fields
       content_type: normalizeOptionalText(result.content_type || null, { maxLength: 100 }),
       has_text: typeof result.has_text === 'boolean' ? result.has_text : null,

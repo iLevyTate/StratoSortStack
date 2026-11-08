@@ -170,7 +170,10 @@ describe('documentAnalysis (behavior)', () => {
     await analyzeDocumentFile(filePath);
 
     expect(extractors.extractTextFromPdf).toHaveBeenCalled();
-    expect(extractors.ocrPdfIfNeeded).toHaveBeenCalledWith(filePath, { signal: undefined });
+    expect(extractors.ocrPdfIfNeeded).toHaveBeenCalledWith(
+      filePath,
+      expect.objectContaining({ signal: undefined })
+    );
     expect(documentLlm.analyzeTextWithLlama).toHaveBeenCalledWith(
       'OCR Content',
       expect.any(String), // fileName
@@ -215,7 +218,10 @@ describe('documentAnalysis (behavior)', () => {
     const result = await analyzeDocumentFile(filePath);
     const logger = require('../src/shared/logger').createLogger();
 
-    expect(extractors.ocrPdfIfNeeded).toHaveBeenCalledWith(filePath, { signal: undefined });
+    expect(extractors.ocrPdfIfNeeded).toHaveBeenCalledWith(
+      filePath,
+      expect.objectContaining({ signal: undefined })
+    );
     expect(result).toEqual(
       expect.objectContaining({
         category: 'Documents',

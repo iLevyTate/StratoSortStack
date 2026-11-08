@@ -210,7 +210,13 @@ const AnalysisDetails = memo(function AnalysisDetails({
     { label: 'Date', value: displayDate },
     { label: 'Document type', value: documentType },
     { label: 'Content type', value: displayContentType },
-    { label: 'Method', value: analysis.extractionMethod },
+    {
+      label: 'Method',
+      value:
+        analysis.extractionMethod && analysis.partialContent === true
+          ? `${analysis.extractionMethod} (partial: only part of the file was read)`
+          : analysis.extractionMethod
+    },
     { label: 'Length', value: contentLength }
   ].filter((item) => isValuePresent(item.value));
   const extractedTextLength =
