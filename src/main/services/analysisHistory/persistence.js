@@ -436,10 +436,16 @@ async function loadHistoryFromJson(
   }
 }
 
+// History and index are rewritten in full on every coalesced save (at most
+// every ~10 s during analysis; the service core skips the save entirely when
+// nothing changed since the last good one). They are written compact: the
+// indentation added ~7% (about 1.5 MB per save at 2,000 entries) that no
+// reader needs, since every reader goes through JSON.parse. The small config
+// file stays indented so it remains readable by hand.
 async function saveHistoryToJson(/** @type {any} */ historyPath, /** @type {any} */ history) {
   history.updatedAt = new Date().toISOString();
   await ensureParentDirectory(historyPath);
-  await atomicWriteFile(historyPath, JSON.stringify(history, null, 2));
+  await atomicWriteFile(historyPath, JSON.stringify(history));
 }
 
 /**
@@ -588,7 +594,7 @@ async function loadIndexFromJson(
 async function saveIndexToJson(/** @type {any} */ indexPath, /** @type {any} */ index) {
   index.updatedAt = new Date().toISOString();
   await ensureParentDirectory(indexPath);
-  await atomicWriteFile(indexPath, JSON.stringify(index, null, 2));
+  await atomicWriteFile(indexPath, JSON.stringify(index));
 }
 
 /**

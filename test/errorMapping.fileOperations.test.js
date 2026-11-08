@@ -44,6 +44,44 @@ describe('errorMapping: file operation codes', () => {
     expect(mapped.message).toMatch(/Network folders/);
   });
 
+  describe('LINK_OUTSIDE_ALLOWED (create folder through a link that leads outside)', () => {
+    const HANDLER_MESSAGE =
+      'That folder is inside a link that points outside your allowed locations. Choose the real folder instead.';
+
+    test('shows the handler message as is, as a warning', () => {
+      const mapped = mapErrorToNotification({
+        error: HANDLER_MESSAGE,
+        errorCode: 'LINK_OUTSIDE_ALLOWED'
+      });
+      expect(mapped).toMatchObject({ severity: 'warning', message: HANDLER_MESSAGE });
+    });
+
+    test('a newer handler wording wins over the copy kept here', () => {
+      const mapped = mapErrorToNotification({
+        error: 'That folder is reached through a link. Choose the real folder.',
+        errorCode: 'LINK_OUTSIDE_ALLOWED'
+      });
+      expect(mapped.message).toBe('That folder is reached through a link. Choose the real folder.');
+      expect(mapped.severity).toBe('warning');
+    });
+
+    test('without a handler message it still says what to do', () => {
+      expect(mapErrorToNotification({ errorCode: 'LINK_OUTSIDE_ALLOWED' })).toMatchObject({
+        severity: 'warning',
+        message: HANDLER_MESSAGE
+      });
+    });
+
+    test('read from the result envelope too', () => {
+      const mapped = mapErrorToNotification({
+        error: { success: false, error: HANDLER_MESSAGE, errorCode: 'LINK_OUTSIDE_ALLOWED' }
+      });
+      // The envelope carries its text in `error`, not `message`; the mapped
+      // copy is the same sentence.
+      expect(mapped.message).toBe(HANDLER_MESSAGE);
+    });
+  });
+
   test('an unknown code falls back to the handler message', () => {
     const mapped = mapErrorToNotification({
       error: 'Invalid destination path: something odd',

@@ -67,7 +67,8 @@ const ERROR_TYPE_MAP = {
 
 /**
  * Codes the file-operation handlers return (destinationPolicy.js,
- * fileOperationHandlers.js, batchOrganizeHandler.js). They are not AI codes,
+ * fileOperationHandlers.js, batchOrganizeHandler.js, folderHandlers.js). They
+ * are not AI codes,
  * so they live beside AI_ERROR_CODES rather than in it.
  */
 const FILE_OPERATION_CODE_MAP = {
@@ -92,10 +93,24 @@ const FILE_OPERATION_CODE_MAP = {
   ABORTED: {
     severity: 'warning',
     message: 'The operation was cancelled before it finished.'
+  },
+  // Create folder (folderHandlers.js): the path is inside an allowed location
+  // as spelled, but a symlink or junction along it leads outside. The handler
+  // writes the copy, so its message is shown as is; the text here is the same
+  // sentence for a result that arrives without one.
+  LINK_OUTSIDE_ALLOWED: {
+    severity: 'warning',
+    message:
+      'That folder is inside a link that points outside your allowed locations. Choose the real folder instead.',
+    useHandlerMessage: true
   }
 };
 
-/** @type {Record<string, { severity: string, message: string }>} */
+/**
+ * `useHandlerMessage`: the handler's own message is the user-facing copy;
+ * `message` is only the fallback when it sends none.
+ * @type {Record<string, { severity: string, message: string, useHandlerMessage?: boolean }>}
+ */
 const ERROR_CODE_MAP = {
   ...FILE_OPERATION_CODE_MAP,
   [AI_ERROR_CODES.LLAMA_MODEL_LOAD_FAILED]: {
@@ -499,7 +514,10 @@ export function mapErrorToNotification({ error, errorType, errorCode, operationT
       : typeof error?.message === 'string'
         ? error.message.trim()
         : '';
-  const baseMessage = mapped?.message || rawMessage || 'Operation failed.';
+  const baseMessage =
+    (mapped?.useHandlerMessage ? rawMessage || mapped.message : mapped?.message) ||
+    rawMessage ||
+    'Operation failed.';
   const severity = mapped?.severity || DEFAULT_NOTIFICATION.severity;
   const prefix = operationType ? `${operationType} failed: ` : '';
   return {

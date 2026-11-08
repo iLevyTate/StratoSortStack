@@ -763,7 +763,7 @@ async function _checkCanonicalLocation(normalizedPath, allowedBasePaths) {
   if (!canonical || canonical === normalizedPath) return null;
 
   if (isPathDangerous(canonical) && !(await _isInDarwinUserTemp(canonical))) {
-    return 'Invalid path: access to system directories is not allowed';
+    return 'Invalid path: path leads (through a link or short name) into system directories, which is not allowed';
   }
 
   // Inside a base as spelled: no base needs resolving. Otherwise the bases
@@ -784,7 +784,7 @@ async function _checkCanonicalLocation(normalizedPath, allowedBasePaths) {
     );
     const bases = realBases.filter((b) => typeof b === 'string');
     if (!isPathWithinAllowed(canonical, /** @type {string[]} */ (bases))) {
-      return 'Invalid path: path is outside allowed directories';
+      return 'Invalid path: path goes through a link that points outside allowed directories';
     }
   }
   return null;

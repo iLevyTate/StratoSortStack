@@ -13,7 +13,12 @@ const os = require('os');
 const { app } = require('electron');
 const { createHandler, safeHandle, z } = require('../ipcWrappers');
 const { createLogger } = require('../../../shared/logger');
-const { validateFileOperationPath } = require('../../../shared/pathSanitization');
+const {
+  validateFileOperationPath,
+  resolveCanonicalPath,
+  isPathDangerous,
+  isPathWithinAllowed
+} = require('../../../shared/pathSanitization');
 const {
   isNotFoundError,
   isPermissionError,
@@ -27,6 +32,62 @@ const { isExecutableExtension } = require('../../../shared/securityConfig');
 const logger = createLogger('IPC:Files:Folders');
 const schemaFilePath = z ? z.string().min(1) : null;
 const { IpcServiceContext, createFromLegacyParams } = require('../IpcServiceContext');
+
+// Returned when the folder's spelling is inside an allowed location but a
+// symlink or junction along it leads outside. The renderer shows the message
+// as is: the code avoids the substrings (PATH, FOLDER, FILE, ...) that its
+// error mapping would replace with generic copy.
+const LINK_OUTSIDE_ALLOWED = 'LINK_OUTSIDE_ALLOWED';
+const LINK_OUTSIDE_ALLOWED_MESSAGE =
+  'That folder is inside a link that points outside your allowed locations. Choose the real folder instead.';
+// Only runs after a refusal; bounded because a link can lead to a network
+// mount whose realpath hangs.
+const LINK_RESOLVE_TIMEOUT_MS = 2000;
+
+/**
+ * Was this create-folder path refused only because of where a link along it
+ * leads? True when the path as spelled passes every lexical check, but its
+ * real location (links and junctions followed) is a different place that is
+ * outside the allowed bases or a system directory. False for anything else,
+ * including a check that timed out, so those keep the generic refusal.
+ *
+ * @param {string} normalizedPath
+ * @param {string[]|null} allowedBasePaths
+ * @returns {Promise<boolean>}
+ */
+async function wasRefusedForLinkTarget(normalizedPath, allowedBasePaths) {
+  /** @type {ReturnType<typeof setTimeout>|undefined} */
+  let timer;
+  try {
+    const asSpelled = await validateFileOperationPath(normalizedPath, {
+      allowedBasePaths,
+      checkSymlinks: false,
+      disallowUNC: false
+    });
+    if (!asSpelled?.valid) return false;
+
+    const timeout = new Promise((resolve) => {
+      timer = setTimeout(() => resolve(null), LINK_RESOLVE_TIMEOUT_MS);
+      if (typeof timer?.unref === 'function') timer.unref();
+    });
+    const real = await Promise.race([
+      resolveCanonicalPath(normalizedPath).catch(/** @returns {null} */ () => null),
+      timeout
+    ]);
+    if (typeof real !== 'string' || !real) return false;
+
+    const caseInsensitive = process.platform === 'win32' || process.platform === 'darwin';
+    const fold = (/** @type {string} */ p) => (caseInsensitive ? p.toLowerCase() : p);
+    if (fold(path.resolve(real)) === fold(normalizedPath)) return false;
+
+    if (isPathDangerous(real)) return true;
+    return Boolean(allowedBasePaths) && !isPathWithinAllowed(real, allowedBasePaths || []);
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /**
  * Register folder operation IPC handlers
@@ -97,6 +158,22 @@ function registerFolderHandlers(servicesOrParams) {
           });
 
           if (!validation.valid) {
+            // A folder inside a link (symlink or junction) that leads outside
+            // the allowed locations is refused on its real location. Say so,
+            // instead of the generic refusal that reads like a typo. The log
+            // keeps the spelled path only (the logger reduces it to its
+            // name), never the link's target.
+            if (await wasRefusedForLinkTarget(normalizedPath, isUNC ? null : allowedPaths)) {
+              logger.warn('[FILE-OPS] Folder creation blocked - link leads outside allowed', {
+                path: normalizedPath,
+                errorCode: LINK_OUTSIDE_ALLOWED
+              });
+              return {
+                success: false,
+                error: LINK_OUTSIDE_ALLOWED_MESSAGE,
+                errorCode: LINK_OUTSIDE_ALLOWED
+              };
+            }
             logger.warn('[FILE-OPS] Folder creation blocked - path traversal attempt', {
               path: fullPath,
               normalized: normalizedPath,
