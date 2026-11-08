@@ -48,7 +48,9 @@ describe('extractTextFromCsv byte cap', () => {
   let csvPath;
 
   beforeAll(() => {
-    tmpDir = fsSync.mkdtempSync(path.join(os.tmpdir(), 'stratosort-csv-head-'));
+    tmpDir = fsSync.mkdtempSync(
+      path.join(jest.requireActual('os').tmpdir(), 'stratosort-csv-head-')
+    );
     csvPath = path.join(tmpDir, 'ledger.csv');
     const rows = ['id,name,amount'];
     for (let i = 1; i <= 200; i += 1) rows.push(`${i},item${i},${i * 10}`);

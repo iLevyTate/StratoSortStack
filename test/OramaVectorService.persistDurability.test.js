@@ -51,7 +51,9 @@ const { app } = require('electron');
 const { compress, uncompress } = require('../src/shared/lz4Codec');
 const { OramaVectorService } = require('../src/main/services/OramaVectorService');
 
-const TEMP_ROOT = require('fs').mkdtempSync(path.join(os.tmpdir(), 'strato-orama-durability-'));
+const TEMP_ROOT = require('fs').mkdtempSync(
+  path.join(jest.requireActual('os').tmpdir(), 'strato-orama-durability-')
+);
 const TEMP_DIR = path.join(TEMP_ROOT, 'compressed');
 
 const vector = (seed = 0.1) => {

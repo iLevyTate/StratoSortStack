@@ -50,7 +50,9 @@ const { app } = require('electron');
 const { getByID, update, count } = require('@orama/orama');
 const { OramaVectorService } = require('../src/main/services/OramaVectorService');
 
-const TEMP_ROOT = require('fs').mkdtempSync(path.join(os.tmpdir(), 'strato-orama-repair-'));
+const TEMP_ROOT = require('fs').mkdtempSync(
+  path.join(jest.requireActual('os').tmpdir(), 'strato-orama-repair-')
+);
 
 const vectorFor = (dimension, seed) => {
   const v = new Array(dimension).fill(0.001);

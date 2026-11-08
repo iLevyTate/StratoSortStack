@@ -50,6 +50,14 @@ const path = require('path');
 
 const CHANNEL = 'files:create-folder-direct';
 
+// The temp root as a user would pass it. On Windows expand 8.3 short names
+// (RUNNER~1) so it matches what the code resolves. On macOS keep the OS
+// spelling: /var/folders/... resolves to /private/var/..., which is on the
+// system-directory denylist as typed, and no user ever passes that form.
+function spelledTempPath(p) {
+  return process.platform === 'darwin' ? p : fs.realpathSync.native(p);
+}
+
 describe('create-folder through a link that leads outside the allowed locations', () => {
   /** @type {string} */
   let tmpRoot;
@@ -63,7 +71,7 @@ describe('create-folder through a link that leads outside the allowed locations'
   let handlers;
 
   beforeAll(() => {
-    tmpRoot = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'strato-mkdir-link-')));
+    tmpRoot = spelledTempPath(fs.mkdtempSync(path.join(os.tmpdir(), 'strato-mkdir-link-')));
     allowedBase = path.join(tmpRoot, 'home');
     outside = path.join(tmpRoot, 'outside');
     fs.mkdirSync(allowedBase);

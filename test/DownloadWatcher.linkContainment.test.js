@@ -47,7 +47,7 @@ let downloads;
 let outside;
 
 beforeEach(() => {
-  base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'dlw-links-')));
+  base = spelledTempPath(fs.mkdtempSync(path.join(os.tmpdir(), 'dlw-links-')));
   downloads = path.join(base, 'Downloads');
   outside = path.join(base, 'outside');
   fs.mkdirSync(downloads);
@@ -82,6 +82,14 @@ function tryFileSymlink(target, link) {
     if (error.code === 'EPERM' || error.code === 'EACCES') return null;
     throw error;
   }
+}
+
+// The temp root as a user would pass it. On Windows expand 8.3 short names
+// (RUNNER~1) so it matches what the code resolves. On macOS keep the OS
+// spelling: /var/folders/... resolves to /private/var/..., which is on the
+// system-directory denylist as typed, and no user ever passes that form.
+function spelledTempPath(p) {
+  return process.platform === 'darwin' ? p : fs.realpathSync.native(p);
 }
 
 describe('DownloadWatcher link containment', () => {

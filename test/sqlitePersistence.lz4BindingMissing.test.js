@@ -80,7 +80,9 @@ describe('SQLite persistence with the lz4 binding missing', () => {
   });
 
   beforeEach(() => {
-    tempDir = fsSync.mkdtempSync(path.join(os.tmpdir(), 'strato-lz4-missing-'));
+    tempDir = fsSync.mkdtempSync(
+      path.join(jest.requireActual('os').tmpdir(), 'strato-lz4-missing-')
+    );
   });
 
   afterEach(() => {

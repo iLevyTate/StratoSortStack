@@ -61,7 +61,9 @@ const {
 } = require('../src/main/workers/oramaRestoreLoader');
 const { OramaVectorService } = require('../src/main/services/OramaVectorService');
 
-const TEMP_ROOT = require('fs').mkdtempSync(path.join(os.tmpdir(), 'strato-orama-restore-worker-'));
+const TEMP_ROOT = require('fs').mkdtempSync(
+  path.join(jest.requireActual('os').tmpdir(), 'strato-orama-restore-worker-')
+);
 const DIM = 8;
 
 afterAll(async () => {

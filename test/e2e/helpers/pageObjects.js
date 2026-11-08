@@ -125,7 +125,7 @@ class NavigationPage {
    * Throws on failure so tests surface real navigation bugs instead of silent `false`.
    */
   async goToPhase(phase, options = {}) {
-    const { timeoutMs = 12000 } = options;
+    const { timeoutMs = 12000, viaSetup = true } = options;
     if (typeof this.page.isClosed === 'function' && this.page.isClosed()) {
       throw new Error('goToPhase: page is closed');
     }
@@ -143,6 +143,17 @@ class NavigationPage {
       throw new Error(`goToPhase: no button found for phase "${phase}"`);
     }
     if (await button.isDisabled()) {
+      // Forward tabs follow the app's phase rule: from Welcome, Discover needs
+      // a real destination folder, while Setup → Discover only needs a folder
+      // to exist (a fresh profile has Uncategorized). Go the way a user would,
+      // through Setup, then try once more.
+      if (viaSetup && phase !== PHASES.SETUP && current !== PHASES.SETUP) {
+        const setupButton = this.getPhaseButton(PHASES.SETUP);
+        if ((await setupButton.count()) > 0 && !(await setupButton.isDisabled())) {
+          await this.goToPhase(PHASES.SETUP, { timeoutMs, viaSetup: false });
+          return this.goToPhase(phase, { timeoutMs, viaSetup: false });
+        }
+      }
       throw new Error(`goToPhase: phase "${phase}" navigation is disabled`);
     }
 

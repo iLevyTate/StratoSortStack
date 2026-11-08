@@ -47,7 +47,9 @@ jest.mock('../src/main/llamaUtils', () => ({
 const { app } = require('electron');
 const { OramaVectorService } = require('../src/main/services/OramaVectorService');
 
-const TEMP_ROOT = require('fs').mkdtempSync(path.join(os.tmpdir(), 'strato-orama-uncapped-'));
+const TEMP_ROOT = require('fs').mkdtempSync(
+  path.join(jest.requireActual('os').tmpdir(), 'strato-orama-uncapped-')
+);
 
 const FILE_IDS = ['file:a', 'file:b', 'file:c', 'file:d', 'file:e', 'file:f'];
 const FOLDER_IDS = ['folder:1', 'folder:2', 'folder:3', 'folder:4', 'folder:5'];

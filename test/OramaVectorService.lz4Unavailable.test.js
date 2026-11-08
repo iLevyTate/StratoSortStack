@@ -44,7 +44,9 @@ jest.mock('../src/main/llamaUtils', () => ({
   })
 }));
 
-const TEMP_DIR = require('fs').mkdtempSync(path.join(os.tmpdir(), 'strato-orama-lz4-'));
+const TEMP_DIR = require('fs').mkdtempSync(
+  path.join(jest.requireActual('os').tmpdir(), 'strato-orama-lz4-')
+);
 
 const vector = (seed = 0.1) => {
   const v = new Array(768).fill(0.01);

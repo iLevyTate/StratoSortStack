@@ -43,7 +43,9 @@ describe('legacy userData discovery and the shared Electron folder', () => {
   };
 
   beforeEach(() => {
-    appData = fs.mkdtempSync(path.join(os.tmpdir(), 'stratosort-userdata-migration-'));
+    appData = fs.mkdtempSync(
+      path.join(jest.requireActual('os').tmpdir(), 'stratosort-userdata-migration-')
+    );
     mockUserDataPath = path.join(appData, 'StratoSort Stack');
     fs.mkdirSync(mockUserDataPath, { recursive: true });
     sharedElectron = path.join(appData, 'Electron');

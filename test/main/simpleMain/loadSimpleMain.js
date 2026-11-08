@@ -123,7 +123,16 @@ function createWindowMockFactory() {
 function loadSimpleMain() {
   const tracked = ['exit', 'SIGINT', 'SIGTERM'];
   const before = new Map(tracked.map((e) => [e, process.listeners(e)]));
-  const mod = require('../../../src/main/simple-main');
+  // process.getSystemVersion is Electron-only; simple-main calls it at load
+  // on macOS. Stand it in under plain Node so the suite runs on every OS.
+  const addedGetSystemVersion = typeof process.getSystemVersion !== 'function';
+  if (addedGetSystemVersion) process.getSystemVersion = () => '15.0.0';
+  let mod;
+  try {
+    mod = require('../../../src/main/simple-main');
+  } finally {
+    if (addedGetSystemVersion) delete process.getSystemVersion;
+  }
   const electron = require('electron');
   const createWindow = require('../../../src/main/core/createWindow');
   const dispose = () => {

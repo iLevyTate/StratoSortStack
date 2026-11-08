@@ -18,6 +18,14 @@ const { validateFileOperationPath } = require('../src/shared/pathSanitization');
 
 const isWindows = process.platform === 'win32';
 
+// The temp root as a user would pass it. On Windows expand 8.3 short names
+// (RUNNER~1) so it matches what the code resolves. On macOS keep the OS
+// spelling: /var/folders/... resolves to /private/var/..., which is on the
+// system-directory denylist as typed, and no user ever passes that form.
+function spelledTempPath(p) {
+  return process.platform === 'darwin' ? p : fs.realpathSync.native(p);
+}
+
 describe('validateFileOperationPath canonical allowlist bases', () => {
   /** @type {string} */
   let tmpRoot;
@@ -27,7 +35,7 @@ describe('validateFileOperationPath canonical allowlist bases', () => {
   let viaLink;
 
   beforeEach(() => {
-    tmpRoot = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'strato-bases-')));
+    tmpRoot = spelledTempPath(fs.mkdtempSync(path.join(os.tmpdir(), 'strato-bases-')));
     const target = path.join(tmpRoot, 'real-docs');
     fs.mkdirSync(target);
     fs.writeFileSync(path.join(target, 'note.txt'), 'hello');
@@ -61,7 +69,7 @@ describe('validateFileOperationPath canonical allowlist bases', () => {
   }, 15000);
 
   test('a path whose real location is outside every base is still refused', async () => {
-    const outside = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'strato-out-')));
+    const outside = spelledTempPath(fs.mkdtempSync(path.join(os.tmpdir(), 'strato-out-')));
     try {
       fs.writeFileSync(path.join(outside, 'secret.txt'), 's');
       const base = path.join(tmpRoot, 'base');
