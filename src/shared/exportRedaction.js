@@ -37,6 +37,29 @@ function redactInlineSecrets(str) {
   return s;
 }
 
+// A key that could carry a path (a separator) or a forged line (a control
+// character); the same test the logger applies to keys it writes.
+// eslint-disable-next-line no-control-regex
+const KEY_NEEDS_SANITIZING_PATTERN = /[\\/\u0000-\u001F\u007F]/;
+
+/**
+ * An object key as it may be exported: run through the same string rules as
+ * values, since log export re-parses JSONL written before the logger cleaned
+ * keys (a per-file map keyed by path), and made unique within `target` so two
+ * keys that reduce to the same text, or a literal key equal to a redacted
+ * one, both keep their value.
+ * @param {string} key
+ * @param {Record<string, any>} target The object being built.
+ * @returns {string}
+ */
+function exportKey(key, target) {
+  const safeKey = KEY_NEEDS_SANITIZING_PATTERN.test(key) ? String(deepSanitizeForExport(key)) : key;
+  if (!Object.prototype.hasOwnProperty.call(target, safeKey)) return safeKey;
+  let n = 2;
+  while (Object.prototype.hasOwnProperty.call(target, `${safeKey} #${n}`)) n += 1;
+  return `${safeKey} #${n}`;
+}
+
 /**
  * Deep redaction for exported JSON-like structures and log lines.
  * @param {unknown} data
@@ -75,16 +98,17 @@ function deepSanitizeForExport(data) {
   /** @type {Record<string, any>} */
   const sanitized = {};
   for (const [key, value] of Object.entries(data)) {
+    const outKey = exportKey(key, sanitized);
     if (EXPORT_SENSITIVE_KEY_PATTERN.test(key)) {
-      sanitized[key] = '[REDACTED]';
+      sanitized[outKey] = '[REDACTED]';
     } else if (key === 'stack' && typeof value === 'string') {
-      sanitized[key] = deepSanitizeForExport(value);
+      sanitized[outKey] = deepSanitizeForExport(value);
     } else if (typeof value === 'object' && value !== null) {
-      sanitized[key] = deepSanitizeForExport(value);
+      sanitized[outKey] = deepSanitizeForExport(value);
     } else if (typeof value === 'string') {
-      sanitized[key] = deepSanitizeForExport(value);
+      sanitized[outKey] = deepSanitizeForExport(value);
     } else {
-      sanitized[key] = value;
+      sanitized[outKey] = value;
     }
   }
   return sanitized;

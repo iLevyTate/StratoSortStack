@@ -1,7 +1,8 @@
 // @ts-check
 'use strict';
 
-const PROVIDER_BASE_URL_RULE = 'baseUrl must use https or be a true localhost URL';
+const PROVIDER_BASE_URL_RULE =
+  'baseUrl must use https or be a true localhost URL, with no username or password in it';
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
 
@@ -11,7 +12,9 @@ const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
  * hostname is parsed rather than prefix-matched: `http://localhost.attacker`
  * and `http://127.0.0.1@evil.com/` both start with a loopback-looking string
  * but resolve to a remote host. IPv6 brackets are stripped because the WHATWG
- * parser has emitted `[::1]` and `::1` across Node versions.
+ * parser has emitted `[::1]` and `::1` across Node versions. A URL with
+ * embedded user:password is refused: fetch cannot send it (every request
+ * fails) and its error text would carry the password.
  * @param {unknown} url
  * @returns {boolean}
  */
@@ -23,6 +26,7 @@ function isAllowedProviderBaseUrl(url) {
   } catch {
     return false;
   }
+  if (parsed.username || parsed.password) return false;
   if (parsed.protocol === 'https:') return true;
   if (parsed.protocol !== 'http:') return false;
   return LOOPBACK_HOSTS.has(parsed.hostname.replace(/^\[|\]$/g, ''));

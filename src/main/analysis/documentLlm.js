@@ -137,7 +137,7 @@ function isPromptOverflowError(error) {
  *
  * @param {string} text - Full document text
  * @param {any} llamaService - LlamaService instance
- * @param {{ smartFolderId?: string | null, chunkSize?: number, maxTokens?: number, temperature?: number, signal?: AbortSignal }} [options]
+ * @param {{ smartFolderId?: string | null, chunkSize?: number, maxTokens?: number, temperature?: number, signal?: AbortSignal, forceLocal?: boolean }} [options]
  * @returns {Promise<string>} Combined bullet-point summaries
  */
 async function summarizeChunks(text, llamaService, options = {}) {
@@ -146,10 +146,13 @@ async function summarizeChunks(text, llamaService, options = {}) {
     chunkSize = CONTENT_SELECTION.MAP_CHUNK_SIZE,
     maxTokens = CONTENT_SELECTION.MAP_MAX_TOKENS,
     temperature = CONTENT_SELECTION.MAP_TEMPERATURE,
-    signal
+    signal,
+    forceLocal = false
   } = options;
 
-  const routerBackend = _getRouterInferenceBackend(smartFolderId, false);
+  // forceLocal carries the caller's privacy invariant (e.g. OCR text from a
+  // local image must never reach a cloud provider) into the map phase too.
+  const routerBackend = _getRouterInferenceBackend(smartFolderId, forceLocal === true);
   if (routerBackend) {
     logger.info('[documentLlm] Map-reduce: using router-backed provider for chunk summaries', {
       provider: routerBackend.providerName,
@@ -307,7 +310,8 @@ async function analyzeTextWithLlama(
       try {
         const combinedSummaries = await summarizeChunks(textContent, getLlamaService(), {
           smartFolderId: options.smartFolderId || null,
-          signal: options.signal
+          signal: options.signal,
+          forceLocal: options.forceLocal === true
         });
         if (combinedSummaries.length > 0) {
           const outline = extractDocumentOutline(
@@ -517,11 +521,18 @@ ${truncated}
                 signal: abortController.signal
               });
 
+            // A cancelled (or timed-out) call is not a cloud failure: providers
+            // can report the abort as NETWORK_ERROR, and falling back would
+            // start a detached local run for work nobody is waiting on.
+            const isCancelled = (/** @type {any} */ err) =>
+              abortController.signal.aborted || err?.name === 'AbortError';
+
             const inference = async () => {
               if (!routerBackend) return localInference();
               try {
                 return await callCloud(requestedMaxTokens);
               } catch (err) {
+                if (isCancelled(err)) throw err;
                 const code = err && err.name === 'AIProviderError' ? err.code : null;
                 if (code === 'OUTPUT_TRUNCATED' && err.partialText?.trim()) {
                   const raised = Math.min(
@@ -541,6 +552,7 @@ ${truncated}
                     try {
                       return await callCloud(raised);
                     } catch (retryErr) {
+                      if (isCancelled(retryErr)) throw retryErr;
                       const retryCode =
                         retryErr && retryErr.name === 'AIProviderError' ? retryErr.code : null;
                       if (retryCode === 'OUTPUT_TRUNCATED' && retryErr.partialText?.trim()) {

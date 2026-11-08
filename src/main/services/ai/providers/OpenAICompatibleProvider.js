@@ -18,6 +18,43 @@ function _normalizeBase(/** @type {any} */ url) {
   return url.endsWith('/') ? url.slice(0, -1) : url;
 }
 
+// `scheme://user:password@` inside any URL in a message. Node's fetch rejects
+// credentialed URLs with an error that quotes the full URL, password included.
+const URL_USERINFO_RE = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]*@/gi;
+
+/** @param {any} text */
+function _redactMessage(text) {
+  if (typeof text !== 'string') return redactSensitive(text);
+  return redactSensitive(text.replace(URL_USERINFO_RE, '$1'));
+}
+
+/** @param {any} url @returns {boolean} */
+function _hasUrlCredentials(url) {
+  if (typeof url !== 'string') return false;
+  try {
+    const parsed = new URL(url);
+    return Boolean(parsed.username || parsed.password);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The caller cancelled: same shape as LlamaService's abort so every consumer's
+ * `err.name === 'AbortError'` check treats a cloud cancel like a local one
+ * (no local fallback, no partial answer reported as complete).
+ * @param {boolean} tokensEmitted
+ * @param {unknown} [cause]
+ */
+function _abortError(tokensEmitted, cause) {
+  const err = /** @type {Error & { tokensEmitted?: boolean }} */ (
+    new Error('Operation aborted', cause ? { cause } : undefined)
+  );
+  err.name = 'AbortError';
+  err.tokensEmitted = tokensEmitted;
+  return err;
+}
+
 function _httpStatusToCode(/** @type {any} */ status, /** @type {any} */ errBody) {
   if (status === 401 || status === 403) return 'AUTH_FAILED';
   if (status === 429) return 'RATE_LIMITED';
@@ -49,7 +86,12 @@ class OpenAICompatibleProvider {
     // Last line of defense: a base URL outside the allow-list leaves the
     // provider unconfigured (ready() false, requests refused) even if every
     // upstream validation was bypassed, so the bearer key can never reach it.
-    this._baseUrl = isAllowedProviderBaseUrl(baseUrl) ? _normalizeBase(baseUrl) : '';
+    // A URL with embedded user:password is refused too: fetch cannot send it
+    // (every request would fail) and its error text would carry the password.
+    this._baseUrl =
+      isAllowedProviderBaseUrl(baseUrl) && !_hasUrlCredentials(baseUrl)
+        ? _normalizeBase(baseUrl)
+        : '';
     this._fetch = fetchFn || globalThis.fetch;
     this._costTracker = costTracker || null;
     this._logger = logger || { warn: () => {}, error: () => {} };
@@ -207,9 +249,12 @@ class OpenAICompatibleProvider {
       });
     } catch (err) {
       cancelCombined();
+      // A caller cancel is not a network failure: reported as NETWORK_ERROR it
+      // sent cancelled work down the cloud-to-local fallback path.
+      if (signal?.aborted) throw _abortError(false, err);
       throw new AIProviderError(
         'NETWORK_ERROR',
-        `Failed to reach ${this._baseUrl}: ${redactSensitive(err.message)}`,
+        `Failed to reach ${_redactMessage(this._baseUrl)}: ${_redactMessage(err?.message)}`,
         { cause: err }
       );
     }
@@ -220,7 +265,7 @@ class OpenAICompatibleProvider {
       let errMessage = `HTTP ${response.status}`;
       try {
         errBody = await response.json();
-        if (errBody?.error?.message) errMessage = redactSensitive(errBody.error.message);
+        if (errBody?.error?.message) errMessage = _redactMessage(errBody.error.message);
       } catch {
         // body unreadable; use generic message
       }
@@ -243,8 +288,9 @@ class OpenAICompatibleProvider {
     try {
       parsed = await response.json();
     } catch (err) {
+      if (signal?.aborted) throw _abortError(false, err);
       if (combinedSignal?.aborted) {
-        // Same classification as an abort during the fetch handshake.
+        // Same classification as a timeout during the fetch handshake.
         throw new AIProviderError(
           'NETWORK_ERROR',
           'Provider response body read timed out or was aborted',
@@ -360,7 +406,7 @@ class OpenAICompatibleProvider {
       if (parsed.error) {
         throw new AIProviderError(
           'PROVIDER_FAILED',
-          redactSensitive(parsed.error?.message || 'Provider stream error')
+          _redactMessage(parsed.error?.message || 'Provider stream error')
         );
       }
       // OpenAI emits the usage block in the final chunk when
@@ -394,13 +440,14 @@ class OpenAICompatibleProvider {
       // back after tokens already streamed (a second answer would be
       // appended to the partial one the user saw).
       readFailed = true;
+      if (signal?.aborted) throw _abortError(fullText.length > 0, err);
       if (err?.name === 'AbortError' || err?.name === 'AIProviderError') {
         if (err.tokensEmitted === undefined) err.tokensEmitted = fullText.length > 0;
         throw err;
       }
       const wrapped = new AIProviderError(
         'NETWORK_ERROR',
-        `Stream failed mid-read: ${redactSensitive(err?.message || String(err))}`,
+        `Stream failed mid-read: ${_redactMessage(err?.message || String(err))}`,
         { cause: err }
       );
       wrapped.tokensEmitted = fullText.length > 0;
@@ -434,6 +481,9 @@ class OpenAICompatibleProvider {
       // If usage is empty (very early abort) this no-ops.
       this._trackUsage(usage);
     }
+    // The caller's abort cancels the reader, which ends the read loop as if
+    // the stream had finished. That is a cancel, not a complete answer.
+    if (signal?.aborted) throw _abortError(fullText.length > 0);
     if (cancelled) {
       const idle = new AIProviderError('STREAM_IDLE_TIMEOUT', 'Stream idle timeout exceeded');
       idle.tokensEmitted = fullText.length > 0;

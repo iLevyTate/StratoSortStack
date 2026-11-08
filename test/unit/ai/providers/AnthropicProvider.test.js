@@ -236,8 +236,11 @@ describe('AnthropicProvider', () => {
     const p = new AnthropicProvider({ getKey: () => 'sk-x', model: 'claude-opus-4-7', fetchFn });
     const ac = new AbortController();
     ac.abort();
+    // A caller cancel is an AbortError, not NETWORK_ERROR (which ChatService
+    // treats as transient and answers with a local fallback).
     await expect(p.chatStream({ prompt: 'hi', signal: ac.signal })).rejects.toMatchObject({
-      code: 'NETWORK_ERROR'
+      name: 'AbortError',
+      tokensEmitted: false
     });
   });
 

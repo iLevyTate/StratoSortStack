@@ -52,4 +52,38 @@ describe('exportRedaction', () => {
     expect(out.items[0].name).toBe('a');
     expect(out.path).toBe('[REDACTED_PATH]/file.txt');
   });
+
+  // Log export re-parses JSONL lines written before the logger redacted keys,
+  // so a per-file map keyed by path must be cleaned here too.
+  test('redacts path-shaped object keys and keeps every value', () => {
+    const out = deepSanitizeForExport({
+      byFile: {
+        'C:\\Users\\jdoe\\Documents\\tax-2025.pdf': 1,
+        'C:\\Users\\jdoe\\Documents\\Private\\tax-2025.pdf': 2,
+        '/home/jdoe/notes/plan.txt': 3,
+        plain: 4
+      }
+    });
+    const serialized = JSON.stringify(out);
+    expect(serialized).not.toContain('jdoe');
+    expect(serialized).not.toContain('Documents');
+    expect(Object.values(out.byFile).sort()).toEqual([1, 2, 3, 4]);
+    expect(out.byFile.plain).toBe(4);
+  });
+
+  test('a literal key equal to a redacted key does not overwrite its value', () => {
+    const out = deepSanitizeForExport({
+      'C:\\Users\\jdoe\\a.pdf': 1,
+      '[REDACTED_PATH]\\a.pdf': 2
+    });
+    expect(Object.values(out).sort()).toEqual([1, 2]);
+    expect(JSON.stringify(out)).not.toContain('jdoe');
+  });
+
+  test('a control character in a key cannot forge a line', () => {
+    const out = deepSanitizeForExport({ 'ok\n{"level":"error"}': 1 });
+    // eslint-disable-next-line no-control-regex -- the assertion checks for raw control bytes
+    expect(Object.keys(out).join('')).not.toMatch(/[\u0000-\u001f]/);
+    expect(Object.values(out)).toEqual([1]);
+  });
 });

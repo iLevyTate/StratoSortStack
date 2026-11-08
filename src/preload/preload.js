@@ -627,14 +627,18 @@ const PAYLOAD_MAX_WALK_DEPTH = 32; // matches sanitizer MAX_SANITIZE_DEPTH
  * @param {WeakSet<object>} seen
  */
 function enforcePayloadSizeLimits(value, depth, seen) {
-  if (depth > PAYLOAD_MAX_WALK_DEPTH) {
-    // Don't traverse below depth limit — sanitizer will collapse it later.
-    return;
-  }
+  // Strings are size-checked at every depth, including the first level past
+  // the walk budget: the sanitizer collapses objects/arrays there to {} / []
+  // but passes a string at that level through unchanged.
   if (typeof value === 'string') {
     if (value.length > PAYLOAD_MAX_STRING_LENGTH) {
       throw new Error('IPC payload too large: string exceeds 5MB limit');
     }
+    return;
+  }
+  if (depth > PAYLOAD_MAX_WALK_DEPTH) {
+    // Don't traverse containers below the depth limit — the sanitizer
+    // collapses them to empty values.
     return;
   }
   if (Array.isArray(value)) {

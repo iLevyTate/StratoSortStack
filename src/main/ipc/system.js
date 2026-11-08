@@ -125,6 +125,8 @@ const MAX_LOG_SERIALIZED_DATA_BYTES = 16384;
 const MAX_LOG_DATA_DEPTH = 4;
 const MAX_LOG_DATA_KEYS = 100;
 const MAX_LOG_ARRAY_ITEMS = 100;
+// Keys are copied from the renderer; a key is diagnostic, never payload.
+const MAX_LOG_KEY_CHARS = 200;
 const LOG_EXPORT_WORKER_TIMEOUT_MS = 120000;
 const BLOCKED_LOG_DATA_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
@@ -176,6 +178,25 @@ function sanitizeRendererContext(value) {
 }
 
 /**
+ * A renderer-supplied key as it may be logged: control characters replaced
+ * like in values and the length capped, made unique within `target` so two
+ * keys that share a capped prefix both keep their value.
+ *
+ * @param {string} key
+ * @param {Record<string, any>} target The object being built.
+ * @returns {string}
+ */
+function clampRendererLogKey(key, target) {
+  let safeKey = String(key).replace(LOG_UNSAFE_CONTROL_CHARS, ' ');
+  if (safeKey.length > MAX_LOG_KEY_CHARS) safeKey = `${safeKey.slice(0, MAX_LOG_KEY_CHARS - 1)}…`;
+  if (!Object.prototype.hasOwnProperty.call(target, safeKey)) return safeKey;
+  const stem = safeKey.slice(0, MAX_LOG_KEY_CHARS - 8);
+  let n = 2;
+  while (Object.prototype.hasOwnProperty.call(target, `${stem} #${n}`)) n += 1;
+  return `${stem} #${n}`;
+}
+
+/**
  * Walk a renderer-supplied log payload, capping depth / width / key count,
  * dropping prototype-polluting keys, and stripping log-line control
  * characters from any string value at any depth. Renderer log input is
@@ -210,7 +231,7 @@ function clampRendererLogPayload(value, depth = 0) {
       sanitized.__truncatedKeys = true;
       break;
     }
-    sanitized[key] = clampRendererLogPayload(nested, depth + 1);
+    sanitized[clampRendererLogKey(key, sanitized)] = clampRendererLogPayload(nested, depth + 1);
     count += 1;
   }
   return sanitized;

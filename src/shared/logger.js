@@ -441,7 +441,40 @@ function redactPathValue(value) {
   const segments = normalized.split('/').filter(Boolean);
   const basename = segments[segments.length - 1];
   if (!basename) return '[REDACTED_PATH]';
+  if (isHomeFolderPath(normalized)) return '[REDACTED_PATH]';
   return `[REDACTED_PATH]/${basename}`;
+}
+
+// A path whose last segment sits directly in a user root (`Users`, `home`)
+// is a home folder, and that last segment is the OS account name, so it is
+// not kept (see redactHomeFolderName). This also hides `C:\Users\Public` or
+// a file stored right in a user root, which is the safe direction.
+const HOME_FOLDER_PATH_PATTERN = /(?:^|[\\/])(?:users|home)[\\/]+[^\\/]+$/i;
+// The account name in a matched last segment: everything up to a quote or
+// closing punctuation, which belongs to the text around the path
+// (`'C:\Users\jdoe'`, `"/Users/jdoe","to"`). A Windows segment may run on
+// into prose after a space; that prose is hidden with the name, since a
+// Windows account name can itself contain spaces. A POSIX segment already
+// stops at whitespace, so in free text `/Users/jane doe` still shows "doe".
+const HOME_FOLDER_NAME_PATTERN = /^[^"'\x60)\]},;]*/;
+
+/**
+ * @param {string} matched A whole path with no trailing separator.
+ */
+function isHomeFolderPath(matched) {
+  return HOME_FOLDER_PATH_PATTERN.test(matched);
+}
+
+/**
+ * `[REDACTED_PATH]` in place of the account name at the start of a home
+ * folder's last segment, keeping what follows the name (and trailing dots
+ * that end a sentence).
+ * @param {string} segment
+ */
+function redactHomeFolderName(segment) {
+  const name = (segment.match(HOME_FOLDER_NAME_PATTERN)?.[0] ?? '').replace(/\.+$/, '');
+  if (!name) return '[REDACTED_PATH]';
+  return `[REDACTED_PATH]${segment.slice(name.length)}`;
 }
 
 // Log-injection guard.
@@ -483,6 +516,13 @@ const LOG_CONTROL_CHAR_PATTERN = /[\u0000-\u0008\u000A-\u001F\u007F]/g;
 // name rather than collapsing to `[REDACTED_PATH]/Taxes`. Segments never
 // contain `\` or `/`, so segment and separator are disjoint and matching
 // stays linear.
+//
+// The style may switch where the segment before the other separator has no
+// whitespace (`C:\Users\jdoe/Documents/x.pdf`, `C:/Users/jdoe\Docs\x.pdf`):
+// such a segment cannot be a file name followed by prose, and ending the
+// path there would leave the user folder raw in front of a second,
+// separately redacted path. After a switch the path continues on the new
+// style (see redactWindowsPaths).
 const PATH_SEGMENT = String.raw`(?:(?![A-Za-z]:[\\/])[^\\/:*?"<>|\r\n])+`;
 // A drive letter preceded by a letter or digit is not a drive: it is the tail
 // of a URL scheme (`https://`) or a word, which the POSIX pass handles.
@@ -501,6 +541,14 @@ const WINDOWS_UNC_PATH_PATTERN = new RegExp(
 );
 // The last separator run and the basename of a matched Windows path.
 const WINDOWS_PATH_TAIL_PATTERN = /([\\/]+)([^\\/]+)$/;
+// The rest of a Windows path after a separator-style switch: a separator run
+// of the new style, then segments on that style. Sticky, so it only matches
+// exactly where the switch is.
+const WINDOWS_PATH_CONTINUATION_PATTERN = new RegExp(
+  String.raw`(\\+|\/)(?:${PATH_SEGMENT}\1)*${PATH_SEGMENT}`,
+  'y'
+);
+const HAS_WHITESPACE_PATTERN = /\s/;
 
 /**
  * @param {string} matched A whole drive or UNC path matched above.
@@ -509,7 +557,50 @@ function redactWindowsPathMatch(matched) {
   const tail = matched.match(WINDOWS_PATH_TAIL_PATTERN);
   // Both patterns end in a separator followed by a segment, so this holds.
   if (!tail) return '[REDACTED_PATH]';
+  if (isHomeFolderPath(matched)) return redactHomeFolderName(tail[2]);
   return `[REDACTED_PATH]${tail[1]}${tail[2]}`;
+}
+
+/**
+ * Redact every path `pattern` (the drive or UNC pattern; group 1 is the
+ * separator the path starts with) finds in `text`, first extending each
+ * match across separator-style switches, then reducing it to its basename.
+ * Every character is consumed by at most one match or continuation, so this
+ * stays linear like the patterns themselves.
+ * @param {string} text
+ * @param {RegExp} pattern
+ */
+function redactWindowsPaths(text, pattern) {
+  pattern.lastIndex = 0;
+  let out = '';
+  let copiedTo = 0;
+  /** @type {RegExpExecArray | null} */
+  let match;
+  while ((match = pattern.exec(text)) !== null) {
+    const start = match.index;
+    let end = start + match[0].length;
+    let separator = match[1];
+    let lastSegment = match[0].match(WINDOWS_PATH_TAIL_PATTERN)?.[2] ?? '';
+    // Only a switch to the other separator character extends the path; a
+    // different run of the same character (`\` after `\\`) still ends it.
+    while (
+      (text[end] === '\\' || text[end] === '/') &&
+      text[end] !== separator[0] &&
+      !HAS_WHITESPACE_PATTERN.test(lastSegment)
+    ) {
+      WINDOWS_PATH_CONTINUATION_PATTERN.lastIndex = end;
+      const rest = WINDOWS_PATH_CONTINUATION_PATTERN.exec(text);
+      if (!rest) break;
+      end += rest[0].length;
+      separator = rest[1];
+      lastSegment = rest[0].match(WINDOWS_PATH_TAIL_PATTERN)?.[2] ?? '';
+    }
+    out += text.slice(copiedTo, start) + redactWindowsPathMatch(text.slice(start, end));
+    copiedTo = end;
+    pattern.lastIndex = end;
+  }
+  pattern.lastIndex = 0;
+  return copiedTo === 0 ? text : out + text.slice(copiedTo);
 }
 
 // POSIX absolute-path redaction, reduced to `[REDACTED_PATH]/basename`.
@@ -580,7 +671,10 @@ const POSIX_ROOTS = [
   'run/user',
   'net'
 ].join('|');
-const POSIX_ROOTED_START = String.raw`(?<=^|[\s"'\x60([{<>=,;|:]|file:\/\/)(?:\/(?:${POSIX_ROOTS})|~)(?=\/)`;
+// Where a POSIX path may start (see above): the start of the text,
+// whitespace, a quote, opening punctuation, `= , ; | < > :` or `file://`.
+const POSIX_PATH_BOUNDARY = String.raw`(?<=^|[\s"'\x60([{<>=,;|:]|file:\/\/)`;
+const POSIX_ROOTED_START = String.raw`${POSIX_PATH_BOUNDARY}(?:\/(?:${POSIX_ROOTS})|~)(?=\/)`;
 // First word of a folder name: the old segment rule minus a closing JSON quote.
 const POSIX_FIRST_WORD = String.raw`(?:[^\s/"]|"(?![,:}\]]))+`;
 // A later word: optional opening punctuation, then at least one other character.
@@ -595,21 +689,42 @@ const POSIX_NOT_AFTER_FILE_NAME = String.raw`(?:(?<!\.[A-Za-z][A-Za-z0-9]{0,7})|
 // The space between two words of a folder name.
 const POSIX_WORD_SPACE = String.raw`[ \u00A0\u202F]`;
 const POSIX_FOLDER = String.raw`${POSIX_FIRST_WORD}(?:${POSIX_NOT_AFTER_FILE_NAME}${POSIX_WORD_SPACE}${POSIX_LATER_WORD})*`;
-// Group 1: the basename of a rooted path. Group 2: the basename of any other
-// path (the old rule, which never starts right after `:` so `https://` and
-// `file://` keep their scheme).
+// Group 1: the basename of a rooted path. Group 2: the basename of a path
+// under any other root whose top-level folder has a space (`/Shared Drives/
+// Team X/x.pdf`): no other rule could anchor on it, so it would be left
+// whole. It starts only at a path boundary and its folders follow the rooted
+// rule, so prose such as "the /a b c route" (no `/` after the words) is not
+// a path. Group 3: the basename of any other path (the old rule, which never
+// starts right after `:` so `https://` and `file://` keep their scheme).
 const POSIX_PATH_PATTERN = new RegExp(
-  String.raw`${POSIX_ROOTED_START}(?:\/${POSIX_FOLDER})*\/([^/\s]+)|(?<!:)\/(?:[^/\s]+\/)+([^/\s]+)`,
+  String.raw`${POSIX_ROOTED_START}(?:\/${POSIX_FOLDER})*\/([^/\s]+)` +
+    String.raw`|${POSIX_PATH_BOUNDARY}\/(?=${POSIX_FIRST_WORD}${POSIX_WORD_SPACE})${POSIX_FOLDER}(?:\/${POSIX_FOLDER})*\/([^/\s]+)` +
+    String.raw`|(?<!:)\/(?:[^/\s]+\/)+([^/\s]+)`,
   'g'
 );
 
+// A character after which a path stands on its own (POSIX_PATH_BOUNDARY
+// minus `:`, which the old rule never follows). A match of the old rule
+// glued to a word, as in a URL (`https://host/home/x`), is a route rather
+// than a home folder.
+const POSIX_STANDALONE_BEFORE_PATTERN = /[\s"'\x60([{<>=,;|]/;
+
 /**
- * @param {string} _match
+ * @param {string} match
  * @param {string | undefined} rootedName
+ * @param {string | undefined} spacedRootName
  * @param {string | undefined} otherName
+ * @param {number} offset
+ * @param {string} text
  */
-function redactPosixPathMatch(_match, rootedName, otherName) {
-  return `[REDACTED_PATH]/${rootedName ?? otherName}`;
+function redactPosixPathMatch(match, rootedName, spacedRootName, otherName, offset, text) {
+  const name = rootedName ?? spacedRootName ?? otherName ?? '';
+  const standalone =
+    otherName === undefined ||
+    offset === 0 ||
+    POSIX_STANDALONE_BEFORE_PATTERN.test(text.charAt(offset - 1));
+  if (standalone && isHomeFolderPath(match)) return redactHomeFolderName(name);
+  return `[REDACTED_PATH]/${name}`;
 }
 
 /**
@@ -632,6 +747,29 @@ function stripLogControlChars(value) {
     if (code === 0x0d) return '\\r';
     return `\\x${code.toString(16).padStart(2, '0')}`;
   });
+}
+
+// A key that could carry a path (a separator) or a forged line (a control
+// character). Every other key is copied as is, so the common case costs one
+// test.
+// eslint-disable-next-line no-control-regex
+const KEY_NEEDS_SANITIZING_PATTERN = /[\\/\u0000-\u0008\u000A-\u001F\u007F]/;
+
+/**
+ * An object key as it may be written: run through the same string rules as
+ * values (a per-file map keyed by path must not print the path), and made
+ * unique within `target` so two keys that reduce to the same text
+ * (`[REDACTED_PATH]\x.pdf`) both keep their value.
+ * @param {string} key
+ * @param {Record<string, any>} target The object being built.
+ */
+function sanitizeLogKey(key, target) {
+  if (!KEY_NEEDS_SANITIZING_PATTERN.test(key)) return key;
+  const safeKey = sanitizeLogData(key);
+  if (!Object.prototype.hasOwnProperty.call(target, safeKey)) return safeKey;
+  let n = 2;
+  while (Object.prototype.hasOwnProperty.call(target, `${safeKey} #${n}`)) n += 1;
+  return `${safeKey} #${n}`;
 }
 
 /**
@@ -660,8 +798,8 @@ function sanitizeLogData(data, _depth = 0, _seen = undefined) {
       nodeInternalSentinels.push(match);
       return `__STRATOSORT_NODEINTERNAL_${idx}__`;
     });
-    sanitized = sanitized.replace(WINDOWS_DRIVE_PATH_PATTERN, redactWindowsPathMatch);
-    sanitized = sanitized.replace(WINDOWS_UNC_PATH_PATTERN, redactWindowsPathMatch);
+    sanitized = redactWindowsPaths(sanitized, WINDOWS_DRIVE_PATH_PATTERN);
+    sanitized = redactWindowsPaths(sanitized, WINDOWS_UNC_PATH_PATTERN);
     sanitized = sanitized.replace(POSIX_PATH_PATTERN, redactPosixPathMatch);
     // Restore protected node:internal/... segments now that path redaction
     // has run. Sentinel uses control chars (/__) so it cannot
@@ -703,23 +841,27 @@ function sanitizeLogData(data, _depth = 0, _seen = undefined) {
       return '[CIRCULAR]';
     }
     seen.add(data);
+    const isArray = Array.isArray(data);
     /** @type {Record<string, any>} */
-    const sanitized = Array.isArray(data) ? [] : {};
+    const sanitized = isArray ? [] : {};
     for (const [key, value] of Object.entries(data)) {
+      /** @type {any} */
+      let safeValue;
       // Redact values for sensitive key names
       if (SENSITIVE_KEY_PATTERN.test(key)) {
-        sanitized[key] = '[REDACTED]';
+        safeValue = '[REDACTED]';
       } else if (PATH_LIKE_KEY_PATTERN.test(key) && typeof value === 'string') {
-        sanitized[key] = redactPathValue(value);
+        safeValue = redactPathValue(value);
       } else if (key === 'stack' && typeof value === 'string') {
-        sanitized[key] = sanitizeLogData(value, _depth + 1, seen);
+        safeValue = sanitizeLogData(value, _depth + 1, seen);
       } else if (typeof value === 'object' && value !== null) {
-        sanitized[key] = sanitizeLogData(value, _depth + 1, seen);
+        safeValue = sanitizeLogData(value, _depth + 1, seen);
       } else if (typeof value === 'string') {
-        sanitized[key] = sanitizeLogData(value, _depth + 1, seen);
+        safeValue = sanitizeLogData(value, _depth + 1, seen);
       } else {
-        sanitized[key] = value;
+        safeValue = value;
       }
+      sanitized[isArray ? key : sanitizeLogKey(key, sanitized)] = safeValue;
     }
     return sanitized;
   }
@@ -884,6 +1026,10 @@ class Logger {
     // Shared destinations are ended centrally by configureFileLogging once
     // every logger has been re-pointed (see _closeStaleFileDestinations).
     this._fileStream = null;
+    // The browser build still transmits a record below its own level when
+    // the record is at or above the transmit level, which is fixed here
+    // while setLevel later moves the pino level (see _dropsLevel).
+    this._transmitLevel = isRenderer ? this.level : undefined;
 
     const pinoOptions = {
       level: this.level,
@@ -1043,6 +1189,36 @@ class Logger {
     }
   }
 
+  /**
+   * True when pino would discard a record at `level` anyway, so the caller
+   * can skip formatting and sanitizing it (a disabled logger.debug in a hot
+   * path otherwise pays the full redaction pass for nothing). Reads pino's
+   * numeric level fields, present in the node and browser builds alike;
+   * anything unexpected (unknown level, a pino without them) returns false
+   * and the record takes the normal path, where pino decides.
+   * @param {string} level
+   */
+  _dropsLevel(level) {
+    const _pino = /** @type {any} */ (this.pino);
+    const values = _pino?.levels?.values;
+    if (!values || typeof _pino.levelVal !== 'number') return false;
+    const value = values[level];
+    if (typeof value !== 'number' || value >= _pino.levelVal) return false;
+    const transmitValue = this._transmitLevel ? values[this._transmitLevel] : undefined;
+    return !(typeof transmitValue === 'number' && value >= transmitValue);
+  }
+
+  /**
+   * @param {string} level
+   * @param {any} message
+   * @param {any[]} args
+   */
+  _write(level, message, args) {
+    if (this._dropsLevel(level)) return;
+    const normalized = normalizeLogCall(message, args);
+    this._safeWrite(level, normalized.message, normalized.data);
+  }
+
   // Core logging methods — wrapped in _safeWrite to survive thread-stream death.
   // If the pino-pretty transport worker has ended, we degrade gracefully to
   // console output instead of crashing the Electron main process.
@@ -1052,6 +1228,8 @@ class Logger {
    * @param {any} [data]
    */
   _safeWrite(level, message, data) {
+    // Direct callers (terminal, terminalRaw) skip a dropped level here too.
+    if (this._dropsLevel(level)) return;
     // Sanitization must not crash the caller: Object.entries() invokes
     // getters, so a throwing getter (or revoked Proxy) in logged data would
     // otherwise propagate out of the logger into the operation it is
@@ -1140,32 +1318,27 @@ class Logger {
 
   /** @param {any} message @param {...any} args */
   error(message, ...args) {
-    const normalized = normalizeLogCall(message, args);
-    this._safeWrite('error', normalized.message, normalized.data);
+    this._write('error', message, args);
   }
 
   /** @param {any} message @param {...any} args */
   warn(message, ...args) {
-    const normalized = normalizeLogCall(message, args);
-    this._safeWrite('warn', normalized.message, normalized.data);
+    this._write('warn', message, args);
   }
 
   /** @param {any} message @param {...any} args */
   info(message, ...args) {
-    const normalized = normalizeLogCall(message, args);
-    this._safeWrite('info', normalized.message, normalized.data);
+    this._write('info', message, args);
   }
 
   /** @param {any} message @param {...any} args */
   debug(message, ...args) {
-    const normalized = normalizeLogCall(message, args);
-    this._safeWrite('debug', normalized.message, normalized.data);
+    this._write('debug', message, args);
   }
 
   /** @param {any} message @param {...any} args */
   trace(message, ...args) {
-    const normalized = normalizeLogCall(message, args);
-    this._safeWrite('trace', normalized.message, normalized.data);
+    this._write('trace', message, args);
   }
 
   // `fatal` is accepted by SYSTEM.LOG IPC (see ALLOWED_LOG_LEVELS in
@@ -1176,8 +1349,7 @@ class Logger {
   // existing transport behavior carries through.
   /** @param {any} message @param {...any} args */
   fatal(message, ...args) {
-    const normalized = normalizeLogCall(message, args);
-    this._safeWrite('fatal', normalized.message, normalized.data);
+    this._write('fatal', message, args);
   }
 
   // Convenience methods

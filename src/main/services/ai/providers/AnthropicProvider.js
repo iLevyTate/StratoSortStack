@@ -16,6 +16,23 @@ const ANTHROPIC_VERSION = '2023-06-01';
 // this, a stalled or hostile server can cause reader.read() to hang forever.
 const STREAM_IDLE_TIMEOUT_MS = 60_000;
 
+/**
+ * The caller cancelled: same shape as LlamaService's and
+ * OpenAICompatibleProvider's abort, so every consumer's
+ * `err.name === 'AbortError'` check treats a cloud cancel like a local one
+ * (no local fallback, no partial answer reported as complete).
+ * @param {boolean} tokensEmitted
+ * @param {unknown} [cause]
+ */
+function _abortError(tokensEmitted, cause) {
+  const err = /** @type {Error & { tokensEmitted?: boolean }} */ (
+    new Error('Operation aborted', cause ? { cause } : undefined)
+  );
+  err.name = 'AbortError';
+  err.tokensEmitted = tokensEmitted;
+  return err;
+}
+
 function _httpStatusToCode(/** @type {any} */ status) {
   if (status === 401 || status === 403) return 'AUTH_FAILED';
   if (status === 429) return 'RATE_LIMITED';
@@ -180,6 +197,9 @@ class AnthropicProvider {
       });
     } catch (err) {
       cancelCombined();
+      // A caller cancel is not a network failure: reported as NETWORK_ERROR it
+      // sent cancelled work down the cloud-to-local fallback path.
+      if (signal?.aborted) throw _abortError(false, err);
       throw new AIProviderError(
         'NETWORK_ERROR',
         `Failed to reach Anthropic: ${redactSensitive(err.message)}`,
@@ -213,6 +233,7 @@ class AnthropicProvider {
     try {
       parsed = await response.json();
     } catch (err) {
+      if (signal?.aborted) throw _abortError(false, err);
       if (combinedSignal?.aborted) {
         // Same classification as an abort during the fetch handshake.
         throw new AIProviderError(
@@ -373,6 +394,7 @@ class AnthropicProvider {
       // back after tokens already streamed (a second answer would be
       // appended to the partial one the user saw).
       readFailed = true;
+      if (signal?.aborted) throw _abortError(fullText.length > 0, err);
       if (err?.name === 'AbortError' || err?.name === 'AIProviderError') {
         if (err.tokensEmitted === undefined) err.tokensEmitted = fullText.length > 0;
         throw err;
@@ -413,6 +435,9 @@ class AnthropicProvider {
       // If usage is empty (very early abort) this no-ops.
       this._trackUsage(usage);
     }
+    // The caller's abort cancels the reader, which ends the read loop as if
+    // the stream had finished. That is a cancel, not a complete answer.
+    if (signal?.aborted) throw _abortError(fullText.length > 0);
     if (cancelled) {
       const idle = new AIProviderError(
         'STREAM_IDLE_TIMEOUT',
