@@ -7,7 +7,7 @@ import {
   setPhase,
   setViewMode,
   setCameFromDashboard,
-  canTransitionTo
+  getPhaseNavigation
 } from '../store/slices/uiSlice';
 import { useNotification } from '../contexts/NotificationContext';
 import { useUndoRedo } from '../components/UndoRedoSystem';
@@ -17,6 +17,7 @@ import { canHotkeySwapSurface, hasActiveOverlay, isTopOverlay } from '../utils/o
 import { isEditableTarget } from '../utils/isEditableTarget';
 import { dispatchAcked } from '../utils/dispatchAcked';
 import { toggleShowLiveActivity } from '../store/thunks/liveActivityThunks';
+import { selectPhaseNavigationContext } from '../utils/phaseNavigation';
 
 const logger = createLogger('useKeyboardShortcuts');
 
@@ -25,14 +26,33 @@ export function useKeyboardShortcuts() {
   const currentPhase = useAppSelector((/** @type {any} */ state) => state.ui.currentPhase);
   const showSettings = useAppSelector((/** @type {any} */ state) => state.ui.showSettings);
   const viewMode = useAppSelector((/** @type {any} */ state) => state.ui.viewMode);
-  const { addNotification } = useNotification();
+  // Same inputs the phase tabs read, so Alt+Left/Right open a step exactly
+  // when its tab would.
+  const navContext = useAppSelector(selectPhaseNavigationContext);
+  const { addNotification, showInfo } = useNotification();
   // This ensures state callbacks (onUndo/onRedo) are invoked, updating UI properly
-  const { undo: undoAction, redo: redoAction, canUndo, canRedo } = useUndoRedo();
+  const {
+    undo: undoAction,
+    redo: redoAction,
+    canUndo,
+    canRedo,
+    isExecuting: isUndoRedoExecuting
+  } = useUndoRedo();
 
   // Use refs to avoid re-attaching event listeners when these values change
   const currentPhaseRef = useRef(currentPhase);
   const showSettingsRef = useRef(showSettings);
   const viewModeRef = useRef(viewMode);
+  const navContextRef = useRef(navContext);
+  // Same busy test as NavigationBar's isBlockedByOperation.
+  const isBusyInStore = useAppSelector(
+    (/** @type {any} */ state) =>
+      Boolean(state.ui?.isOrganizing) ||
+      Boolean(state.ui?.isLoading) ||
+      Boolean(state.analysis?.isAnalyzing)
+  );
+  const isBusy = isBusyInStore || Boolean(isUndoRedoExecuting);
+  const busyRef = useRef(isBusy);
   const undoActionRef = useRef(undoAction);
   const redoActionRef = useRef(redoAction);
   const canUndoRef = useRef(canUndo);
@@ -48,6 +68,12 @@ export function useKeyboardShortcuts() {
   useEffect(() => {
     viewModeRef.current = viewMode;
   }, [viewMode]);
+  useEffect(() => {
+    navContextRef.current = navContext;
+  }, [navContext]);
+  useEffect(() => {
+    busyRef.current = isBusy;
+  }, [isBusy]);
   useEffect(() => {
     undoActionRef.current = undoAction;
   }, [undoAction]);
@@ -190,51 +216,48 @@ export function useKeyboardShortcuts() {
         }
       }
 
-      // Alt + Arrow keys for phase navigation (use ref for current phase).
+      // Alt + Arrow keys for phase navigation: the keyboard twin of the phase
+      // tabs, under the same rule (uiSlice.getPhaseNavigation). Back is always
+      // open; forward needs the step being left to pass its Continue check.
+      // A refused move stays put and gives the reason the tab's tooltip gives.
       // Inert in dashboard view mode: the phase tab strip is hidden there, so a
       // keyboard phase jump would change state invisibly under the dashboard.
-      if (event.altKey && viewModeRef.current !== 'dashboard') {
+      if (
+        event.altKey &&
+        (event.key === 'ArrowLeft' || event.key === 'ArrowRight') &&
+        viewModeRef.current !== 'dashboard'
+      ) {
+        event.preventDefault();
         const phase = currentPhaseRef.current;
-        if (event.key === 'ArrowLeft') {
-          event.preventDefault();
-          const phases = PHASE_ORDER || (PHASES ? Object.values(PHASES) : []);
-          const currentIndex = phases.indexOf(phase);
-          if (currentIndex > 0) {
-            const previousPhase = phases[currentIndex - 1];
-            if (canTransitionTo(phase, previousPhase)) {
-              actions.advancePhase(previousPhase);
-              addNotification(
-                `Navigated to ${PHASE_METADATA[previousPhase]?.title || previousPhase}`,
-                'info',
-                2000
-              );
-            }
-          }
-        }
+        const phases = PHASE_ORDER || (PHASES ? Object.values(PHASES) : []);
+        const currentIndex = phases.indexOf(phase);
+        const targetIndex = event.key === 'ArrowLeft' ? currentIndex - 1 : currentIndex + 1;
+        if (currentIndex < 0 || targetIndex < 0 || targetIndex >= phases.length) return;
 
-        if (event.key === 'ArrowRight') {
-          event.preventDefault();
-          const phases = PHASE_ORDER || (PHASES ? Object.values(PHASES) : []);
-          const currentIndex = phases.indexOf(phase);
-          if (currentIndex < phases.length - 1) {
-            const nextPhase = phases[currentIndex + 1];
-            if (canTransitionTo(phase, nextPhase)) {
-              actions.advancePhase(nextPhase);
-              addNotification(
-                `Navigated to ${PHASE_METADATA[nextPhase]?.title || nextPhase}`,
-                'info',
-                2000
-              );
-            }
-          }
+        // Paused while work is in flight, exactly like the phase tabs.
+        if (busyRef.current) {
+          showInfo('Navigation is paused until the current operation finishes.', 5200);
+          return;
         }
+        const targetPhase = phases[targetIndex];
+        const navigation = getPhaseNavigation(phase, targetPhase, navContextRef.current);
+        if (!navigation.allowed) {
+          if (navigation.reason) showInfo(navigation.reason, 5200);
+          return;
+        }
+        actions.advancePhase(targetPhase);
+        addNotification(
+          `Navigated to ${PHASE_METADATA[targetPhase]?.title || targetPhase}`,
+          'info',
+          2000
+        );
       }
     };
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-    // Only re-attach when actions or addNotification change (both are memoized/stable)
-  }, [actions, addNotification]);
+    // Only re-attach when actions or the notifiers change (all memoized/stable)
+  }, [actions, addNotification, showInfo]);
 
   // Handle menu actions from main process (File menu shortcuts)
   useEffect(() => {

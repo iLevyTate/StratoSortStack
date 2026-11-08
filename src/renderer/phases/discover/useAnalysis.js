@@ -1011,21 +1011,9 @@ export function useAnalysis(options = {}) {
           index === self.findIndex((/** @type {any} */ f) => f.path === file.path)
       );
 
-      try {
-        const saveSettings = window?.electronAPI?.settings?.save;
-        if (typeof saveSettings === 'function') {
-          await saveSettings({
-            namingConvention: namingSettings.convention,
-            separator: namingSettings.separator,
-            dateFormat: namingSettings.dateFormat,
-            caseConvention: namingSettings.caseConvention
-          });
-        }
-      } catch (syncError) {
-        logger.warn('Failed to sync Discover naming settings before analysis', {
-          error: syncError?.message
-        });
-      }
+      // No naming write here: namingSettings already is the persisted default
+      // (uiSlice selectNamingDefaults). Saving it before each batch used to
+      // overwrite a newer choice made in Settings.
 
       // Pass the real batch total: setIsAnalyzing's internal ref fallback is
       // stale inside this handler and used to zero the progress total.

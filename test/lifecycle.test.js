@@ -304,6 +304,67 @@ describe('lifecycle – handleBeforeQuit', () => {
 
     expect(flushHashCache).toHaveBeenCalledTimes(1);
   });
+
+  // A quit during the first seconds must stop a startup that is still running:
+  // otherwise service integration can initialise (watchers, Orama) against a
+  // container that phase 3 has already shut down.
+  test('aborts a startup still in flight before services shut down', async () => {
+    const order = [];
+    const abortStartup = jest.fn(() => order.push('abortStartup'));
+    const serviceIntegration = {
+      shutdown: jest.fn(async () => {
+        order.push('serviceIntegration.shutdown');
+      })
+    };
+    initializeLifecycle({
+      setIsQuitting: jest.fn(),
+      abortStartup,
+      getMetricsInterval: () => null,
+      setMetricsInterval: jest.fn(),
+      getDownloadWatcher: () => null,
+      setDownloadWatcher: jest.fn(),
+      getServiceIntegration: () => serviceIntegration,
+      getSettingsService: () => null,
+      getChildProcessListeners: () => [],
+      setChildProcessListeners: jest.fn(),
+      getGlobalProcessListeners: () => [],
+      setGlobalProcessListeners: jest.fn(),
+      getEventListeners: () => [],
+      setEventListeners: jest.fn()
+    });
+
+    await handleBeforeQuit();
+
+    expect(abortStartup).toHaveBeenCalledTimes(1);
+    expect(abortStartup).toHaveBeenCalledWith(expect.any(String));
+    expect(order).toEqual(['abortStartup', 'serviceIntegration.shutdown']);
+  });
+
+  test('a throwing startup abort does not stop the shutdown', async () => {
+    const serviceIntegration = { shutdown: jest.fn().mockResolvedValue(undefined) };
+    initializeLifecycle({
+      setIsQuitting: jest.fn(),
+      abortStartup: jest.fn(() => {
+        throw new Error('abort failed');
+      }),
+      getMetricsInterval: () => null,
+      setMetricsInterval: jest.fn(),
+      getDownloadWatcher: () => null,
+      setDownloadWatcher: jest.fn(),
+      getServiceIntegration: () => serviceIntegration,
+      getSettingsService: () => null,
+      getChildProcessListeners: () => [],
+      setChildProcessListeners: jest.fn(),
+      getGlobalProcessListeners: () => [],
+      setGlobalProcessListeners: jest.fn(),
+      getEventListeners: () => [],
+      setEventListeners: jest.fn()
+    });
+
+    await handleBeforeQuit();
+
+    expect(serviceIntegration.shutdown).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('lifecycle – handleBeforeQuit exit code vs pending update', () => {

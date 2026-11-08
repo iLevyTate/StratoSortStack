@@ -89,13 +89,14 @@ All-MiniLM vs 768 for Nomic). The index must be rebuilt when switching; the UI p
 
 ### Performance Tuning
 
-| Variable                                    | Default | Description                                                                                                                                                                     |
-| :------------------------------------------ | :------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `MAX_IMAGE_CACHE`                           | `300`   | Maximum cached image analyses (50-1000)                                                                                                                                         |
-| `AUTO_ORGANIZE_BATCH_SIZE`                  | `10`    | Files processed per auto-organize batch (1-100)                                                                                                                                 |
-| `STRATOSORT_INFERENCE_CONCURRENCY`          | auto    | Override the inference slot count used by `ModelAccessCoordinator`. Accepts a positive integer; non-numeric / non-positive values fall back to the platform-aware auto value.   |
-| `STRATOSORT_ORAMA_COMPRESS`                 | `true`  | When `false`, disables LZ4 compression of persisted Orama indexes (faster writes, larger on-disk footprint). Used for debugging corruption suspected to be compression-related. |
-| `STRATOSORT_ORAMA_BATCH_UPSERT_CONCURRENCY` | auto    | Override concurrent batch-upsert workers in `OramaVectorService`. Non-numeric values fall back to the service default.                                                          |
+| Variable                                    | Default | Description                                                                                                                                                                                                                                                                                                                                                     |
+| :------------------------------------------ | :------ | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MAX_IMAGE_CACHE`                           | `300`   | Maximum cached image analyses (50-1000)                                                                                                                                                                                                                                                                                                                         |
+| `AUTO_ORGANIZE_BATCH_SIZE`                  | `10`    | Files processed per auto-organize batch (1-100)                                                                                                                                                                                                                                                                                                                 |
+| `STRATOSORT_INFERENCE_CONCURRENCY`          | auto    | Override the inference slot count used by `ModelAccessCoordinator`. Accepts a positive integer; non-numeric / non-positive values fall back to the platform-aware auto value.                                                                                                                                                                                   |
+| `STRATOSORT_ORAMA_COMPRESS`                 | `true`  | When `false`, disables LZ4 compression of persisted Orama indexes (faster writes, larger on-disk footprint). Used for debugging corruption suspected to be compression-related.                                                                                                                                                                                 |
+| `STRATOSORT_ORAMA_BATCH_UPSERT_CONCURRENCY` | auto    | Override concurrent batch-upsert workers in `OramaVectorService`. Non-numeric values fall back to the service default.                                                                                                                                                                                                                                          |
+| `STRATOSORT_ORAMA_RESTORE_WORKER`           | on      | When `false`, startup restore reads, decodes and parses saved vector collections (and their sidecars) on the main thread instead of in the `oramaRestoreWorker` worker thread. Off under tests unless set to `true`. Files under 4 MB are always parsed in-process. See [`ORAMA_VECTOR_SIDECAR.md`](ORAMA_VECTOR_SIDECAR.md#restore-parses-in-a-worker-thread). |
 
 ### Embeddings and embedding queue (environment)
 
@@ -266,19 +267,21 @@ organized into categories:
 
 ### TIMEOUTS (milliseconds)
 
-| Constant                  | Value     | Description                                                                                                    |
-| :------------------------ | :-------- | :------------------------------------------------------------------------------------------------------------- |
-| `DEBOUNCE_INPUT`          | 300       | Input debounce delay                                                                                           |
-| `AI_ANALYSIS_SHORT`       | 30,000    | Short AI analysis timeout                                                                                      |
-| `AI_ANALYSIS_MEDIUM`      | 60,000    | Medium AI analysis timeout                                                                                     |
-| `AI_ANALYSIS_LONG`        | 300,000   | Long AI analysis timeout (5 min; CPU vision)                                                                   |
-| `AI_ANALYSIS_BATCH`       | 1,800,000 | Batch analysis timeout (30 min)                                                                                |
-| `ANALYSIS_LOCK`           | 300,000   | Max lock duration before force release                                                                         |
-| `GLOBAL_ANALYSIS`         | 600,000   | Max total analysis time (10 min)                                                                               |
-| `WINDOW_SHOW_FALLBACK`    | 4,000     | Show the main window if `ready-to-show` has not fired                                                          |
-| `FIRST_PAINT_GATE`        | 3,000     | Longest wait for the first paint before AI bring-up starts                                                     |
-| `DEFAULT_FOLDER_PROBE`    | 3,000     | Cap on each stat or mkdir of the `Uncategorized` folder before the window exists; startup continues without it |
-| `GPU_FALLBACK_STABLE_RUN` | 30,000    | Time after window creation at which a stable hardware-accelerated run clears `.gpu-fallback`                   |
+| Constant                       | Value     | Description                                                                                                             |
+| :----------------------------- | :-------- | :---------------------------------------------------------------------------------------------------------------------- |
+| `DEBOUNCE_INPUT`               | 300       | Input debounce delay                                                                                                    |
+| `AI_ANALYSIS_SHORT`            | 30,000    | Short AI analysis timeout                                                                                               |
+| `AI_ANALYSIS_MEDIUM`           | 60,000    | Medium AI analysis timeout                                                                                              |
+| `AI_ANALYSIS_LONG`             | 300,000   | Long AI analysis timeout (5 min; CPU vision)                                                                            |
+| `AI_ANALYSIS_BATCH`            | 1,800,000 | Batch analysis timeout (30 min)                                                                                         |
+| `ANALYSIS_LOCK`                | 300,000   | Max lock duration before force release                                                                                  |
+| `GLOBAL_ANALYSIS`              | 600,000   | Max total analysis time (10 min)                                                                                        |
+| `WINDOW_SHOW_FALLBACK`         | 4,000     | Show the main window if `ready-to-show` has not fired                                                                   |
+| `FIRST_PAINT_GATE`             | 5,100     | Longest wait for the first paint before AI bring-up starts; outlasts `WINDOW_SHOW_FALLBACK` plus the ~100 ms show delay |
+| `COORDINATED_STARTUP_SOFT`     | 45,000    | After this, coordinated startup is reported as degraded ("still starting" warning) but keeps running                    |
+| `COORDINATED_STARTUP_HARD_CAP` | 180,000   | Coordinated startup is aborted after this; also `StartupManagerCore`'s own `startupTimeout`                             |
+| `DEFAULT_FOLDER_PROBE`         | 3,000     | Cap on each stat or mkdir of the `Uncategorized` folder before the window exists; startup continues without it          |
+| `GPU_FALLBACK_STABLE_RUN`      | 30,000    | Time after window creation at which a stable hardware-accelerated run clears `.gpu-fallback`                            |
 
 ### RETRY Configuration
 

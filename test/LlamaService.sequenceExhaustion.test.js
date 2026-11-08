@@ -167,7 +167,7 @@ describe('LlamaService.generateText – session disposal on sequence exhaustion'
 
     const result = await service.generateText({ prompt: 'hello', maxTokens: 128 });
 
-    expect(result).toEqual({ response: 'recovered-response' });
+    expect(result).toEqual({ response: 'recovered-response', truncated: false });
     // Two sessions were constructed (one per runOnce attempt).
     expect(mockLlama.sessions).toHaveLength(2);
     // The exhausted session was disposed exactly once (in the catch) and
@@ -187,7 +187,7 @@ describe('LlamaService.generateText – session disposal on sequence exhaustion'
 
     const result = await service.generateText({ prompt: 'hello', maxTokens: 128 });
 
-    expect(result).toEqual({ response: 'recovered-response' });
+    expect(result).toEqual({ response: 'recovered-response', truncated: false });
     expect(mockLlama.sessions[0].dispose).toHaveBeenCalledTimes(1);
     expect(service._recoverFromSequenceExhaustion).toHaveBeenCalledTimes(1);
     // Recovery + retry still happened despite the dispose throwing.

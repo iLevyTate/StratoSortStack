@@ -120,6 +120,9 @@ Changes you will notice:
 
 ### Changed
 
+- **StratoSort no longer registers itself as a viewer for PDF, Word, Excel, PowerPoint, text and
+  Markdown files.** Opening a file that way did nothing, so the entry in "Open with" is gone.
+  Existing installs drop it on the next install or update.
 - **The vision model stays loaded across a batch of images.** On a GPU with little memory, it was
   shut down and restarted after every image to make room for the embedding model. During a vision
   batch the embedding model now runs on the CPU beside it (without raising the "running on CPU"
@@ -189,15 +192,74 @@ Changes you will notice:
 - **A search index too large to save is reported instead of silently not saving.** A collection is
   saved as one block of text, and V8 cannot build one longer than about 537 million characters. Past
   that, every save failed, was retried as if the disk had hiccuped, and new passages were lost at
-  each restart. Now the app shows an error naming the index, saves everything else, and does not
-  retry that index until files are removed from it. It warns in the log once a save passes 85% of
-  the limit.
+  each restart. Now the app shows an error naming the index, saves everything else, and retries that
+  index every 30 minutes, when files are removed from it, and once more at quit. It warns in the log
+  once a save passes 85% of the limit.
 - **A search index file too large to read is no longer renamed as corrupt.** It is left on disk as
   it is and never saved over, so no data is lost, and an error says search results are incomplete.
   Resetting that index clears the error.
 - **Half-written search index files are cleaned up.** A save interrupted by a crash or a full disk
   left its temporary file behind (hundreds of MB each on a large library). Startup now removes those
   older than an hour from the search index folder.
+- **A vector repair at startup no longer wipes the file's details.** When the index restored a
+  file's missing vector from its backup copy, it replaced the whole entry with the vector alone, so
+  the file lost its name, path, tags and hash from search. The repair now keeps the full entry.
+- **Large libraries keep every file's vector.** Past 10,000 files the app dropped stored vectors
+  from its backup copy, so those files were re-embedded on every launch and could drop out of
+  search. The limit is gone; it saved well under 1 MB per 10,000 files.
+- **Loading the search index no longer freezes the window.** The index is read and parsed on a
+  background thread, so the app stays responsive while a large library loads.
+- **Typing a new search cancels the previous one** instead of letting it run ahead of the new query.
+  Cancelling a search affects only that search.
+- **Phase tabs, Alt+arrow keys and dashboard links follow one rule.** A tab that is blocked says why
+  in its tooltip and when clicked, going back is always allowed, and all of them pause while
+  analysis or file moves run.
+- **File naming has one setting.** Changing the naming convention in Discover changes the default in
+  Settings, and the other way round.
+- **Creating a folder through a link that points outside your allowed locations** is refused with a
+  message that says so, instead of a generic "cannot access that path".
+
+- **Organize no longer overwrites a file when two moves pick the same numbered name.** When a batch
+  moved `report.pdf` and `report_1.pdf` into a folder that already held `report.pdf`, both moves
+  could land on `report_1.pdf` and one file was lost. Every mover in the app (organize, single move,
+  Downloads, undo, rollback) now claims a destination name one at a time.
+- **A batch that was rolled back no longer shows as organized.** Restored files are reported as not
+  moved, no undo entry is recorded for them, and a file whose restore failed is named in the error.
+- One file held by antivirus or the indexer (permission denied) fails only that file instead of
+  undoing the whole batch. Repeated permission failures still stop the batch.
+- A destination folder deleted during a batch is recreated instead of reported as a missing source.
+- A cross-drive move that loses a name race walks to the next free name instead of failing.
+- After a crash, a move that had already landed on a numbered or fallback name is found and kept in
+  undo and search.
+- **A large library no longer starts in degraded mode.** A startup that is slow but still working
+  keeps going: the 45 s mark reports a warning, the services are no longer shut down after they
+  finish, and the warning clears once startup completes. A hard cap still stops a hung startup.
+- Quitting while the vector store is still saving waits for that save instead of exiting halfway
+  through it. Saving the index now tells its callers when it did not reach disk, and a full rebuild
+  that could not be saved says so.
+- A transient read error at launch no longer replaces the organize and analysis journal with an
+  empty one, and restoring settings from a backup no longer files the default settings as the newest
+  automatic backup.
+- Search stays responsive while the keyword index rebuilds after an analysis.
+- Find Duplicates checks the whole library, not only the first 1,000 files.
+- Chat treats documents found by keyword as keyword matches, with their text, instead of telling the
+  model they were 0% relevant. A local answer cut off at the output limit says so instead of showing
+  a raw fragment. Cancelling a cloud chat no longer returns the partial answer as complete, and no
+  longer falls back to the local model.
+- Map-reduce summaries honor local-only processing, so text from a local-only file is not sent to a
+  cloud provider.
+- A provider address with a user name or password in it is refused, and errors never repeat it.
+- The smart-folder and Downloads watchers do not follow a link or junction out of the watched
+  folder. Stopping a watcher cancels its running analysis, including transcription, and failed
+  analyses retry with a delay instead of three times in a row.
+- File paths are hidden in log keys as well as values, and a home folder no longer leaves your
+  account name visible.
+- Scanned PDFs are read past the first page (up to a page limit), large CSV files are read in part,
+  and a partial read is marked as partial in the file's details.
+- First run: choosing the dashboard with only the Uncategorized folder now sends you to add a
+  destination, and Welcome, Setup and Discover agree on what counts as one. Files dropped from a
+  pick for being unsupported or too large are named in the message.
+- Development: end-to-end tests no longer download AI models.
 - **Startup repair re-embeds missing vectors under default settings.** The file-vector backfill
   asked whether embedding was allowed after organizing, which is refused under the default "during
   analysis" timing, so missing file vectors were never rebuilt and the file was marked skipped.

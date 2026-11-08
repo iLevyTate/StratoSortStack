@@ -419,6 +419,9 @@ const EXECUTABLE_EXTENSIONS = new Set([
   '.library-ms', // Library definition — can point at remote/WebDAV locations
   '.searchconnector-ms', // Search connector — remote location, same surface as .library-ms
   '.diagcab', // Troubleshooting pack — runs PowerShell via msdt
+  '.wsb', // Windows Sandbox config — runs its LogonCommand with host folders mapped in
+  '.rdp', // Remote Desktop connection — connects out with embedded drive/clipboard redirection
+  '.ppkg', // Provisioning package — installs settings/apps on open
   '.scpt',
   '.jar',
   '.appx',

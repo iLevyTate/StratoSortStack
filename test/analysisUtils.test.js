@@ -267,4 +267,38 @@ describe('analysisUtils', () => {
       expect(persisted.fallbackReason).toBeNull();
     });
   });
+  // A head read, a capped OCR sweep or a length-truncated body is analyzed
+  // from part of the file; the history row has to say so or the details view
+  // and re-analysis decisions cannot tell it from a complete read.
+  describe('recordAnalysisResult partial-content flag', () => {
+    const logger = { warn: jest.fn(), debug: jest.fn() };
+
+    test('a result analyzed from part of the file is persisted as partial', async () => {
+      const analysisHistory = { recordAnalysis: jest.fn() };
+      await recordAnalysisResult({
+        filePath: '/data/big.csv',
+        result: { category: 'docs', extractionMethod: 'content', partialContent: true },
+        processingTime: 1,
+        modelType: 'llm',
+        analysisHistory,
+        logger
+      });
+      const persisted = analysisHistory.recordAnalysis.mock.calls[0][1];
+      expect(persisted.partialContent).toBe(true);
+    });
+
+    test('a complete read carries no partial flag', async () => {
+      const analysisHistory = { recordAnalysis: jest.fn() };
+      await recordAnalysisResult({
+        filePath: '/data/small.csv',
+        result: { category: 'docs', extractionMethod: 'content', partialContent: false },
+        processingTime: 1,
+        modelType: 'llm',
+        analysisHistory,
+        logger
+      });
+      const persisted = analysisHistory.recordAnalysis.mock.calls[0][1];
+      expect(persisted).not.toHaveProperty('partialContent');
+    });
+  });
 });

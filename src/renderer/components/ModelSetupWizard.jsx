@@ -142,7 +142,22 @@ function detectProfileKey(models) {
   return 'custom';
 }
 
-export default function ModelSetupWizard({ onComplete, onSkip, onStepChange, embedded = false }) {
+/**
+ * @param {object} props
+ * @param {() => void} [props.onComplete]
+ * @param {() => void} [props.onSkip] The user declines model downloads ("Continue with limited AI").
+ * @param {() => void} [props.onDismiss] The user leaves the wizard while a download keeps running.
+ *   Without it the downloading step falls back to the skip button.
+ * @param {(step: string) => void} [props.onStepChange]
+ * @param {boolean} [props.embedded]
+ */
+export default function ModelSetupWizard({
+  onComplete,
+  onSkip,
+  onDismiss,
+  onStepChange,
+  embedded = false
+}) {
   // Memoize the provider value so context consumers (many, deep in the
   // wizard body) don't re-render whenever the wizard's parent re-renders
   // for unrelated reasons. Without useMemo the object identity changes
@@ -151,12 +166,17 @@ export default function ModelSetupWizard({ onComplete, onSkip, onStepChange, emb
   const contextValue = useMemo(() => ({ embedded }), [embedded]);
   return (
     <WizardLayoutContext.Provider value={contextValue}>
-      <ModelSetupWizardBody onComplete={onComplete} onSkip={onSkip} onStepChange={onStepChange} />
+      <ModelSetupWizardBody
+        onComplete={onComplete}
+        onSkip={onSkip}
+        onDismiss={onDismiss}
+        onStepChange={onStepChange}
+      />
     </WizardLayoutContext.Provider>
   );
 }
 
-function ModelSetupWizardBody({ onComplete, onSkip, onStepChange }) {
+function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
   const [systemInfo, setSystemInfo] = useState(null);
   const [recommendations, setRecommendations] = useState(null);
   const [selectedProfile, setSelectedProfile] = useState('base');
@@ -1212,6 +1232,14 @@ function ModelSetupWizardBody({ onComplete, onSkip, onStepChange }) {
       const status = downloadState[filename]?.status;
       return status === 'failed' || status === 'cancelled';
     });
+    // Leaving while bytes are still moving is not a decline: the download the
+    // user just started keeps running, so this exit must not record "skip".
+    const hasActiveDownload = models.some(([_, filename]) => {
+      const status = downloadState[filename]?.status || 'downloading';
+      return !['ready', 'complete', 'failed', 'cancelled'].includes(status);
+    });
+    const leaveKeepsDownloading =
+      !allComplete && hasActiveDownload && typeof onDismiss === 'function';
 
     return (
       <WizardCard as="section" variant="hero" aria-labelledby="wizard-setup-title" className="">
@@ -1219,8 +1247,21 @@ function ModelSetupWizardBody({ onComplete, onSkip, onStepChange }) {
           step="downloading"
           icon={Download}
           title="Downloading models"
-          description="This can take a while depending on your connection. You can continue with limited AI at any time."
+          description={
+            leaveKeepsDownloading
+              ? 'This can take a while depending on your connection. You can close this and keep using the app while the download continues.'
+              : 'This can take a while depending on your connection. You can continue with limited AI at any time.'
+          }
         />
+
+        {initError && (
+          <AlertBox variant="warning" className="mb-4">
+            <div className="space-y-1">
+              <p className="font-medium">Setup not ready</p>
+              <p>{initError}</p>
+            </div>
+          </AlertBox>
+        )}
 
         <div className="space-y-3">
           {models.map(([_type, filename]) => {
@@ -1314,6 +1355,16 @@ function ModelSetupWizardBody({ onComplete, onSkip, onStepChange }) {
                 if (applied) {
                   setStep('complete');
                 }
+              } else if (leaveKeepsDownloading) {
+                // Closing keeps the user's download consent, so main must
+                // already name the models being downloaded: the wizard (and
+                // the apply on completion) is gone once it closes, and
+                // background setup would otherwise fetch the old defaults on
+                // the next launch while the chosen download sits unused.
+                const applied = await applySelectedProfileConfig();
+                if (applied && isMountedRef.current) {
+                  onDismiss();
+                }
               } else {
                 onSkip();
               }
@@ -1321,7 +1372,11 @@ function ModelSetupWizardBody({ onComplete, onSkip, onStepChange }) {
             variant={allComplete ? 'primary' : 'secondary'}
             className="w-full sm:flex-1"
           >
-            {allComplete ? 'Continue' : CONTINUE_WITH_LIMITED_AI_LABEL}
+            {allComplete
+              ? 'Continue'
+              : leaveKeepsDownloading
+                ? 'Close and keep downloading'
+                : CONTINUE_WITH_LIMITED_AI_LABEL}
           </Button>
           {hasFailures && (
             <Button onClick={startDownloads} variant="secondary" className="w-full sm:flex-1">

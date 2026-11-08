@@ -274,8 +274,16 @@ class StartupManager {
 
       await Promise.race([this._runStartupSequence(signal), timeoutPromise]);
 
+      // The sequence checks the signal between phases, so reaching here means
+      // every phase ran. An abort seen only now arrived after the work was
+      // done; failing would shut down services that are up and in use.
       if (signal.aborted) {
-        throw new Error('Startup aborted');
+        logger.warn(
+          '[STARTUP] Abort arrived after the startup sequence completed; keeping services',
+          {
+            reason: signal.reason instanceof Error ? signal.reason.message : signal.reason
+          }
+        );
       }
 
       this.startupState = 'completed';
@@ -320,7 +328,8 @@ class StartupManager {
   }
 
   async _runStartupSequence(/** @type {any} */ signal) {
-    if (signal?.aborted) return;
+    // Throw, not return: startup() treats a resolved sequence as "every phase ran".
+    if (signal?.aborted) throw new Error('Startup aborted');
     logger.info('[STARTUP] Beginning internal startup sequence');
 
     // Phase 0: Preflight checks

@@ -205,9 +205,16 @@ class SettingsBackupService {
    * Restore settings from a backup file
    * @param {string} backupPath - Path to backup file
    * @param {(...args: any[]) => any} saveSettings - Function to save restored settings
+   * @param {{ preRestoreBackup?: boolean }} [options] - `preRestoreBackup: false`
+   *   skips the snapshot of the current settings taken before the restore.
+   *   Pass it when there are no real current settings to keep (auto-recovery
+   *   from an unreadable settings.json, where the loader can only offer
+   *   defaults): a defaults snapshot would become the newest automatic backup
+   *   and rotate out a genuine one.
    * @returns {Promise<Record<string, any>>}
    */
-  async restoreFromBackup(backupPath, saveSettings) {
+  async restoreFromBackup(backupPath, saveSettings, options = {}) {
+    const preRestoreBackup = options?.preRestoreBackup !== false;
     try {
       // Validate backup path (path traversal protection)
       this._validateBackupPath(backupPath);
@@ -284,9 +291,6 @@ class SettingsBackupService {
         delete backupData.settings.settingsSchemaVersion;
       }
 
-      // Create a backup of current settings before restoring
-      await this.createBackup();
-
       // Validate backup settings
       const validation = validateSettings(backupData.settings);
       if (!validation.valid) {
@@ -296,6 +300,13 @@ class SettingsBackupService {
         error.validationErrors = validation.errors;
         error.validationWarnings = validation.warnings;
         throw error;
+      }
+
+      // Snapshot the current settings before restoring, once the restore is
+      // known to go ahead: a rejected backup must not add a snapshot that
+      // rotates out an older automatic backup.
+      if (preRestoreBackup) {
+        await this.createBackup();
       }
 
       // Sanitize and merge with defaults

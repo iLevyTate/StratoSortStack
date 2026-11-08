@@ -18,7 +18,13 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const fsp = require('fs/promises');
-const { launchApp, closeApp, waitForAppReady, dismissGraphTour } = require('./helpers/electronApp');
+const {
+  launchApp,
+  closeApp,
+  waitForAppReady,
+  dismissGraphTour,
+  createIsolatedE2eUserDataDir
+} = require('./helpers/electronApp');
 const { NavigationPage } = require('./helpers/pageObjects');
 const { pressOpenSearchShortcut } = require('./helpers/e2eShortcuts');
 const { ensureAdvancedExperienceMode } = require('./helpers/e2eSettings');
@@ -60,7 +66,10 @@ test.describe('QA runtime repro (real models)', () => {
     // without the real model profile skip instead of failing the full suite.
     test.skip(!fs.existsSync(REAL_MODELS_DIR), `real models dir missing (${REAL_MODELS_DIR})`);
 
-    profileDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'stratosort-qa-profile-'));
+    // Seeded like every helper profile (limited-AI choice): if a junctioned
+    // model is missing or renamed, background setup must not start a real
+    // multi-GB download in the middle of this session.
+    profileDir = createIsolatedE2eUserDataDir();
     modelsJunction = path.join(profileDir, 'models');
     // Junction (not copy): models are multi-GB. MUST be unlinked with rmdirSync
     // BEFORE any recursive delete of profileDir (F-140 lesson).

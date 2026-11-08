@@ -305,7 +305,10 @@ describe('extractTextFromSvg adversarial inputs', () => {
         out = extractTextFromSvg(doc, { maxChars: 10 * MB });
       }).not.toThrow();
       const elapsed = Date.now() - started;
-      if (elapsed >= 1500) expect(`${name} took ${elapsed} ms`).toBe('under 1500 ms');
+      // A regex stall or quadratic loop on these multi-MB inputs takes tens of
+      // seconds. 6000 ms (the notebookExtractor bound) keeps that signal and
+      // leaves room for coverage instrumentation on a slow CI runner.
+      if (elapsed >= 6000) expect(`${name} took ${elapsed} ms`).toBe('under 6000 ms');
       expect(typeof out).toBe('string');
     }
     expect(extractTextFromSvg(cases['whitespace run inside text'])).toBe('tail\nnext');

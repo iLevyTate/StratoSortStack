@@ -3,6 +3,7 @@
  * Reject ipcMain.handle invocations from unexpected sender origins (defense in depth).
  * Production renderers load from the custom app:// scheme; dev loads from
  * http://localhost / http://127.0.0.1 (and file:// for the offline fallback).
+ * The dev origins are accepted only when the app is not packaged.
  *
  * Test and dev bypasses are gated by explicit setters (setTestBypass,
  * setDevPermissive) rather than `process.env.NODE_ENV` checks, so an
@@ -57,6 +58,10 @@ function isAllowedRendererUrl(url) {
   // exclusively by this app (see core/appProtocol.js), so any app:// sender is
   // our own bundle.
   if (url.startsWith('app://')) return true;
+  // Dev-only origins: the webpack dev server / local renderer HTTP server and
+  // the file:// offline fallback. A packaged build only ever loads app://, so
+  // these must not reach the IPC surface there.
+  if (isPackagedApp()) return false;
   if (url.startsWith('file://')) return true;
   if (url.startsWith('http://127.0.0.1:')) return true;
   if (url.startsWith('http://localhost:')) return true;

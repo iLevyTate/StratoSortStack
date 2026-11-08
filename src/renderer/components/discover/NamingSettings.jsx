@@ -1,8 +1,7 @@
-import React, { memo, useCallback, useEffect, useRef } from 'react';
+import React, { memo, useCallback } from 'react';
 import PropTypes from 'prop-types';
 import Select from '../ui/Select';
 import { Text } from '../ui/Typography';
-import { logger } from '../../../shared/logger';
 import { normalizeSeparator } from '../../../shared/namingConventions';
 
 const NamingSettings = memo(function NamingSettings({
@@ -25,27 +24,9 @@ const NamingSettings = memo(function NamingSettings({
     [setCaseConvention]
   );
   const handleSeparatorChange = useCallback((e) => setSeparator(e.target.value), [setSeparator]);
+  // Pure form: the setters own persistence (useDiscoverState saves each change
+  // to the naming default in settings), so this never writes on its own.
   const normalizedSeparator = normalizeSeparator(separator);
-
-  // Skip saving on initial mount to avoid overwriting stored settings with prop defaults
-  const isFirstRender = useRef(true);
-  useEffect(() => {
-    if (isFirstRender.current) {
-      isFirstRender.current = false;
-      return;
-    }
-    if (typeof window === 'undefined' || !window.electronAPI?.settings?.save) return;
-    window.electronAPI.settings
-      .save({
-        namingConvention,
-        separator,
-        dateFormat,
-        caseConvention
-      })
-      .catch((err) => {
-        logger.warn('[NamingSettings] Failed to persist naming preferences:', err?.message);
-      });
-  }, [namingConvention, separator, dateFormat, caseConvention]);
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-relaxed">

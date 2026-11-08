@@ -17,6 +17,7 @@ import { fetchLicenseStatus } from './store/slices/licenseSlice';
 import { useSettingsSubscription } from './hooks/useSettingsSubscription';
 import { useNotificationActivation } from './hooks/useNotificationActivation';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { hasDestinationFolder } from './utils/smartFolderDestinations';
 
 // AppShell is a .jsx module (untyped under checkJs); cast at import so JSX
 // prop checks pass under noImplicitAny. See tsconfig.checkjs.json header re .jsx.
@@ -50,9 +51,10 @@ function AppContent() {
   // Dashboard is only meaningful once setup is done — without smart folders its
   // actions are dead ends. For a true first run, fall through to the phased
   // flow so onboarding (Welcome → Setup) still runs even if 'dashboard' was the
-  // remembered preference.
-  const smartFoldersConfigured = useAppSelector(
-    (/** @type {any} */ state) => state.files.smartFolders.length > 0
+  // remembered preference. The Uncategorized catch-all main seeds on every
+  // profile does not count, or a first-run Dashboard pick skips Setup.
+  const smartFoldersConfigured = useAppSelector((/** @type {any} */ state) =>
+    hasDestinationFolder(state.files.smartFolders)
   );
   const effectiveDashboard = viewMode === 'dashboard' && smartFoldersConfigured;
   const selectedTheme = useAppSelector((/** @type {any} */ state) => state.ui.selectedTheme);

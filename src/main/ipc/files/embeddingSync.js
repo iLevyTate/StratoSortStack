@@ -526,10 +526,13 @@ async function embedHistoryEntry({ entry, filePath, smartFolder = null, services
     return { action: 'skipped', reason: 'no-analysis' };
   }
 
-  // Startup repair is the only caller: a backfill, not a live stage.
+  // Startup repair is the only caller: a backfill, not a live stage. The
+  // scope gate needs the smart-folder context the analysis path gives it, or
+  // a smart-folders-only library would index files outside every folder.
   const gate = await shouldEmbedForRepair({
     policyOverride: entry?.embedding?.policy || null,
-    analysis: entry.analysis
+    analysis: entry.analysis,
+    isInSmartFolder: Boolean(smartFolder)
   });
   if (!gate.shouldEmbed) {
     try {

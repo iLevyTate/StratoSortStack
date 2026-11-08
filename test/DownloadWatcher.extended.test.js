@@ -8,7 +8,10 @@ jest.mock('fs', () => ({
     stat: jest.fn(),
     access: jest.fn(),
     mkdir: jest.fn().mockResolvedValue(undefined),
-    rename: jest.fn().mockResolvedValue(undefined)
+    rename: jest.fn().mockResolvedValue(undefined),
+    // The watcher refuses links out of Downloads (lstat + realpath); no links here.
+    lstat: jest.fn().mockResolvedValue({ isSymbolicLink: () => false }),
+    realpath: jest.fn(async (p) => p)
   },
   constants: { R_OK: 4 }
 }));

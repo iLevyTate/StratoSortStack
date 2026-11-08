@@ -626,13 +626,13 @@ function OrganizePhase() {
                 Files ready for organization
               </Heading>
               {unprocessedFiles.length > 0 && (
-                <Text
-                  as="span"
-                  variant="tiny"
-                  className="px-2.5 py-1 font-medium bg-stratosort-blue/10 text-stratosort-blue rounded-full"
-                >
+                // A plain span: Text's tiny variant adds text-system-gray-500,
+                // which outranked the pill's own color. Brand blue on this
+                // header is below 4.5:1 at 12px (axe), so the count uses the
+                // theme's body text on the blue tint.
+                <span className="px-2.5 py-1 text-xs font-medium bg-stratosort-blue/15 text-system-gray-900 rounded-full">
                   {unprocessedFiles.length} file{unprocessedFiles.length !== 1 ? 's' : ''}
-                </Text>
+                </span>
               )}
             </div>
             {unprocessedFiles.length > 0 && (

@@ -17,6 +17,7 @@ const {
   safeWaitForTimeout
 } = require('./helpers/electronApp');
 const { NavigationPage } = require('./helpers/pageObjects');
+const { createSyntheticFiles, seedAnalyzedFiles } = require('./helpers/seedState');
 const {
   PHASES,
   SELECTORS,
@@ -61,22 +62,23 @@ test.describe('Full Pipeline — Analysis to Organize', () => {
   });
 
   test('should navigate full pipeline: Discover → Organize → Complete', async () => {
+    // Organize opens once Discover has an analyzed file; seed one (real
+    // analysis needs a model).
+    await seedAnalyzedFiles(window, createSyntheticFiles(app, ['pipeline-report.txt']));
     await nav.goToPhase(PHASES.DISCOVER);
     expect(await nav.getCurrentPhase()).toBe(PHASES.DISCOVER);
 
     await nav.goToPhase(PHASES.ORGANIZE);
     expect(await nav.getCurrentPhase()).toBe(PHASES.ORGANIZE);
 
+    // Complete opens from Organize only once a file was organized. Nothing
+    // has been moved here, so both ways in stay closed and say why.
     const completeTab = nav.getPhaseButton(PHASES.COMPLETE);
-    expect(await completeTab.count()).toBeGreaterThan(0);
-
-    // Complete is in the nav graph from Organize, but only useful once files were organized.
-    const viewResultsButton = window.getByRole('button', { name: /View Results/i });
-    const canViewResults = await viewResultsButton.isEnabled().catch(() => false);
-    if (canViewResults && (await nav.isPhaseAccessible(PHASES.COMPLETE))) {
-      await nav.goToPhase(PHASES.COMPLETE);
-      expect(await nav.getCurrentPhase()).toBe(PHASES.COMPLETE);
-    }
+    await expect(completeTab).toHaveAttribute('aria-disabled', 'true');
+    await expect(completeTab).toHaveAccessibleDescription(
+      'Process at least one file to view results.'
+    );
+    await expect(window.getByRole('button', { name: /View Results/i })).toBeDisabled();
   });
 
   test('should show Discover UI with file import controls', async () => {
@@ -97,6 +99,8 @@ test.describe('Full Pipeline — Analysis to Organize', () => {
   });
 
   test('should show Organize UI with smart folder tabs', async () => {
+    // Organize opens once Discover has an analyzed file; seed one.
+    await seedAnalyzedFiles(window, createSyntheticFiles(app, ['pipeline-report.txt']));
     // Establish deterministic navigation context before asserting Organize UI.
     const discoverOk = await nav.goToPhase(PHASES.DISCOVER);
     expect(discoverOk).toBe(true);
@@ -117,12 +121,9 @@ test.describe('Full Pipeline — Analysis to Organize', () => {
       };
     });
 
-    expect(
-      uiState.hasReviewOrganize ||
-        uiState.hasSmartFolders ||
-        uiState.hasReadyForOrganization ||
-        uiState.hasNoFilesReady
-    ).toBe(true);
+    expect(uiState.hasReadyForOrganization).toBe(true);
+    expect(uiState.hasSmartFolders).toBe(true);
+    expect(uiState.hasNoFilesReady).toBe(false);
   });
 
   test('should show Complete phase with session summary', async () => {
@@ -172,6 +173,8 @@ test.describe('Full Pipeline — Analysis to Organize', () => {
   });
 
   test('should maintain file count when navigating between phases', async () => {
+    // Organize opens once Discover has an analyzed file; seed one.
+    await seedAnalyzedFiles(window, createSyntheticFiles(app, ['pipeline-report.txt']));
     await nav.goToPhase(PHASES.DISCOVER);
     await safeWaitForTimeout(window, 300);
 

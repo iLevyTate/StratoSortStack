@@ -13,7 +13,12 @@
  *   registers an AbortController here keyed by `requestId`.
  * - When the preload timeout fires (or the renderer chooses to cancel), it
  *   sends on `IPC_CHANNELS.SYSTEM.ABORT_INVOKE` with `{ requestId }`. The main
- *   listener calls `abort(requestId)` which triggers the AbortController.
+ *   listener calls `handleAbortInvokeMessage(event, payload)`, which validates
+ *   the payload and triggers the AbortController.
+ * - Entries are scoped to the webContents that issued the invoke: an
+ *   ABORT_INVOKE message only aborts entries registered by the same sender,
+ *   so one window can never cancel another window's request even if it
+ *   learned the id. Internal callers (`abort`, `abortAll`) are not gated.
  * - Handlers opt in to cancellation by reading `event.abortSignal`. Existing
  *   handlers that ignore it are unaffected — the wrapper still cleans up the
  *   entry in `finally`.
@@ -28,12 +33,15 @@ const logger = createLogger('IPCAbortRegistry');
 const MAX_CONCURRENT_ENTRIES = 10000;
 const MAX_REQUEST_ID_LENGTH = 128;
 const REQUEST_ID_PATTERN = /^[\w.:-]+$/;
+const MAX_REASON_LENGTH = 64;
+const DEFAULT_ABORT_REASON = 'ipc-timeout';
 
 /**
  * @typedef {Object} AbortRegistryEntry
  * @property {AbortController} controller
  * @property {string} channel
  * @property {number} registeredAt
+ * @property {number|null} senderId - webContents id that issued the invoke
  */
 
 /** @type {Map<string, AbortRegistryEntry>} */
@@ -57,22 +65,34 @@ function isValidRequestId(requestId) {
 }
 
 /**
+ * @param {unknown} senderId
+ * @returns {number|null}
+ */
+function normalizeSenderId(senderId) {
+  return typeof senderId === 'number' && Number.isFinite(senderId) ? senderId : null;
+}
+
+/**
  * Register an AbortController for an in-flight invoke.
  * Returns the controller's signal (or `null` if registration was refused).
  *
  * @param {string} requestId
  * @param {string} channel
+ * @param {number|null} [senderId] - webContents id of the invoking renderer
  * @returns {AbortSignal|null}
  */
-function register(requestId, channel) {
+function register(requestId, channel, senderId = null) {
   if (!isValidRequestId(requestId)) {
     return null;
   }
-  if (_entries.has(requestId)) {
+  const normalizedSenderId = normalizeSenderId(senderId);
+  const existing = _entries.get(requestId);
+  if (existing) {
     // Duplicate id from a buggy/compromised renderer: refuse rather than
-    // silently replace, since we'd leak the prior controller.
+    // silently replace, since we'd leak the prior controller. Never hand one
+    // sender another sender's signal (or the right to unregister its entry).
     logger.warn(`[AbortRegistry] Duplicate requestId ignored: ${requestId}`);
-    return _entries.get(requestId).controller.signal;
+    return existing.senderId === normalizedSenderId ? existing.controller.signal : null;
   }
   if (_entries.size >= MAX_CONCURRENT_ENTRIES) {
     // LRU-evict the oldest entry and ABORT it, so that:
@@ -105,7 +125,8 @@ function register(requestId, channel) {
   _entries.set(requestId, {
     controller,
     channel,
-    registeredAt: Date.now()
+    registeredAt: Date.now(),
+    senderId: normalizedSenderId
   });
   return controller.signal;
 }
@@ -114,9 +135,13 @@ function register(requestId, channel) {
  * Unregister an entry (called in the wrapper's `finally` block).
  *
  * @param {string} requestId
+ * @param {number|null} [senderId] - when given, only that sender's entry is removed
  */
-function unregister(requestId) {
+function unregister(requestId, senderId) {
   if (!isValidRequestId(requestId)) return;
+  const entry = _entries.get(requestId);
+  if (!entry) return;
+  if (senderId !== undefined && entry.senderId !== normalizeSenderId(senderId)) return;
   _entries.delete(requestId);
 }
 
@@ -147,6 +172,42 @@ function abort(requestId, reason = 'ipc-timeout') {
     `[AbortRegistry] Aborted invoke requestId=${requestId} channel=${entry.channel} reason=${reason}`
   );
   return true;
+}
+
+/**
+ * Handle a renderer `SYSTEM.ABORT_INVOKE` message. This is the only path a
+ * renderer has to abort, so it validates the payload and is scoped to the
+ * sending webContents: the entry must exist, have been registered by the same
+ * sender, and (when the payload names one) be on the same channel. Anything
+ * else is ignored. Never throws.
+ *
+ * @param {any} event - IpcMainEvent (only `event.sender.id` is read)
+ * @param {unknown} payload - `{ requestId: string, channel?: string, reason?: string }`
+ * @returns {boolean} True if a matching entry was aborted
+ */
+function handleAbortInvokeMessage(event, payload) {
+  try {
+    const senderId = normalizeSenderId(event?.sender?.id);
+    if (senderId === null) return false;
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+    const { requestId, channel, reason } = /** @type {Record<string, unknown>} */ (payload);
+    if (!isValidRequestId(requestId)) return false;
+    const id = /** @type {string} */ (requestId);
+    const entry = _entries.get(id);
+    // Unknown id (already settled) or another sender's request: ignore.
+    if (!entry || entry.senderId !== senderId) return false;
+    if (channel !== undefined && channel !== entry.channel) return false;
+    const safeReason =
+      typeof reason === 'string' &&
+      reason.length <= MAX_REASON_LENGTH &&
+      REQUEST_ID_PATTERN.test(reason)
+        ? reason
+        : DEFAULT_ABORT_REASON;
+    return abort(id, safeReason);
+  } catch (err) {
+    logger.debug(`[AbortRegistry] abort-invoke message error: ${err?.message || err}`);
+    return false;
+  }
 }
 
 /**
@@ -184,6 +245,7 @@ module.exports = {
   unregister,
   abort,
   abortAll,
+  handleAbortInvokeMessage,
   size,
   isValidRequestId,
   _reset,

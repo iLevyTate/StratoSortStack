@@ -1,10 +1,11 @@
 // @ts-check
-import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
+import { createSlice, createAsyncThunk, createSelector } from '@reduxjs/toolkit';
 import { PHASES, PHASE_TRANSITIONS, PHASE_ORDER } from '../../../shared/constants';
 import { logger } from '../../../shared/logger';
 import { serializeData } from '../../utils/serialization';
 import { settingsIpc } from '../../services/ipc';
 import { BOOTSTRAP_IPC_OPTIONS, runIpcWithTimeoutRetry } from '../ipcTimeout';
+import { normalizeNamingConventionState } from '../../../shared/namingConventions';
 
 // PHASE_ORDER is imported from constants
 const VALID_PHASES = PHASE_ORDER || ['welcome', 'setup', 'discover', 'organize', 'complete'];
@@ -27,23 +28,118 @@ function canTransitionTo(/** @type {any} */ fromPhase, /** @type {any} */ toPhas
   return allowedTransitions === toPhase;
 }
 
-// Disabled-tab tooltips. Keys are the *blocked target* phase the user is
-// trying to reach; the message describes the prerequisite step they're
-// missing. Surfaced on `aria-disabled` tabs in NavigationBar so users learn
-// why a tab is unavailable instead of bouncing off it silently.
-//
-// Returns null when the transition is permitted (caller falls back to its
-// usual descriptive tooltip).
+/**
+ * True when `toPhase` comes before `fromPhase` in PHASE_ORDER. Going back to
+ * an earlier step is always allowed: nothing a later step does is lost by
+ * looking at an earlier one, and the graph alone left Organize and Results
+ * with no way back to Setup.
+ * @param {any} fromPhase
+ * @param {any} toPhase
+ */
+function isBackwardMove(fromPhase, toPhase) {
+  if (!isValidPhase(fromPhase) || !isValidPhase(toPhase)) return false;
+  return VALID_PHASES.indexOf(toPhase) < VALID_PHASES.indexOf(fromPhase);
+}
+
+/**
+ * The moves `setPhase` accepts: the transition graph plus any step back.
+ * @param {any} fromPhase
+ * @param {any} toPhase
+ */
+function canReachPhase(fromPhase, toPhase) {
+  return canTransitionTo(fromPhase, toPhase) || isBackwardMove(fromPhase, toPhase);
+}
+
+// Why a forward step the graph does not offer is closed. Keys are the
+// *blocked target* phase. Setup and Discover never appear: Setup opens from
+// Welcome and Discover from Welcome or Setup, and every other route to them
+// is a step back.
 const TRANSITION_BLOCK_REASONS = {
-  [PHASES.SETUP]: 'Open Setup from the Welcome step.',
-  [PHASES.DISCOVER]: 'Add files in Discover to get started.',
-  [PHASES.ORGANIZE]: 'Analyze a file in Discover first.',
-  [PHASES.COMPLETE]: 'Organize at least one file to see results.'
+  [PHASES.ORGANIZE]: 'Organize opens from Discover. Go to Discover first.',
+  [PHASES.COMPLETE]: 'Results open from Organize. Go to Organize first.'
 };
 
-function getTransitionBlockReason(/** @type {any} */ fromPhase, /** @type {any} */ toPhase) {
-  if (canTransitionTo(fromPhase, toPhase)) return null;
-  return TRANSITION_BLOCK_REASONS[toPhase] || null;
+/**
+ * Reason a move `setPhase` would refuse, or null when it is accepted. Does not
+ * look at files or folders; `getPhaseNavigation` adds those.
+ * @param {any} fromPhase
+ * @param {any} toPhase
+ */
+function getTransitionBlockReason(fromPhase, toPhase) {
+  if (canReachPhase(fromPhase, toPhase)) return null;
+  return /** @type {Record<string, string>} */ (TRANSITION_BLOCK_REASONS)[toPhase] || null;
+}
+
+// Why a phase's own Continue button is disabled. Each text is the one that
+// button (or, for Welcome, its notice) shows, so a closed phase tab and the
+// in-phase button never give two different reasons.
+const PHASE_PREREQUISITE_REASONS = {
+  needsDestination: 'Add at least one smart folder first so files have somewhere to go.',
+  needsSmartFolder: 'Add at least one destination to continue.',
+  needsAnalyzedFile: 'Analyze at least one file first.',
+  allAnalysisFailed: 'All files failed analysis. Retry them, or clear the queue and try again.',
+  needsProcessedFile: 'Process at least one file to view results.'
+};
+
+/**
+ * @typedef {object} PhaseNavigationContext
+ * @property {boolean} [hasDestinationFolder] a smart folder other than Uncategorized exists (Welcome's rule)
+ * @property {boolean} [hasSmartFolders] any smart folder exists (Setup's Continue rule)
+ * @property {boolean} [hasAnalyzedFiles] at least one file in the queue is analyzed (Discover's Continue rule)
+ * @property {boolean} [hasFailedFiles] at least one file in the queue failed analysis
+ * @property {boolean} [hasProcessedFiles] at least one file was organized (Organize's View results rule)
+ */
+
+/**
+ * The one rule for moving between phases, shared by the phase tabs and the
+ * in-phase buttons:
+ * - staying put or going back is always allowed;
+ * - going forward follows the transition graph, and the step being left must
+ *   pass the same check as its own Continue button (NAVIGATION_RULES.canGoNext;
+ *   Welcome, which has no Continue, requires a destination folder like its
+ *   "Organize files now" button).
+ * Operations in flight (analysis, file moves) are not checked here; the
+ * navigation bar pauses every tab for those.
+ *
+ * @param {any} fromPhase
+ * @param {any} toPhase
+ * @param {PhaseNavigationContext} [context]
+ * @returns {{ allowed: boolean, reason: string | null }}
+ */
+function getPhaseNavigation(fromPhase, toPhase, context = {}) {
+  if (!isValidPhase(fromPhase) || !isValidPhase(toPhase)) {
+    return { allowed: false, reason: null };
+  }
+  if (fromPhase === toPhase || isBackwardMove(fromPhase, toPhase)) {
+    return { allowed: true, reason: null };
+  }
+  if (!canTransitionTo(fromPhase, toPhase)) {
+    return { allowed: false, reason: getTransitionBlockReason(fromPhase, toPhase) };
+  }
+  if (fromPhase === (PHASES?.WELCOME ?? 'welcome')) {
+    if (toPhase === (PHASES?.DISCOVER ?? 'discover') && context.hasDestinationFolder !== true) {
+      return { allowed: false, reason: PHASE_PREREQUISITE_REASONS.needsDestination };
+    }
+    return { allowed: true, reason: null };
+  }
+  if (NAVIGATION_RULES.canGoNext({ currentPhase: fromPhase }, context)) {
+    return { allowed: true, reason: null };
+  }
+  switch (fromPhase) {
+    case PHASES?.SETUP ?? 'setup':
+      return { allowed: false, reason: PHASE_PREREQUISITE_REASONS.needsSmartFolder };
+    case PHASES?.DISCOVER ?? 'discover':
+      return {
+        allowed: false,
+        reason: context.hasFailedFiles
+          ? PHASE_PREREQUISITE_REASONS.allAnalysisFailed
+          : PHASE_PREREQUISITE_REASONS.needsAnalyzedFile
+      };
+    case PHASES?.ORGANIZE ?? 'organize':
+      return { allowed: false, reason: PHASE_PREREQUISITE_REASONS.needsProcessedFile };
+    default:
+      return { allowed: false, reason: null };
+  }
 }
 
 // Navigation state rules - determines when navigation buttons should be disabled
@@ -73,8 +169,10 @@ const NAVIGATION_RULES = {
         // Setup requires at least one smart folder (context provides this)
         return context.hasSmartFolders === true;
       case PHASES?.DISCOVER ?? 'discover':
-        // Discover requires files to be analyzed (or total failure acknowledged)
-        return context.hasAnalyzedFiles || context.totalAnalysisFailure;
+        // Discover requires at least one analyzed file. A total analysis
+        // failure does not unlock it: Organize lists only analyzed files, so
+        // there would be nothing to organize (matches DiscoverPhase's footer).
+        return Boolean(context.hasAnalyzedFiles);
       case PHASES?.ORGANIZE ?? 'organize':
         // Organize requires at least one processed file to view results
         return context.hasProcessedFiles;
@@ -221,8 +319,8 @@ const uiSlice = createSlice({
         return;
       }
 
-      // Validate that the transition is allowed by the central transition graph.
-      if (state.currentPhase !== newPhase && !canTransitionTo(state.currentPhase, newPhase)) {
+      // Validate the move: the central transition graph, plus any step back.
+      if (state.currentPhase !== newPhase && !canReachPhase(state.currentPhase, newPhase)) {
         const warning = `Invalid phase transition: ${state.currentPhase} -> ${newPhase}`;
         logger.warn(`[uiSlice] ${warning}`, {
           from: state.currentPhase,
@@ -350,6 +448,14 @@ const uiSlice = createSlice({
       state.settingsLoaded = true;
       state.settingsError = null;
     },
+    // Optimistic write of the naming keys only (saveNamingDefaults). Unlike
+    // updateSettings it does not mark settings as loaded: a partial object
+    // must never satisfy fetchSettings' cache.
+    mergeNamingSettings: (state, action) => {
+      const patch = pickNamingSettings(action.payload);
+      if (Object.keys(patch).length === 0) return;
+      state.settings = { ...(state.settings || {}), ...patch };
+    },
     setGraphTourDismissed: (state, action) => {
       state.graphTourDismissed = Boolean(action.payload);
     },
@@ -428,7 +534,119 @@ export const {
   setSelectedTheme
 } = uiSlice.actions;
 
+// =============================================================================
+// Default naming convention: one persisted value
+// =============================================================================
+//
+// Settings -> File naming defaults and Discover's naming dialog edit the same
+// thing: the persisted settings keys below (SettingsService, allowlisted in
+// securityConfig). Watchers and Reanalyze read them in main; Discover reads
+// them through selectNamingDefaults. files.namingConvention is only a renderer
+// mirror (localStorage) used until settings arrive and by early startup code.
+
+/** Persisted settings keys that hold the default naming convention. */
+export const NAMING_SETTING_KEYS = [
+  'namingConvention',
+  'dateFormat',
+  'caseConvention',
+  'separator'
+];
+
+/**
+ * The naming keys present on a settings-shaped object, string values only.
+ * @param {any} source
+ * @returns {Record<string, string>}
+ */
+function pickNamingSettings(source) {
+  /** @type {Record<string, string>} */
+  const picked = {};
+  if (!source || typeof source !== 'object') return picked;
+  for (const key of NAMING_SETTING_KEYS) {
+    if (typeof source[key] === 'string') picked[key] = source[key];
+  }
+  return picked;
+}
+
+/**
+ * Settings-shaped patch from either Discover's shape ({ convention, ... }) or
+ * the settings keys ({ namingConvention, ... }).
+ * @param {any} patch
+ * @returns {Record<string, string>}
+ */
+function toNamingSettingsPatch(patch) {
+  if (!patch || typeof patch !== 'object') return {};
+  const settingsShaped =
+    typeof patch.convention === 'string' ? { ...patch, namingConvention: patch.convention } : patch;
+  return pickNamingSettings(settingsShaped);
+}
+
+/**
+ * The default naming convention in Discover's shape
+ * ({ convention, separator, dateFormat, caseConvention }). Each persisted
+ * setting wins over the renderer mirror; the mirror only fills keys settings
+ * do not have yet (before the first settings load).
+ */
+export const selectNamingDefaults = createSelector(
+  [
+    (/** @type {any} */ state) => state.ui?.settings,
+    (/** @type {any} */ state) => state.files?.namingConvention
+  ],
+  (settings, mirror) => {
+    const base = normalizeNamingConventionState(mirror);
+    const persisted = pickNamingSettings(settings);
+    return normalizeNamingConventionState({
+      convention: persisted.namingConvention || base.convention,
+      separator: persisted.separator ?? base.separator,
+      dateFormat: persisted.dateFormat || base.dateFormat,
+      caseConvention: persisted.caseConvention || base.caseConvention
+    });
+  }
+);
+
+/**
+ * Change the default naming convention from anywhere in the renderer.
+ * Updates the cached settings at once (so Discover and the dashboard follow),
+ * then persists through settings:save, which broadcasts the merged settings
+ * back. A failed save puts the previous values back.
+ */
+export const saveNamingDefaults = createAsyncThunk(
+  'ui/saveNamingDefaults',
+  async (/** @type {any} */ patch, { dispatch, getState, rejectWithValue }) => {
+    const settingsPatch = toNamingSettingsPatch(patch);
+    if (Object.keys(settingsPatch).length === 0) return settingsPatch;
+
+    const previousAll = toNamingSettingsPatch(selectNamingDefaults(getState()));
+    /** @type {Record<string, string>} */
+    const previous = {};
+    for (const key of Object.keys(settingsPatch)) {
+      if (typeof previousAll[key] === 'string') previous[key] = previousAll[key];
+    }
+
+    dispatch(uiSlice.actions.mergeNamingSettings(settingsPatch));
+    try {
+      const result = await settingsIpc.save(settingsPatch);
+      if (result && typeof result === 'object' && result.success === false) {
+        throw new Error(result.error || 'Settings save failed');
+      }
+      return settingsPatch;
+    } catch (error) {
+      dispatch(uiSlice.actions.mergeNamingSettings(previous));
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn('[uiSlice] Failed to save naming defaults', { error: message });
+      return rejectWithValue(message);
+    }
+  }
+);
+
 // Export navigation rules for use in components
-export { NAVIGATION_RULES, isValidPhase, canTransitionTo, getTransitionBlockReason };
+export {
+  NAVIGATION_RULES,
+  PHASE_PREREQUISITE_REASONS,
+  isValidPhase,
+  canTransitionTo,
+  canReachPhase,
+  getTransitionBlockReason,
+  getPhaseNavigation
+};
 
 export default uiSlice.reducer;

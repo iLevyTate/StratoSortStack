@@ -68,12 +68,14 @@ class DegradedStateTracker extends EventEmitter {
       throw new TypeError('DegradedStateTracker.raise requires { code }');
     }
     const now = Date.now();
+    let sourceJoined = false;
     if (typeof input.source === 'string' && input.source) {
       let sources = this._sources.get(input.code);
       if (!sources) {
         sources = new Set();
         this._sources.set(input.code, sources);
       }
+      sourceJoined = !sources.has(input.source);
       sources.add(input.source);
     }
     const existing = this._flags.get(input.code);
@@ -81,9 +83,14 @@ class DegradedStateTracker extends EventEmitter {
       existing.lastSeenAt = now;
       existing.count += 1;
       // Allow severity to escalate (warning -> error) but not downgrade.
-      if (input.severity === 'error' && existing.severity !== 'error') {
+      const escalated = input.severity === 'error' && existing.severity !== 'error';
+      if (escalated) {
         existing.severity = 'error';
       }
+      // A dismissal covered the condition the user saw. Another subsystem
+      // joining the flag, or an escalation, is new: show the banner again.
+      // A plain repeat of the same raise stays dismissed.
+      if (sourceJoined || escalated) existing.dismissed = false;
       if (input.message) existing.message = input.message;
       if (input.detail) existing.detail = input.detail;
       this._syncSources(existing);

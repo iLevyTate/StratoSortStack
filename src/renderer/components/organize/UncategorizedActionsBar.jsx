@@ -266,7 +266,6 @@ function UncategorizedActionsBar({
                 variant="primary"
                 size="sm"
                 onClick={() => openCreateModal(suggestion.displayName)}
-                aria-label={`Create Smart Folder for ${suggestion.displayName}`}
               >
                 <Sparkles className="w-4 h-4 mr-1.5" />
                 Create folder for {suggestion.displayName}
@@ -276,7 +275,8 @@ function UncategorizedActionsBar({
               variant={suggestion ? 'ghost' : 'secondary'}
               size="sm"
               onClick={() => openCreateModal('')}
-              aria-label="Create a new Smart Folder"
+              // The accessible name must contain the visible text (WCAG 2.5.3).
+              aria-label={suggestion ? 'Different folder… create a new Smart Folder' : undefined}
             >
               <FolderPlus className="w-4 h-4 mr-1.5" />
               {suggestion ? 'Different folder…' : '+ Create Smart Folder'}
@@ -286,7 +286,11 @@ function UncategorizedActionsBar({
               size="sm"
               onClick={handleReanalyzeAll}
               disabled={isReanalyzing}
-              aria-label={`Reanalyze ${uncategorizedFiles.length} uncategorized files`}
+              aria-label={
+                isReanalyzing
+                  ? 'Reanalyzing…'
+                  : `Reanalyze ${uncategorizedFiles.length} uncategorized files`
+              }
             >
               <RefreshCw className={`w-4 h-4 mr-1.5 ${isReanalyzing ? 'animate-spin' : ''}`} />
               {isReanalyzing ? 'Reanalyzing…' : `Reanalyze ${uncategorizedFiles.length}`}

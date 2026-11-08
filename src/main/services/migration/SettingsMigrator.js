@@ -47,6 +47,38 @@ const NEW_DEFAULTS = {
   settingsSchemaVersion: CURRENT_SCHEMA_VERSION
 };
 
+/**
+ * Repair values an older build accepted but today's validation rules reject
+ * (e.g. a maxConcurrentAnalysis above the current cap, a string-typed
+ * confidenceThreshold). The migrator reads the raw file and hands it to the
+ * strict save(), so one such value would otherwise fail the whole migration
+ * on every launch. Each rejected value is coerced the way a normal load
+ * coerces it (sanitizeSettings) or, when that yields nothing valid, dropped
+ * so the default applies. Mutates `settings`; returns the repaired keys.
+ * @param {Record<string, any>} settings
+ * @returns {{ coerced: string[], dropped: string[] }}
+ */
+function repairInvalidValues(settings) {
+  // Loaded on use: the validation rules pull in the full defaults module.
+  const { validateSettings, sanitizeSettings } = require('../../../shared/settingsValidation');
+  /** @type {string[]} */
+  const coerced = [];
+  /** @type {string[]} */
+  const dropped = [];
+  for (const [key, value] of Object.entries(settings)) {
+    if (validateSettings({ [key]: value }).valid) continue;
+    const repaired = sanitizeSettings({ [key]: value })[key];
+    if (repaired !== undefined && validateSettings({ [key]: repaired }).valid) {
+      settings[key] = repaired;
+      coerced.push(key);
+    } else {
+      delete settings[key];
+      dropped.push(key);
+    }
+  }
+  return { coerced, dropped };
+}
+
 class SettingsMigrator {
   constructor(/** @type {any} */ settingsService) {
     this._settingsService = settingsService;
@@ -222,6 +254,22 @@ class SettingsMigrator {
 
       // Update schema version
       newSettings.settingsSchemaVersion = CURRENT_SCHEMA_VERSION;
+
+      const repaired = repairInvalidValues(newSettings);
+      for (const key of repaired.coerced) {
+        migrated.push(`Coerced invalid legacy value: ${key}`);
+        this._log(`Coerced invalid value: ${key} = ${newSettings[key]}`);
+      }
+      for (const key of repaired.dropped) {
+        migrated.push(`Dropped invalid legacy value: ${key}`);
+        this._log(`Dropped invalid value: ${key}`);
+      }
+      if (repaired.coerced.length > 0 || repaired.dropped.length > 0) {
+        logger.warn('[SettingsMigrator] Repaired settings values rejected by current rules', {
+          coerced: repaired.coerced,
+          dropped: repaired.dropped
+        });
+      }
 
       // Save migrated settings
       await this._settingsService.save(newSettings);

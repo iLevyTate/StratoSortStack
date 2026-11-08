@@ -55,7 +55,7 @@ jest.mock('../../src/renderer/components/layout', () => ({
 
 jest.mock('../../src/renderer/components/ModelSetupWizard', () => ({
   __esModule: true,
-  default: ({ onStepChange }) => (
+  default: ({ onStepChange, onDismiss }) => (
     <div data-testid="model-setup-wizard">
       <button
         data-testid="wizard-start-download"
@@ -63,6 +63,12 @@ jest.mock('../../src/renderer/components/ModelSetupWizard', () => ({
       >
         start download
       </button>
+      {/* Mirrors the downloading-step footer's "Close and keep downloading". */}
+      {typeof onDismiss === 'function' && (
+        <button data-testid="wizard-dismiss" onClick={onDismiss}>
+          close and keep downloading
+        </button>
+      )}
     </div>
   )
 }));
@@ -394,6 +400,47 @@ describe('WelcomePhase', () => {
         expect(update).toHaveBeenCalledWith('modelAutoDownloadSkipped', false);
       });
     });
+
+    test('closing the wizard mid-download keeps the download consent', async () => {
+      const update = jest.fn(async () => ({ success: true }));
+      window.electronAPI = {
+        llama: missingModelsLlamaApi(),
+        settings: {
+          get: jest.fn(async () => ({ modelAutoDownloadSkipped: false })),
+          update
+        }
+      };
+
+      render(<WelcomePhase />);
+      await act(async () => {});
+      await act(async () => {});
+
+      fireEvent.click(await screen.findByTestId('wizard-start-download', {}, { timeout: 3000 }));
+      await waitFor(() => {
+        expect(update).toHaveBeenCalledWith('modelAutoDownloadSkipped', false);
+      });
+
+      // The user leaves the wizard while files are still transferring. That is
+      // not "do not download": the consent just recorded must stand, or the
+      // next launch will not resume the half-finished download.
+      fireEvent.click(screen.getByTestId('wizard-dismiss'));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('model-setup-wizard')).not.toBeInTheDocument();
+      });
+      expect(update).not.toHaveBeenCalledWith('modelAutoDownloadSkipped', true);
+      expect(update.mock.calls.at(-1)).toEqual(['modelAutoDownloadSkipped', false]);
+      expect(mockAddNotification).toHaveBeenCalledWith(
+        expect.stringMatching(/downloading in the background/i),
+        'info',
+        6000,
+        'models-downloading'
+      );
+      expect(mockAddNotification).not.toHaveBeenCalledWith(
+        expect.stringMatching(/Continuing with limited AI/i),
+        expect.anything()
+      );
+    });
   });
 
   test('guided chooser records the phased preference and enters Discover', async () => {
@@ -463,6 +510,32 @@ describe('WelcomePhase', () => {
       mockDispatch.mockClear();
       fireEvent.click(screen.getByText(/Organize files now/i));
       expect(mockDispatch).toHaveBeenCalledWith({ type: 'ui/setPhase', payload: 'setup' });
+    });
+
+    test('the Guided steps card also routes to Setup when only Uncategorized exists', async () => {
+      mockState.files.smartFolders = [
+        {
+          id: 'default-uncategorized',
+          name: 'Uncategorized',
+          category: 'uncategorized',
+          isDefault: true,
+          path: 'C:/U'
+        }
+      ];
+      await renderReady();
+      mockDispatch.mockClear();
+
+      fireEvent.click(screen.getByText('Guided steps').closest('button'));
+
+      expect(mockDispatch).toHaveBeenCalledWith({ type: 'ui/setViewMode', payload: 'phased' });
+      expect(mockDispatch).toHaveBeenCalledWith({ type: 'ui/setPhase', payload: 'setup' });
+      expect(mockDispatch).not.toHaveBeenCalledWith({ type: 'ui/setPhase', payload: 'discover' });
+      expect(mockAddNotification).toHaveBeenCalledWith(
+        expect.stringMatching(/smart folder/i),
+        'info',
+        5000,
+        'organize-needs-folders'
+      );
     });
 
     test('goes to Discover as before once a real smart folder exists', async () => {

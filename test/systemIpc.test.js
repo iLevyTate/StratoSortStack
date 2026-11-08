@@ -592,6 +592,29 @@ describe('registerSystemIpc', () => {
       expect(loggedData.nested.note).not.toMatch(/[\r\n]/);
     });
 
+    test('caps renderer key length and strips control characters from keys', async () => {
+      const handler = handlers[SYSTEM_CHANNELS.LOG];
+      const longKey = 'k'.repeat(5000);
+      const result = await handler(null, {
+        level: 'info',
+        message: 'keys',
+        data: {
+          [longKey]: 1,
+          [`${longKey}-other`]: 2,
+          'line1\nline2\u001b': 3
+        }
+      });
+
+      expect(result).toEqual({ success: true });
+      const [, loggedData] = mockLogger.info.mock.calls.at(-1);
+      const keys = Object.keys(loggedData);
+      expect(Math.max(...keys.map((k) => k.length))).toBeLessThanOrEqual(200);
+      // eslint-disable-next-line no-control-regex -- assertion intentionally checks for control bytes
+      expect(keys.join('')).not.toMatch(/[\u0000-\u001f\u007f]/);
+      // Two keys that share a capped prefix both keep their value.
+      expect(Object.values(loggedData).sort()).toEqual([1, 2, 3]);
+    });
+
     test('keeps the Renderer: facility prefix even when renderer provides no context', async () => {
       const handler = handlers[SYSTEM_CHANNELS.LOG];
       const result = await handler(null, { level: 'info', message: 'plain', data: {} });

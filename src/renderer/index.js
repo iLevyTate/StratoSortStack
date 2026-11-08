@@ -15,12 +15,11 @@ import {
   setOrganizedFiles
 } from './store/slices/filesSlice';
 import { mergeAnalysisResults } from './store/slices/analysisSlice';
-import { fetchSettings } from './store/slices/uiSlice';
+import { fetchSettings, selectNamingDefaults } from './store/slices/uiSlice';
 import App from './App.js';
 import { applyPlatformClass } from './utils/platform';
 import { fetchAnalysisHistoryPages } from './utils/analysisHistoryFetch';
 import { mergeReadyQueueIntoState, normalizeReadyQueuePayload } from './utils/readyQueueHydration';
-import { normalizeNamingConventionState } from '../shared/namingConventions';
 import { GlobalErrorBoundary as _GlobalErrorBoundary } from './components/ErrorBoundary';
 import { getScrollBehavior } from './utils/motionPreferences';
 import { lockAppScroll } from './utils/scrollLock';
@@ -104,7 +103,9 @@ async function hydrateDurableReadyQueue() {
     // store.getState() calls also guarantees a consistent view of selected
     // files / analysis / fileStates.
     const postAwaitState = store.getState();
-    const namingSettings = normalizeNamingConventionState(postAwaitState.files?.namingConvention);
+    // The default naming convention is the persisted settings; the
+    // files.namingConvention mirror only fills in before settings load.
+    const namingSettings = selectNamingDefaults(postAwaitState);
     const merged = mergeReadyQueueIntoState(
       {
         selectedFiles: postAwaitState.files.selectedFiles,

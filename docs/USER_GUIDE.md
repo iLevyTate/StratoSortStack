@@ -43,6 +43,13 @@ StratoSort is organized into five phases. You move through them in order:
    Undo/Redo if you change your mind.
 5. **Complete** — See a summary of everything that was organized. Undo is still available here.
 
+The step tabs in the top bar follow the same rules as each step's own Continue button. A tab you
+cannot open yet is dimmed, and hovering or focusing it tells you why (for example, from Welcome,
+Discover needs a Smart Folder first; Organize needs at least one analyzed file; Results need at
+least one organized file). Going back to an earlier step is always allowed. While analysis runs or
+files are moving, the tabs pause until the work finishes; Settings stays available from the gear
+icon.
+
 Prefer one screen over steps? Choose **Dashboard** on the Welcome screen, or use the **Guided /
 Dashboard** toggle in the top bar, for a single overview screen. **Guided** (the phases above) is
 the default.
@@ -81,7 +88,15 @@ content against these descriptions to decide where it fits best.
 
 ## 4) Naming Conventions
 
-Open **Settings -> Default Locations -> File naming defaults**.
+There is one default naming convention. You can change it in either of two places, and both show the
+same value:
+
+- **Settings -> Default Locations -> File naming defaults** (saved when you click Save).
+- The **Naming strategy** button in Discover (saved as soon as you pick an option).
+
+The default applies to Discover's suggested names (already analyzed files update to match), the
+Download Watcher, the Smart Folder Watcher, and **Reanalyze All Files**. It is kept between
+sessions.
 
 You can control:
 
@@ -275,6 +290,18 @@ Then run a small batch first and review outcomes before scaling up.
 - Review naming defaults in **Settings -> Default Locations**.
 - Confirm convention/date/case/separator values.
 
+### "That folder is inside a link that points outside your allowed locations."
+
+You can see this when you use **Create directory** on a Smart Folder marked **Missing** in Setup. On
+this computer, StratoSort creates folders only inside your home folder, Documents, Downloads or
+Desktop, and never inside a system folder. It goes by where the folder really is, not by the path as
+written. If the path runs through a shortcut-style link (a symbolic link, or a junction on Windows)
+that leads somewhere outside those places, or into a system folder, the folder is refused.
+
+- Edit the Smart Folder to use the real folder the link points to.
+- If that real folder is outside those places, create it yourself in File Explorer or Finder, then
+  choose it as the Smart Folder's location with **Browse**.
+
 ### Need to see logs
 
 - Open **Settings -> Diagnostics** (Advanced) and use **Open Folder** or **Export Logs**.
@@ -292,14 +319,17 @@ Then run a small batch first and review outcomes before scaling up.
     tab are remembered on this computer.
   - It shows the same cleaned-up lines the log file holds. Folder paths are removed, leaving file
     names, on Windows and in the usual places on macOS and Linux (your home folder, external drives,
-    `/tmp` and similar). A path that ends at a folder keeps that folder's own name. A macOS or Linux
-    path anywhere else is only cleaned up to its first space, so folder names after a space can
-    still show there; organize lines name only the file. When paths are hidden for a demo or
-    recording (`STRATOSORT_REDACT_PATHS=1`), the panel also shows file names as "a file". This is
-    best effort: it can hide some words that only look like file names (such as `simple-main.js` or
-    a web address), it can show the part of a file name before its last space, and a name inside a
-    web link or ending in `.com`, `.co` or `.io` can still show. The context column (which part of
-    the app wrote the line) is never hidden.
+    `/tmp` and similar). A path that ends at a folder keeps that folder's own name, except your home
+    folder itself (`C:\Users\<name>`, `/Users/<name>`, `/home/<name>`): its name is your account
+    name, so it is hidden too. A Windows path that mixes `\` and `/` is cleaned up as one path. A
+    macOS or Linux path anywhere else is only cleaned up to its first space, unless that space is in
+    its first folder (`/Shared Drives/...`), so folder names after a space can still show there;
+    organize lines name only the file. When paths are hidden for a demo or recording
+    (`STRATOSORT_REDACT_PATHS=1`), the panel also shows file names as "a file". This is best effort:
+    it can hide some words that only look like file names (such as `simple-main.js` or a web
+    address), it can show the part of a file name before its last space, and a name inside a web
+    link or ending in `.com`, `.co` or `.io` can still show. The context column (which part of the
+    app wrote the line) is never hidden.
   - Turning it on or off does not create a settings backup. While it is closed, nothing is collected
     for it.
 

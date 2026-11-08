@@ -148,6 +148,70 @@ async function renameWithTransientRetry(from, to, maxAttempts) {
 }
 
 /**
+ * Per-path FIFO mutex chains shared by EVERY in-process mover. Keyed by
+ * {@link pathLockKey}. Entries self-clean once the tail holder releases.
+ * @type {Map<string, Promise<any>>}
+ */
+const pathLocks = new Map();
+
+/**
+ * Canonical lock key for a path: host-normalized and, on case-insensitive
+ * filesystems (win32, default darwin), case-folded, so `Report_1.pdf` and
+ * `report_1.pdf` contend on one lock exactly as they contend on one file.
+ * @param {string} filePath
+ * @returns {string}
+ */
+function pathLockKey(filePath) {
+  const normalized = path.resolve(resolveFsPath(filePath));
+  return isCaseInsensitiveFileSystem() ? normalized.toLowerCase() : normalized;
+}
+
+/**
+ * Run `fn` under a per-path FIFO mutex so callers claiming the SAME name
+ * execute one at a time, in arrival order. This is what makes the
+ * occupancy preflight in {@link renameNoReplace} and atomicMove a real claim:
+ * fs.rename replaces an occupied destination, so two movers whose probes
+ * both saw the name free (a batch op walking `x.pdf` -> `x_1.pdf` while a
+ * sibling op, a single move or the download watcher targets `x_1.pdf`
+ * directly) would otherwise both "succeed" and one file would be destroyed.
+ * The lock is module-level so all movers share one map. It is NOT
+ * re-entrant: `fn` must not take the same key again. It does not protect
+ * against another PROCESS creating the name in the window (the documented
+ * TOCTOU trade-off); it closes the race the app itself creates.
+ * JS is single-threaded, so the synchronous chain append is race-free.
+ * @template T
+ * @param {string} filePath
+ * @param {() => Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+async function withPathLock(filePath, fn) {
+  const key = pathLockKey(filePath);
+  const previous = pathLocks.get(key) || Promise.resolve();
+  /** @type {(v?: any) => void} */
+  let releaseCurrent = () => {};
+  const current = new Promise((resolve) => {
+    releaseCurrent = resolve;
+  });
+  // Publish our link as the new tail synchronously so the next caller queues
+  // behind us, not behind `previous`.
+  const chained = previous.then(() => current);
+  pathLocks.set(key, chained);
+  // Our turn starts once every earlier holder has released. Swallow prior
+  // errors: a failed move upstream must not reject our unrelated turn.
+  await previous.catch(() => {});
+  try {
+    return await fn();
+  } finally {
+    releaseCurrent();
+    // Drop the entry if nobody chained after us, so the map can't grow
+    // unbounded across many distinct destinations.
+    if (pathLocks.get(key) === chained) {
+      pathLocks.delete(key);
+    }
+  }
+}
+
+/**
  * Persist `data` to `filePath` via temp+fsync+rename. fsync is load-bearing
  * for the journal: without it, a power loss between `writeFile` and `rename`
  * can commit the rename target while its data is still in the page cache,
@@ -194,13 +258,6 @@ async function durableWriteJson(filePath, data) {
 class AtomicFileOperations {
   constructor() {
     this.activeTransactions = new Map();
-    // Per-destination FIFO mutex chain. Serializes concurrent atomicMove()
-    // calls that target the SAME destination so the fileExists()->rename()
-    // preflight can't be raced intra-process (Node's fs.rename overwrites a
-    // pre-existing destination silently). Keyed by normalized destination path;
-    // entries are self-cleaning (dropped once the tail waiter releases).
-    /** @type {Map<string, Promise<any>>} */
-    this._destinationLocks = new Map();
     this.backupDirectory = null;
     this.backupBaseDirectory = null;
     this.journalDirectory = null;
@@ -222,40 +279,17 @@ class AtomicFileOperations {
   }
 
   /**
-   * Run `fn` under a per-key FIFO mutex so callers contending on the same key
-   * execute one at a time (in arrival order). Used to serialize moves to the
-   * same destination; JS is single-threaded so a synchronous chain append is
-   * race-free. Map entries self-clean when no later caller has chained on.
+   * Serialize work on one destination name with every other in-process
+   * mover (batch organize, single moves, the download watcher, rollback).
+   * Delegates to the shared module-level {@link withPathLock}.
    * @template T
    * @param {string} key
    * @param {() => Promise<T>} fn
    * @returns {Promise<T>}
    * @private
    */
-  async _withDestinationLock(key, fn) {
-    const previous = this._destinationLocks.get(key) || Promise.resolve();
-    /** @type {(v?: any) => void} */
-    let releaseCurrent;
-    const current = new Promise((resolve) => {
-      releaseCurrent = resolve;
-    });
-    // Publish our link as the new tail synchronously so the next caller queues
-    // behind us, not behind `previous`.
-    const chained = previous.then(() => current);
-    this._destinationLocks.set(key, chained);
-    // Our turn starts once every earlier holder has released. Swallow prior
-    // errors: a failed move upstream must not reject our unrelated turn.
-    await previous.catch(() => {});
-    try {
-      return await fn();
-    } finally {
-      releaseCurrent();
-      // Drop the entry if nobody chained after us, so the map can't grow
-      // unbounded across many distinct destinations.
-      if (this._destinationLocks.get(key) === chained) {
-        this._destinationLocks.delete(key);
-      }
-    }
+  _withDestinationLock(key, fn) {
+    return withPathLock(key, fn);
   }
 
   // ===== Transaction Journaling =====
@@ -935,18 +969,7 @@ class AtomicFileOperations {
 
     let backupPath = null;
 
-    // Ensure source exists for memfs-based tests to prevent ENOENT
     const normalizedSource = resolveFsPath(source);
-    if (type === 'move' || type === 'copy') {
-      if (process.env.NODE_ENV === 'test') {
-        if (!(await this.fileExists(normalizedSource))) {
-          await fs.mkdir(path.dirname(normalizedSource), {
-            recursive: true
-          });
-          await fs.writeFile(normalizedSource, '');
-        }
-      }
-    }
 
     // Create backup for existing files. This MUST happen before the
     // destructive step and BEFORE we persist the intent journal, so that
@@ -1091,24 +1114,12 @@ class AtomicFileOperations {
         });
       } catch (error) {
         if (error.code === 'ENOENT') {
-          // Source is genuinely missing — retrying the rename is wasteful.
-          if (attempts === 0 && process.env.NODE_ENV !== 'test') {
-            throw new FileSystemError(FILE_SYSTEM_ERROR_CODES.FILE_NOT_FOUND, {
-              path: normalizedSource,
-              operation: 'move'
-            });
-          }
-          // In test env, create placeholder and retry (CRIT-16 fix preserved)
-          if (process.env.NODE_ENV === 'test') {
-            if (!(await this.fileExists(normalizedSource))) {
-              await fs.mkdir(path.dirname(normalizedSource), {
-                recursive: true
-              });
-              await fs.writeFile(normalizedSource, '');
-            }
-          }
-          attempts++;
-          continue;
+          // Source is genuinely missing (on the first attempt or after a
+          // name-conflict retry): retrying the rename cannot help.
+          throw new FileSystemError(FILE_SYSTEM_ERROR_CODES.FILE_NOT_FOUND, {
+            path: normalizedSource,
+            operation: 'move'
+          });
         }
         if (error.code === 'EEXIST') {
           // Destination exists: pick a unique candidate and retry under the
@@ -1122,8 +1133,21 @@ class AtomicFileOperations {
           // crossDeviceMove resolves void; callers (executeOperation's
           // createdDestinations, batch-organize result paths) need the
           // final path, same as the same-device branch above.
-          await crossDeviceMove(normalizedSource, attemptDestination, { verify: true });
-          return attemptDestination;
+          try {
+            await crossDeviceMove(normalizedSource, attemptDestination, { verify: true });
+            return attemptDestination;
+          } catch (crossDeviceError) {
+            // Another writer took the name during the copy; the no-replace
+            // publish refused it. Same as a same-device EEXIST: next name.
+            const nameTaken =
+              crossDeviceError?.code === 'FILE_EXISTS' ||
+              crossDeviceError?.code === 'EEXIST' ||
+              crossDeviceError?.metadata?.originalCode === 'EEXIST';
+            if (!nameTaken) throw crossDeviceError;
+            attempts++;
+            finalDestination = await this.generateUniqueFilename(attemptDestination);
+            continue;
+          }
         } else {
           const fsError = FileSystemError.fromNodeError(error, {
             path: normalizedSource,
@@ -1193,21 +1217,10 @@ class AtomicFileOperations {
           finalDestination = await this.generateUniqueFilename(finalDestination);
           continue;
         } else if (error.code === 'ENOENT') {
-          if (attempts === 0 && process.env.NODE_ENV !== 'test') {
-            throw new FileSystemError(FILE_SYSTEM_ERROR_CODES.FILE_NOT_FOUND, {
-              path: normalizedSource,
-              operation: 'copy'
-            });
-          }
-          // Create placeholder source and retry once
-          if (process.env.NODE_ENV === 'test') {
-            await fs.mkdir(path.dirname(normalizedSource), {
-              recursive: true
-            });
-            await fs.writeFile(normalizedSource, '');
-          }
-          attempts++;
-          continue;
+          throw new FileSystemError(FILE_SYSTEM_ERROR_CODES.FILE_NOT_FOUND, {
+            path: normalizedSource,
+            operation: 'copy'
+          });
         } else {
           const fsError = FileSystemError.fromNodeError(error, {
             path: normalizedSource,
@@ -1916,9 +1929,12 @@ async function crossDeviceMove(source, dest, options = {}) {
     if (error.isFileSystemError) {
       throw error;
     }
+    // EEXIST can only come from the publish onto the destination name, so
+    // name the occupied destination, not the source, in the error.
     const fsError = FileSystemError.fromNodeError(error, {
-      path: normalizedSource,
-      operation: 'crossDeviceMove'
+      path: error?.code === 'EEXIST' ? normalizedDest : normalizedSource,
+      operation: 'crossDeviceMove',
+      destination: normalizedDest
     });
     throw fsError;
   }
@@ -1932,9 +1948,12 @@ async function crossDeviceMove(source, dest, options = {}) {
  * Windows). Callers that walk numbered-suffix candidates "on EEXIST"
  * therefore never see the collision and destroy the occupant instead.
  * This helper restores the no-replace semantics those callers assume by
- * preflighting existence and throwing a synthetic EEXIST. The
- * check-then-rename window is the same accepted TOCTOU trade-off as
- * atomicMove's preflight above.
+ * preflighting existence and throwing a synthetic EEXIST. The probe and
+ * the rename run under {@link withPathLock} on the destination, shared with
+ * atomicMove, so two in-process movers can never both claim one free name
+ * (each would see it free, and the second rename would replace the first).
+ * Another process creating the name inside the window remains the accepted
+ * TOCTOU trade-off.
  *
  * Case-only renames are exempt: on case-insensitive filesystems
  * (win32, default darwin) access(dest) finds the source itself, and
@@ -1953,31 +1972,33 @@ async function renameNoReplace(source, dest) {
     ? normalizedSource.toLowerCase() === normalizedDest.toLowerCase()
     : normalizedSource === normalizedDest;
 
-  if (!isSameFileTarget) {
-    let destOccupied = false;
-    try {
-      await fs.access(normalizedDest);
-      destOccupied = true;
-    } catch (accessError) {
-      // Only a confirmed ENOENT means the destination is free. Any other
-      // probe failure (EACCES, EPERM, ...) is indistinguishable from an
-      // occupied destination — fail closed rather than risk an overwrite.
-      if (/** @type {NodeJS.ErrnoException} */ (accessError).code !== 'ENOENT') {
-        throw accessError;
+  await withPathLock(normalizedDest, async () => {
+    if (!isSameFileTarget) {
+      let destOccupied = false;
+      try {
+        await fs.access(normalizedDest);
+        destOccupied = true;
+      } catch (accessError) {
+        // Only a confirmed ENOENT means the destination is free. Any other
+        // probe failure (EACCES, EPERM, ...) is indistinguishable from an
+        // occupied destination — fail closed rather than risk an overwrite.
+        if (/** @type {NodeJS.ErrnoException} */ (accessError).code !== 'ENOENT') {
+          throw accessError;
+        }
+      }
+      if (destOccupied) {
+        const eexistError = /** @type {NodeJS.ErrnoException} */ (
+          new Error(
+            `EEXIST: file already exists, rename '${normalizedSource}' -> '${normalizedDest}'`
+          )
+        );
+        eexistError.code = 'EEXIST';
+        throw eexistError;
       }
     }
-    if (destOccupied) {
-      const eexistError = /** @type {NodeJS.ErrnoException} */ (
-        new Error(
-          `EEXIST: file already exists, rename '${normalizedSource}' -> '${normalizedDest}'`
-        )
-      );
-      eexistError.code = 'EEXIST';
-      throw eexistError;
-    }
-  }
 
-  await fs.rename(normalizedSource, normalizedDest);
+    await fs.rename(normalizedSource, normalizedDest);
+  });
 }
 
 module.exports = {
@@ -1985,6 +2006,9 @@ module.exports = {
   atomicFileOps,
   crossDeviceMove,
   renameNoReplace,
+  // Shared per-name lock: anything that claims a destination name by
+  // probe-then-write outside renameNoReplace/atomicMove must take it too.
+  withPathLock,
   // Exported for callers that need crash-consistency, not just in-process
   // atomicity: safeWriteFile/atomicCreate skip the fsync, so a power loss
   // between write and rename can commit a zero-byte file.

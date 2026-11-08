@@ -390,6 +390,39 @@ const createMainWindow = require('./core/createWindow');
 
 /** @type {Promise<void> | null} */
 let _windowCreationPromise = null;
+/** @type {any} Window whose restore waits for its first 'show'. */
+let _restoreQueuedForWindow = null;
+
+/**
+ * Bring the existing main window forward (second launch, tray, dock click).
+ * Before the window's first show the restore is queued for that show:
+ * show() on a window still waiting for ready-to-show puts an unpainted frame
+ * on screen and releases the first-paint gate, which starts heavyweight
+ * startup while the renderer is still loading.
+ * @param {any} win
+ * @param {string} source - log prefix, e.g. 'SECOND-INSTANCE'
+ */
+function restoreMainWindow(win, source) {
+  const { restoreWindow } = require('./core/windowState');
+  const restore = () => {
+    restoreWindow(win).catch((/** @type {any} */ error) => {
+      logger.error(`[${source}] Error restoring window:`, error);
+    });
+  };
+
+  if (mainWindowFirstShowPending && win === mainWindow) {
+    if (_restoreQueuedForWindow !== win) {
+      _restoreQueuedForWindow = win;
+      win.once('show', () => {
+        if (_restoreQueuedForWindow === win) _restoreQueuedForWindow = null;
+        if (!win.isDestroyed()) restore();
+      });
+    }
+    logger.debug(`[${source}] Window not shown yet; restoring after its first show`);
+    return;
+  }
+  restore();
+}
 
 function createWindow() {
   if (_shutdownState.shouldClose) {
@@ -404,15 +437,13 @@ function createWindow() {
   logger.debug('[WINDOW] createWindow() called');
 
   // Use event-driven window state manager instead of nested setTimeout
-  const { restoreWindow, ensureWindowOnScreen } = require('./core/windowState');
+  const { ensureWindowOnScreen } = require('./core/windowState');
 
   if (mainWindow && !mainWindow.isDestroyed()) {
     logger.debug('[WINDOW] Window already exists, restoring state...');
 
     // Use event-driven restoration (replaces complex setTimeout chain)
-    restoreWindow(mainWindow).catch((error) => {
-      logger.error('[WINDOW] Error during window state restoration:', error);
-    });
+    restoreMainWindow(mainWindow, 'WINDOW');
 
     // Ensure window is on screen (handle multi-monitor issues)
     ensureWindowOnScreen(mainWindow);
@@ -773,78 +804,308 @@ function handleSettingsChanged(/** @type {any} */ settings, /** @type {any} */ m
   }
 }
 
-async function runCoordinatedStartupInBackground(
-  /** @type {any} */ startupManager,
-  /** @type {any} */ integration
-) {
-  const COORDINATED_STARTUP_TIMEOUT = TIMEOUTS.SERVICE_STARTUP + 15000; // 45s
+/** Aborts the coordinated startup in flight, if any (set while one runs). */
+/** @type {((reason: string) => void) | null} */
+let _abortActiveCoordinatedStartup = null;
+
+/**
+ * Abort a coordinated startup that is still running. Lifecycle calls this on
+ * quit so services are not initialised against a container being shut down.
+ * @param {string} reason
+ * @returns {boolean} true when a running startup was told to stop
+ */
+function abortCoordinatedStartup(reason) {
+  if (!_abortActiveCoordinatedStartup) return false;
+  _abortActiveCoordinatedStartup(reason);
+  return true;
+}
+
+/**
+ * Phase 1 (StartupManager services) then Phase 2 (ServiceIntegration).
+ *
+ * Resolves with the services result when both phases finish within the soft
+ * timeout, or with `{ degraded: true, error }` when startup fails. When the
+ * soft timeout elapses first it resolves `{ degraded: true, timedOut: true,
+ * lateCompletion }` and startup keeps running: `lateCompletion` resolves with
+ * the services result if it then finishes, or null if it fails, is aborted
+ * or hits the hard cap. Only the hard cap (or abortCoordinatedStartup) aborts.
+ *
+ * @param {any} startupManager
+ * @param {any} integration
+ * @param {{ softTimeoutMs?: number, hardCapMs?: number }} [options]
+ * @returns {Promise<any>}
+ */
+async function runCoordinatedStartupInBackground(startupManager, integration, options = {}) {
+  const softTimeoutMs = options.softTimeoutMs ?? TIMEOUTS.COORDINATED_STARTUP_SOFT;
+  const hardCapMs = options.hardCapMs ?? TIMEOUTS.COORDINATED_STARTUP_HARD_CAP;
   const coordinatedStartupController = new AbortController();
   const { signal: coordinatedStartupSignal } = coordinatedStartupController;
-  let timedOut = false;
-  let timeoutId;
 
-  const abortCoordinatedStartup = (/** @type {any} */ reason) => {
+  const abort = (/** @type {string} */ reason) => {
     if (!coordinatedStartupSignal.aborted) {
       coordinatedStartupController.abort(reason);
     }
+    startupManager.abortStartup?.(reason);
   };
+  _abortActiveCoordinatedStartup = abort;
 
   const coordinatedStartup = async () => {
     logger.info('[STARTUP] Phase 1: Starting AI services...');
     const servicesResult = await startupManager.startup({ signal: coordinatedStartupSignal });
-    if (coordinatedStartupSignal.aborted) {
+    if (coordinatedStartupSignal.aborted || _shutdownState.shouldClose) {
       throw new Error('Coordinated startup aborted before service integration');
     }
 
     logger.info('[STARTUP] Phase 2: Initializing service integration...');
-    await integration.initialize({
+    const integrationResult = await integration.initialize({
       startupResult: servicesResult,
       signal: coordinatedStartupSignal
     });
+    // ServiceIntegration resolves (never rejects) with initialized left false
+    // when it fails or is aborted mid-way; that is a failed startup, not a
+    // finished one, or the late path would clear the banner over a dead app.
+    if (coordinatedStartupSignal.aborted || _shutdownState.shouldClose) {
+      throw new Error('Coordinated startup aborted during service integration');
+    }
+    if (!integration.initialized) {
+      const failures = Array.isArray(integrationResult?.errors)
+        ? integrationResult.errors
+            .map((/** @type {any} */ e) => e?.error || e?.service)
+            .filter(Boolean)
+            .join('; ')
+        : '';
+      throw new Error(`Service integration did not initialize${failures ? `: ${failures}` : ''}`);
+    }
 
     return servicesResult;
   };
 
-  const timeoutPromise = new Promise((_, reject) => {
-    timeoutId = setTimeout(() => {
-      timedOut = true;
-      abortCoordinatedStartup('Coordinated startup timeout');
-      startupManager.abortStartup('Coordinated startup timeout');
-      reject(
-        new Error(`Coordinated startup timeout after ${COORDINATED_STARTUP_TIMEOUT / 1000} seconds`)
-      );
-    }, COORDINATED_STARTUP_TIMEOUT);
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let softTimer;
+  const hardTimer = setTimeout(() => {
+    logger.error('[STARTUP] Coordinated startup hit its hard cap; aborting', { hardCapMs });
+    abort(`Coordinated startup hard cap of ${hardCapMs / 1000} seconds exceeded`);
+  }, hardCapMs);
+  hardTimer.unref?.();
+
+  const settled = coordinatedStartup().finally(() => {
+    clearTimeout(hardTimer);
+    if (softTimer) clearTimeout(softTimer);
+    if (_abortActiveCoordinatedStartup === abort) _abortActiveCoordinatedStartup = null;
   });
 
-  try {
-    const coordinatedStartupPromise = coordinatedStartup().catch((error) => {
-      if (timedOut) {
-        logger.error('[STARTUP] Coordinated startup failed after timeout', {
-          message: error?.message || 'Unknown error',
-          stack: error?.stack
-        });
-        return {
-          degraded: true,
-          error: error?.message || 'Coordinated startup failed after timeout',
-          lateFailure: true
-        };
-      }
-      throw error;
-    });
+  const SOFT_TIMEOUT = Symbol('soft-timeout');
+  const softTimeout = new Promise((resolve) => {
+    softTimer = setTimeout(() => resolve(SOFT_TIMEOUT), softTimeoutMs);
+  });
 
-    const startupResult = await Promise.race([coordinatedStartupPromise, timeoutPromise]);
-    logger.info('[STARTUP] Coordinated startup completed successfully');
-    return startupResult;
+  /** @type {any} */
+  let winner;
+  try {
+    winner = await Promise.race([settled, softTimeout]);
   } catch (error) {
     logger.error('[STARTUP] Coordinated startup failed:', {
       message: error?.message || 'Unknown error',
       stack: error?.stack
     });
     logger.warn('[STARTUP] Continuing startup in degraded mode');
-    return { degraded: true, error: error.message };
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
+    return { degraded: true, error: error?.message || 'Coordinated startup failed' };
   }
+
+  if (winner !== SOFT_TIMEOUT) {
+    logger.info('[STARTUP] Coordinated startup completed successfully');
+    return winner;
+  }
+
+  logger.warn('[STARTUP] Coordinated startup still running after soft timeout; continuing', {
+    softTimeoutMs,
+    hardCapMs
+  });
+  const lateCompletion = settled.then(
+    (result) => {
+      logger.info('[STARTUP] Coordinated startup completed after the soft timeout');
+      return result;
+    },
+    /** @returns {null} */ (error) => {
+      logger.error('[STARTUP] Coordinated startup failed after timeout', {
+        message: error?.message || 'Unknown error',
+        stack: error?.stack
+      });
+      return null;
+    }
+  );
+  return {
+    degraded: true,
+    timedOut: true,
+    error: `Coordinated startup timeout after ${softTimeoutMs / 1000} seconds`,
+    lateCompletion
+  };
+}
+
+const COORDINATED_FAILURE_CODE = 'startup.coordinated-failure';
+const COORDINATED_STILL_STARTING_CODE = 'startup.still-starting';
+
+function clearCoordinatedStartupFlag(/** @type {string} */ code) {
+  try {
+    require('./services/DegradedStateTracker').getInstance().clear(code);
+  } catch (trackerErr) {
+    logger.debug('[STARTUP] Could not clear degraded-startup flag', {
+      code,
+      error: trackerErr?.message
+    });
+  }
+}
+
+function raiseCoordinatedStartupFailure(/** @type {any} */ error) {
+  try {
+    const tracker = require('./services/DegradedStateTracker').getInstance();
+    tracker.raise({
+      code: COORDINATED_FAILURE_CODE,
+      subsystem: 'startup',
+      severity: 'error',
+      message:
+        'AI services did not fully start — analysis and semantic search may be unavailable. Restart StratoSort to retry.',
+      detail: { error: error || null }
+    });
+  } catch (trackerErr) {
+    logger.warn('[STARTUP] Failed to raise degraded-startup flag', {
+      error: trackerErr?.message
+    });
+  }
+}
+
+/**
+ * Tell the user how coordinated startup went. A startup that outlived the
+ * soft timeout is still running, so it gets a warning that says so; telling
+ * the user to restart would only start the slow load over. The restart error
+ * is for a startup that failed (here, or later in finishLateCoordinatedStartup).
+ * @param {any} startupResult
+ */
+function raiseCoordinatedStartupNotice(startupResult) {
+  if (!startupResult?.degraded || _shutdownState.shouldClose) return;
+  if (!startupResult.timedOut) {
+    raiseCoordinatedStartupFailure(startupResult.error);
+    return;
+  }
+  try {
+    require('./services/DegradedStateTracker')
+      .getInstance()
+      .raise({
+        code: COORDINATED_STILL_STARTING_CODE,
+        subsystem: 'startup',
+        severity: 'warning',
+        message:
+          'AI services are still starting — analysis and semantic search will be ready shortly. ' +
+          'A large library can take a few minutes; StratoSort keeps loading in the background.',
+        detail: { error: startupResult.error || null }
+      });
+  } catch (trackerErr) {
+    logger.warn('[STARTUP] Failed to raise still-starting flag', {
+      error: trackerErr?.message
+    });
+  }
+}
+
+let _deferredStartupWiringApplied = false;
+
+/**
+ * Wiring that needs ServiceIntegration initialised: watchers, learning
+ * feedback, settings propagation, the learning scan, resuming interrupted
+ * organize batches and model verification. Runs once, from whichever path
+ * finishes coordinated startup (in time or after the soft timeout), and never
+ * once shutdown has begun.
+ * @param {any} startupManager
+ * @param {any} integration - the ServiceIntegration instance
+ * @param {any} startupResult
+ * @param {Record<string, any>} initialSettings
+ * @returns {Promise<boolean>} true when the wiring ran
+ */
+async function completeDeferredStartup(
+  startupManager,
+  integration,
+  startupResult,
+  initialSettings
+) {
+  if (_deferredStartupWiringApplied) return false;
+  if (_shutdownState.shouldClose) {
+    logger.info('[STARTUP] Skipping deferred service wiring: shutdown in progress');
+    return false;
+  }
+  if (!integration?.initialized) {
+    if (startupResult?.timedOut) {
+      logger.warn('[STARTUP] Service integration still initializing; wiring runs when it finishes');
+    } else {
+      logger.warn('[STARTUP] Service integration did not finish initializing');
+    }
+    return false;
+  }
+  _deferredStartupWiringApplied = true;
+
+  const getCustomFolders = () => customFolders;
+  const getMainWindow = () => mainWindow;
+  logger.info('[STARTUP] Applying deferred service wiring');
+  integration.configureSmartFolderWatcher({
+    getSmartFolders: getCustomFolders,
+    analyzeDocumentFile,
+    analyzeImageFile,
+    analyzeMediaFile
+  });
+  integration.configureDownloadWatcher({
+    getCustomFolders: () => customFolders,
+    analyzeDocumentFile,
+    analyzeImageFile,
+    analyzeMediaFile
+  });
+  integration.configureLearningFeedback({
+    getSmartFolders: getCustomFolders
+  });
+  handleSettingsChanged(currentSettings || initialSettings, {
+    source: 'startup-post-init',
+    timestamp: Date.now()
+  });
+  scheduleLearningStartupScan(integration);
+
+  // Resume interrupted organize batches only now: processingState is
+  // null on the ServiceIntegration shell until initialize() attaches
+  // it, so the previous fixed 500ms timer raced background startup
+  // and silently skipped the resume whenever it lost.
+  resumeIncompleteBatches(integration, logger, getMainWindow).catch((/** @type {any} */ err) => {
+    logger.warn('[RESUME] Resume of incomplete batches failed:', err?.message);
+  });
+
+  if (!startupResult?.degraded) {
+    await verifyModelsInBackground(startupManager);
+  }
+  return true;
+}
+
+/**
+ * After a soft timeout, finish startup when the late completion arrives. On
+ * success (service integration initialised) clear the notices and run the
+ * deferred wiring; on failure swap the still-starting warning for the
+ * restart error.
+ * @param {any} startupManager
+ * @param {any} integration - the ServiceIntegration instance
+ * @param {Promise<any>} lateCompletion
+ * @param {Record<string, any>} initialSettings
+ * @returns {Promise<boolean>} true when the wiring ran
+ */
+async function finishLateCoordinatedStartup(
+  startupManager,
+  integration,
+  lateCompletion,
+  initialSettings
+) {
+  const lateResult = await lateCompletion;
+  if (_shutdownState.shouldClose) return false;
+  if (!lateResult || !integration?.initialized) {
+    raiseCoordinatedStartupFailure('Coordinated startup did not finish after the soft timeout');
+    clearCoordinatedStartupFlag(COORDINATED_STILL_STARTING_CODE);
+    return false;
+  }
+  clearCoordinatedStartupFlag(COORDINATED_STILL_STARTING_CODE);
+  clearCoordinatedStartupFlag(COORDINATED_FAILURE_CODE);
+  return completeDeferredStartup(startupManager, integration, lateResult, initialSettings);
 }
 
 /**
@@ -1060,9 +1321,6 @@ if (gotTheLock || process.env.STRATOSORT_FORCE_LAUNCH === '1') {
     }
 
     // Someone tried to run a second instance, restore and focus our window
-    // Use event-driven window state manager
-    const { restoreWindow } = require('./core/windowState');
-
     // Windows: Jump List tasks are passed via argv when the app is already running.
     // Process them here so tasks work reliably in the single-instance scenario.
     try {
@@ -1075,10 +1333,7 @@ if (gotTheLock || process.env.STRATOSORT_FORCE_LAUNCH === '1') {
 
     if (mainWindow && !mainWindow.isDestroyed()) {
       logger.debug('[SECOND-INSTANCE] Restoring window for second instance attempt');
-
-      restoreWindow(mainWindow).catch((error) => {
-        logger.error('[SECOND-INSTANCE] Error restoring window:', error);
-      });
+      restoreMainWindow(mainWindow, 'SECOND-INSTANCE');
     } else {
       // No window exists, create one
       createWindow();
@@ -1256,8 +1511,12 @@ app
         // Restore legacy state/history before services read userData
         await migrateUserDataState();
 
-        // Get the startup manager instance
-        const startupManager = getStartupManager();
+        // Get the startup manager instance. Its own timeout matches the
+        // coordinated hard cap so a slow but progressing service start is not
+        // torn down early (see TIMEOUTS.COORDINATED_STARTUP_SOFT).
+        const startupManager = getStartupManager({
+          startupTimeout: TIMEOUTS.COORDINATED_STARTUP_HARD_CAP
+        });
 
         // Create the integration shell now so IPC and the renderer can come up quickly.
         // Heavy startup work runs after the first window is created.
@@ -1526,22 +1785,11 @@ app
         // timeout wins the race against `ipcRenderer.invoke`, and the main-side
         // ipcRegistry wrapper has already associated that requestId with an
         // AbortController (exposed to handlers as `event.abortSignal`).
+        // Payload validation and sender scoping (a window may only abort its
+        // own invokes) live in the registry.
         const ipcAbortRegistry = require('./core/ipcAbortRegistry');
-        const abortInvokeHandler = (/** @type {any} */ _event, /** @type {any} */ payload) => {
-          try {
-            const requestId =
-              payload && typeof payload === 'object' && typeof payload.requestId === 'string'
-                ? payload.requestId
-                : null;
-            if (!requestId) return;
-            const reason =
-              payload && typeof payload.reason === 'string' && payload.reason.length <= 64
-                ? payload.reason
-                : 'ipc-timeout';
-            ipcAbortRegistry.abort(requestId, reason);
-          } catch (err) {
-            logger.debug(`[IPC] abort-invoke handler error: ${err?.message || err}`);
-          }
+        const abortInvokeHandler = (/** @type {any} */ event, /** @type {any} */ payload) => {
+          ipcAbortRegistry.handleAbortInvokeMessage(event, payload);
         };
         registerListener(ipcMain, IPC_CHANNELS.SYSTEM.ABORT_INVOKE, abortInvokeHandler);
 
@@ -1622,6 +1870,13 @@ app
                 uptimeS: Math.round(process.uptime())
               });
 
+              // A quit during the gate: nothing below should start against a
+              // shutdown that is already tearing services down.
+              if (_shutdownState.shouldClose) {
+                logger.info('[STARTUP] Shutdown began before first paint; skipping startup');
+                return undefined;
+              }
+
               // Run first-time setup in background (non-blocking)
               // Handled by ./core/backgroundSetup module
               runBackgroundSetup();
@@ -1637,65 +1892,31 @@ app
               // Surface degraded startup to the user. Previously this state was
               // log-only: AI analysis/search would silently fail with no
               // explanation. The DegradedStateBanner polls this tracker.
-              if (startupResult?.degraded) {
-                try {
-                  const tracker = require('./services/DegradedStateTracker').getInstance();
-                  tracker.raise({
-                    code: 'startup.coordinated-failure',
-                    subsystem: 'startup',
-                    severity: 'error',
-                    message:
-                      'AI services did not fully start — analysis and semantic search may be unavailable. Restart StratoSort to retry.',
-                    detail: { error: startupResult.error || null }
+              raiseCoordinatedStartupNotice(startupResult);
+
+              // A startup that outlived the soft timeout is still running;
+              // when it finishes, clear the notice and run the same wiring
+              // (or, if it fails, raise the restart error then).
+              if (startupResult?.lateCompletion) {
+                finishLateCoordinatedStartup(
+                  startupManager,
+                  serviceIntegration,
+                  startupResult.lateCompletion,
+                  initialSettings
+                ).catch((/** @type {any} */ err) => {
+                  logger.error('[STARTUP] Late startup wiring failed', {
+                    error: err?.message || String(err)
                   });
-                } catch (trackerErr) {
-                  logger.warn('[STARTUP] Failed to raise degraded-startup flag', {
-                    error: trackerErr?.message
-                  });
-                }
+                });
+                return undefined;
               }
 
-              if (serviceIntegration?.initialized) {
-                logger.info('[STARTUP] Applying deferred service wiring');
-                serviceIntegration.configureSmartFolderWatcher({
-                  getSmartFolders: getCustomFolders,
-                  analyzeDocumentFile,
-                  analyzeImageFile,
-                  analyzeMediaFile
-                });
-                serviceIntegration.configureDownloadWatcher({
-                  getCustomFolders: () => customFolders,
-                  analyzeDocumentFile,
-                  analyzeImageFile,
-                  analyzeMediaFile
-                });
-                serviceIntegration.configureLearningFeedback({
-                  getSmartFolders: getCustomFolders
-                });
-                handleSettingsChanged(currentSettings || initialSettings, {
-                  source: 'startup-post-init',
-                  timestamp: Date.now()
-                });
-                scheduleLearningStartupScan(serviceIntegration);
-
-                // Resume interrupted organize batches only now: processingState is
-                // null on the ServiceIntegration shell until initialize() attaches
-                // it, so the previous fixed 500ms timer raced background startup
-                // and silently skipped the resume whenever it lost.
-                if (!_shutdownState.shouldClose) {
-                  resumeIncompleteBatches(serviceIntegration, logger, getMainWindow).catch(
-                    (err) => {
-                      logger.warn('[RESUME] Resume of incomplete batches failed:', err?.message);
-                    }
-                  );
-                }
-              } else {
-                logger.warn('[STARTUP] Service integration did not finish initializing');
-              }
-
-              if (!startupResult?.degraded) {
-                await verifyModelsInBackground(startupManager);
-              }
+              await completeDeferredStartup(
+                startupManager,
+                serviceIntegration,
+                startupResult,
+                initialSettings
+              );
               return undefined;
             }
           )
@@ -1703,19 +1924,7 @@ app
             logger.error('[STARTUP] Deferred startup pipeline failed', {
               error: err?.message || String(err)
             });
-            try {
-              const tracker = require('./services/DegradedStateTracker').getInstance();
-              tracker.raise({
-                code: 'startup.coordinated-failure',
-                subsystem: 'startup',
-                severity: 'error',
-                message:
-                  'AI services did not fully start — analysis and semantic search may be unavailable. Restart StratoSort to retry.',
-                detail: { error: err?.message || String(err) }
-              });
-            } catch {
-              // tracker unavailable — already logged above
-            }
+            raiseCoordinatedStartupFailure(err?.message || String(err));
           });
 
         // Start periodic system metrics broadcast to renderer
@@ -1809,7 +2018,8 @@ app
           setGlobalProcessListeners: (/** @type {any} */ val) => {
             globalProcessListeners = val;
           },
-          setIsQuitting
+          setIsQuitting,
+          abortStartup: abortCoordinatedStartup
         });
 
         // Register lifecycle handlers (replaces inline before-quit, window-all-closed, etc.)
@@ -2008,3 +2218,12 @@ logger.info('StratoSort main process initialized');
 const { resumeIncompleteBatches } = require('./services/OrganizeResumeService');
 
 // Delete folder and its contents
+
+// Exported for unit tests (test/main/simpleMain); the app never requires this module.
+module.exports = {
+  runCoordinatedStartupInBackground,
+  abortCoordinatedStartup,
+  completeDeferredStartup,
+  finishLateCoordinatedStartup,
+  raiseCoordinatedStartupNotice
+};

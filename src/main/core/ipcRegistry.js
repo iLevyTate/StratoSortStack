@@ -185,8 +185,11 @@ function registerHandler(ipcMain, channel, handler) {
     }
     let registeredRequestId = null;
     let abortSignal = null;
+    // Scope the abort key to the invoking webContents so an ABORT_INVOKE from
+    // another window can never cancel this request.
+    const senderId = typeof event?.sender?.id === 'number' ? event.sender.id : null;
     if (requestId && ipcAbortRegistry.isValidRequestId(requestId)) {
-      abortSignal = ipcAbortRegistry.register(requestId, channel);
+      abortSignal = ipcAbortRegistry.register(requestId, channel, senderId);
       if (abortSignal) {
         registeredRequestId = requestId;
       }
@@ -211,7 +214,7 @@ function registerHandler(ipcMain, channel, handler) {
       return await withCorrelationId(async () => handler(event, ...args), correlationId);
     } finally {
       if (registeredRequestId) {
-        ipcAbortRegistry.unregister(registeredRequestId);
+        ipcAbortRegistry.unregister(registeredRequestId, senderId);
       }
       _inFlightOperations.delete(operationId);
     }

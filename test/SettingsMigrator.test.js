@@ -7,7 +7,10 @@ jest.mock('../src/shared/logger', () => ({
   })
 }));
 
+// Keep every real constant (the migrator lazily loads settingsValidation,
+// which builds the defaults from them); override only the model defaults.
 jest.mock('../src/shared/constants', () => ({
+  ...jest.requireActual('../src/shared/constants'),
   AI_DEFAULTS: {
     TEXT: { MODEL: 'text.gguf' },
     IMAGE: { MODEL: 'vision.gguf' },

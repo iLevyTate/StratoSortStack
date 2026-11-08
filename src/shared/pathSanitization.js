@@ -623,6 +623,240 @@ async function checkSymlinkSafety(
   }
 }
 
+const CANONICAL_RESOLVE_MAX_STEPS = 256;
+
+/**
+ * Resolve where a path really lives: follow every directory link along it
+ * (symlinks and Windows junctions, not only the last component) and expand
+ * Windows 8.3 short names (`C:\PROGRA~3` -> `C:\ProgramData`). The part of the
+ * path that does not exist yet is re-attached after the deepest existing
+ * ancestor; a dangling link is followed to its target.
+ *
+ * `fs.promises.realpath` is the native resolver (GetFinalPathNameByHandle on
+ * Windows), which is what expands short names.
+ *
+ * @param {string} targetPath - Absolute path
+ * @returns {Promise<string|null>} The real path, or null when it cannot be determined
+ */
+async function resolveCanonicalPath(targetPath) {
+  if (!fs || typeof fs.realpath !== 'function' || typeof targetPath !== 'string') return null;
+  let probe = path.resolve(targetPath);
+  /** @type {string[]} */
+  let tail = [];
+  for (let step = 0; step < CANONICAL_RESOLVE_MAX_STEPS; step++) {
+    try {
+      const real = await fs.realpath(probe);
+      if (typeof real !== 'string' || !real) return null;
+      return tail.length > 0 ? path.join(real, ...tail) : real;
+    } catch (error) {
+      const code = /** @type {any} */ (error)?.code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') return null;
+      // A dangling link: realpath fails, but writing through it would create
+      // the file at the link's target, so judge the target.
+      let linkTarget = null;
+      try {
+        if (typeof fs.lstat === 'function' && typeof fs.readlink === 'function') {
+          const stats = await fs.lstat(probe);
+          if (stats?.isSymbolicLink?.()) {
+            linkTarget = await fs.readlink(probe);
+          }
+        }
+      } catch {
+        linkTarget = null;
+      }
+      if (typeof linkTarget === 'string' && linkTarget) {
+        probe = path.resolve(path.dirname(probe), linkTarget);
+        continue;
+      }
+      const parent = path.dirname(probe);
+      if (parent === probe) return null;
+      tail = [path.basename(probe), ...tail];
+      probe = parent;
+    }
+  }
+  return null;
+}
+
+/**
+ * Real paths of `targets`, all from ONE realpath implementation so they can be
+ * compared with each other (is this file really inside that folder?).
+ *
+ * The native resolver (GetFinalPathNameByHandle on Windows) expands 8.3 short
+ * names and resolves subst and mapped drives to their target; the JS walk
+ * (lstat + readlink per component) does neither, so a result from one must
+ * never be compared with a result from the other. Native realpath fails with
+ * EISDIR/EINVAL and the like on some Windows volumes (RAM disks,
+ * VeraCrypt/ImDisk containers, some virtual cloud drives); when it fails on any
+ * target for a reason other than a missing path, every target is resolved
+ * again with the JS walk, which still follows symlinks and junctions.
+ *
+ * @param {string[]} targets
+ * @returns {Promise<Array<{ path: string, error?: undefined } | { path?: undefined, error: any }>>}
+ *   One entry per target, in order: its real path, or the error that stopped it.
+ */
+async function resolveRealPaths(targets) {
+  /** @param {(p: string) => Promise<string>} realpath */
+  const resolveAll = (realpath) =>
+    Promise.all(
+      targets.map(async (target) => {
+        try {
+          return { path: await realpath(target) };
+        } catch (error) {
+          return { error };
+        }
+      })
+    );
+  /** @param {any} error */
+  const isMissing = (error) => error?.code === 'ENOENT' || error?.code === 'ENOTDIR';
+
+  if (!fs || typeof fs.realpath !== 'function') {
+    return targets.map(() => ({ error: new Error('realpath unavailable') }));
+  }
+  const nativeResults = await resolveAll((p) => fs.realpath(p));
+  if (!nativeResults.some((r) => r.error && !isMissing(r.error))) return nativeResults;
+
+  let jsRealpath = null;
+  try {
+    const fsCallback = require('fs');
+    if (typeof fsCallback.realpath === 'function') {
+      jsRealpath = require('util').promisify(fsCallback.realpath);
+    }
+  } catch {
+    jsRealpath = null;
+  }
+  return jsRealpath ? resolveAll(jsRealpath) : nativeResults;
+}
+
+/**
+ * macOS keeps the per-user temp folder under `/private/var/folders`, which the
+ * `/private/var` deny entry covers once the `/var` alias is resolved. Files
+ * genuinely living in the user's own temp folder (Mail attachments dragged
+ * out, browser temp downloads) are not system files.
+ *
+ * @param {string} canonicalPath
+ * @returns {Promise<boolean>}
+ */
+async function _isInDarwinUserTemp(canonicalPath) {
+  if (PLATFORM !== 'darwin') return false;
+  let tmp;
+  try {
+    tmp = require('os').tmpdir();
+  } catch {
+    return false;
+  }
+  if (!tmp) return false;
+  const realTmp = await resolveCanonicalPath(tmp);
+  return Boolean(realTmp) && isPathWithinAllowed(canonicalPath, [/** @type {string} */ (realTmp)]);
+}
+
+/**
+ * Re-run the denylist and allowlist on the real location of `normalizedPath`.
+ *
+ * @param {string} normalizedPath
+ * @param {string[]|null} allowedBasePaths
+ * @returns {Promise<string|null>} An error message, or null when the real location is acceptable
+ */
+async function _checkCanonicalLocation(normalizedPath, allowedBasePaths) {
+  const canonical = await resolveCanonicalPath(normalizedPath);
+  // Could not canonicalize (no fs, permission error): the lexical checks that
+  // already ran stand.
+  if (!canonical || canonical === normalizedPath) return null;
+
+  if (isPathDangerous(canonical) && !(await _isInDarwinUserTemp(canonical))) {
+    return 'Invalid path: path leads (through a link or short name) into system directories, which is not allowed';
+  }
+
+  // Inside a base as spelled: no base needs resolving. Otherwise the bases
+  // may themselves be spelled through a link or short name, so accept the
+  // real location against the real spelling of each base, each bounded on its
+  // own so one unreachable base (an offline network smart folder) cannot fail
+  // the check for paths in the others. A base that does not resolve in time
+  // only loses its real spelling; it never widens what is allowed.
+  if (
+    allowedBasePaths &&
+    allowedBasePaths.length > 0 &&
+    !isPathWithinAllowed(canonical, allowedBasePaths)
+  ) {
+    const realBases = await Promise.all(
+      allowedBasePaths.map((base) =>
+        base ? _resolveCanonicalPathBounded(base, CANONICAL_BASE_TIMEOUT_MS) : null
+      )
+    );
+    const bases = realBases.filter((b) => typeof b === 'string');
+    if (!isPathWithinAllowed(canonical, /** @type {string[]} */ (bases))) {
+      return 'Invalid path: path goes through a link that points outside allowed directories';
+    }
+  }
+  return null;
+}
+
+// Per-base budget inside the overall SYMLINK_CHECK_TIMEOUT_MS of a canonical
+// check, leaving time for the target's own resolution.
+const CANONICAL_BASE_TIMEOUT_MS = 2000;
+
+/**
+ * {@link resolveCanonicalPath}, or null when it has not finished in `timeoutMs`.
+ * @param {string} targetPath
+ * @param {number} timeoutMs
+ * @returns {Promise<string|null>}
+ */
+async function _resolveCanonicalPathBounded(targetPath, timeoutMs) {
+  /** @type {ReturnType<typeof setTimeout>|undefined} */
+  let timeoutId;
+  const timeout = new Promise((resolve) => {
+    timeoutId = setTimeout(() => resolve(null), timeoutMs);
+    if (timeoutId && typeof timeoutId === 'object' && typeof timeoutId.unref === 'function') {
+      timeoutId.unref();
+    }
+  });
+  try {
+    return /** @type {string|null} */ (
+      await Promise.race([
+        resolveCanonicalPath(targetPath).catch(/** @returns {null} */ () => null),
+        timeout
+      ])
+    );
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
+ * {@link _checkCanonicalLocation} bounded by a timeout (network mounts can
+ * hang a realpath). A timeout fails closed, like the symlink check.
+ *
+ * @param {string} normalizedPath
+ * @param {string[]|null} allowedBasePaths
+ * @param {number} [timeoutMs]
+ * @returns {Promise<string|null>}
+ */
+async function _checkCanonicalLocationWithTimeout(
+  normalizedPath,
+  allowedBasePaths,
+  timeoutMs = SYMLINK_CHECK_TIMEOUT_MS
+) {
+  /** @type {ReturnType<typeof setTimeout>|undefined} */
+  let timeoutId;
+  const timeoutPromise = new Promise((resolve) => {
+    timeoutId = setTimeout(() => {
+      resolve(
+        `Path check timeout after ${timeoutMs}ms - path may be on unresponsive network mount`
+      );
+    }, timeoutMs);
+    if (timeoutId && typeof timeoutId === 'object' && typeof timeoutId.unref === 'function') {
+      timeoutId.unref();
+    }
+  });
+  const checkPromise = _checkCanonicalLocation(normalizedPath, allowedBasePaths).catch(
+    (error) => `Path check failed: ${error?.message || error}`
+  );
+  try {
+    return /** @type {string|null} */ (await Promise.race([checkPromise, timeoutPromise]));
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 /**
  * Validate a file path for file operations (move, copy, delete, open)
  * Performs comprehensive security checks including:
@@ -634,7 +868,8 @@ async function checkSymlinkSafety(
  * @param {string} filePath - Path to validate
  * @param {Object} [options] - Validation options
  * @param {string[]} [options.allowedBasePaths] - If provided, path must be within these directories
- * @param {boolean} [options.checkSymlinks=false] - Whether to check symlink safety
+ * @param {boolean} [options.checkSymlinks=false] - Whether to check symlink safety and judge the
+ *   real location (links anywhere along the path, 8.3 short names) against the same rules
  * @param {boolean} [options.requireExists=false] - Whether the path must exist
  * @param {boolean} [options.requireAbsolute=false] - Whether input must be absolute
  * @param {boolean} [options.disallowUNC=false] - Block UNC/network paths
@@ -724,6 +959,19 @@ async function validateFileOperationPath(filePath, options = {}) {
           normalizedPath,
           error: symlinkResult.error || 'Invalid path: unsafe symbolic link'
         };
+      }
+
+      // The checks above judge the path as spelled. A link part-way down the
+      // path (junction/symlinked directory) or a Windows 8.3 short name can
+      // spell a system directory, or a folder outside the allowed bases,
+      // under an innocent name. Judge the real location too. The returned
+      // normalizedPath stays the caller's spelling (trash/undo rely on it).
+      const canonicalError = await _checkCanonicalLocationWithTimeout(
+        normalizedPath,
+        allowedBasePaths
+      );
+      if (canonicalError) {
+        return { valid: false, normalizedPath, error: canonicalError };
       }
     }
 
@@ -1007,6 +1255,8 @@ module.exports = {
   validateFileOperationPath,
   validateFileOperationPathSync,
   checkSymlinkSafety,
+  resolveCanonicalPath,
+  resolveRealPaths,
   isPathDangerous,
   isPathWithinAllowed,
   // Path normalization for index keys

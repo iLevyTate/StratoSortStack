@@ -24,8 +24,10 @@ import { Plus, ChevronDown, ChevronUp, RotateCcw, Folder } from 'lucide-react';
 import { filesIpc, settingsIpc, smartFoldersIpc } from '../services/ipc';
 import { normalizePathValue } from '../utils/pathNormalization';
 import { mapErrorToNotification } from '../utils/errorMapping';
+import { countDestinationFolders } from '../utils/smartFolderDestinations';
 
 const logger = createLogger('SetupPhase');
+const FALLBACK_ONLY_NOTE_ID = 'setup-fallback-only-note';
 const normalizePathWithFallback = (value, fallback = 'Documents') => {
   const normalized = normalizePathValue(value);
   return normalized || fallback;
@@ -466,7 +468,15 @@ function SetupPhase() {
   };
 
   const isCompactMode = viewMode === 'compact';
-  const hasConfiguredFolders = smartFolders.length > 0;
+  // Same rule Welcome uses: the Uncategorized catch-all (always present, and
+  // not removable) is not a destination, so it does not count toward
+  // readiness. Otherwise Welcome says "add a smart folder first" and Setup
+  // answers "Ready for discovery" for the same list. Continue stays usable with
+  // only the fallback (Discover still analyzes and searches); its tooltip says
+  // what that means instead.
+  const destinationCount = countDestinationFolders(smartFolders);
+  const hasConfiguredFolders = destinationCount > 0;
+  const onlyFallbackFolder = !hasConfiguredFolders && smartFolders.length > 0;
   // Threshold past which the responsive smart-folder grid becomes
   // expensive to layout/paint (each card carries its own form, collapse
   // state, hover/motion, and icons). Rather than swap to a full
@@ -539,8 +549,10 @@ function SetupPhase() {
         collapsedSummary={
           <Text variant="small" className="text-system-gray-700">
             {hasConfiguredFolders
-              ? `${smartFolders.length} destination${smartFolders.length !== 1 ? 's' : ''} ready — expand for setup tips`
-              : 'Add a destination to continue — expand for setup tips'}
+              ? `${destinationCount} destination${destinationCount !== 1 ? 's' : ''} ready — expand for setup tips`
+              : onlyFallbackFolder
+                ? 'No destination yet, so files can only go to Uncategorized — expand for setup tips'
+                : 'Add a destination to continue — expand for setup tips'}
           </Text>
         }
       >
@@ -555,8 +567,10 @@ function SetupPhase() {
                   Ready for discovery
                 </StatusBadge>
               ) : (
+                // With only the Uncategorized fallback, Continue stays enabled,
+                // so the badge says what is missing without claiming it blocks.
                 <StatusBadge variant="warning" size="sm">
-                  Add at least one destination
+                  {onlyFallbackFolder ? 'No destination yet' : 'Add at least one destination'}
                 </StatusBadge>
               )}
             </div>
@@ -564,9 +578,9 @@ function SetupPhase() {
               Start with a trusted set of destinations
             </Heading>
             <Text variant="small" className="text-system-gray-600">
-              Most people begin with the default folder set, then refine categories later. You only
-              need one destination to continue, and you review every suggested move before it
-              happens.
+              Most people begin with the default folder set, then refine categories later. One
+              destination is enough to start organizing, and you review every suggested move before
+              it happens.
             </Text>
             <Text variant="tiny" className="text-system-gray-500 mt-2">
               By default, folders are created directly under your user Documents directory. Paths
@@ -580,9 +594,14 @@ function SetupPhase() {
             </Text>
             <Text variant="small" className="mt-1 font-medium text-system-gray-800">
               {hasConfiguredFolders
-                ? `${smartFolders.length} destination${smartFolders.length !== 1 ? 's' : ''} ready`
+                ? `${destinationCount} destination${destinationCount !== 1 ? 's' : ''} ready`
                 : 'Waiting for your first destination'}
             </Text>
+            {onlyFallbackFolder && (
+              <Text variant="tiny" className="mt-1 text-system-gray-500">
+                Uncategorized only holds files that fit nowhere else, so it does not count.
+              </Text>
+            )}
             <Text variant="tiny" className="mt-1 text-system-gray-500">
               You can always come back and adjust these later.
             </Text>
@@ -596,7 +615,7 @@ function SetupPhase() {
           <Text variant="small" className="font-medium">
             {isLoading
               ? 'Loading...'
-              : `${smartFolders.length} destination${smartFolders.length !== 1 ? 's' : ''}`}
+              : `${destinationCount} destination${destinationCount !== 1 ? 's' : ''}`}
           </Text>
           {/* F-204: what the watcher is doing with these folders (was silent). */}
           {!isLoading && <WatcherStatusLine folderCount={smartFolders.length} />}
@@ -732,6 +751,17 @@ function SetupPhase() {
       </div>
 
       {/* Footer navigation */}
+      {onlyFallbackFolder && !isLoading && (
+        // Visible (not only a hover title) so keyboard and touch users learn
+        // what Continue means here; the button points at it.
+        <Text
+          id={FALLBACK_ONLY_NOTE_ID}
+          variant="small"
+          className="text-system-gray-600 text-center sm:text-right"
+        >
+          No destination yet, so analyzed files can only go to Uncategorized.
+        </Text>
+      )}
       <ActionBar>
         <Button
           onClick={() => actions.advancePhase(PHASES?.WELCOME ?? 'welcome')}
@@ -771,11 +801,12 @@ function SetupPhase() {
           title={
             isLoading
               ? 'Loading setup data.'
-              : !hasConfiguredFolders
+              : smartFolders.length === 0
                 ? 'Add at least one destination to continue.'
                 : undefined
           }
-          disabled={isLoading || !hasConfiguredFolders}
+          aria-describedby={onlyFallbackFolder && !isLoading ? FALLBACK_ONLY_NOTE_ID : undefined}
+          disabled={isLoading || smartFolders.length === 0}
         >
           {isLoading ? 'Loading...' : 'Continue to Discovery'}
         </Button>

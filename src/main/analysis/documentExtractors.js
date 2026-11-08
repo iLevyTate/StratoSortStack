@@ -732,6 +732,12 @@ async function checkFileSize(filePath, fileName, maxSizeOverride) {
 }
 
 /**
+ * Appended by truncateText. Exported so the analysis can recognise a cut body,
+ * flag it partial and strip the marker before the text is analyzed or stored.
+ */
+const TEXT_TRUNCATION_MARKER = '\n\n[Text truncated due to length]';
+
+/**
  * Truncate text to prevent memory issues
  * @param {string} text - Text to truncate
  * @returns {string} Truncated text
@@ -739,7 +745,7 @@ async function checkFileSize(filePath, fileName, maxSizeOverride) {
 function truncateText(text) {
   if (!text) return '';
   if (text.length <= MAX_TEXT_LENGTH) return text;
-  return `${text.substring(0, MAX_TEXT_LENGTH)}\n\n[Text truncated due to length]`;
+  return `${text.substring(0, MAX_TEXT_LENGTH)}${TEXT_TRUNCATION_MARKER}`;
 }
 
 /**
@@ -995,10 +1001,25 @@ function formatCsvRow(/** @type {any} */ row) {
   return String(row);
 }
 
-async function extractTextFromCsv(/** @type {any} */ filePath) {
+/**
+ * @param {any} filePath
+ * @param {{ maxBytes?: number | null }} [options] `maxBytes` reads only the
+ *   head of a CSV over the text size limit, like the other text formats.
+ */
+async function extractTextFromCsv(filePath, options = {}) {
   // Treat CSV as structured text; enforce file size to avoid memory blowups
-  await checkFileSize(filePath, filePath);
-  const raw = await readTextFileWithEncoding(filePath);
+  const fileSize = await checkFileSize(filePath, filePath);
+  const maxBytes =
+    options && Number.isFinite(options.maxBytes) && Number(options.maxBytes) > 0
+      ? Math.floor(Number(options.maxBytes))
+      : null;
+  let raw = await readTextFileWithEncoding(filePath, { maxBytes });
+  if (maxBytes && fileSize > maxBytes) {
+    // The cap lands mid-row; a half row would parse as a short or broken
+    // record (or an unclosed quote), so keep only the complete lines.
+    const lastNewline = raw.lastIndexOf('\n');
+    if (lastNewline > 0) raw = raw.slice(0, lastNewline);
+  }
 
   // Stream-parse so we can stop reading after MAX_CSV_ROWS instead of
   // materializing the entire records array and then slicing. For a 200 MB
@@ -1226,11 +1247,49 @@ async function extractTextFromPdf(filePath, fileName, options = {}) {
 }
 
 /**
+ * Most pages of a scanned PDF that are OCR'd. Each page costs seconds of
+ * tesseract time inside the EXTRACTION_TIMEOUTS.OCR budget; the opening pages
+ * carry what naming and filing need, and the coverage report says when the
+ * rest was left out.
+ */
+const PDF_OCR_MAX_PAGES = 3;
+
+/**
+ * How much of a scanned PDF OCR read. `totalPages` is null when the page
+ * count could not be established.
+ * @typedef {{ pagesOcred?: number, totalPages?: number | null }} PdfOcrCoverage
+ */
+
+/**
+ * @param {PdfOcrCoverage | undefined} coverage
+ * @param {number} pagesOcred
+ * @param {number | null} totalPages
+ */
+function reportPdfOcrCoverage(coverage, pagesOcred, totalPages) {
+  if (!coverage || typeof coverage !== 'object') return;
+  coverage.pagesOcred = pagesOcred;
+  coverage.totalPages = totalPages;
+  if (totalPages && pagesOcred < totalPages) {
+    logger.info('[OCR] Scanned PDF longer than the OCR page cap; analyzing the first pages only', {
+      pagesOcred,
+      totalPages,
+      maxPages: PDF_OCR_MAX_PAGES
+    });
+  }
+}
+
+/**
  * @param {any} filePath
- * @param {{ signal?: AbortSignal }} [options]
+ * @param {{ signal?: AbortSignal, pageCount?: number | null, coverage?: PdfOcrCoverage }} [options]
+ *   `pageCount` is the page count pdf.js already found, when known;
+ *   `coverage` receives how many pages were OCR'd out of how many.
  */
 async function ocrPdfIfNeeded(filePath, options = {}) {
-  const { signal } = options;
+  const { signal, coverage } = options;
+  const knownPageCount =
+    Number.isInteger(options.pageCount) && Number(options.pageCount) > 0
+      ? Number(options.pageCount)
+      : null;
   throwIfAborted(signal);
   let pdfBuffer;
   let rasterPng;
@@ -1338,7 +1397,9 @@ async function ocrPdfIfNeeded(filePath, options = {}) {
         const fallbackText = await ocrPdfWithCanvasRenderer(pdfBuffer, {
           lang: 'eng',
           oem: 1,
-          psm: 3
+          psm: 3,
+          coverage,
+          pageCount: knownPageCount
         });
         if (fallbackText) return fallbackText;
         return '';
@@ -1350,7 +1411,9 @@ async function ocrPdfIfNeeded(filePath, options = {}) {
         const fallbackText = await ocrPdfWithCanvasRenderer(pdfBuffer, {
           lang: 'eng',
           oem: 1,
-          psm: 3
+          psm: 3,
+          coverage,
+          pageCount: knownPageCount
         });
         if (fallbackText) return fallbackText;
         return '';
@@ -1374,7 +1437,9 @@ async function ocrPdfIfNeeded(filePath, options = {}) {
         const fallbackText = await ocrPdfWithCanvasRenderer(pdfBuffer, {
           lang: 'eng',
           oem: 1,
-          psm: 3
+          psm: 3,
+          coverage,
+          pageCount: knownPageCount
         });
         if (fallbackText) {
           return fallbackText;
@@ -1405,7 +1470,9 @@ async function ocrPdfIfNeeded(filePath, options = {}) {
         const fallbackText = await ocrPdfWithCanvasRenderer(pdfBuffer, {
           lang: 'eng',
           oem: 1,
-          psm: 3
+          psm: 3,
+          coverage,
+          pageCount: knownPageCount
         });
         if (fallbackText) {
           return fallbackText;
@@ -1414,24 +1481,71 @@ async function ocrPdfIfNeeded(filePath, options = {}) {
       }
     }
 
-    // Clear PDF buffer before OCR to reduce peak memory
-    pdfBuffer = null;
     throwIfAborted(signal);
+    const ocrOptions = { lang: 'eng', oem: 1, psm: 3 };
 
-    const ocrResult = await recognizeIfAvailable(null, rasterPng, {
-      lang: 'eng',
-      oem: 1,
-      psm: 3
-    });
+    // libvips renders only page 0 of a PDF unless another page is asked for,
+    // so the later pages are rendered one at a time, up to the cap.
+    let totalPages =
+      knownPageCount ||
+      (Number.isInteger(metadata?.pages) && Number(metadata?.pages) > 0
+        ? Number(metadata?.pages)
+        : null);
+    if (!totalPages && workerRasterized) {
+      // The worker reports only the rendered page's size.
+      try {
+        const probed = Number((await sharp(pdfBuffer, { density: OCR_DENSITY }).metadata())?.pages);
+        totalPages = Number.isInteger(probed) && probed > 0 ? probed : null;
+      } catch {
+        totalPages = null;
+      }
+    }
+    const pageLimit = Math.min(totalPages || 1, PDF_OCR_MAX_PAGES);
+
+    const ocrResult = await recognizeIfAvailable(null, rasterPng, ocrOptions);
+    rasterPng = null;
     if (!ocrResult.success) {
       return '';
     }
-    const ocrText = ocrResult.text;
+    let pagesOcred = 1;
+    const pageTexts = [ocrResult.text || ''];
 
-    // Fixed: Truncate OCR results and clean up
-    const result = ocrText && ocrText.trim().length > 0 ? truncateText(ocrText) : '';
-    rasterPng = null;
-    return result;
+    for (let page = 1; page < pageLimit; page += 1) {
+      throwIfAborted(signal);
+      let pagePng = null;
+      try {
+        let pagePipeline = sharp(pdfBuffer, { density: OCR_DENSITY, page });
+        const pageMeta = await pagePipeline.metadata();
+        if (pageMeta.width > OCR_MAX_WIDTH || pageMeta.height > OCR_MAX_HEIGHT) {
+          pagePipeline = pagePipeline.resize(OCR_MAX_WIDTH, OCR_MAX_HEIGHT, {
+            fit: 'inside',
+            withoutEnlargement: true
+          });
+        }
+        pagePng = await pagePipeline.png({ compressionLevel: 6 }).toBuffer();
+      } catch (pageError) {
+        logger.debug('[OCR] PDF page rasterization failed', {
+          page,
+          error: pageError?.message
+        });
+        continue;
+      }
+      throwIfAborted(signal);
+      const pageResult = await recognizeIfAvailable(null, pagePng, ocrOptions);
+      if (pageResult.success) {
+        pagesOcred += 1;
+        pageTexts.push(pageResult.text || '');
+      }
+    }
+    // Clear the PDF buffer as soon as no page needs it
+    pdfBuffer = null;
+    reportPdfOcrCoverage(coverage, pagesOcred, totalPages);
+
+    const ocrText = pageTexts
+      .map((text) => text.trim())
+      .filter(Boolean)
+      .join('\n\n');
+    return ocrText ? truncateText(ocrText) : '';
   } catch (error) {
     logger.warn('[OCR] OCR processing failed', {
       filePath,
@@ -1452,7 +1566,15 @@ async function ocrPdfIfNeeded(filePath, options = {}) {
   }
 }
 
-async function ocrPdfWithCanvasRenderer(/** @type {any} */ pdfBuffer, options = {}) {
+/**
+ * Render PDF pages with pdf.js + @napi-rs/canvas and OCR them, for when sharp
+ * has no PDF support (the prebuilt libvips does not).
+ * @param {any} pdfBuffer
+ * @param {{ coverage?: PdfOcrCoverage, pageCount?: number | null } & Record<string, any>} [options]
+ *   `coverage` and `pageCount` as for ocrPdfIfNeeded; the rest goes to tesseract.
+ */
+async function ocrPdfWithCanvasRenderer(pdfBuffer, options = {}) {
+  const { coverage, pageCount, ...ocrOptions } = options;
   if (!pdfBuffer || pdfBuffer.length === 0) return '';
 
   const renderer = await getUnpdfRenderer();
@@ -1487,7 +1609,15 @@ async function ocrPdfWithCanvasRenderer(/** @type {any} */ pdfBuffer, options = 
       pdfDoc = null;
     }
   }
-  const MAX_PAGES = 3;
+  const docPages = Number(pdfDoc?.numPages);
+  /** @type {number | null} */
+  const totalPages =
+    Number.isInteger(docPages) && docPages > 0
+      ? docPages
+      : Number.isInteger(pageCount) && Number(pageCount) > 0
+        ? Number(pageCount)
+        : null;
+  const pageLimit = Math.min(totalPages || PDF_OCR_MAX_PAGES, PDF_OCR_MAX_PAGES);
   const SCALE = 1.5;
   const OCR_PAGE_CONCURRENCY = 2;
 
@@ -1500,7 +1630,7 @@ async function ocrPdfWithCanvasRenderer(/** @type {any} */ pdfBuffer, options = 
   // allocation entirely for renderers that don't detach.
   let perPageRenderTarget = null;
   try {
-    for (let pageNumber = 1; pageNumber <= MAX_PAGES; pageNumber += 1) {
+    for (let pageNumber = 1; pageNumber <= pageLimit; pageNumber += 1) {
       try {
         let renderTarget;
         if (pdfDoc) {
@@ -1540,9 +1670,9 @@ async function ocrPdfWithCanvasRenderer(/** @type {any} */ pdfBuffer, options = 
       /** @type {{ pageNumber: number, imageBuffer: Buffer }} */ { pageNumber, imageBuffer }
     ) => {
       try {
-        const ocrResult = await recognizeIfAvailable(null, imageBuffer, options);
-        if (ocrResult.success && ocrResult.text && ocrResult.text.trim()) {
-          return ocrResult.text.trim();
+        const ocrResult = await recognizeIfAvailable(null, imageBuffer, ocrOptions);
+        if (ocrResult.success) {
+          return { ok: true, text: (ocrResult.text || '').trim() };
         }
       } catch (error) {
         logger.debug('[OCR] PDF page OCR failed', {
@@ -1550,12 +1680,18 @@ async function ocrPdfWithCanvasRenderer(/** @type {any} */ pdfBuffer, options = 
           error: error.message
         });
       }
-      return '';
+      return { ok: false, text: '' };
     },
     { settle: true }
   );
 
-  const trimmed = pageTexts.filter(Boolean).join('\n\n').trim();
+  const pagesOcred = pageTexts.filter((page) => page?.ok).length;
+  reportPdfOcrCoverage(coverage, pagesOcred, totalPages);
+  const trimmed = pageTexts
+    .map((page) => page?.text || '')
+    .filter(Boolean)
+    .join('\n\n')
+    .trim();
   if (!trimmed) return '';
   logger.info('[OCR] Successfully extracted text via PDF page renderer fallback');
   return truncateText(trimmed);
@@ -3270,15 +3406,18 @@ async function extractTextFromPdfWithTimeout(filePath, fileName, options = {}) {
 }
 
 /**
- * OCR PDF with timeout protection
+ * OCR PDF with timeout protection; the timeout aborts the page loop so no
+ * further pages are rendered or recognized after the caller has given up.
  * @param {string} filePath - Path to PDF file
+ * @param {{ signal?: AbortSignal, pageCount?: number | null, coverage?: PdfOcrCoverage }} [options]
  * @returns {Promise<string>} OCR text
  */
 async function ocrPdfWithTimeout(filePath, options = {}) {
-  return withTimeout(
-    ocrPdfIfNeeded(filePath, options),
+  return withAbortableTimeout(
+    (abortController) => ocrPdfIfNeeded(filePath, { ...options, signal: abortController.signal }),
     EXTRACTION_TIMEOUTS.OCR,
-    `OCR: ${filePath}`
+    `OCR: ${filePath}`,
+    { signal: options.signal }
   );
 }
 
@@ -3370,6 +3509,8 @@ module.exports = {
   // Test-only observability for the extract -> OCR buffer hand-off.
   _pdfBufferCacheSizeForTests: () => _pdfBufferCache.size,
   PDF_MIN_TEXT_CHARS_PER_PAGE,
+  PDF_OCR_MAX_PAGES,
+  TEXT_TRUNCATION_MARKER,
   formatXlsxCellValue,
   xlsxFormatKind,
   xlsxCellNumberFormat,

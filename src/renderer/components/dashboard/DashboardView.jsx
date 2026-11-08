@@ -13,12 +13,7 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
-import {
-  setPhase,
-  setViewMode,
-  setCameFromDashboard,
-  canTransitionTo
-} from '../../store/slices/uiSlice';
+import { setPhase, setViewMode, setCameFromDashboard } from '../../store/slices/uiSlice';
 import {
   selectFileStats,
   selectSmartFolders,
@@ -42,6 +37,9 @@ import Stack from '../layout/Stack';
 import { Heading, Text, Caption } from '../ui/Typography';
 import AnalysisProgress from '../discover/AnalysisProgress';
 import KnowledgeStatsCard from './KnowledgeStatsCard';
+import { countDestinationFolders } from '../../utils/smartFolderDestinations';
+import { planPhaseRoute, selectPhaseNavigationContext } from '../../utils/phaseNavigation';
+import { useNotification } from '../../contexts/NotificationContext';
 
 const RECENT_LIMIT = 4;
 const QUEUE_PREVIEW_LIMIT = 4;
@@ -613,26 +611,28 @@ export default function DashboardView() {
   const progress = useAppSelector(selectAnalysisProgress);
   const redactPaths = useAppSelector(selectRedactPaths);
 
+  const navContext = useAppSelector(selectPhaseNavigationContext);
+  const { showInfo } = useNotification();
+
   // Leaving the dashboard hands the user back to the phased flow at a chosen
-  // step. setPhase enforces PHASE_TRANSITIONS, and not every phase is directly
-  // reachable from the current one — but `discover` is reachable from every
-  // phase and can in turn reach setup/organize/welcome, so it serves as a
-  // universal hub for the one illegal-transition case.
+  // step, under the phase tabs' rule (uiSlice.getPhaseNavigation): back is
+  // always open, forward only past steps whose Continue check passes. A step
+  // that is not one move away is reached through Discover, which every phase
+  // reaches; when a prerequisite is missing the route stops at the last step
+  // it may take and says why, the same notice a closed tab gives. Returns
+  // whether the target was reached.
   const goToPhase = useCallback(
     (target) => {
+      const route = planPhaseRoute(currentPhase, target, navContext);
       dispatch(setViewMode('phased'));
       // Leave a breadcrumb so the phased chrome can offer a one-click way home.
       // setViewMode clears the flag, so this must follow it.
       dispatch(setCameFromDashboard(true));
-      if (currentPhase === target) return;
-      if (canTransitionTo(currentPhase, target)) {
-        dispatch(setPhase(target));
-      } else {
-        dispatch(setPhase('discover'));
-        if (target !== 'discover') dispatch(setPhase(target));
-      }
+      for (const step of route.steps) dispatch(setPhase(step));
+      if (!route.reached && route.reason) showInfo(route.reason, 5200);
+      return route.reached;
     },
-    [dispatch, currentPhase]
+    [dispatch, currentPhase, navContext, showInfo]
   );
 
   const goOrganize = useCallback(() => goToPhase('organize'), [goToPhase]);
@@ -660,8 +660,7 @@ export default function DashboardView() {
 
   const requestPicker = useCallback(
     (eventName) => {
-      goToPhase('discover');
-      bridgeDispatch(eventName);
+      if (goToPhase('discover')) bridgeDispatch(eventName);
     },
     [goToPhase, bridgeDispatch]
   );
@@ -671,8 +670,7 @@ export default function DashboardView() {
   const handleDashboardDrop = useCallback(
     (files) => {
       if (!Array.isArray(files) || files.length === 0) return;
-      goToPhase('discover');
-      bridgeDispatch('app:drop-files', files);
+      if (goToPhase('discover')) bridgeDispatch('app:drop-files', files);
     },
     [goToPhase, bridgeDispatch]
   );
@@ -718,7 +716,9 @@ export default function DashboardView() {
   }, [stats.failed, stats.pending, stats.ready]);
 
   const summary = useMemo(() => {
-    const folderCount = smartFolders.length;
+    // The Uncategorized catch-all main seeds on every profile is not a
+    // destination; count only folders files can actually be routed to.
+    const folderCount = countDestinationFolders(smartFolders);
     const folderNoun = folderCount === 1 ? 'smart folder' : 'smart folders';
     const inFlight = stats.pending + stats.ready;
 
@@ -737,7 +737,7 @@ export default function DashboardView() {
       parts.push(`${stats.ready} ready to organize`);
     }
     return `${folderCount} ${folderNoun} ready · ${parts.join(', ')}`;
-  }, [smartFolders.length, stats.pending, stats.ready, organizedCount]);
+  }, [smartFolders, stats.pending, stats.ready, organizedCount]);
 
   const reduceMotion = useReducedMotion();
   const blockVariants = reduceMotion ? BLOCK_VARIANTS_REDUCED : BLOCK_VARIANTS;
@@ -825,7 +825,7 @@ export default function DashboardView() {
           {stats.failed > 0 && (
             <AlertBox variant="danger">
               {stats.failed} {stats.failed === 1 ? 'file' : 'files'} couldn&apos;t be analyzed —
-              review {stats.failed === 1 ? 'it' : 'them'} in Organize.
+              retry {stats.failed === 1 ? 'it' : 'them'} in Discover.
             </AlertBox>
           )}
 

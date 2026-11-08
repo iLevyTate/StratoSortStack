@@ -189,10 +189,11 @@ describe('Logger', () => {
       });
       expect(sanitized.userDataPath).toBe('[REDACTED_PATH]/StratoSort Stack');
       expect(sanitized.logFilePath).toBe('[REDACTED_PATH]/session.log');
-      expect(sanitized.homeDir).toBe('[REDACTED_PATH]/benja');
-      // Username must not survive in the sanitized output for userDataPath
-      // even though the raw string contained "benja".
-      expect(JSON.stringify(sanitized.userDataPath)).not.toMatch(/benja/);
+      // A home folder's basename is the username, so none is kept.
+      expect(sanitized.homeDir).toBe('[REDACTED_PATH]');
+      // Username must not survive anywhere in the sanitized output even
+      // though every raw string contained "benja".
+      expect(JSON.stringify(sanitized)).not.toMatch(/benja/);
     });
 
     test('reduces userDataPath to basename on macOS and Linux, hiding username', () => {
@@ -429,7 +430,8 @@ describe('Logger', () => {
           '/Users/bob/Library/Application Support/StratoSort Stack/logs/a.log',
           '[REDACTED_PATH]/a.log'
         ],
-        ['a home folder alone', '/Users/bob', '[REDACTED_PATH]/bob']
+        // A home folder's basename is the username, so it is not kept.
+        ['a home folder alone', '/Users/bob', '[REDACTED_PATH]']
       ])('reduces %s to its file name', (_label, raw, expected) => {
         expect(sanitizeLogData(raw)).toBe(expected);
       });
@@ -529,7 +531,10 @@ describe('Logger', () => {
         ],
         // A word glued to the root is not a root (the old whitespace cut applies).
         ['foo/Users/a b/c', 'foo[REDACTED_PATH]/a b/c'],
-        ['C:\\PROGRA~1/a b/c', '[REDACTED_PATH]\\PROGRA~1/a b/c']
+        // A `~` glued to a word is not the home root. (`C:\PROGRA~1/a b/c`
+        // used to pin this; a Windows path that switches to `/` is now
+        // redacted whole, see logger.pathRedaction.test.js.)
+        ['PROGRA~1/a b/c', 'PROGRA~1/a b/c']
       ])('leaves non-rooted text as before: %s', (raw, expected) => {
         expect(sanitizeLogData(raw)).toBe(expected);
       });

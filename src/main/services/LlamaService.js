@@ -51,8 +51,13 @@ const logger = createLogger('LlamaService');
 const NEGATIVE_VISION_SUPPORT_TTL_MS = 15_000;
 // One model family at a time. A document load waits out the current vision
 // batch, and a new vision batch waits out an in-flight text load, instead of
-// failing the document in a few seconds and storing a stub.
-const VISION_BATCH_IDLE_WAIT_MS = 10 * 60 * 1000;
+// failing the document in a few seconds and storing a stub. The wait is a
+// fraction of the per-document analysis budget (TIMEOUTS.GLOBAL_ANALYSIS, the
+// smart-folder watcher's timeout): extraction runs before it and inference
+// after it inside that budget, so a wait as long as the budget meant the
+// caller always timed out first and the "take memory at the next image
+// boundary" fallback never ran for a watcher document.
+const VISION_BATCH_IDLE_WAIT_MS = Math.floor((TIMEOUTS.GLOBAL_ANALYSIS || 10 * 60 * 1000) / 4);
 const TEXT_LANE_IDLE_WAIT_MS = 10 * 60 * 1000;
 const MODEL_LANE_POLL_MS = 250;
 // The memory-manager type the vision runtime registers under. Same value as
@@ -79,6 +84,24 @@ function getSystemAnalyticsSafe() {
   } catch {
     return null;
   }
+}
+
+/**
+ * Run one chat-session prompt and report whether generation stopped at the
+ * output-token cap. promptWithMeta is the node-llama-cpp v3 call that
+ * session.prompt() wraps; only it exposes the stop reason. prompt() is used
+ * when promptWithMeta is absent (the shared jest double), and reports no cap.
+ * @param {any} session
+ * @param {string} prompt
+ * @param {Record<string, any>} options
+ * @returns {Promise<{ response: string, truncated: boolean }>}
+ */
+async function promptWithStopReason(session, prompt, options) {
+  if (typeof session.promptWithMeta !== 'function') {
+    return { response: await session.prompt(prompt, options), truncated: false };
+  }
+  const meta = await session.promptWithMeta(prompt, options);
+  return { response: meta?.responseText ?? '', truncated: meta?.stopReason === 'maxTokens' };
 }
 
 const isOutOfMemoryError = (/** @type {any} */ error) => {
@@ -3609,13 +3632,14 @@ class LlamaService extends EventEmitter {
                   }
                 };
                 if (signal) promptOptions.signal = signal;
-                return await session.prompt(prompt, promptOptions);
+                return await promptWithStopReason(session, prompt, promptOptions);
               };
 
               try {
-                let response;
+                /** @type {{ response: string, truncated: boolean }} */
+                let output;
                 try {
-                  response = await runOnce();
+                  output = await runOnce();
                 } catch (error) {
                   if (isSequenceExhaustedError(error)) {
                     if (session) {
@@ -3627,12 +3651,13 @@ class LlamaService extends EventEmitter {
                       session = null;
                     }
                     await this._recoverFromSequenceExhaustion('text', error);
-                    response = await runOnce();
+                    output = await runOnce();
                   } else {
                     throw error;
                   }
                 }
 
+                const { response, truncated } = output;
                 const durationMs = Date.now() - startTime;
                 const responseChars = response?.length || 0;
                 const approxTokens = Math.round(responseChars / 4);
@@ -3647,10 +3672,13 @@ class LlamaService extends EventEmitter {
                   maxTokens: safeMaxTokens,
                   requestedMaxTokens,
                   temperature,
-                  gpu: this._gpuBackend !== 'cpu'
+                  gpu: this._gpuBackend !== 'cpu',
+                  truncated
                 });
 
-                return { response };
+                // truncated: generation stopped at the output-token cap, so
+                // the response is a prefix of the answer (often cut-off JSON).
+                return { response, truncated };
               } catch (error) {
                 this._metrics.recordTextGeneration(Date.now() - startTime, 0, false);
                 if (isOutOfMemoryError(error)) {
@@ -3788,13 +3816,14 @@ class LlamaService extends EventEmitter {
                 /** @type {Record<string, any>} */
                 const promptOptions = { maxTokens: safeMaxTokens, temperature };
                 if (signal) promptOptions.signal = signal;
-                return await session.prompt(prompt, promptOptions);
+                return await promptWithStopReason(session, prompt, promptOptions);
               };
 
               try {
-                let response;
+                /** @type {{ response: string, truncated: boolean }} */
+                let output;
                 try {
-                  response = await runOnce();
+                  output = await runOnce();
                 } catch (error) {
                   if (isSequenceExhaustedError(error)) {
                     // _recoverFromSequenceExhaustion unloads the model (which cascades
@@ -3809,12 +3838,13 @@ class LlamaService extends EventEmitter {
                       session = null;
                     }
                     await this._recoverFromSequenceExhaustion('text', error);
-                    response = await runOnce();
+                    output = await runOnce();
                   } else {
                     throw error;
                   }
                 }
 
+                const { response, truncated } = output;
                 const durationMs = Date.now() - startTime;
                 const responseChars = response?.length || 0;
                 const approxTokens = Math.round(responseChars / 4);
@@ -3829,10 +3859,13 @@ class LlamaService extends EventEmitter {
                   maxTokens: safeMaxTokens,
                   requestedMaxTokens,
                   temperature,
-                  gpu: this._gpuBackend !== 'cpu'
+                  gpu: this._gpuBackend !== 'cpu',
+                  truncated
                 });
 
-                return { response };
+                // truncated: generation stopped at the output-token cap, so
+                // the response is a prefix of the answer (often cut-off JSON).
+                return { response, truncated };
               } catch (error) {
                 this._metrics.recordTextGeneration(Date.now() - startTime, 0, false);
                 if (isOutOfMemoryError(error)) {
@@ -3886,7 +3919,11 @@ class LlamaService extends EventEmitter {
         ...(options.format && { format: options.format }),
         ...(options.signal && { signal: options.signal })
       });
-      return /** @type {Record<string, any>} */ ({ success: true, response: result.response });
+      return /** @type {Record<string, any>} */ ({
+        success: true,
+        response: result.response,
+        truncated: result.truncated === true
+      });
     } catch (error) {
       return /** @type {Record<string, any>} */ ({
         success: false,
@@ -4207,6 +4244,9 @@ class LlamaService extends EventEmitter {
         try {
           return await withLlamaResilience(
             async (retryOptions) => {
+              // A caller that gave up while queued (Discover cancel, watcher
+              // timeout) must not free memory or start the vision runtime.
+              if (signal?.aborted) throw createAbortError();
               // Handle CPU fallback from LlamaResilience when GPU errors occur
               if (retryOptions?.forceCPU && this._gpuBackend !== 'cpu') {
                 await this._reloadModelCPU('vision', { operationId });
@@ -4392,7 +4432,7 @@ class LlamaService extends EventEmitter {
           this._modelMemoryManager?.releaseRef('vision');
         }
       },
-      { operationId }
+      { operationId, signal }
     );
   }
 

@@ -58,8 +58,34 @@ const DEFAULT_LAUNCH_OPTIONS = {
 
 const LAUNCH_MAX_ATTEMPTS = 3;
 
-function createIsolatedE2eUserDataDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'stratosort-e2e-userdata-'));
+/**
+ * Settings every helper-created profile starts with. An isolated profile has
+ * no models, so without this the app's background setup (backgroundSetup.js
+ * downloadMissingModels) starts a real multi-GB model download on every
+ * launch. `modelAutoDownloadSkipped` is the persisted "Continue with limited
+ * AI" choice: it pauses background downloads, and WelcomePhase then never
+ * auto-opens the first-run model wizard. A spec that needs that wizard (the
+ * axe audit of it, for one) keeps the seed and calls
+ * openModelSetupWizardOffline(). `allowModelAutoDownload: true` is only for a
+ * spec that really exercises the download path (it uses the network).
+ */
+const E2E_SEED_SETTINGS = Object.freeze({ modelAutoDownloadSkipped: true });
+
+/**
+ * Create an isolated userData dir for one E2E launch.
+ *
+ * @param {{ allowModelAutoDownload?: boolean }} [options]
+ *   allowModelAutoDownload: true leaves the profile empty, for specs that
+ *   exercise the first-run wizard or download path (the app may start a
+ *   background model download, so it can use the network).
+ * @returns {string}
+ */
+function createIsolatedE2eUserDataDir({ allowModelAutoDownload = false } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stratosort-e2e-userdata-'));
+  if (!allowModelAutoDownload) {
+    fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify(E2E_SEED_SETTINGS, null, 2));
+  }
+  return dir;
 }
 
 function cleanupE2eUserDataDir(userDataPath) {
@@ -173,12 +199,19 @@ function killOrphanStratoSortElectronProcesses() {
  * @param {Object} options.env - Additional environment variables
  * @param {number} options.timeout - Launch timeout in milliseconds
  * @param {boolean} options.headed - Run with visible window (default: false)
+ * @param {string} [options.userDataDir] - Profile dir to reuse (used as-is; the caller owns it)
+ * @param {boolean} [options.allowModelAutoDownload] - Skip the limited-AI seed so the
+ *   first-run model wizard auto-opens and the background model download runs
+ *   (network; see E2E_SEED_SETTINGS)
  * @param {{ dir: string, size?: { width: number, height: number } }} [options.recordVideo]
  *   Playwright video capture for the Electron window (used by the product tour).
  * @returns {Promise<{app: ElectronApplication, window: Page}>}
  */
 async function launchApp(options = {}, attempt = 1) {
-  const e2eUserData = options.userDataDir || createIsolatedE2eUserDataDir();
+  // A spec-provided userDataDir is used as-is (never seeded or rewritten).
+  const e2eUserData =
+    options.userDataDir ||
+    createIsolatedE2eUserDataDir({ allowModelAutoDownload: options.allowModelAutoDownload });
   const mergedOptions = {
     ...DEFAULT_LAUNCH_OPTIONS,
     ...options,
@@ -259,6 +292,11 @@ async function launchApp(options = {}, attempt = 1) {
     // Wait for the window to be ready (DOM loaded)
     await window.waitForLoadState('domcontentloaded');
     console.log('[E2E] Main window ready');
+    // A seeded profile never auto-opens the model wizard, so later
+    // dismissModelSetupWizard calls return at once instead of waiting for it.
+    if (!options.userDataDir && !options.allowModelAutoDownload) {
+      modelWizardSkippedWindows.add(window);
+    }
 
     // Optional: Wait for the app to be fully initialized
     // This waits for the React app to mount
@@ -539,15 +577,22 @@ async function dismissModals(window) {
   }
 }
 
-/** Windows whose first-run model wizard was skipped (see dismissModelSetupWizard). */
+/**
+ * Windows whose first-run model wizard cannot auto-open: skipped by
+ * dismissModelSetupWizard, or launched on a seeded profile (E2E_SEED_SETTINGS).
+ */
 const modelWizardSkippedWindows = new WeakSet();
 
 /**
  * Dismiss the first-run "Set up on-device AI" model wizard if/when it appears.
  *
+ * Only profiles without the limited-AI seed get this wizard: launchApp({
+ * allowModelAutoDownload: true }) or a spec-provided userDataDir. On a seeded
+ * profile WelcomePhase honors the persisted skip and this returns false at once.
+ *
  * WelcomePhase auto-opens this wizard ~2s AFTER the app becomes ready: its
  * model-check effect waits RETRY_DELAY_MS (1800ms) when no models are present
- * (the usual case in an isolated E2E profile), re-checks getModels(), then
+ * (the usual case in an unseeded E2E profile), re-checks getModels(), then
  * opens the wizard Modal. When the first-run background download has already
  * landed the small embedding model, it opens at once instead and
  * waitForAppReady's dismissModals() pass closes it. Otherwise that single early
@@ -617,6 +662,113 @@ async function dismissModelSetupWizard(window, { timeout = 7000 } = {}) {
   if (closed) modelWizardSkippedWindows.add(window);
 
   return true;
+}
+
+/**
+ * What backgroundSetup.downloadMissingModels logs when the persisted
+ * limited-AI choice (modelAutoDownloadSkipped) stops a background download.
+ * It is the proof that this launch's one background download check has run
+ * and declined.
+ */
+const BACKGROUND_DOWNLOAD_DECLINED_LOG = 'Model auto-download declined by user setting';
+
+/** What backgroundSetup.downloadMissingModels logs as it starts a download. */
+const BACKGROUND_DOWNLOAD_STARTED_LOG = 'Missing models, starting background download';
+
+/** Concatenated text of the app's session logs under userData/logs. */
+function readAppSessionLogs(userDataPath) {
+  const logsDir = path.join(userDataPath, 'logs');
+  let names;
+  try {
+    names = fs.readdirSync(logsDir);
+  } catch {
+    return '';
+  }
+  return names
+    .filter((name) => name.endsWith('.log'))
+    .map((name) => {
+      try {
+        return fs.readFileSync(path.join(logsDir, name), 'utf8');
+      } catch {
+        return '';
+      }
+    })
+    .join('\n');
+}
+
+/**
+ * Resolve once background setup has logged that it declined to download
+ * models; reject after `timeout` ms.
+ *
+ * @param {string} userDataPath
+ * @param {{ timeout?: number, pollMs?: number }} [options]
+ */
+async function waitForBackgroundDownloadDeclined(
+  userDataPath,
+  { timeout = 60000, pollMs = 250 } = {}
+) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    if (readAppSessionLogs(userDataPath).includes(BACKGROUND_DOWNLOAD_DECLINED_LOG)) return;
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `Background setup did not log "${BACKGROUND_DOWNLOAD_DECLINED_LOG}" within ${timeout} ms`
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+}
+
+/**
+ * Bring up the first-run "Set up on-device AI" wizard without any network.
+ *
+ * The wizard auto-opens only when the profile has no persisted limited-AI
+ * choice, and that same empty profile makes background setup start a real
+ * multi-GB model download. Background setup checks the choice once per launch
+ * (backgroundSetup.downloadMissingModels), and nothing else downloads a model
+ * except the wizard's own Download button. So this helper:
+ *   1. requires a seeded profile (E2E_SEED_SETTINGS) and waits until
+ *      background setup has logged that it declined the download;
+ *   2. clears the choice the way the app itself does
+ *      (settings.update('modelAutoDownloadSkipped', false));
+ *   3. reloads the renderer, so WelcomePhase runs its model check again and
+ *      auto-opens the wizard, exactly as on a first run.
+ * Background setup does not run again for that launch, so nothing downloads.
+ * The caller must not click a download button in the wizard.
+ *
+ * @param {ElectronApplication} app - from launchApp() (default seeded profile)
+ * @param {Page} window
+ * @param {{ timeout?: number }} [options] - how long to wait for background
+ *   setup's decline (default 60000)
+ */
+async function openModelSetupWizardOffline(app, window, { timeout = 60000 } = {}) {
+  const userDataPath = app && app.__e2eUserData;
+  let seeded = false;
+  try {
+    const settings = JSON.parse(fs.readFileSync(path.join(userDataPath, 'settings.json'), 'utf8'));
+    seeded = settings?.modelAutoDownloadSkipped === true;
+  } catch {
+    // No readable settings.json: not a seeded profile.
+  }
+  if (!seeded) {
+    throw new Error(
+      'openModelSetupWizardOffline needs a profile seeded with modelAutoDownloadSkipped: true ' +
+        '(launchApp() default); without it background setup downloads models'
+    );
+  }
+
+  await waitForBackgroundDownloadDeclined(userDataPath, { timeout });
+
+  await window.evaluate(async () => {
+    await window.electronAPI.settings.update('modelAutoDownloadSkipped', false);
+  });
+  // This window can show the wizard again after the reload below.
+  modelWizardSkippedWindows.delete(window);
+  await window.reload();
+  await window.waitForSelector('nav[aria-label="Phase navigation"]', {
+    state: 'visible',
+    timeout: 30000
+  });
 }
 
 /**
@@ -780,6 +932,10 @@ module.exports = {
   waitForAppReady,
   dismissModals,
   dismissModelSetupWizard,
+  openModelSetupWizardOffline,
+  readAppSessionLogs,
+  BACKGROUND_DOWNLOAD_DECLINED_LOG,
+  BACKGROUND_DOWNLOAD_STARTED_LOG,
   dismissGraphTour,
   ensureKnowledgeOsClosed,
   expandDiscoverGuideIfCollapsed,

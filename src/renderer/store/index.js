@@ -10,6 +10,7 @@ import licenseReducer from './slices/licenseSlice';
 import ipcMiddleware, { markStoreReady } from './middleware/ipcMiddleware';
 import persistenceMiddleware from './middleware/persistenceMiddleware';
 import {
+  CURRENT_STATE_VERSION,
   migrateState,
   restoreSerializedStateBackup,
   safeBackupSerializedState,
@@ -254,17 +255,31 @@ const loadState = () => {
       restoreSerializedStateBackup(localStorage); // Re-seed the live key with the good blob
       logger.warn('[Store] Persisted state was corrupt; restored from last-good backup');
     }
-    if (!recoveredFromBackup) {
-      safeBackupSerializedState(serializedState, localStorage);
-    }
     const migrated = migrateState(parsedRaw);
     const parsed = migrated ? validateLoadedState(migrated) : null;
 
     if (!parsed) {
-      // Migration failed or returned null - start fresh
+      // Migration failed or returned null - start fresh. A parseable blob
+      // that cannot be migrated (newer or invalid version, array root) is not
+      // known-good: stash it under the forensics key and leave the backup
+      // alone, then re-seed the live key from that last known-good backup
+      // (a no-op when there is none).
+      if (!recoveredFromBackup) {
+        try {
+          localStorage.setItem('stratosort_redux_state_corrupt', serializedState.slice(0, 262144));
+        } catch {
+          // Forensics stash is best-effort only
+        }
+      }
       restoreSerializedStateBackup(localStorage);
       logger.warn('[Store] State migration returned null, starting with fresh state');
       return undefined;
+    }
+
+    // Back up only once the blob is known to load: the backup key must hold
+    // the last KNOWN-GOOD blob, never one migration just rejected.
+    if (!recoveredFromBackup) {
+      safeBackupSerializedState(serializedState, localStorage);
     }
 
     // Only claim the restore AFTER migration/validation succeeded — if the
@@ -318,22 +333,8 @@ const loadState = () => {
         ? Math.round(stateAgeMs / (1000 * 60 * 60))
         : 24;
 
-      // Drop the expired blob so the next persistence flush writes a
-      // fresh snapshot with a current timestamp. Without this, every
-      // reload within the same browser session kept reading the same
-      // stale timestamp and kept flipping the expired banner on until
-      // a user action happened to trigger a save — users reported the
-      // banner "wouldn't go away" on quick restarts.
-      try {
-        localStorage.removeItem('stratosort_redux_state');
-      } catch {
-        // Storage may be disabled or quota-exceeded; surfacing is not
-        // critical here because the next save path has its own quota
-        // fallback, and the in-memory return value below is correct.
-      }
-
       // Preserve durable data (smart folders + organization history) while resetting session state.
-      return /** @type {any} */ ({
+      const expiredState = /** @type {any} */ ({
         ui: {
           currentPhase: PHASES?.WELCOME ?? 'welcome',
           previousPhase: null,
@@ -410,6 +411,40 @@ const loadState = () => {
           degradedFlagsError: null
         }
       });
+
+      // Replace the expired blob with a fresh snapshot of just the durable
+      // data, stamped now. A stale timestamp left in place kept flipping the
+      // expired banner on every quick restart, and removing the blob instead
+      // lost the organize history (organizedPathIndex/organizedFiles) when the
+      // renderer reloaded before the first debounced save rewrote it. If the
+      // write fails the expired blob stays: its data is intact and the next
+      // save path has its own quota fallback.
+      try {
+        localStorage.setItem(
+          'stratosort_redux_state',
+          JSON.stringify({
+            _version: CURRENT_STATE_VERSION,
+            ui: {
+              viewMode: expiredState.ui.viewMode,
+              selectedTheme: expiredState.ui.selectedTheme
+            },
+            files: {
+              selectedFiles: [],
+              smartFolders: expiredState.files.smartFolders,
+              organizedFiles: expiredState.files.organizedFiles,
+              organizedPathIndex: expiredState.files.organizedPathIndex,
+              namingConvention: expiredState.files.namingConvention,
+              fileStates: {}
+            },
+            analysis: { results: [] },
+            timestamp: Date.now()
+          })
+        );
+      } catch {
+        // Storage disabled or quota-exceeded; the in-memory state is correct.
+      }
+
+      return expiredState;
     }
 
     // from persisted state overriding slice initial state defaults

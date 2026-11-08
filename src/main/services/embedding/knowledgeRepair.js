@@ -188,12 +188,36 @@ async function checkPassagesSafely(readHealth, fileId, entry, filePath, checkPas
 }
 
 /**
+ * Ask the injected pre-gate whether the repair could embed this file at all.
+ * No pre-gate, or one that fails, reads as yes: the embedder and the passage
+ * repair still ask the full gate themselves.
+ * @param {((args: { entry: Record<string, any>, filePath: string }) => Promise<boolean>) | undefined} wouldEmbed
+ * @param {Record<string, any>} entry
+ * @param {string} filePath
+ * @param {{ debug: Function }} log
+ * @returns {Promise<boolean>}
+ */
+async function wouldEmbedSafely(wouldEmbed, entry, filePath, log) {
+  if (typeof wouldEmbed !== 'function') return true;
+  try {
+    return (await wouldEmbed({ entry, filePath })) !== false;
+  } catch (error) {
+    log.debug('Embedding gate check failed during repair', {
+      filePath,
+      error: /** @type {any} */ (error)?.message
+    });
+    return true;
+  }
+}
+
+/**
  * @param {{
  *   entries: Record<string, any> | null | undefined,
  *   vectorDb: { getFile: (id: string) => Promise<any>,
  *               restoreOrphanedEmbeddings?: (ids: string[]) => Promise<any> } | null | undefined,
  *   embedEntry: (args: { entry: Record<string, any>, filePath: string }) => Promise<{ action?: string, reason?: string }>,
  *   repairPassages?: (args: { entry: Record<string, any>, filePath: string }) => Promise<{ action?: string, reason?: string }>,
+ *   wouldEmbed?: (args: { entry: Record<string, any>, filePath: string }) => Promise<boolean>,
  *   checkPassages?: boolean,
  *   fileExists: (filePath: string) => Promise<boolean>,
  *   shouldStop?: () => boolean,
@@ -207,6 +231,7 @@ async function repairKnowledge({
   vectorDb,
   embedEntry,
   repairPassages,
+  wouldEmbed,
   checkPassages = true,
   fileExists,
   shouldStop = () => false,
@@ -241,7 +266,7 @@ async function repairKnowledge({
   const seen = new Set();
   const readHealth = createPassageHealthReader(vectorDb);
   /**
-   * @type {Array<{ entry: Record<string, any>, filePath: string, id: string,
+   * @type {Array<{ entry: Record<string, any>, filePath: string, id: string, doc: any,
    *   usable: boolean, restoring: boolean, passagesBroken: boolean | null }>}
    */
   const needsWork = [];
@@ -279,7 +304,10 @@ async function repairKnowledge({
     }
 
     const usable = await fileVectorUsable(vectorDb, doc, id);
-    const restoring = Boolean(doc?.isOrphaned && doc.hasVector !== false && usable);
+    // The store reads an orphan-marked row as unusable whatever its vector,
+    // so whether the vector is intact is only known once the row is restored
+    // (pass 2). Deciding here from `usable` sent every orphan to the embedder.
+    const restoring = Boolean(doc?.isOrphaned && doc.hasVector !== false);
     // Passages are only looked at here when the file vector needs nothing;
     // otherwise pass 2 looks after the re-embed, in the original order.
     /** @type {boolean | null} */
@@ -299,28 +327,62 @@ async function repairKnowledge({
         continue;
       }
     }
-    needsWork.push({ entry, filePath, id, usable, restoring, passagesBroken });
+    // Re-embedding and passage repair both go through the embedding gate. A
+    // file the gate keeps out of the index ('manual' timing, a 'skip' policy,
+    // outside a smart-folders-only scope) would be stat-ed, refused and its
+    // history rewritten on every launch, so it is set aside here, unstat-ed.
+    // An orphan restore is not embedding work and still goes ahead.
+    if (!restoring && !(await wouldEmbedSafely(wouldEmbed, entry, filePath, log))) {
+      summary.skippedGate++;
+      continue;
+    }
+    needsWork.push({ entry, filePath, id, doc, usable, restoring, passagesBroken });
   }
 
   // Pass 2: only files that need something. Each is checked on disk first,
   // as before — a missing file is never restored or re-embedded.
+  /** @type {typeof needsWork} */
+  const present = [];
   for (const item of needsWork) {
     if (shouldStop()) {
       summary.stopped = true;
       break;
     }
-    const { entry, filePath, id, usable, restoring } = item;
-    if (!(await fileExists(filePath))) {
+    if (!(await fileExists(item.filePath))) {
       summary.skippedMissing++;
       continue;
     }
-
     summary.checked++;
+    present.push(item);
+    if (item.restoring) toRestore.push(item.id);
+  }
+
+  // Orphan-marked rows whose file is back are un-flagged first, in one call:
+  // the file exists, so the stale-path mark is wrong whatever the vector. The
+  // vector is then judged like any other row's, and only a missing or zero
+  // one is re-embedded (F-221).
+  if (toRestore.length > 0 && typeof vectorDb.restoreOrphanedEmbeddings === 'function') {
+    try {
+      const result = await vectorDb.restoreOrphanedEmbeddings(toRestore);
+      summary.restored = Number(result?.restored) || 0;
+    } catch (error) {
+      log.warn('Restoring orphan-marked vectors failed', {
+        count: toRestore.length,
+        error: /** @type {any} */ (error)?.message
+      });
+    }
+  }
+
+  for (const item of present) {
+    if (shouldStop()) {
+      summary.stopped = true;
+      break;
+    }
+    const { entry, filePath, id, restoring } = item;
+    const usable = restoring ? await fileVectorUsable(vectorDb, item.doc, id) : item.usable;
     const atCap = () => summary.embedded + summary.passages + summary.failed >= maxEmbeds;
 
-    if (restoring) {
-      toRestore.push(id);
-    } else if (!usable) {
+    if (!usable) {
       if (atCap()) {
         summary.deferred++;
         continue;
@@ -365,18 +427,6 @@ async function repairKnowledge({
     }
 
     if (usable && !restoring) summary.healthy++;
-  }
-
-  if (toRestore.length > 0 && typeof vectorDb.restoreOrphanedEmbeddings === 'function') {
-    try {
-      const result = await vectorDb.restoreOrphanedEmbeddings(toRestore);
-      summary.restored = Number(result?.restored) || 0;
-    } catch (error) {
-      log.warn('Restoring orphan-marked vectors failed', {
-        count: toRestore.length,
-        error: /** @type {any} */ (error)?.message
-      });
-    }
   }
 
   return summary;
@@ -565,6 +615,21 @@ function scheduleStartupKnowledgeRepair({
           } catch {
             return false;
           }
+        },
+        // The gate's own answer for this file, before any disk or model work.
+        // Scope needs the smart-folder list, so services are only wired up
+        // when the library is smart-folders-only.
+        wouldEmbed: async ({ entry, filePath }) => {
+          const { shouldEmbedForRepair } = require('./embeddingGate');
+          const gate = await shouldEmbedForRepair({
+            policyOverride: entry?.embedding?.policy || null,
+            analysis: entry?.analysis || null
+          });
+          if (!gate?.shouldEmbed) return false;
+          if (gate.scope === 'smart_folders_only') {
+            return Boolean(getSmartFolderForPath(filePath, getServices()));
+          }
+          return true;
         },
         embedEntry: ({ entry, filePath }) =>
           embedHistoryEntry({

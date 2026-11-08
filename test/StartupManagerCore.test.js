@@ -253,4 +253,72 @@ describe('StartupManagerCore', () => {
       expect(oramaMock.shutdown).toHaveBeenCalled();
     });
   });
+  describe('abort that arrives after the startup sequence finished', () => {
+    function useServiceMocks() {
+      const { getInstance: getOrama } = require('../src/main/services/OramaVectorService');
+      const { getInstance: getLlama } = require('../src/main/services/LlamaService');
+      const oramaMock = { initialize: jest.fn().mockResolvedValue(), shutdown: jest.fn() };
+      const llamaMock = {
+        initialize: jest.fn().mockResolvedValue(),
+        getHealthStatus: jest.fn(() => ({ gpuBackend: 'cpu' })),
+        shutdown: jest.fn()
+      };
+      getOrama.mockReturnValue(oramaMock);
+      getLlama.mockReturnValue(llamaMock);
+      return { oramaMock, llamaMock };
+    }
+
+    test('returns success and keeps the services running', async () => {
+      const { oramaMock, llamaMock } = useServiceMocks();
+      const manager = new StartupManager({ startupTimeout: 1000 });
+      manager.startHealthMonitoring = jest.fn();
+      const realSequence = manager._runStartupSequence.bind(manager);
+      // Every service came up; the parent's abort lands only once the
+      // sequence has nothing left to do.
+      manager._runStartupSequence = async (signal) => {
+        await realSequence(signal);
+        manager.abortStartup('parent gave up just as startup finished');
+      };
+
+      const result = await manager.startup();
+
+      expect(result.success).toBe(true);
+      expect(manager.startupState).toBe('completed');
+      expect(llamaMock.shutdown).not.toHaveBeenCalled();
+      expect(oramaMock.shutdown).not.toHaveBeenCalled();
+    });
+
+    test('a signal that is already aborted fails startup without starting services', async () => {
+      const { oramaMock, llamaMock } = useServiceMocks();
+      const controller = new AbortController();
+      controller.abort('quit before startup began');
+      const manager = new StartupManager({ startupTimeout: 1000 });
+      manager.startHealthMonitoring = jest.fn();
+
+      await expect(manager.startup({ signal: controller.signal })).rejects.toThrow(
+        'Startup aborted'
+      );
+      expect(manager.startupState).toBe('failed');
+      expect(oramaMock.initialize).not.toHaveBeenCalled();
+      expect(llamaMock.initialize).not.toHaveBeenCalled();
+      expect(manager.startHealthMonitoring).not.toHaveBeenCalled();
+    });
+
+    test('an abort observed mid-sequence still fails startup and cleans up', async () => {
+      const { oramaMock, llamaMock } = useServiceMocks();
+      const controller = new AbortController();
+      oramaMock.initialize.mockImplementation(async () => {
+        controller.abort('quit');
+      });
+      const manager = new StartupManager({ startupTimeout: 1000 });
+      manager.startHealthMonitoring = jest.fn();
+
+      await expect(manager.startup({ signal: controller.signal })).rejects.toThrow(
+        'Startup aborted'
+      );
+      expect(manager.startupState).toBe('failed');
+      expect(llamaMock.shutdown).toHaveBeenCalled();
+      expect(oramaMock.shutdown).toHaveBeenCalled();
+    });
+  });
 });

@@ -31,6 +31,52 @@ function describeFirstFailure(results) {
   const { message } = mapErrorToNotification({ error: failed.error, errorCode: failed.errorCode });
   return message;
 }
+
+const ROLLBACK_NAMES_SHOWN = 3;
+
+/**
+ * The one message for a batch the main process rolled back after a critical
+ * error. Restored rows come back `success: false, rolledBack: true`; a row
+ * whose restore failed keeps `success: true, rollbackFailed: true` because
+ * that file is still at its destination, and those files are named so the
+ * user can find them. Main deletes the recovery manifest when every restore
+ * worked, so its path is only shown when something was left behind.
+ * @param {any} result - the batch handler's rollback outcome
+ * @param {any[]} rows - its per-op results
+ * @returns {string}
+ */
+function describeRolledBackBatch(result, rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  // The op that triggered the rollback carries the real error; restored rows
+  // only repeat the rollback reason.
+  const reason = describeFirstFailure(list.filter((r) => r && !r.rolledBack));
+  const leftBehind = list.filter((r) => r && r.rollbackFailed === true);
+  const leftBehindCount = Math.max(
+    leftBehind.length,
+    Number.isInteger(result?.rollbackFailCount) ? result.rollbackFailCount : 0
+  );
+  const head = `Organization was rolled back. ${reason}`;
+  if (leftBehindCount === 0) {
+    return `${head} Files already moved were returned to their original locations.`;
+  }
+  const names = leftBehind
+    .map((r) =>
+      String(r.destination || r.source || '')
+        .split(/[\\/]/)
+        .pop()
+    )
+    .filter(Boolean);
+  const shown = names.slice(0, ROLLBACK_NAMES_SHOWN).join(', ');
+  const more = leftBehindCount - Math.min(names.length, ROLLBACK_NAMES_SHOWN);
+  const fileWord = leftBehindCount === 1 ? 'file' : 'files';
+  const named = shown ? `: ${shown}${more > 0 ? ` and ${more} more` : ''}` : '';
+  const recovery =
+    typeof result?.recoveryPath === 'string' && result.recoveryPath
+      ? ` Recovery details: ${result.recoveryPath}`
+      : '';
+  return `${head} ${leftBehindCount} ${fileWord} could not be returned and remain in the destination folder${named}.${recovery}`;
+}
+
 import { toCanonicalPath } from '../../utils/canonicalPath';
 import { resolveOrganizeDestination, suggestionForOperation } from './organizeDestination';
 
@@ -814,11 +860,17 @@ export function useOrganization({
                 resArray = Array.isArray(result?.results) ? result.results : [];
               }
 
+              // A batch main rolled back after a critical error: restored rows
+              // (rolledBack) never count as moved; rows whose restore failed
+              // keep success:true because those files are at their
+              // destination. One error toast below replaces the
+              // success/partial/nothing-organized toasts.
+              const rolledBackBatch = result?.rolledBack === true;
               const operationMap = new Map(
                 operations.map((/** @type {any} */ op) => [op.source, op.destination])
               );
               const uiResults = resArray
-                .filter((/** @type {any} */ r) => r.success)
+                .filter((/** @type {any} */ r) => r.success && !r.rolledBack)
                 .map((/** @type {any} */ r) => {
                   const original =
                     analysisResults.find((/** @type {any} */ a) => a.path === r.source) || {};
@@ -845,7 +897,7 @@ export function useOrganization({
                   };
                 });
               const successfulMoves = resArray
-                .filter((/** @type {any} */ r) => r.success && r.source)
+                .filter((/** @type {any} */ r) => r.success && !r.rolledBack && r.source)
                 .map((/** @type {any} */ r) => ({
                   source: r.source,
                   destination: r.destination || operationMap.get(r.source)
@@ -867,7 +919,9 @@ export function useOrganization({
 
                 // When some files fail during batch operation, warn user about partial completion
                 const failedCount = resArray.filter((/** @type {any} */ r) => !r.success).length;
-                if (result?.partialFailure || failedCount > 0) {
+                if (rolledBackBatch) {
+                  // Reported once, after this block.
+                } else if (result?.partialFailure || failedCount > 0) {
                   addNotification(
                     `Organized ${uiResults.length} files with ${failedCount} failures. ${describeFirstFailure(resArray)}`,
                     'warning',
@@ -901,18 +955,20 @@ export function useOrganization({
                   });
                 }
 
-                setLastOrganizeSummary({
-                  count: uiResults.length,
-                  partial: Boolean(result?.partialFailure || failedCount > 0),
-                  failedCount: failedCount || 0
-                });
+                if (!rolledBackBatch) {
+                  setLastOrganizeSummary({
+                    count: uiResults.length,
+                    partial: Boolean(result?.partialFailure || failedCount > 0),
+                    failedCount: failedCount || 0
+                  });
+                }
 
                 setBatchProgress({
                   current: filesToProcess.length,
                   total: filesToProcess.length,
                   currentFile: ''
                 });
-              } else {
+              } else if (!rolledBackBatch) {
                 logger.warn('[ORGANIZE] onExecute: No successful results to process');
                 if (resArray.length > 0) {
                   // Every file was refused. The reason was logged in main and
@@ -923,6 +979,13 @@ export function useOrganization({
                     9000
                   );
                 }
+              }
+              if (rolledBackBatch) {
+                logger.warn('[ORGANIZE] Batch rolled back by main', {
+                  batchId: result?.batchId,
+                  rollbackFailCount: result?.rollbackFailCount
+                });
+                addNotification(describeRolledBackBatch(result, resArray), 'error', 12000);
               }
             } catch (callbackError) {
               logger.error('[ORGANIZE] onExecute callback failed:', callbackError.message);
@@ -1182,6 +1245,10 @@ export function useOrganization({
         }
         // A run that finished without pausing supersedes any parked batch.
         pausedBatchRef.current = null;
+
+        // Main rolled the batch back; onExecute already told the user what
+        // was restored and what was left behind. Stay on Organize.
+        if (result?.rolledBack === true) return;
 
         if (successCount > 0) {
           // Only auto-advance when user is still on Organize phase.

@@ -18,13 +18,8 @@ import {
 import { PHASES, PHASE_METADATA, PHASE_ORDER } from '../../shared/constants';
 import { createLogger } from '../../shared/logger';
 import { useAppSelector, useAppDispatch } from '../store/hooks';
-import {
-  setPhase,
-  setViewMode,
-  openSettings,
-  canTransitionTo,
-  getTransitionBlockReason
-} from '../store/slices/uiSlice';
+import { setPhase, setViewMode, openSettings, getPhaseNavigation } from '../store/slices/uiSlice';
+import { selectFileStats, selectOrganizedCount } from '../store/selectors';
 import { updateHealth } from '../store/slices/systemSlice';
 import { fetchAiConfig } from '../store/slices/aiProviderSlice';
 import { useFloatingSearch } from '../contexts/FloatingSearchContext';
@@ -35,6 +30,7 @@ import { Button, IconButton } from './ui';
 import { Text } from './ui/Typography';
 import { isMac } from '../utils/platform';
 import { useUndoRedo } from './UndoRedoSystem';
+import { hasDestinationFolder } from '../utils/smartFolderDestinations';
 
 const logger = createLogger('NavigationBar');
 // =============================================================================
@@ -219,8 +215,8 @@ const NavTab = memo(function NavTab({
       onPhaseChange(phase);
       return;
     }
-    onBlockedNavigate?.(phase);
-  }, [canNavigate, onBlockedNavigate, onPhaseChange, phase]);
+    onBlockedNavigate?.(phase, blockReason);
+  }, [blockReason, canNavigate, onBlockedNavigate, onPhaseChange, phase]);
 
   const handleMouseEnter = useCallback(() => onHover(phase), [onHover, phase]);
   const handleMouseLeave = useCallback(() => onHover(null), [onHover]);
@@ -350,7 +346,9 @@ const ViewModeToggle = memo(function ViewModeToggle() {
   // control honest: it never highlights Dashboard while the rendered surface
   // stays phased. Same aria-disabled + tooltip treatment as the phase tabs, so
   // the title still surfaces on hover (a native `disabled` would swallow it).
-  const dashboardAvailable = useAppSelector((state) => state.files.smartFolders.length > 0);
+  const dashboardAvailable = useAppSelector((state) =>
+    hasDestinationFolder(state.files.smartFolders)
+  );
 
   // Single stable handler reads the target mode off the button's data-* attr,
   // avoiding a fresh inline closure per option in the render loop.
@@ -610,7 +608,30 @@ function NavigationBar() {
   const cameFromDashboard = useAppSelector((state) => state.ui.cameFromDashboard);
   // Mirror App.js' dashboard gate so the "Back to dashboard" affordance never
   // dead-ends: returning is only offered when the dashboard would actually render.
-  const dashboardAvailable = useAppSelector((state) => state.files?.smartFolders?.length > 0);
+  const dashboardAvailable = useAppSelector((state) =>
+    hasDestinationFolder(state.files?.smartFolders)
+  );
+  // Inputs to the phase-tab rule (uiSlice.getPhaseNavigation). Each is the
+  // value the matching in-phase button reads, so a tab opens exactly when that
+  // button would: Setup's Continue counts any folder, Discover's Continue the
+  // ready count from selectFileStats, Organize's View results the organized
+  // history.
+  const hasSmartFolders = useAppSelector(
+    (state) => Array.isArray(state.files?.smartFolders) && state.files.smartFolders.length > 0
+  );
+  const hasAnalyzedFiles = useAppSelector((state) => selectFileStats(state).ready > 0);
+  const hasFailedFiles = useAppSelector((state) => selectFileStats(state).failed > 0);
+  const hasProcessedFiles = useAppSelector((state) => selectOrganizedCount(state) > 0);
+  const navContext = useMemo(
+    () => ({
+      hasDestinationFolder: dashboardAvailable,
+      hasSmartFolders,
+      hasAnalyzedFiles,
+      hasFailedFiles,
+      hasProcessedFiles
+    }),
+    [dashboardAvailable, hasSmartFolders, hasAnalyzedFiles, hasFailedFiles, hasProcessedFiles]
+  );
   const isOrganizing = useAppSelector((state) => state.ui.isOrganizing);
   const { isExecuting: isUndoRedoExecuting, executionStatus } = useUndoRedo();
   const isLoading = useAppSelector((state) => state.ui.isLoading);
@@ -812,20 +833,31 @@ function NavigationBar() {
     };
   }, []);
 
+  // Keep top-level navigation responsive; analysis state can become stale.
+  const isBlockedByOperation =
+    isOrganizing || isLoading || Boolean(isAnalyzing) || Boolean(isUndoRedoExecuting);
+
   // Phase navigation handler
   const handlePhaseChange = useCallback(
     (newPhase) => {
       if (!newPhase || typeof newPhase !== 'string') return;
 
-      if (newPhase === currentPhase || canTransitionTo(currentPhase, newPhase)) {
+      if (getPhaseNavigation(currentPhase, newPhase, navContext).allowed) {
         actions.advancePhase(newPhase);
       }
     },
-    [currentPhase, actions]
+    [currentPhase, actions, navContext]
   );
 
   const handleBlockedNavigation = useCallback(
-    (phase) => {
+    (phase, blockReason) => {
+      // Closed by a prerequisite, not by work in flight: repeat the tooltip's
+      // reason so a click explains itself too.
+      if (!isBlockedByOperation && blockReason) {
+        showInfo(blockReason, 5200);
+        return;
+      }
+
       if (!phase || phase === currentPhase) {
         showInfo(
           isOrganizing
@@ -854,7 +886,7 @@ function NavigationBar() {
         5200
       );
     },
-    [actions, currentPhase, isAnalyzing, isOrganizing, showInfo]
+    [actions, currentPhase, isAnalyzing, isBlockedByOperation, isOrganizing, showInfo]
   );
 
   // Settings handler
@@ -868,9 +900,6 @@ function NavigationBar() {
     dispatch(setViewMode('dashboard'));
   }, [dispatch]);
 
-  // Keep top-level navigation responsive; analysis state can become stale.
-  const isBlockedByOperation =
-    isOrganizing || isLoading || Boolean(isAnalyzing) || Boolean(isUndoRedoExecuting);
   // Only show a nav spinner for loading states other than analysis to avoid duplicate indicators
   const navSpinnerActive = isOrganizing || isLoading || Boolean(isUndoRedoExecuting);
   // Dashboard mode hides the phased chrome (tab strip, step counter, the
@@ -932,13 +961,16 @@ function NavigationBar() {
               {(PHASE_ORDER || ['welcome', 'setup', 'discover', 'organize', 'complete']).map(
                 (phase) => {
                   const isActive = phase === currentPhase;
+                  // One rule for tabs and in-phase buttons: back is always
+                  // open, forward opens when the step being left would let
+                  // its own Continue through. Work in flight pauses all tabs.
+                  const navigation = getPhaseNavigation(currentPhase, phase, navContext);
 
-                  const canNavigate =
-                    (isActive || canTransitionTo(currentPhase, phase)) && !isBlockedByOperation;
+                  const canNavigate = (isActive || navigation.allowed) && !isBlockedByOperation;
 
                   const blockReason =
-                    !canNavigate && !isActive && !isBlockedByOperation
-                      ? getTransitionBlockReason(currentPhase, phase)
+                    !isActive && !isBlockedByOperation && !navigation.allowed
+                      ? navigation.reason
                       : null;
 
                   return (

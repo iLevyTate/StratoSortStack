@@ -16,6 +16,29 @@ const { TIMEOUTS } = require('../../shared/performanceConstants');
 const { meanPoolVectors } = require('../../shared/vectorMath');
 
 /**
+ * AbortError for an embed whose caller walked away (a superseded search, a
+ * closed modal). Callers recognise it by `name`, so it is never retried,
+ * counted as a failure, or wrapped as EMBEDDING_GENERATION_FAILED.
+ *
+ * @param {string} [message]
+ * @returns {Error & { code?: string }}
+ */
+function createAbortError(message = 'Embedding aborted') {
+  const error = /** @type {Error & { code?: string }} */ (new Error(message));
+  error.name = 'AbortError';
+  error.code = 'ABORT_ERR';
+  return error;
+}
+
+/**
+ * @param {AbortSignal | null | undefined} signal
+ * @param {string} [message]
+ */
+function throwIfSignalAborted(signal, message) {
+  if (signal?.aborted) throw createAbortError(message);
+}
+
+/**
  * LlamaService health snapshot (`{ initialized, gpuDetected, ... }`) or null
  * when the service or its accessor is unavailable (lazy init, test doubles).
  * @param {any} llamaService
@@ -98,6 +121,9 @@ class ParallelEmbeddingService {
       totalRequests: 0,
       successfulRequests: 0,
       failedRequests: 0,
+      // Embeds dropped or discarded because their caller aborted. Kept out of
+      // failedRequests so cancellations never push concurrency down.
+      abortedRequests: 0,
       totalLatencyMs: 0,
       peakConcurrency: 0
     };
@@ -319,10 +345,13 @@ class ParallelEmbeddingService {
   /**
    * Acquire a semaphore slot for making a request
    * FIX: Added timeout and queue limit to prevent hanging promises and memory bloat
+   * @param {AbortSignal | null} [signal] - aborting drops a queued request from
+   *   the queue (it never reaches the model) and rejects with an AbortError.
    * @returns {Promise<void>} Resolves when slot is available
-   * @throws {Error} If queue is full or timeout is reached
+   * @throws {Error} If queue is full, timeout is reached, or the signal aborts
    */
-  async _acquireSlot() {
+  async _acquireSlot(signal = null) {
+    throwIfSignalAborted(signal, 'Embedding aborted before it was queued');
     if (this._isShuttingDown) {
       const error = /** @type {Error & { code?: string }} */ (
         new Error('ParallelEmbeddingService: Service shutting down')
@@ -355,12 +384,39 @@ class ParallelEmbeddingService {
     }
 
     return new Promise((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        // Remove this entry from waitQueue
-        const index = this.waitQueue.findIndex((entry) => entry.resolve === resolve);
+      const removeEntry = () => {
+        const index = this.waitQueue.indexOf(entry);
         if (index !== -1) {
           this.waitQueue.splice(index, 1);
         }
+      };
+      const onAbort = () => {
+        // Superseded caller: leave the queue without ever taking a slot, so a
+        // stale embed can't run ahead of the live one.
+        removeEntry();
+        clearTimeout(entry.timeoutId);
+        reject(createAbortError('Embedding aborted while queued'));
+      };
+      const detachAbort = () => signal?.removeEventListener('abort', onAbort);
+      // Store resolve, reject, and timeout for cleanup. Waking (_releaseSlot /
+      // a concurrency raise) and shutdown call these, so they also detach the
+      // abort listener.
+      /** @type {{ resolve: () => void, reject: (e: any) => void, timeoutId: any }} */
+      const entry = {
+        resolve: () => {
+          detachAbort();
+          resolve();
+        },
+        reject: (/** @type {any} */ error) => {
+          detachAbort();
+          reject(error);
+        },
+        timeoutId: null
+      };
+      entry.timeoutId = setTimeout(() => {
+        // Remove this entry from waitQueue
+        removeEntry();
+        detachAbort();
         const error = /** @type {Error & { code?: string }} */ (
           new Error('ParallelEmbeddingService: Queue timeout')
         );
@@ -372,8 +428,8 @@ class ParallelEmbeddingService {
         reject(error);
       }, SEMAPHORE_CONFIG.QUEUE_TIMEOUT_MS);
 
-      // Store resolve, reject, and timeout for cleanup
-      this.waitQueue.push({ resolve, reject, timeoutId });
+      signal?.addEventListener('abort', onAbort, { once: true });
+      this.waitQueue.push(entry);
     });
   }
 
@@ -407,24 +463,41 @@ class ParallelEmbeddingService {
 
   /**
    * Generate embedding for a single text with retry logic
+   *
+   * `options.signal` lets a caller that may be superseded (a search the user
+   * has typed past) cancel cooperatively: while queued for a slot the request
+   * is dropped and never reaches the model; once running, the signal is
+   * forwarded to LlamaService (which drops it from its own inference queue)
+   * and any result that still arrives is discarded. Either way the call
+   * rejects with an AbortError and is not counted or logged as a failure.
+   *
    * @param {string} text - Text to embed
+   * @param {{ signal?: AbortSignal | null }} [options]
    * @returns {Promise<{vector: number[], model: string}>}
    */
-  async embedText(text) {
+  async embedText(text, options = {}) {
+    const signal = options?.signal || null;
     const startTime = Date.now();
     let acquiredSlot = false;
 
     try {
-      await this._acquireSlot();
+      await this._acquireSlot(signal);
       acquiredSlot = true;
+      throwIfSignalAborted(signal);
       // Increment totalRequests after slot acquisition so _adjustConcurrency
       // always sees totalRequests >= successfulRequests + failedRequests.
       this.stats.totalRequests++;
-      const result = await this._embedTextWithRetry(text);
+      const result = await this._embedTextWithRetry(text, { signal });
+      // The caller is gone: discard the vector rather than hand it back.
+      throwIfSignalAborted(signal, 'Embedding aborted; result discarded');
       this.stats.successfulRequests++;
       this.stats.totalLatencyMs += Date.now() - startTime;
       return result;
     } catch (error) {
+      if (signal?.aborted) {
+        this.stats.abortedRequests++;
+        throw error?.name === 'AbortError' ? error : createAbortError();
+      }
       if (acquiredSlot) this.stats.failedRequests++;
       throw error;
     } finally {
@@ -438,9 +511,10 @@ class ParallelEmbeddingService {
   /**
    * Internal embedding with retry logic using centralized retry utility
    * @param {string} text - Text to embed
+   * @param {{ signal?: AbortSignal | null }} [options]
    * @returns {Promise<{vector: number[], model: string}>}
    */
-  async _embedTextWithRetry(text) {
+  async _embedTextWithRetry(text, { signal = null } = {}) {
     const originalText = String(text || '');
     const llamaService = getLlamaService();
 
@@ -531,10 +605,13 @@ class ParallelEmbeddingService {
     ) => {
       let lastError;
       for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+        throwIfSignalAborted(signal);
         try {
           return await this._embedWithProviders(inputText, options);
         } catch (error) {
           lastError = error;
+          // A cancelled embed is never retried: the requester is gone.
+          if (signal?.aborted) throw error;
           if (!this._isRetryableError(error) || attempt >= this.maxRetries) throw error;
           const delayMs = Math.min(this.initialRetryDelayMs * 2 ** attempt, this.maxRetryDelayMs);
           logger.debug('[ParallelEmbeddingService] Retrying transient error', {
@@ -554,10 +631,11 @@ class ParallelEmbeddingService {
           return await embedWithTransientRetry(plan.text, {
             llamaService,
             modelName,
-            config
+            config,
+            signal
           });
         } catch (error) {
-          if (!isEmbeddingContextOverflow(error)) {
+          if (signal?.aborted || !isEmbeddingContextOverflow(error)) {
             throw error;
           }
           lastOverflowError = error;
@@ -576,13 +654,16 @@ class ParallelEmbeddingService {
 
       // Final fallback: chunk and mean-pool. This ensures oversized/token-dense
       // inputs remain processable rather than being dropped.
+      throwIfSignalAborted(signal);
       const pooled = await this._embedWithChunkPooling(
         originalText,
         modelName,
         llamaService,
         config,
-        ultraStrictCap.maxChars
+        ultraStrictCap.maxChars,
+        signal
       );
+      throwIfSignalAborted(signal);
       if (pooled && Array.isArray(pooled.vector) && pooled.vector.length > 0) {
         logger.debug('[ParallelEmbeddingService] Recovered embedding via chunk pooling', {
           originalLength: originalText.length,
@@ -596,6 +677,10 @@ class ParallelEmbeddingService {
       }
       throw new Error('Embedding overflow recovery failed');
     } catch (error) {
+      // Cancellation is not a failure: no error log, no generation-failed wrap.
+      if (signal?.aborted) {
+        throw error?.name === 'AbortError' ? error : createAbortError();
+      }
       logger.error('[ParallelEmbeddingService] Embedding failed via AI service', {
         error: error.message,
         retryable: this._isRetryableError(error)
@@ -614,8 +699,9 @@ class ParallelEmbeddingService {
 
   async _embedWithProviders(
     /** @type {any} */ textToEmbed,
-    /** @type {any} */ { llamaService, modelName, config }
+    /** @type {any} */ { llamaService, modelName, config, signal = null }
   ) {
+    throwIfSignalAborted(signal);
     const pool = getEmbeddingPool();
     this._syncProviderConcurrencyCap('embedding-provider', pool);
     if (!this._loggedEmbeddingExecutionMode) {
@@ -634,6 +720,9 @@ class ParallelEmbeddingService {
         if (modelPath) {
           const workerOperationName = 'Embedding worker';
           const workerTimeoutMs = TIMEOUTS.EMBEDDING_REQUEST || 30000;
+          // The signal is deliberately NOT handed to Piscina: aborting a
+          // running Piscina task terminates the worker thread, throwing away
+          // the warm GPU-resident model. Check it around the run instead.
           const result = await withTimeout(
             pool.run({
               text: textToEmbed,
@@ -643,6 +732,7 @@ class ParallelEmbeddingService {
             workerTimeoutMs,
             workerOperationName
           );
+          throwIfSignalAborted(signal);
           if (result?.embedding) {
             const expectedDim = resolveEmbeddingDimension(modelName);
             if (result.embedding.length !== expectedDim) {
@@ -666,6 +756,9 @@ class ParallelEmbeddingService {
           }
         }
       } catch (workerError) {
+        // Cancelled: don't fall back to the main-process path for a caller
+        // that's gone.
+        if (signal?.aborted) throw workerError;
         // can immediately try a stricter input cap instead of falling back to
         // the main process (which will likely fail with the same error).
         if (isEmbeddingContextOverflow(workerError)) {
@@ -691,11 +784,15 @@ class ParallelEmbeddingService {
 
     // Pass retry configuration to LlamaService
     // Note: LlamaService handles retries internally via LlamaResilience, but we pass options if supported
+    /** @type {{ signal?: AbortSignal }} */
     const options = {
       // maxRetries: this.maxRetries, // LlamaService uses internal config for retries
       // initialDelay: this.initialRetryDelayMs,
       // maxDelay: this.maxRetryDelayMs
     };
+    // LlamaService.generateEmbedding drops a queued inference when this fires
+    // (ModelAccessCoordinator) and skips its fallback-model chain.
+    if (signal) options.signal = signal;
 
     const result = await llamaService.generateEmbedding(textToEmbed, options);
 
@@ -745,7 +842,8 @@ class ParallelEmbeddingService {
     /** @type {any} */ modelName,
     /** @type {any} */ llamaService,
     /** @type {any} */ config,
-    /** @type {any} */ maxCharsHint
+    /** @type {any} */ maxCharsHint,
+    /** @type {AbortSignal | null} */ signal = null
   ) {
     try {
       const baseChunkSize = Number.isFinite(maxCharsHint) && maxCharsHint > 0 ? maxCharsHint : 900;
@@ -782,6 +880,7 @@ class ParallelEmbeddingService {
       const workerResults = await Promise.allSettled(
         Array.from({ length: workerCount }, async () => {
           while (nextIndex < chunks.length) {
+            if (signal?.aborted) return;
             const currentIndex = nextIndex;
             nextIndex += 1;
             const chunk = chunks[currentIndex];
@@ -810,7 +909,8 @@ class ParallelEmbeddingService {
               const chunkResult = await this._embedWithProviders(safeChunk, {
                 llamaService,
                 modelName,
-                config
+                config,
+                signal
               });
               if (chunkResult?.vector?.length) {
                 vectors.push(chunkResult.vector);
@@ -1316,6 +1416,9 @@ class ParallelEmbeddingService {
       totalRequests: 0,
       successfulRequests: 0,
       failedRequests: 0,
+      // Embeds dropped or discarded because their caller aborted. Kept out of
+      // failedRequests so cancellations never push concurrency down.
+      abortedRequests: 0,
       totalLatencyMs: 0,
       peakConcurrency: 0
     };

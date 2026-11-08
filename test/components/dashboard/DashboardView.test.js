@@ -13,16 +13,22 @@ jest.mock('../../../src/renderer/store/hooks', () => ({
   useAppSelector: jest.fn((selector) => selector(mockState))
 }));
 
-const mockCanTransitionTo = jest.fn();
-
+// The phase rule (getPhaseNavigation) is the real one, so the routing tests
+// below pin the same prerequisites the phase tabs enforce.
 jest.mock('../../../src/renderer/store/slices/uiSlice', () => ({
+  ...jest.requireActual('../../../src/renderer/store/slices/uiSlice'),
   setPhase: jest.fn((phase) => ({ type: 'ui/setPhase', payload: phase })),
   setViewMode: jest.fn((mode) => ({ type: 'ui/setViewMode', payload: mode })),
   setCameFromDashboard: jest.fn((value) => ({
     type: 'ui/setCameFromDashboard',
     payload: value
-  })),
-  canTransitionTo: (...args) => mockCanTransitionTo(...args)
+  }))
+}));
+
+const mockNotification = { showInfo: jest.fn() };
+
+jest.mock('../../../src/renderer/contexts/NotificationContext', () => ({
+  useNotification: jest.fn(() => mockNotification)
 }));
 
 // Each selector reads from the controllable mockSelectorValues object so a test
@@ -181,9 +187,8 @@ function phasePayloads() {
 describe('DashboardView', () => {
   beforeEach(() => {
     mockDispatch.mockClear();
-    mockCanTransitionTo.mockReset();
+    mockNotification.showInfo.mockClear();
     mockFormatDisplayFileName.mockClear();
-    mockCanTransitionTo.mockReturnValue(true);
     capturedDropHandler = null;
     mockIsDragging = false;
     setupState();
@@ -324,6 +329,20 @@ describe('DashboardView', () => {
       render(<DashboardView />);
       expect(screen.getByText('1 smart folder ready · 1 awaiting analysis')).toBeInTheDocument();
     });
+
+    test('summary does not count the Uncategorized catch-all as a smart folder (onboarding-ux-1)', () => {
+      setupState({
+        fileStats: { total: 0, ready: 0, failed: 0, pending: 0 },
+        smartFolders: [
+          { id: 'u', name: 'Uncategorized', category: 'uncategorized', isDefault: true },
+          { id: 'a', name: 'Financial' }
+        ]
+      });
+      render(<DashboardView />);
+      expect(
+        screen.getByText('1 smart folder ready · add files to get started')
+      ).toBeInTheDocument();
+    });
   });
 
   describe('adaptive status badge', () => {
@@ -402,7 +421,7 @@ describe('DashboardView', () => {
       render(<DashboardView />);
       const alert = screen.getByRole('alert');
       expect(alert).toHaveTextContent('1 file');
-      expect(alert).toHaveTextContent('review it');
+      expect(alert).toHaveTextContent('retry it in Discover');
     });
   });
 
@@ -471,6 +490,9 @@ describe('DashboardView', () => {
           { newName: 'four.pdf' },
           { newName: 'five.pdf' }
         ],
+        // Organize opens from Discover only with an analyzed file (the rule
+        // the phase tabs follow); the blocked case is covered below.
+        fileStats: { total: 1, ready: 1, failed: 0, pending: 0 },
         redactPaths: true
       });
       render(<DashboardView />);
@@ -509,7 +531,6 @@ describe('DashboardView', () => {
 
     test('a legal transition navigates directly without the discover detour', () => {
       setupState({ currentPhase: 'welcome' });
-      mockCanTransitionTo.mockReturnValue(true);
       render(<DashboardView />);
 
       fireEvent.click(buttonFor('Manage smart folders'));
@@ -518,7 +539,6 @@ describe('DashboardView', () => {
 
     test('deep-linking out of the dashboard leaves a "came from dashboard" breadcrumb', () => {
       setupState({ currentPhase: 'welcome' });
-      mockCanTransitionTo.mockReturnValue(true);
       render(<DashboardView />);
 
       fireEvent.click(buttonFor('Manage smart folders'));
@@ -534,24 +554,84 @@ describe('DashboardView', () => {
       });
     });
 
-    test('an illegal transition detours through the discover hub', () => {
-      setupState({ currentPhase: 'welcome' });
-      mockCanTransitionTo.mockReturnValue(false);
+    test('a step the graph does not offer detours through the discover hub', () => {
+      // Welcome -> Organize is not one move; Welcome -> Discover -> Organize is,
+      // and each hop passes its check (a destination, then an analyzed file).
+      setupState({
+        currentPhase: 'welcome',
+        fileStats: { total: 1, ready: 1, failed: 0, pending: 0 }
+      });
       render(<DashboardView />);
 
-      fireEvent.click(buttonFor('Manage smart folders'));
-      expect(phasePayloads()).toEqual(['discover', 'setup']);
+      fireEvent.click(buttonFor('Review & organize'));
+      expect(phasePayloads()).toEqual(['discover', 'organize']);
+      expect(mockNotification.showInfo).not.toHaveBeenCalled();
     });
 
-    test('routing to discover itself never double-dispatches, even when the transition is illegal', () => {
+    test('the detour never skips a prerequisite: with nothing analyzed it stops at Discover and says why', () => {
+      setupState({
+        currentPhase: 'welcome',
+        fileStats: { total: 1, ready: 0, failed: 0, pending: 1 }
+      });
+      render(<DashboardView />);
+
+      fireEvent.click(buttonFor('Review & organize'));
+      expect(phasePayloads()).toEqual(['discover']);
+      expect(mockNotification.showInfo).toHaveBeenCalledWith(
+        'Analyze at least one file first.',
+        5200
+      );
+    });
+
+    test('from Discover itself, Organize stays closed until a file is analyzed', () => {
+      setupState({
+        currentPhase: 'discover',
+        fileStats: { total: 1, ready: 0, failed: 0, pending: 1 }
+      });
+      render(<DashboardView />);
+
+      fireEvent.click(buttonFor('Review & organize'));
+      // Leaves the dashboard onto the step the user is on, with the reason.
+      expect(mockDispatch).toHaveBeenCalledWith({ type: 'ui/setViewMode', payload: 'phased' });
+      expect(phasePayloads()).toEqual([]);
+      expect(mockNotification.showInfo).toHaveBeenCalledWith(
+        'Analyze at least one file first.',
+        5200
+      );
+    });
+
+    test('when every file failed, Review failed stops at Discover with the retry reason', () => {
+      setupState({
+        currentPhase: 'welcome',
+        fileStats: { total: 2, ready: 0, failed: 2, pending: 0 }
+      });
+      render(<DashboardView />);
+
+      fireEvent.click(screen.getByText('2 failed').closest('button'));
+      expect(phasePayloads()).toEqual(['discover']);
+      expect(mockNotification.showInfo).toHaveBeenCalledWith(
+        'All files failed analysis. Retry them, or clear the queue and try again.',
+        5200
+      );
+    });
+
+    test('going back is always open: Results to Organize needs nothing analyzed', () => {
+      setupState({ currentPhase: 'complete' });
+      render(<DashboardView />);
+
+      fireEvent.click(buttonFor('Review & organize'));
+      expect(phasePayloads()).toEqual(['organize']);
+      expect(mockNotification.showInfo).not.toHaveBeenCalled();
+    });
+
+    test('routing to discover itself never double-dispatches', () => {
       jest.useFakeTimers();
       try {
         setupState({ currentPhase: 'welcome' });
-        mockCanTransitionTo.mockReturnValue(false);
         render(<DashboardView />);
 
-        // "Add & analyze files" routes to discover; the detour target is already
-        // discover, so the second setPhase must be skipped (no ['discover','discover']).
+        // "Add & analyze files" routes to discover in one move; it must not
+        // also take the hub detour (no ['discover','discover']).
         fireEvent.click(buttonFor('Add & analyze files'));
         expect(phasePayloads()).toEqual(['discover']);
       } finally {

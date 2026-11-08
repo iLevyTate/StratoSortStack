@@ -70,7 +70,8 @@ module.exports = (env, argv) => {
       textExtractionWorker: './src/main/workers/textExtractionWorker.js',
       imagePreprocessWorker: './src/main/workers/imagePreprocessWorker.js',
       umapProjectionWorker: './src/main/workers/umapProjectionWorker.js',
-      settingsImportParserWorker: './src/main/workers/settingsImportParserWorker.js'
+      settingsImportParserWorker: './src/main/workers/settingsImportParserWorker.js',
+      oramaRestoreWorker: './src/main/workers/oramaRestoreWorker.js'
     },
     output: {
       path: path.resolve(__dirname, 'dist'),

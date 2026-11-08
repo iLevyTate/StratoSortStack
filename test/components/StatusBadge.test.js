@@ -25,7 +25,7 @@ describe('StatusBadge', () => {
   // U-T2: the uppercase micro-chip recipe extracted verbatim from the
   // SettingsPanel save-status / mode chips — must stay pixel-identical.
   test.each([
-    ['info', 'border-stratosort-blue/30 bg-stratosort-blue/10 text-stratosort-blue'],
+    ['info', 'border-stratosort-blue/30 bg-stratosort-blue/10 text-system-gray-900'],
     ['success', 'border-stratosort-success/30 bg-stratosort-success/10 text-stratosort-success'],
     ['neutral', 'border-border-soft bg-system-gray-100 text-system-gray-500']
   ])('label appearance %s carries the verbatim chip recipe (U-T2)', (variant, tone) => {

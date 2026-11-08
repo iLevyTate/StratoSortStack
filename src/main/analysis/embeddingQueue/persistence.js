@@ -12,7 +12,11 @@ const path = require('path');
 const fs = require('fs').promises;
 const { logger } = require('../../../shared/logger');
 const { createKeyValueStore, shouldUseSqliteBackend } = require('../../utils/sqliteStore');
-const { compressSync: compress, uncompressSync: uncompress } = require('../../../shared/lz4Codec');
+const {
+  compressSync: compress,
+  uncompressSync: uncompress,
+  isLz4BindingAvailable
+} = require('../../../shared/lz4Codec');
 const {
   atomicWriteFile,
   safeUnlink,
@@ -30,6 +34,7 @@ const SQLITE_KEYS = {
 };
 
 const sqliteStores = new Map();
+const LZ4_UNAVAILABLE_CODE = 'LZ4_UNAVAILABLE';
 const SQLITE_COMPRESSION_ENABLED =
   String(process.env.STRATOSORT_SQLITE_COMPRESS || 'true').toLowerCase() !== 'false';
 
@@ -64,6 +69,17 @@ function getSqliteStore(filePath) {
       try {
         return JSON.parse(text);
       } catch (jsonError) {
+        if (isLz4BindingAvailable === false) {
+          // Without the lz4-napi binding the codec passes bytes through
+          // unchanged, so a genuine LZ4 blob cannot be decoded and must not
+          // be taken for corruption (which backs up and deletes the DB).
+          throw Object.assign(
+            new Error(
+              'Stored embedding queue is not plain JSON and the LZ4 codec is unavailable to decode it'
+            ),
+            { code: LZ4_UNAVAILABLE_CODE, transient: true, originalError: jsonError }
+          );
+        }
         try {
           const decompressed = uncompress(buffer);
           return JSON.parse(decompressed.toString('utf8'));
@@ -188,6 +204,15 @@ async function loadPersistedData(filePath, onLoad, description, options = {}) {
       }
       return;
     } catch (error) {
+      if (error?.code === LZ4_UNAVAILABLE_CODE) {
+        // Leave the database untouched and fail the load: the owner latches
+        // persists off, so nothing overwrites the unreadable rows.
+        logger.warn('[EmbeddingQueue] SQLite data held: LZ4 codec unavailable', {
+          description,
+          error: error.message
+        });
+        throw error;
+      }
       if (
         error?.code === 'SQLITE_CORRUPT' ||
         error?.code === 'SQLITE_NOTADB' ||

@@ -18,8 +18,7 @@ jest.mock('../../src/renderer/store/slices/uiSlice', () => ({
   setViewMode: jest.fn((mode) => ({ type: 'ui/setViewMode', payload: mode })),
   openSettings: jest.fn(() => ({ type: 'ui/openSettings' })),
   toggleSettings: jest.fn(() => ({ type: 'ui/toggleSettings' })),
-  canTransitionTo: jest.fn(() => true),
-  getTransitionBlockReason: jest.fn(() => null)
+  getPhaseNavigation: jest.fn(() => ({ allowed: true, reason: null }))
 }));
 
 const mockFetchAiConfig = jest.fn(() => ({ type: 'aiProvider/fetch' }));
@@ -398,6 +397,26 @@ describe('NavigationBar regression guards', () => {
         name: /Add a smart folder in Setup to open the dashboard/i
       })
     ).toBeInTheDocument();
+  });
+
+  // Main seeds Uncategorized on every profile; it is a catch-all, not a
+  // destination, so it must not unlock the dashboard (App.js agrees).
+  test('keeps the Dashboard toggle and breadcrumb off when only Uncategorized exists', () => {
+    mockState.ui.cameFromDashboard = true;
+    mockState.files.smartFolders = [
+      {
+        id: 'default-uncategorized',
+        name: 'Uncategorized',
+        category: 'uncategorized',
+        isDefault: true
+      }
+    ];
+    render(<NavigationBar />);
+
+    const toggleGroup = screen.getByRole('group', { name: /view mode/i });
+    const dashboardButton = within(toggleGroup).getByText('Dashboard').closest('button');
+    expect(dashboardButton).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.queryByRole('button', { name: /back to dashboard/i })).not.toBeInTheDocument();
   });
 
   test('enables the Dashboard toggle once a smart folder exists', () => {

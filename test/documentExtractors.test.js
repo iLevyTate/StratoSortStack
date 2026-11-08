@@ -171,6 +171,10 @@ describe('documentExtractors', () => {
 
       expect(result.length).toBeLessThanOrEqual(500000 + 100);
       expect(result).toContain('[Text truncated due to length]');
+      // The analysis recognises a cut body by this exported suffix.
+      expect(
+        result.endsWith(require('../src/main/analysis/documentExtractors').TEXT_TRUNCATION_MARKER)
+      ).toBe(true);
     });
 
     test('treats a thin text layer as a scan: PDF_NO_TEXT_CONTENT with the layer attached', async () => {

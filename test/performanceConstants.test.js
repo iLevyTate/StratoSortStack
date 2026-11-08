@@ -42,10 +42,12 @@ describe('performanceConstants', () => {
       expect(constants.TIMEOUTS.WINDOW_CREATION_READY).toBe(60000);
       // Hidden-window bound: createWindow.js force-shows after this.
       expect(constants.TIMEOUTS.WINDOW_SHOW_FALLBACK).toBe(4000);
-      // Heavyweight startup waits at most this long for the first paint.
-      expect(constants.TIMEOUTS.FIRST_PAINT_GATE).toBe(3000);
-      expect(constants.TIMEOUTS.FIRST_PAINT_GATE).toBeLessThan(
-        constants.TIMEOUTS.WINDOW_SHOW_FALLBACK
+      // Heavyweight startup waits at most this long for the first paint. The
+      // cap outlasts the show fallback (plus the show delay after a late
+      // ready-to-show) so the fallback's show releases the gate, not the cap.
+      expect(constants.TIMEOUTS.FIRST_PAINT_GATE).toBe(5100);
+      expect(constants.TIMEOUTS.FIRST_PAINT_GATE).toBeGreaterThan(
+        constants.TIMEOUTS.WINDOW_SHOW_FALLBACK + constants.TIMEOUTS.WINDOW_LOAD_DELAY
       );
     });
 

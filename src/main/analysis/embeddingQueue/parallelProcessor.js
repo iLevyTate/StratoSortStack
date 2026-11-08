@@ -13,6 +13,34 @@ const { withTimeout } = require('../../../shared/promiseUtils');
 const { TIMEOUTS } = require('../../../shared/performanceConstants');
 const PQueue = require('p-queue').default;
 
+/** Error code for a flush that hit a vector store refusing writes. */
+const VECTOR_WRITES_BLOCKED = 'VECTOR_WRITES_BLOCKED';
+
+/**
+ * The vector store answers `{ queued: false, reason: 'shutdown' }` (without
+ * throwing) when its writes are blocked or it is shutting down. Nothing was
+ * written, so the caller must not count the items as embedded.
+ * @param {any} result
+ * @returns {boolean}
+ */
+function isWritesBlockedResult(result) {
+  return Boolean(result && result.queued === false && result.reason === 'shutdown');
+}
+
+/**
+ * Rejecting (rather than reporting per-item failures) keeps the whole batch in
+ * the durable queue for a later flush and keeps the refusal out of the
+ * dead-letter retry budget: the items themselves are fine.
+ * @param {'file' | 'folder'} type
+ * @returns {Error & { code: string }}
+ */
+function writesBlockedError(type) {
+  return Object.assign(
+    new Error(`Vector store refused ${type} writes (shutting down or writes blocked)`),
+    { code: VECTOR_WRITES_BLOCKED }
+  );
+}
+
 /**
  * Process items in parallel with semaphore-based concurrency control
  * @param {object} params - Processing parameters
@@ -61,6 +89,7 @@ async function processItemsInParallel({
           TIMEOUTS.BATCH_EMBEDDING_MAX || 5 * 60 * 1000,
           `Batch ${type} upsert`
         );
+        if (isWritesBlockedResult(result)) throw writesBlockedError(type);
         // If the service returns success: false (e.g. dimension mismatch), we must treat it as a failure
         // so items go to the failed queue instead of being silently dropped.
         if (result && result.success === false) {
@@ -104,6 +133,7 @@ async function processItemsInParallel({
           TIMEOUTS.BATCH_EMBEDDING_MAX || 5 * 60 * 1000,
           `Batch ${type} upsert`
         );
+        if (isWritesBlockedResult(result)) throw writesBlockedError(type);
         if (result && result.success === false) {
           const isDimensionMismatch =
             result.error === 'dimension_mismatch' || result.requiresRebuild === true;
@@ -153,6 +183,8 @@ async function processItemsInParallel({
 
       return processedCount;
     } catch (batchError) {
+      // Retrying item by item against a store that refuses writes cannot help.
+      if (batchError?.code === VECTOR_WRITES_BLOCKED) throw batchError;
       logger.warn(
         `[EmbeddingQueue] Batch ${type} upsert failed, falling back to parallel individual:`,
         batchError.message
@@ -167,6 +199,7 @@ async function processItemsInParallel({
   );
 
   const queue = new PQueue({ concurrency });
+  let writesBlocked = false;
 
   /** @param {any} item */
   const processItem = async (item) => {
@@ -195,6 +228,11 @@ async function processItemsInParallel({
         `Upsert ${type}`
       );
 
+      if (isWritesBlockedResult(result)) {
+        writesBlocked = true;
+        return;
+      }
+
       if (result && result.success === false) {
         const isDimensionMismatch =
           result.error === 'dimension_mismatch' || result.requiresRebuild === true;
@@ -222,9 +260,15 @@ async function processItemsInParallel({
     }
   };
 
-  await Promise.all(items.map((item) => queue.add(() => processItem(item))));
+  await Promise.all(
+    items.map((item) => queue.add(() => (writesBlocked ? undefined : processItem(item))))
+  );
+
+  // Rejecting leaves the whole batch queued; any item that did land is simply
+  // upserted again on the next flush (upserts are idempotent).
+  if (writesBlocked) throw writesBlockedError(type);
 
   return processedCount;
 }
 
-module.exports = { processItemsInParallel };
+module.exports = { processItemsInParallel, VECTOR_WRITES_BLOCKED };

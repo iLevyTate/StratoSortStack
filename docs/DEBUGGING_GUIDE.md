@@ -83,7 +83,7 @@ time (reports range from tens of seconds to more than a minute).
    `Uncategorized` folder in Documents gives up after `TIMEOUTS.DEFAULT_FOLDER_PROBE` (3 s) and
    startup continues without it; old-log and crash-dump cleanup waits until after the first paint.
    Heavyweight AI bring-up (node-llama-cpp import, GPU probing, backend selection) waits for the
-   first paint (`src/main/core/firstPaintGate.js`, capped at `TIMEOUTS.FIRST_PAINT_GATE`, 3 s) and
+   first paint (`src/main/core/firstPaintGate.js`, capped at `TIMEOUTS.FIRST_PAINT_GATE`, 5.1 s) and
    then runs behind the splash screen. A long hidden phase on the current build therefore points at
    the main thread being blocked (slow disk, antivirus, a hung GPU process) rather than at the AI
    engine, and the log tells the two apart.
@@ -153,7 +153,14 @@ result and the GPU fallback decision at module load) are not in the file.
        `previous` follows a selection that differs from the saved record.
    13. `[STARTUP] Coordinated startup completed successfully`, or
        `[STARTUP] Coordinated startup failed:` followed by
-       `[STARTUP] Continuing startup in degraded mode`.
+       `[STARTUP] Continuing startup in degraded mode`. A startup that takes longer than
+       `TIMEOUTS.COORDINATED_STARTUP_SOFT` (45 s) logs
+       `[STARTUP] Coordinated startup still running after soft timeout; continuing` (warn, with
+       `softTimeoutMs` and `hardCapMs`) and keeps going; it then ends with
+       `[STARTUP] Coordinated startup completed after the soft timeout`, or with
+       `[STARTUP] Coordinated startup failed after timeout`. One that reaches
+       `TIMEOUTS.COORDINATED_STARTUP_HARD_CAP` (180 s) logs
+       `[STARTUP] Coordinated startup hit its hard cap; aborting` (error) first.
 
    Also search for these warning and error lines, which are normally absent:
 
@@ -463,8 +470,8 @@ Three log lines feed that view and are written at `info` in every build:
   organize (`src/main/ipc/files/batchOrganizeHandler.js`). They used to be development-only
   (`ENABLE_BATCH_TRACE_LOGS`, now removed). Their `source` and `destination` are file names only
   (`path.basename`), never folders or file content: POSIX path redaction follows folder names with
-  spaces only under the well-known roots (see below), so a full path elsewhere could still leak a
-  folder such as `Medical Records`.
+  spaces only under the well-known roots or in a top-level folder (see below), so a full path
+  elsewhere could still leak a folder such as `Medical Records`.
 
 The feed (`src/main/services/liveLogFeed.js`) listens to the logger only while a window is
 subscribed and ignores records logged while it is sending a batch, so a failing send cannot feed
@@ -483,6 +490,14 @@ takes no settings backup (`BACKUP_EXEMPT_KEYS` in `src/main/services/SettingsSer
 POSIX paths. That includes a second path in the same line: before, `move C:\a\x.pdf to D:\b\x.pdf`
 left the second path raw. Windows file names keep their spaces.
 
+A home folder on its own (`C:\Users\<name>`, `/Users/<name>`, `/home/<name>`) becomes a bare
+`[REDACTED_PATH]`: its last segment is the OS account name, so it is not kept as a basename. This
+also hides `C:\Users\Public`. A Windows path whose separator switches between `\` and `/`
+(`C:\Users\jdoe/Documents/x.pdf`, `C:/Users/jdoe\Docs\x.pdf`) is redacted as one path, so the user
+folder in front of the switch is no longer left raw. Object keys that contain a separator or a
+control character go through the same rules as values, and a key that reduces to the same text as an
+earlier one gets a ` #2` (then ` #3`, ...) suffix, so both values are kept.
+
 A POSIX path keeps spaces inside its folder names only when it starts at a well-known root
 (`/Users`, `/home`, `/Volumes`, `/private`, `/var`, `/tmp`, `/mnt`, `/media`, `/run/media`,
 `/run/user`, `/opt`, `/Library`, `/Applications`, `/System`, `/Network`, `/root`, `/srv`, `/net`) or
@@ -495,8 +510,10 @@ path may follow `:`, so the id `file:/users/jane/mobile documents/scan.pdf` is w
 (U+00A0) or a narrow no-break space (U+202F). Free text cannot say where a path ends, so the rest is
 a compromise:
 
-- A POSIX path under any other root, or glued to a word (as in a URL), is still cut at its first
-  whitespace: `/data/My Files/x.pdf` becomes `[REDACTED_PATH]/My Files/x.pdf`.
+- A POSIX path under any other root is fully redacted when its top-level folder has a space
+  (`/Shared Drives/Team X/x.pdf` becomes `[REDACTED_PATH]/x.pdf`). Otherwise it, and any path glued
+  to a word (as in a URL), is still cut at its first whitespace: `/data/My Files/x.pdf` becomes
+  `[REDACTED_PATH]/My Files/x.pdf`.
 - The file name is captured only up to its first whitespace; the rest stays as plain text
   (`[REDACTED_PATH]/2024 return.pdf`).
 - A folder name with two spaces in a row, or a word after a space that contains `"`, `\`, `:`, `;`,

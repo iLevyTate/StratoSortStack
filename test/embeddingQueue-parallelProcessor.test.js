@@ -217,4 +217,107 @@ describe('embeddingQueue parallelProcessor', () => {
     expect(processed).toBe(1);
     expect(onItemFailed).not.toHaveBeenCalled();
   });
+
+  describe('vector store refusing writes (shutdown / writes blocked)', () => {
+    const SHUTDOWN_FILE_BATCH = { queued: false, count: 0, skipped: true, reason: 'shutdown' };
+
+    function run(type, vectorDbService, items) {
+      const onProgress = jest.fn();
+      const onItemFailed = jest.fn();
+      const failedItemIds = new Set();
+      const promise = processItemsInParallel({
+        items,
+        type,
+        vectorDbService,
+        failedItemIds,
+        startProcessedCount: 0,
+        totalBatchSize: items.length,
+        concurrency: 2,
+        onProgress,
+        onItemFailed
+      });
+      return { promise, onProgress, onItemFailed, failedItemIds };
+    }
+
+    test('a refused file batch rejects so the batch stays queued instead of counting as embedded', async () => {
+      const vectorDbService = {
+        batchUpsertFiles: jest.fn().mockResolvedValue(SHUTDOWN_FILE_BATCH),
+        upsertFile: jest.fn(async (file) => ({
+          queued: false,
+          fileId: file.id,
+          skipped: true,
+          reason: 'shutdown'
+        }))
+      };
+      const items = [{ id: 'file:a', vector: [1], meta: { path: 'a' } }];
+      const { promise, onProgress, onItemFailed, failedItemIds } = run(
+        'file',
+        vectorDbService,
+        items
+      );
+
+      await expect(promise).rejects.toMatchObject({ code: 'VECTOR_WRITES_BLOCKED' });
+      expect(onProgress).not.toHaveBeenCalled();
+      // Transient refusal, not a per-item failure: it must not count toward dead-lettering.
+      expect(onItemFailed).not.toHaveBeenCalled();
+      expect(failedItemIds.size).toBe(0);
+      // No point retrying each item individually against a store that refuses writes.
+      expect(vectorDbService.upsertFile).not.toHaveBeenCalled();
+    });
+
+    test('a refused single-file upsert rejects instead of counting as embedded', async () => {
+      const vectorDbService = {
+        upsertFile: jest.fn(async (file) => ({
+          queued: false,
+          fileId: file.id,
+          skipped: true,
+          reason: 'shutdown'
+        }))
+      };
+      const items = [
+        { id: 'file:a', vector: [1], meta: { path: 'a' } },
+        { id: 'file:b', vector: [1], meta: { path: 'b' } }
+      ];
+      const { promise, onProgress, onItemFailed, failedItemIds } = run(
+        'file',
+        vectorDbService,
+        items
+      );
+
+      await expect(promise).rejects.toMatchObject({ code: 'VECTOR_WRITES_BLOCKED' });
+      expect(onProgress).not.toHaveBeenCalled();
+      expect(onItemFailed).not.toHaveBeenCalled();
+      expect(failedItemIds.size).toBe(0);
+    });
+
+    test('a refused folder batch rejects instead of counting as embedded', async () => {
+      const vectorDbService = {
+        batchUpsertFolders: jest
+          .fn()
+          .mockResolvedValue({ queued: false, count: 0, skipped: [], reason: 'shutdown' })
+      };
+      const items = [{ id: 'folder:one', vector: [1], meta: { name: 'One', path: 'C:\\One' } }];
+      const { promise, onProgress, onItemFailed } = run('folder', vectorDbService, items);
+
+      await expect(promise).rejects.toMatchObject({ code: 'VECTOR_WRITES_BLOCKED' });
+      expect(onProgress).not.toHaveBeenCalled();
+      expect(onItemFailed).not.toHaveBeenCalled();
+    });
+
+    test('a refused single-folder upsert rejects instead of counting as embedded', async () => {
+      const vectorDbService = {
+        upsertFolder: jest.fn(async (folder) => ({
+          queued: false,
+          folderId: folder.id,
+          skipped: true,
+          reason: 'shutdown'
+        }))
+      };
+      const items = [{ id: 'folder:one', vector: [1], meta: { name: 'One', path: 'C:\\One' } }];
+      const { promise, onItemFailed } = run('folder', vectorDbService, items);
+
+      await expect(promise).rejects.toMatchObject({ code: 'VECTOR_WRITES_BLOCKED' });
+      expect(onItemFailed).not.toHaveBeenCalled();
+    });
+  });
 });

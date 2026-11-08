@@ -247,6 +247,15 @@ class AnalysisHistoryServiceCore {
         await this.loadConfig();
         await this.loadHistory();
         await this.loadIndex();
+        // The index is derived data: a rebuild that fails must never reach the
+        // reset below, which would overwrite the history it was derived from.
+        try {
+          this._reconcileIndexWithHistory();
+        } catch (reconcileError) {
+          logger.warn('[AnalysisHistoryService] Could not rebuild index; keeping the loaded one', {
+            error: /** @type {any} */ (reconcileError)?.message
+          });
+        }
         if (this._readOnly) {
           this._readOnly = false;
           this._readOnlyReason = null;
@@ -384,14 +393,70 @@ class AnalysisHistoryServiceCore {
     await saveConfigFile(this.configPath, this.config);
   }
 
+  // History and index are two separate writes with no transaction between
+  // them. Each history save stamps a fresh `pairRevision`; each index save
+  // stamps the revision of the history it was derived from. The stamps are
+  // taken synchronously when the save starts, so a history+index pair saved
+  // together carries one revision, and a load that finds two different ones
+  // knows only one of the writes landed (see _reconcileIndexWithHistory).
   async saveHistory() {
+    if (this.analysisHistory) this.analysisHistory.pairRevision = crypto.randomUUID();
     await this.circuitBreaker.execute(() =>
       saveHistoryFile(this.historyPath, this.analysisHistory)
     );
   }
 
   async saveIndex() {
+    if (this.analysisIndex) {
+      this.analysisIndex.pairRevision = this.analysisHistory?.pairRevision ?? null;
+    }
     await this.circuitBreaker.execute(() => saveIndexFile(this.indexPath, this.analysisIndex));
+  }
+
+  /**
+   * The index is derived from the history. When the pair on disk does not
+   * carry the same revision (a crash between the two writes, or one of them
+   * failing), the loaded index may point at entries the history no longer
+   * has, or miss ones it does. Rebuild it from the history, which is the
+   * source of truth, and schedule a save so disk matches again. Data written
+   * before revisions existed has none on either side and is left as is.
+   * @private
+   * @returns {boolean} true when the index was rebuilt
+   */
+  _reconcileIndexWithHistory() {
+    if (!this.analysisHistory || !this.analysisIndex) return false;
+    const historyRevision = this.analysisHistory.pairRevision ?? null;
+    const indexRevision = this.analysisIndex.pairRevision ?? null;
+    if (historyRevision === indexRevision) return false;
+
+    const previous = this.analysisIndex;
+    const rebuilt = createEmptyIndex(this.SCHEMA_VERSION);
+    if (previous.createdAt) rebuilt.createdAt = previous.createdAt;
+    if (previous.lastOptimized !== undefined) rebuilt.lastOptimized = previous.lastOptimized;
+    const entries = Object.values(this.analysisHistory.entries || {});
+    let incomplete = 0;
+    for (const entry of entries) {
+      if (!entry || typeof entry !== 'object' || !entry.id) continue;
+      // Older or partial entries may lack `analysis` or `timestamp`. Index
+      // what they have (hash and path come first) instead of letting one
+      // entry abort the rebuild; the entry itself is left untouched.
+      const analysis = entry.analysis && typeof entry.analysis === 'object' ? entry.analysis : {};
+      try {
+        updateIndexes(rebuilt, analysis === entry.analysis ? entry : { ...entry, analysis });
+      } catch {
+        incomplete++;
+      }
+    }
+    rebuilt.pairRevision = historyRevision;
+    this.analysisIndex = rebuilt;
+    this._cache = createCacheStore();
+    this._statsNeedFullRecalc = true;
+    logger.warn('[AnalysisHistoryService] History and index on disk did not match; rebuilt index', {
+      entries: entries.length,
+      incompleteEntries: incomplete
+    });
+    this._markHistoryDirty();
+    return true;
   }
 
   /** @returns {boolean} Whether memory holds changes that are not on disk yet. */
@@ -558,24 +623,23 @@ class AnalysisHistoryServiceCore {
   }
 
   /**
-   * Force the next operation to reload history from disk, discarding memory.
-   * Changes waiting for the coalesced save are lost with it, so say so: this
-   * only happens after a save just failed, i.e. the disk is already refusing.
+   * An immediate (non-coalesced) save failed after the caller undid its own
+   * in-memory change. Everything else in memory is still the correct state,
+   * including entries the coalesced save was holding for OTHER files, whose
+   * recordAnalysis already resolved. Reloading from disk here used to drop
+   * those entries and mark them saved. Keep them and retry exactly like a
+   * failed coalesced save, raising the storage-full banner on a full disk.
    * @param {string} operation
+   * @param {PromiseRejectedResult[]} failures
    */
-  _forceReloadFromDisk(operation) {
-    const unsaved = this._historyChangeSeq - this._historySavedSeq;
-    if (unsaved > 0) {
-      logger.warn('[AnalysisHistoryService] Reloading from disk drops unsaved history changes', {
-        operation,
-        unsavedChanges: unsaved
-      });
-    }
-    if (this._historySaveTimer) clearTimeout(this._historySaveTimer);
-    this._historySaveTimer = null;
-    this._historySavedSeq = this._historyChangeSeq;
-    this._historyFirstUnsavedAt = 0;
-    this.initialized = false;
+  _retryAfterImmediateSaveFailure(operation, failures) {
+    logger.warn('[AnalysisHistoryService] Immediate history save failed; will retry', {
+      operation,
+      unsavedChanges: this._historyChangeSeq - this._historySavedSeq
+    });
+    const diskFull = failures.find((r) => isDiskFullError(/** @type {any} */ (r).reason));
+    if (diskFull) this._raiseStorageFull(/** @type {any} */ (diskFull).reason?.code);
+    this._scheduleHistorySave();
   }
 
   /**
@@ -828,6 +892,9 @@ class AnalysisHistoryServiceCore {
               reasoning: safeResults.reasoning || null,
               documentDate: safeResults.documentDate || safeResults.date || null,
               extractionMethod: safeResults.extractionMethod || null,
+              // Omitted (not false) for a complete read, like
+              // transcriptSegmentsTruncated; the details view reads it.
+              ...(safeResults.partialContent === true ? { partialContent: true } : {}),
               // Structured data for queries
               keyEntities: safeResults.keyEntities || [],
               dates: safeResults.dates || [],
@@ -1206,6 +1273,15 @@ class AnalysisHistoryServiceCore {
         }
       }
 
+      // What this call changes, so a failed save can undo exactly that and
+      // leave every other in-memory change in place.
+      /** @type {Array<{ entry: any, hadOrganization: boolean, organization: any, fileName: any, hadAnalysis: boolean, analysis: any }>} */
+      const touched = [];
+      const index = this.analysisIndex;
+      /** @type {any} */
+      let prevPathLookup = null;
+      const prevIndexUpdatedAt = index?.updatedAt;
+
       // Scan through entries and update matching ones
       const entries = this.analysisHistory?.entries || {};
       for (const entry of Object.values(entries)) {
@@ -1220,6 +1296,20 @@ class AnalysisHistoryServiceCore {
         if (update) {
           // Track old actual path for index update
           const oldActualPath = actualPath;
+
+          // Only top-level fields of entry, entry.organization and
+          // entry.analysis change below, so shallow copies restore them.
+          touched.push({
+            entry,
+            hadOrganization: Object.prototype.hasOwnProperty.call(entry, 'organization'),
+            organization: entry.organization ? { ...entry.organization } : entry.organization,
+            fileName: entry.fileName,
+            hadAnalysis: Object.prototype.hasOwnProperty.call(entry, 'analysis'),
+            analysis: entry.analysis ? { ...entry.analysis } : entry.analysis
+          });
+          if (index?.pathLookup && prevPathLookup === null) {
+            prevPathLookup = { ...index.pathLookup };
+          }
 
           // Update the organization fields
           if (!entry.organization) {
@@ -1302,18 +1392,30 @@ class AnalysisHistoryServiceCore {
         if (saveFailures.length > 0) {
           // Fail CLOSED. Returning success here made FilePathCoordinator skip
           // its compensating rollback, so the vector DB ended up pointing at
-          // new paths while on-disk history still held the old ones — and the
-          // forced re-init below discards the in-memory update, cementing the
-          // divergence. Throwing lets the coordinator roll back its other
-          // stores; the re-init reloads disk state so memory matches it.
+          // new paths while on-disk history still held the old ones. Throwing
+          // lets the coordinator roll back its other stores; this move is
+          // undone in memory to match, and the retry rewrites disk from it.
           const errMsg = saveFailures.map((r) => r.reason?.message).join('; ');
           logger.error('[AnalysisHistoryService] updateEntryPaths persistence failed', {
             updated,
             errors: errMsg
           });
+          for (const t of touched) {
+            if (t.hadOrganization) t.entry.organization = t.organization;
+            else delete t.entry.organization;
+            if (t.hadAnalysis) t.entry.analysis = t.analysis;
+            else delete t.entry.analysis;
+            t.entry.fileName = t.fileName;
+          }
+          if (index && prevPathLookup !== null) {
+            index.pathLookup = prevPathLookup;
+            index.updatedAt = prevIndexUpdatedAt;
+          }
           this.analysisHistory.updatedAt = prevUpdatedAt;
-          // Force re-init: reload disk state, dropping the unsaved update
-          this._forceReloadFromDisk('updateEntryPaths');
+          this._retryAfterImmediateSaveFailure(
+            'updateEntryPaths',
+            /** @type {PromiseRejectedResult[]} */ (saveFailures)
+          );
           clearCachesHelper(this._cache, this);
           const persistError = /** @type {Error & { code?: string }} */ (
             new Error(`updateEntryPaths persistence failed: ${errMsg}`)
@@ -1567,7 +1669,11 @@ class AnalysisHistoryServiceCore {
             }
           }
           this.analysisHistory.updatedAt = prevUpdatedAt;
-          this._forceReloadFromDisk('removeEntriesByPath');
+          this._retryAfterImmediateSaveFailure(
+            'removeEntriesByPath',
+            /** @type {PromiseRejectedResult[]} */ (saveFailures)
+          );
+          clearCachesHelper(this._cache, this);
           logger.error(
             '[AnalysisHistoryService] removeEntriesByPath persistence failed, rolled back',
             {

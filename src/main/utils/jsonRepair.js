@@ -260,11 +260,11 @@ function repairJSON(json) {
     return `"${fixed}"`;
   });
 
-  // Count structural braces/brackets only (skip those inside JSON strings)
-  let openBraces = 0,
-    closeBraces = 0,
-    openBrackets = 0,
-    closeBrackets = 0;
+  // Track the structural braces/brackets still open (skipping those inside
+  // JSON strings), innermost last, so truncated output is closed in reverse
+  // nesting order: `{"a":[{"t":"x` needs `"}]}`, not `"]}}`.
+  /** @type {string[]} */
+  const openStack = [];
   let inString = false;
   {
     let escaped = false;
@@ -283,10 +283,10 @@ function repairJSON(json) {
         continue;
       }
       if (!inString) {
-        if (ch === '{') openBraces++;
-        else if (ch === '}') closeBraces++;
-        else if (ch === '[') openBrackets++;
-        else if (ch === ']') closeBrackets++;
+        if (ch === '{' || ch === '[') openStack.push(ch);
+        else if ((ch === '}' || ch === ']') && openStack.at(-1) === (ch === '}' ? '{' : '[')) {
+          openStack.pop();
+        }
       }
     }
   }
@@ -296,13 +296,18 @@ function repairJSON(json) {
     repaired += '"';
   }
 
-  // Add missing closing brackets/braces
-  if (openBrackets > closeBrackets) {
-    repaired += ']'.repeat(openBrackets - closeBrackets);
-  }
-
-  if (openBraces > closeBraces) {
-    repaired += '}'.repeat(openBraces - closeBraces);
+  if (openStack.length > 0) {
+    // Cut off inside an object at a key (`{"a":1,"ke` or `{"a":1,"key":`):
+    // a key with no value cannot parse, so drop it.
+    if (openStack.at(-1) === '{') {
+      repaired = repaired.replace(/([{,])\s*"(?:[^"\\]|\\.)*"\s*:?\s*$/, '$1');
+    }
+    // Cut off right after a separator: `[{"t":"a"},` -> `[{"t":"a"}`.
+    repaired = repaired.replace(/,\s*$/, '');
+    repaired += openStack
+      .reverse()
+      .map((open) => (open === '{' ? '}' : ']'))
+      .join('');
   }
 
   // Remove any text after the final closing brace/bracket

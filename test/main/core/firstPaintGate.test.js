@@ -74,11 +74,31 @@ describe('firstPaintGate.waitForFirstPaint', () => {
 
   test('defaults the cap to TIMEOUTS.FIRST_PAINT_GATE', async () => {
     jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick'] });
-    expect(TIMEOUTS.FIRST_PAINT_GATE).toBe(3000);
+    expect(TIMEOUTS.FIRST_PAINT_GATE).toBe(5100);
     const win = makeWindow();
     const gate = waitForFirstPaint(win);
     await jest.advanceTimersByTimeAsync(TIMEOUTS.FIRST_PAINT_GATE);
     await expect(gate).resolves.toBe('timeout');
+  });
+
+  // createWindow.js force-shows a still-hidden window at WINDOW_SHOW_FALLBACK
+  // (and shows ~100 ms after a late ready-to-show). The gate's cap must not
+  // win that race: releasing on 'timeout' starts heavyweight sync work that
+  // blocks the very timer meant to put the window on screen.
+  test("a window shown by the show fallback releases the gate as 'shown', not 'timeout'", async () => {
+    jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick'] });
+    const win = makeWindow();
+    let settled = null;
+    const gate = waitForFirstPaint(win).then((reason) => {
+      settled = reason;
+      return reason;
+    });
+
+    await jest.advanceTimersByTimeAsync(TIMEOUTS.WINDOW_SHOW_FALLBACK + TIMEOUTS.WINDOW_LOAD_DELAY);
+    expect(settled).toBeNull();
+
+    win.emit('show');
+    await expect(gate).resolves.toBe('shown');
   });
 
   test("resolves 'no-window' for a null or destroyed window without touching it", async () => {

@@ -42,6 +42,80 @@ async function validateResumeOperationPath(candidate, role, logger) {
   return validation.normalizedPath;
 }
 
+/**
+ * The source size+mtime the live handler journaled with the started mark,
+ * or null for legacy journal entries that carry none.
+ * @param {any} op
+ * @returns {{ size: number, mtimeMs: number } | null}
+ */
+function recordedSourceMetadata(op) {
+  const expectedSize = op.sourceSize ?? op.size;
+  const expectedMtime = op.sourceMtime ?? op.mtimeMs ?? op.mtime;
+  const parsedMtime =
+    typeof expectedMtime === 'number'
+      ? expectedMtime
+      : typeof expectedMtime === 'string'
+        ? Date.parse(expectedMtime)
+        : NaN;
+  if (typeof expectedSize !== 'number' || !Number.isFinite(parsedMtime)) return null;
+  return { size: expectedSize, mtimeMs: parsedMtime };
+}
+
+/**
+ * Whether `filePath` is a regular file with the recorded size and an mtime
+ * within 2 s of the recorded one (a rename preserves both).
+ * @param {string} filePath
+ * @param {{ size: number, mtimeMs: number }} recorded
+ * @returns {Promise<boolean>}
+ */
+async function matchesRecordedFile(filePath, recorded) {
+  try {
+    const stat = await fs.stat(filePath);
+    return (
+      stat.isFile() &&
+      stat.size === recorded.size &&
+      Math.abs(stat.mtimeMs - recorded.mtimeMs) < 2000
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** @param {string} value */
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Find the moved file under one of the names the live batch handler can
+ * pick for `plannedDestination`: the numbered collision walk
+ * (`<base>_<N><ext>`, formatNumberedCollisionCandidate) or the UUID
+ * fallback (`<base>_<8 hex><ext>`). Returns the first sibling matching the
+ * recorded size+mtime, or null.
+ * @param {string} plannedDestination
+ * @param {{ size: number, mtimeMs: number }} recorded
+ * @returns {Promise<string|null>}
+ */
+async function findMovedSibling(plannedDestination, recorded) {
+  const dir = path.dirname(plannedDestination);
+  const ext = path.extname(plannedDestination);
+  const base = path.basename(plannedDestination, ext);
+  const pattern = new RegExp(
+    `^${escapeRegExp(base)}_(?:\\d+|[0-9a-f]{8})${escapeRegExp(ext)}$`,
+    process.platform === 'win32' ? 'i' : ''
+  );
+  let names;
+  try {
+    names = await fs.readdir(dir);
+  } catch {
+    return null;
+  }
+  for (const name of names) {
+    if (!pattern.test(String(name))) continue;
+    const candidate = path.join(dir, String(name));
+    if (await matchesRecordedFile(candidate, recorded)) return candidate;
+  }
+  return null;
+}
+
 async function pathExists(
   /** @type {any} */ filePath,
   /** @type {any} */ logger,
@@ -277,30 +351,40 @@ async function resumeBatch(
       const destinationExists = await pathExists(op.destination, logger, 'destination');
 
       if (!sourceExists) {
+        const recorded = recordedSourceMetadata(op);
+        // The live handler journals only the PLANNED destination before the
+        // rename; a collision walk (`_N`) or UUID fallback picks the final
+        // name after that, and the done mark carrying it is not awaited. A
+        // crash in that window leaves the moved file under a sibling name,
+        // so look for it there before declaring the op failed.
+        const siblingMatch =
+          recorded && !(destinationExists && (await matchesRecordedFile(op.destination, recorded)))
+            ? await findMovedSibling(op.destination, recorded)
+            : null;
+        if (siblingMatch) {
+          logger?.info?.('[RESUME] Moved file found under a collision-suffixed name', {
+            batchId: batch.id,
+            index: i,
+            destination: path.basename(siblingMatch)
+          });
+          op.destination = siblingMatch;
+          await serviceIntegration.processingState.markOrganizeOpDone(batch.id, i, {
+            destination: siblingMatch
+          });
+          const win = getMainWindow?.();
+          if (win && !win.isDestroyed()) {
+            safeSend(win.webContents, IPC_EVENTS.OPERATION_PROGRESS, {
+              type: 'batch_organize',
+              current: i + 1,
+              total,
+              currentFile: path.basename(op.source)
+            });
+          }
+          continue;
+        }
         if (destinationExists) {
-          const expectedSize = op.sourceSize ?? op.size;
-          const expectedMtime = op.sourceMtime ?? op.mtimeMs ?? op.mtime;
-          const hasSize = typeof expectedSize === 'number';
-          const parsedMtime =
-            typeof expectedMtime === 'number'
-              ? expectedMtime
-              : typeof expectedMtime === 'string'
-                ? Date.parse(expectedMtime)
-                : NaN;
-          const hasMtime = Number.isFinite(parsedMtime);
-
-          if (hasSize && hasMtime) {
-            let destMatches = false;
-            try {
-              const destStat = await fs.stat(op.destination);
-              destMatches =
-                destStat.isFile() &&
-                destStat.size === expectedSize &&
-                Math.abs(destStat.mtimeMs - parsedMtime) < 2000;
-            } catch {
-              destMatches = false;
-            }
-            if (!destMatches) {
+          if (recorded) {
+            if (!(await matchesRecordedFile(op.destination, recorded))) {
               throw new Error(
                 'Source missing and destination occupant does not match the recorded file'
               );

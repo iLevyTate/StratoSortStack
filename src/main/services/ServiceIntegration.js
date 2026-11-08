@@ -180,6 +180,21 @@ class ServiceIntegration {
       return this._initPromise;
     }
 
+    // A quit that lands before coordinated startup reaches this point has
+    // already torn the container down; resolving services now would start
+    // watchers and reopen stores against it. Resolves (never rejects), like
+    // every other failed initialization.
+    if (this._isShuttingDown) {
+      logger.info('[ServiceIntegration] Shutdown already started; skipping initialization');
+      return /** @type {any} */ ({
+        initialized: [],
+        errors: [],
+        skipped: [],
+        success: false,
+        shuttingDown: true
+      });
+    }
+
     if (this.initialized) {
       return /** @type {any} */ ({
         initialized: [],

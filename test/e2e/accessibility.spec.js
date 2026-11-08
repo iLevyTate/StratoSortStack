@@ -25,11 +25,16 @@ const {
   launchApp,
   closeApp,
   waitForAppReady,
-  dismissModelSetupWizard
+  dismissModelSetupWizard,
+  openModelSetupWizardOffline,
+  readAppSessionLogs,
+  BACKGROUND_DOWNLOAD_DECLINED_LOG,
+  BACKGROUND_DOWNLOAD_STARTED_LOG
 } = require('./helpers/electronApp');
 const { NavigationPage } = require('./helpers/pageObjects');
 const { PHASES } = require('./helpers/testFixtures');
 const { pressOpenSearchShortcut } = require('./helpers/e2eShortcuts');
+const { createSyntheticFiles, seedAnalyzedFiles } = require('./helpers/seedState');
 
 // Impacts that FAIL the test. Ratcheted critical → critical+serious on
 // 2026-07-02 when every audited screen (incl. dark/light themes, search modal,
@@ -106,9 +111,10 @@ test.describe('Accessibility (axe)', () => {
     app = result.app;
     window = result.window;
     await waitForAppReady(window);
-    // The first-run model wizard auto-opens ~2s after ready; its overlay would
-    // block phase navigation and the Settings dialog audited below, and skews
-    // the baseline a11y snapshot. Skip it so each screen audits a clean state.
+    // The default profile carries the limited-AI seed, so the first-run model
+    // wizard never auto-opens and this returns at once. It stays as a guard: an
+    // open wizard overlay would block phase navigation and the Settings dialog
+    // audited below, and skew the baseline a11y snapshot.
     await dismissModelSetupWizard(window);
     nav = new NavigationPage(window);
   });
@@ -142,12 +148,13 @@ test.describe('Accessibility (axe)', () => {
   });
 
   test('Organize phase has no critical violations', async () => {
-    // Same convention as organize-phase.spec.js: the Organize tab is disabled
-    // until files have been analyzed, which never happens in the model-free
-    // isolated profile — skip rather than fail.
-    const organizeButton = window.locator('button:has-text("Organize")');
-    const isDisabled = await organizeButton.isDisabled().catch(() => true);
-    test.skip(isDisabled, 'Organize navigation disabled (no analyzed files in isolated profile)');
+    // Organize opens only from Discover, and only once a file is analyzed.
+    // Seed one analyzed file (real analysis needs a model), then step through
+    // Discover the way a user does. This audits the review queue with that
+    // file in it: the file grid, bulk actions and the move bar.
+    const files = createSyntheticFiles(app, ['a11y-quarterly-budget.txt']);
+    await seedAnalyzedFiles(window, files);
+    await nav.goToPhase(PHASES.DISCOVER);
     await nav.goToPhase(PHASES.ORGANIZE);
     await window.waitForTimeout(500);
     await auditCurrentScreen(window, 'organize');
@@ -194,12 +201,13 @@ test.describe('Accessibility (axe) — first-run wizard', () => {
   let window;
 
   test.beforeEach(async () => {
+    // Default (seeded) profile: background setup never downloads a model.
+    // openModelSetupWizardOffline then brings the wizard up without ever
+    // letting a download start (see its JSDoc in electronApp.js).
     const result = await launchApp();
     app = result.app;
     window = result.window;
-    // Leave modals alone: the wizard is what this test audits, and it can
-    // already be open here (see dismissModelSetupWizard in electronApp.js).
-    await waitForAppReady(window, { dismissModals: false });
+    await waitForAppReady(window);
   });
 
   test.afterEach(async () => {
@@ -207,12 +215,20 @@ test.describe('Accessibility (axe) — first-run wizard', () => {
   });
 
   test('Model setup wizard has no critical violations', async () => {
-    // The wizard auto-opens on a profile without the text model: at once when
-    // the background setup has already fetched the embedding model, else ~2s
-    // after app-ready. Audit it instead of dismissing it.
+    await openModelSetupWizardOffline(app, window);
     const wizard = window.getByRole('dialog', { name: /set up on-device ai/i });
-    await expect(wizard).toBeVisible({ timeout: 10000 });
+    await expect(wizard).toBeVisible({ timeout: 15000 });
     await window.waitForTimeout(300);
     await auditCurrentScreen(window, 'model-setup-wizard');
+
+    // Network-free invariant: background setup declined its one download
+    // check, and no model download is running.
+    const logs = readAppSessionLogs(app.__e2eUserData);
+    expect(logs).toContain(BACKGROUND_DOWNLOAD_DECLINED_LOG);
+    expect(logs).not.toContain(BACKGROUND_DOWNLOAD_STARTED_LOG);
+    const downloadStatus = await window.evaluate(() =>
+      window.electronAPI.llama.getDownloadStatus()
+    );
+    expect((downloadStatus?.status ?? downloadStatus)?.active).toBe(0);
   });
 });

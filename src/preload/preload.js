@@ -502,6 +502,21 @@ const log = {
 };
 
 /**
+ * Renderer-chosen tag that lets `system.abortInvoke({ channel, abortKey })`
+ * address one in-flight invoke instead of every invoke on the channel. It is
+ * resolved to preload-generated request ids inside this preload (one per
+ * webContents), so it never crosses to main. Same narrow class as request ids.
+ */
+const ABORT_KEY_PATTERN = /^[\w.:-]{1,64}$/;
+
+/**
+ * @param {unknown} abortKey
+ * @returns {abortKey is string}
+ */
+const isValidAbortKey = (abortKey) =>
+  typeof abortKey === 'string' && ABORT_KEY_PATTERN.test(abortKey);
+
+/**
  * @param {string} query
  * @param {Record<string, any>} [options]
  */
@@ -627,14 +642,18 @@ const PAYLOAD_MAX_WALK_DEPTH = 32; // matches sanitizer MAX_SANITIZE_DEPTH
  * @param {WeakSet<object>} seen
  */
 function enforcePayloadSizeLimits(value, depth, seen) {
-  if (depth > PAYLOAD_MAX_WALK_DEPTH) {
-    // Don't traverse below depth limit — sanitizer will collapse it later.
-    return;
-  }
+  // Strings are size-checked at every depth, including the first level past
+  // the walk budget: the sanitizer collapses objects/arrays there to {} / []
+  // but passes a string at that level through unchanged.
   if (typeof value === 'string') {
     if (value.length > PAYLOAD_MAX_STRING_LENGTH) {
       throw new Error('IPC payload too large: string exceeds 5MB limit');
     }
+    return;
+  }
+  if (depth > PAYLOAD_MAX_WALK_DEPTH) {
+    // Don't traverse containers below the depth limit — the sanitizer
+    // collapses them to empty values.
     return;
   }
   if (Array.isArray(value)) {
@@ -705,7 +724,7 @@ class SecureIPCManager {
     this.channelQueues = new Map();
     /** @type {Map<string, number>} */
     this._channelQueueTimestamps = new Map();
-    /** @type {Map<string, string>} */
+    /** @type {Map<string, { channel: string, abortKey: string|null }>} */
     this._inflightInvokes = new Map();
     /** @type {{ value: any, expiresAt: number, pending: Promise<any>|null }} */
     this._embeddingsStatsCache = { value: null, expiresAt: 0, pending: null };
@@ -880,25 +899,33 @@ class SecureIPCManager {
   }
 
   /**
-   * Renderer-initiated cooperative cancel for all in-flight invokes on a
-   * channel. Sends the same ABORT_INVOKE signal the timeout path uses, so the
+   * Renderer-initiated cooperative cancel for in-flight invokes on a channel.
+   * Sends the same ABORT_INVOKE signal the timeout path uses, so the
    * main-side handler's `event.abortSignal` fires and the operation (e.g. a
    * batch organize) can stop instead of running to completion after the user
    * clicked Cancel. The invoke promise itself still settles normally — the
    * handler decides how to resolve once aborted.
    *
+   * Without `abortKey` every in-flight invoke on the channel is signalled.
+   * With `abortKey` only invokes started with that key (see
+   * `safeInvokeAbortable`) are signalled, so one surface cannot cancel
+   * another surface's request on a shared channel. A malformed key signals
+   * nothing rather than widening to the whole channel.
+   *
    * @param {string} channel - Invoke channel to abort (e.g. 'files:perform-operation')
    * @param {string} [reason='renderer-cancel']
+   * @param {unknown} [abortKey] - optional tag from the invoke to cancel
    * @returns {number} Number of in-flight invokes signalled
    */
-  abortInflightChannel(channel, reason) {
+  abortInflightChannel(channel, reason, abortKey) {
     if (typeof channel !== 'string' || channel.length === 0) return 0;
+    if (abortKey !== undefined && !isValidAbortKey(abortKey)) return 0;
     let signalled = 0;
-    for (const [requestId, inflightChannel] of this._inflightInvokes) {
-      if (inflightChannel === channel) {
-        this._sendAbortSignal(channel, requestId, reason || 'renderer-cancel');
-        signalled += 1;
-      }
+    for (const [requestId, inflight] of this._inflightInvokes) {
+      if (inflight.channel !== channel) continue;
+      if (abortKey !== undefined && inflight.abortKey !== abortKey) continue;
+      this._sendAbortSignal(channel, requestId, reason || 'renderer-cancel');
+      signalled += 1;
     }
     return signalled;
   }
@@ -907,8 +934,9 @@ class SecureIPCManager {
    * @param {string} channel
    * @param {any[]} sanitizedArgs
    * @param {number} timeout
+   * @param {string|null} [abortKey] - tag for `abortInflightChannel`
    */
-  async _invokeWithTimeout(channel, sanitizedArgs, timeout) {
+  async _invokeWithTimeout(channel, sanitizedArgs, timeout, abortKey = null) {
     let completed = false;
     /** @type {ReturnType<typeof setTimeout>|undefined} */
     let timeoutId;
@@ -917,7 +945,7 @@ class SecureIPCManager {
     // rewritten by the HTML/path sanitizer. The main wrapper strips it before
     // calling the handler, so no handler needs to know about it.
     const argsWithMeta = [...sanitizedArgs, this._buildIpcMetaEnvelope(requestId)];
-    this._inflightInvokes.set(requestId, channel);
+    this._inflightInvokes.set(requestId, { channel, abortKey });
 
     try {
       const invokePromise = ipcRenderer.invoke(channel, ...argsWithMeta);
@@ -957,15 +985,16 @@ class SecureIPCManager {
    * @param {string} channel
    * @param {any[]} sanitizedArgs
    * @param {number} timeout
+   * @param {string|null} [abortKey] - tag for `abortInflightChannel`
    */
-  async _invokeWithRetries(channel, sanitizedArgs, timeout) {
+  async _invokeWithRetries(channel, sanitizedArgs, timeout, abortKey = null) {
     const MAX_RETRIES = 3;
     /** @type {any} */
     let lastError;
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
-        return await this._invokeWithTimeout(channel, sanitizedArgs, timeout);
+        return await this._invokeWithTimeout(channel, sanitizedArgs, timeout, abortKey);
       } catch (error) {
         lastError = error;
         if (error.message && error.message.includes('No handler registered')) {
@@ -1116,17 +1145,41 @@ class SecureIPCManager {
    * @param {...any} args
    */
   async safeInvoke(channel, ...args) {
-    if (THROTTLED_CHANNELS.has(channel)) {
-      return this.enqueueThrottled(channel, () => this.safeInvokeCore(channel, ...args));
-    }
-    return this.safeInvokeCore(channel, ...args);
+    return this._safeInvoke(channel, args, null);
+  }
+
+  /**
+   * `safeInvoke` that tags the invoke with a renderer-chosen `abortKey`, so
+   * `abortInflightChannel(channel, reason, abortKey)` cancels only this
+   * request. An invalid key is dropped (the invoke runs untagged). The key is
+   * kept in this preload and never sent to main.
+   *
+   * @param {string} channel
+   * @param {unknown} abortKey
+   * @param {...any} args
+   */
+  async safeInvokeAbortable(channel, abortKey, ...args) {
+    return this._safeInvoke(channel, args, isValidAbortKey(abortKey) ? abortKey : null);
   }
 
   /**
    * @param {string} channel
-   * @param {...any} args
+   * @param {any[]} args
+   * @param {string|null} abortKey
    */
-  async safeInvokeCore(channel, ...args) {
+  _safeInvoke(channel, args, abortKey) {
+    if (THROTTLED_CHANNELS.has(channel)) {
+      return this.enqueueThrottled(channel, () => this.safeInvokeCore(channel, args, abortKey));
+    }
+    return this.safeInvokeCore(channel, args, abortKey);
+  }
+
+  /**
+   * @param {string} channel
+   * @param {any[]} args
+   * @param {string|null} [abortKey] - tag for `abortInflightChannel`
+   */
+  async safeInvokeCore(channel, args, abortKey = null) {
     // Tracks whether THIS invocation actually acquired the concurrency lock.
     // The finally block must only release a lock it owns — otherwise a caller
     // that was throttled (and threw CONCURRENCY_LIMIT below) would delete the
@@ -1241,7 +1294,7 @@ class SecureIPCManager {
           });
         return await this._embeddingsStatsCache.pending;
       }
-      return await this._invokeWithRetries(channel, sanitizedArgs, timeout);
+      return await this._invokeWithRetries(channel, sanitizedArgs, timeout, abortKey);
     } catch (/** @type {any} */ error) {
       // CONCURRENCY_LIMIT rejections come from the throttle above and are an
       // expected steady-state outcome whenever two renderer surfaces poll the
@@ -1920,9 +1973,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
       options === undefined
         ? secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.GET_STATS)
         : secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.GET_STATS, options),
-    search: (/** @type {any} */ query, options = {}) =>
-      secureIPC.safeInvoke(
+    // `options.abortKey` (optional) tags this invoke so
+    // system.abortInvoke({ channel, abortKey }) cancels only it; the key is
+    // not part of the payload sent to main.
+    search: (/** @type {any} */ query, /** @type {Record<string, any>} */ options = {}) =>
+      secureIPC.safeInvokeAbortable(
         IPC_CHANNELS.EMBEDDINGS.SEARCH,
+        options?.abortKey,
         buildEmbeddingSearchPayload(query, options)
       ),
     scoreFiles: (/** @type {any} */ query, /** @type {any} */ fileIds) =>
@@ -2156,13 +2213,30 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onLiveLogBatch: (/** @type {any} */ callback) =>
       secureIPC.safeOn(IPC_CHANNELS.SYSTEM.LIVE_LOG_BATCH, callback),
     // Cooperative cancel of in-flight invokes on a channel (e.g. user clicks
-    // Cancel during a batch organize). Synchronous fire-and-forget; returns
-    // the number of in-flight requests signalled.
-    abortInvoke: (/** @type {any} */ payload) =>
-      secureIPC.abortInflightChannel(
+    // Cancel during a batch organize). With `abortKey`, only the invokes
+    // tagged with that key (embeddings.search `options.abortKey`) are
+    // cancelled; without it, every in-flight invoke on the channel is.
+    // Synchronous fire-and-forget; returns the number of requests signalled
+    // (0 when rate-limited).
+    abortInvoke: (/** @type {any} */ payload) => {
+      try {
+        secureIPC.checkRateLimit(IPC_CHANNELS.SYSTEM.ABORT_INVOKE);
+      } catch {
+        return 0;
+      }
+      const hasAbortKey =
+        payload !== null &&
+        typeof payload === 'object' &&
+        Object.prototype.hasOwnProperty.call(payload, 'abortKey');
+      // An explicit-but-invalid key (undefined, null, '', object) must not
+      // widen to a per-channel abort.
+      if (hasAbortKey && !isValidAbortKey(payload.abortKey)) return 0;
+      return secureIPC.abortInflightChannel(
         typeof payload?.channel === 'string' ? payload.channel : '',
-        typeof payload?.reason === 'string' ? payload.reason : 'renderer-cancel'
-      ),
+        typeof payload?.reason === 'string' ? payload.reason : 'renderer-cancel',
+        hasAbortKey ? payload.abortKey : undefined
+      );
+    },
     getLegalNotices: () => secureIPC.safeInvoke(IPC_CHANNELS.SYSTEM.GET_LEGAL_NOTICES),
     openLegalDocument: (/** @type {any} */ kind) =>
       secureIPC.safeInvoke(IPC_CHANNELS.SYSTEM.OPEN_LEGAL_DOCUMENT, { kind }),

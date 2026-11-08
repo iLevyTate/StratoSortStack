@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-07T13:52:20.394Z",
+  "generatedAt": "2026-11-08T21:41:28.880Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
@@ -23076,10 +23076,11 @@
       "**/node_modules/@napi-rs/canvas/**/*",
       "**/node_modules/better-sqlite3/**/*",
       "**/node_modules/lz4-napi/**/*",
+      "**/node_modules/@antoniomuso/lz4-napi-*/**/*",
       "**/node_modules/pino/**/*",
       "**/node_modules/thread-stream/**/*",
       "**/node_modules/piscina/**/*",
-      "dist/{ocrWorker,embeddingWorker,logExportWorker,textExtractionWorker,imagePreprocessWorker,umapProjectionWorker,settingsImportParserWorker}.js"
+      "dist/{ocrWorker,embeddingWorker,logExportWorker,textExtractionWorker,imagePreprocessWorker,umapProjectionWorker,settingsImportParserWorker,oramaRestoreWorker}.js"
     ],
     "packagedFiles": [
       "dist/**/*",

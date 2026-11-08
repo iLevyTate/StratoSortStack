@@ -35,10 +35,11 @@
     "**/node_modules/@napi-rs/canvas/**/*",
     "**/node_modules/better-sqlite3/**/*",
     "**/node_modules/lz4-napi/**/*",
+    "**/node_modules/@antoniomuso/lz4-napi-*/**/*",
     "**/node_modules/pino/**/*",
     "**/node_modules/thread-stream/**/*",
     "**/node_modules/piscina/**/*",
-    "dist/{ocrWorker,embeddingWorker,logExportWorker,textExtractionWorker,imagePreprocessWorker,umapProjectionWorker,settingsImportParserWorker}.js"
+    "dist/{ocrWorker,embeddingWorker,logExportWorker,textExtractionWorker,imagePreprocessWorker,umapProjectionWorker,settingsImportParserWorker,oramaRestoreWorker}.js"
   ],
   "files": [
     "dist/**/*",
@@ -78,15 +79,6 @@
     "buildResources": "assets",
     "output": "release/build"
   },
-  "fileAssociations": [
-    { "ext": "pdf", "name": "PDF Document", "role": "Viewer" },
-    { "ext": "doc", "role": "Viewer" },
-    { "ext": "docx", "role": "Viewer" },
-    { "ext": "xlsx", "role": "Viewer" },
-    { "ext": "pptx", "role": "Viewer" },
-    { "ext": "txt", "role": "Viewer" },
-    { "ext": "md", "role": "Viewer" }
-  ],
   "win": {
     "icon": "assets/icons/win/icon.ico",
     "target": ["nsis", "zip"],
@@ -145,16 +137,7 @@
     "target": ["AppImage", "deb"],
     "category": "Office;Utility;FileTools",
     "synopsis": "AI-powered file organization",
-    "description": "StratoSort uses AI to intelligently organize your files into smart folders. Features include semantic search, automatic categorization, and customizable organization rules.",
-    "mimeTypes": [
-      "application/pdf",
-      "application/msword",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-      "text/plain",
-      "text/markdown"
-    ]
+    "description": "StratoSort uses AI to intelligently organize your files into smart folders. Features include semantic search, automatic categorization, and customizable organization rules."
   },
   "extraResources": [
     {

@@ -13,6 +13,7 @@ const {
   getRequiredLlamaPrebuiltPackages,
   getRequiredWhisperVariantPackages,
   getWindowsZipArtifactName,
+  getWorkerBundleNames,
   readAsarHeader,
   verifyBetterSqlitePrebuilds,
   verifyMacArtifacts,
@@ -20,6 +21,19 @@ const {
 } = require('../scripts/verify-packaged-artifacts');
 
 const VERSION = '9.9.9';
+
+// The webpack.main.config.js worker entries that electron-builder.json
+// asarUnpack must place on disk (worker_threads cannot start from inside
+// app.asar; workerPools.resolveWorkerPath tries app.asar.unpacked/dist first).
+// Derived from webpack.main.config.js, like the verifier itself, so a new
+// worker entry cannot leave this list stale.
+const WORKER_BUNDLES = getWorkerBundleNames();
+
+function seedUnpackedWorkers(resources) {
+  WORKER_BUNDLES.forEach((name) => {
+    writeFile(path.join(resources, 'app.asar.unpacked', 'dist', `${name}.js`));
+  });
+}
 
 function writeFile(targetPath) {
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
@@ -85,6 +99,22 @@ function seedWhisperVariants(unpackedModules, platform, arch) {
   });
 }
 
+// The lz4-napi binary shard npm installs for the build's platform/arch. The
+// lz4-napi folder alone holds only the JS loader; without the shard every
+// .json.lz4 store reads as corrupt at runtime (orama-4).
+function lz4ShardName(platform, arch) {
+  if (platform === 'win32') return arch === 'arm64' ? 'win32-arm64-msvc' : 'win32-x64-msvc';
+  if (platform === 'darwin') return `darwin-${arch}`;
+  return `linux-${arch}-gnu`;
+}
+
+function seedLz4Binding(unpackedModules, platform, arch) {
+  const shard = lz4ShardName(platform, arch);
+  writeFile(
+    path.join(unpackedModules, '@antoniomuso', `lz4-napi-${shard}`, `lz4-napi.${shard}.node`)
+  );
+}
+
 function windowsUnpackedModules(buildRoot, arch = 'x64') {
   const appDir = arch === 'arm64' ? 'win-arm64-unpacked' : 'win-unpacked';
   return path.join(buildRoot, appDir, 'resources', 'app.asar.unpacked', 'node_modules');
@@ -101,6 +131,7 @@ function createWindowsBuildRoot({ arch = 'x64', skipWhisperVariants = false } = 
     writeFile(path.join(appRoot, fileName));
   });
   writeAsar(path.join(resources, 'app.asar'));
+  seedUnpackedWorkers(resources);
   writeFile(path.join(resources, 'assets', 'runtime', 'llama-server.exe'));
   if (arch !== 'arm64') {
     writeExecutable(path.join(resources, 'assets', 'runtime', 'ffmpeg', 'ffmpeg.exe'));
@@ -108,6 +139,7 @@ function createWindowsBuildRoot({ arch = 'x64', skipWhisperVariants = false } = 
   }
 
   seedNativeModules(unpackedModules);
+  seedLz4Binding(unpackedModules, 'win32', arch);
   seedLlamaPrebuilts(unpackedModules, 'win32', arch);
   seedSqlitePrebuilds(unpackedModules, 'win32', arch);
   if (!skipWhisperVariants) {
@@ -143,10 +175,12 @@ function createMacBuildRoot({
     writeFile(path.join(frameworkResources, 'snapshot_blob.bin'));
   }
   writeAsar(path.join(resources, 'app.asar'));
+  seedUnpackedWorkers(resources);
   writeFile(path.join(resources, 'assets', 'runtime', 'llama-server'));
   writeExecutable(path.join(resources, 'assets', 'runtime', 'ffmpeg', 'ffmpeg'));
 
   seedNativeModules(unpackedModules);
+  seedLz4Binding(unpackedModules, 'darwin', arch);
   seedSqlitePrebuilds(unpackedModules, 'darwin', arch);
   if (!skipWhisperVariants) {
     seedWhisperVariants(unpackedModules, 'darwin', arch);
@@ -596,5 +630,177 @@ describe('verify-packaged-artifacts', () => {
     test('unknown platform returns empty list rather than throwing', () => {
       expect(getRequiredWhisperVariantPackages('aix', 'x64')).toEqual([]);
     });
+  });
+});
+
+describe('verify-packaged-artifacts worker bundles and asar integrity', () => {
+  const tempDirs = [];
+  const winResources = (buildRoot) => path.join(buildRoot, 'win-unpacked', 'resources');
+  const macResources = (buildRoot) =>
+    path.join(buildRoot, 'mac-arm64', 'StratoSort Stack.app', 'Contents', 'Resources');
+
+  afterEach(() => {
+    while (tempDirs.length > 0) {
+      fs.rmSync(tempDirs.pop(), { recursive: true, force: true });
+    }
+  });
+
+  test('worker bundle list comes from the webpack main entries', () => {
+    // Pinned so a worker silently dropped from webpack.main.config.js fails
+    // here instead of only in a packaged build.
+    expect(WORKER_BUNDLES).not.toContain('main');
+    expect([...WORKER_BUNDLES].sort()).toEqual(
+      [
+        'embeddingWorker',
+        'imagePreprocessWorker',
+        'logExportWorker',
+        'ocrWorker',
+        'oramaRestoreWorker',
+        'settingsImportParserWorker',
+        'textExtractionWorker',
+        'umapProjectionWorker'
+      ].sort()
+    );
+  });
+
+  test('electron-builder asarUnpack unpacks every webpack worker bundle', () => {
+    const { minimatch } = require('minimatch');
+    const config = JSON.parse(
+      jest
+        .requireActual('fs')
+        .readFileSync(path.join(__dirname, '..', 'electron-builder.json'), 'utf8')
+    );
+    const notUnpacked = getWorkerBundleNames().filter(
+      (name) => !config.asarUnpack.some((pattern) => minimatch(`dist/${name}.js`, pattern))
+    );
+    expect(notUnpacked).toEqual([]);
+  });
+
+  test('rejects Windows builds missing an unpacked worker bundle', () => {
+    const buildRoot = createWindowsBuildRoot();
+    tempDirs.push(buildRoot);
+    fs.rmSync(
+      path.join(
+        winResources(buildRoot),
+        'app.asar.unpacked',
+        'dist',
+        'settingsImportParserWorker.js'
+      )
+    );
+
+    expect(() => verifyWindowsArtifacts(buildRoot, 'x64', VERSION)).toThrow(
+      'Windows unpacked worker bundle settingsImportParserWorker.js'
+    );
+  });
+
+  test('rejects macOS builds missing an unpacked worker bundle', () => {
+    const buildRoot = createMacBuildRoot({ arch: 'arm64' });
+    tempDirs.push(buildRoot);
+    fs.rmSync(path.join(macResources(buildRoot), 'app.asar.unpacked', 'dist', 'ocrWorker.js'));
+
+    expect(() => verifyMacArtifacts(buildRoot, 'arm64')).toThrow(
+      'macOS unpacked worker bundle ocrWorker.js'
+    );
+  });
+
+  test('rejects builds that unpacked integrity-protected app code from app.asar', () => {
+    const buildRoot = createWindowsBuildRoot();
+    tempDirs.push(buildRoot);
+    writeAsar(path.join(winResources(buildRoot), 'app.asar'), {
+      ...APP_ASAR_ENTRIES,
+      dist: {
+        files: {
+          'main.js': { size: 1, unpacked: true },
+          'preload.js': { size: 1, offset: '0' },
+          'index.html': { size: 1, unpacked: true }
+        }
+      }
+    });
+
+    expect(() => verifyWindowsArtifacts(buildRoot, 'x64', VERSION)).toThrow(
+      'Windows app.asar unpacked integrity-protected app code: dist/index.html, dist/main.js'
+    );
+  });
+
+  test('accepts unpacked worker bundles in the asar header', () => {
+    const buildRoot = createWindowsBuildRoot();
+    tempDirs.push(buildRoot);
+    writeAsar(path.join(winResources(buildRoot), 'app.asar'), {
+      ...APP_ASAR_ENTRIES,
+      dist: {
+        files: {
+          'main.js': { size: 1, offset: '0' },
+          'ocrWorker.js': { size: 1, unpacked: true }
+        }
+      }
+    });
+
+    expect(() => verifyWindowsArtifacts(buildRoot, 'x64', VERSION)).not.toThrow();
+  });
+});
+
+describe('verify-packaged-artifacts lz4-napi binding (orama-4)', () => {
+  const tempDirs = [];
+  const macModules = (buildRoot) =>
+    path.join(
+      buildRoot,
+      'mac-arm64',
+      'StratoSort Stack.app',
+      'Contents',
+      'Resources',
+      'app.asar.unpacked',
+      'node_modules'
+    );
+
+  afterEach(() => {
+    while (tempDirs.length > 0) {
+      fs.rmSync(tempDirs.pop(), { recursive: true, force: true });
+    }
+  });
+
+  test('rejects a Windows build whose lz4-napi folder has no binary for the target', () => {
+    const buildRoot = createWindowsBuildRoot();
+    tempDirs.push(buildRoot);
+    fs.rmSync(path.join(windowsUnpackedModules(buildRoot), '@antoniomuso'), {
+      recursive: true,
+      force: true
+    });
+
+    expect(() => verifyWindowsArtifacts(buildRoot, 'x64', VERSION)).toThrow(
+      /lz4-napi native binding for win32-x64-msvc missing/
+    );
+  });
+
+  test('accepts the binary inside the lz4-napi folder itself', () => {
+    const buildRoot = createWindowsBuildRoot();
+    tempDirs.push(buildRoot);
+    const modules = windowsUnpackedModules(buildRoot);
+    fs.rmSync(path.join(modules, '@antoniomuso'), { recursive: true, force: true });
+    writeFile(path.join(modules, 'lz4-napi', 'lz4-napi.win32-x64-msvc.node'));
+
+    expect(() => verifyWindowsArtifacts(buildRoot, 'x64', VERSION)).not.toThrow();
+  });
+
+  test('rejects a Windows arm64 build that carries only the x64 binary', () => {
+    const buildRoot = createWindowsBuildRoot({ arch: 'arm64' });
+    tempDirs.push(buildRoot);
+    const modules = windowsUnpackedModules(buildRoot, 'arm64');
+    fs.rmSync(path.join(modules, '@antoniomuso'), { recursive: true, force: true });
+    seedLz4Binding(modules, 'win32', 'x64');
+
+    expect(() => verifyWindowsArtifacts(buildRoot, 'arm64', VERSION)).toThrow(
+      /lz4-napi native binding for win32-arm64-msvc missing/
+    );
+  });
+
+  test('rejects a macOS arm64 build that carries only the x64 binary', () => {
+    const buildRoot = createMacBuildRoot({ arch: 'arm64' });
+    tempDirs.push(buildRoot);
+    fs.rmSync(path.join(macModules(buildRoot), '@antoniomuso'), { recursive: true, force: true });
+    seedLz4Binding(macModules(buildRoot), 'darwin', 'x64');
+
+    expect(() => verifyMacArtifacts(buildRoot, 'arm64')).toThrow(
+      /lz4-napi native binding for darwin-arm64 missing/
+    );
   });
 });

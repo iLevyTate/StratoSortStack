@@ -39,6 +39,15 @@ const SEMANTIC_ID_PREFIX_RE = /^(file|image):/i;
 // a few tens of milliseconds of work.
 const DUPLICATE_SCAN_YIELD_PAIRS = 20000;
 
+// Rows the duplicate scan reads from the vector store. The exact (SHA-256)
+// tier is a linear pass, so it covers every row the store will enumerate in
+// one read (peekFiles clamps at 10000). The embedding tiers compare every pair
+// and stay capped at DUPLICATE_EMBEDDING_COMPARE_LIMIT files. Whenever either
+// cap leaves files out, the result says so (truncated + counts + warning)
+// instead of reporting "no duplicates" for the part it never looked at.
+const DUPLICATE_SCAN_ROW_LIMIT = 10000;
+const DUPLICATE_EMBEDDING_COMPARE_LIMIT = 1000;
+
 const yieldToEventLoop = () => new Promise((resolve) => setImmediate(resolve));
 
 /**
@@ -2259,8 +2268,9 @@ Examples of good names: "Q4 Financial Reports", "Employee Onboarding Materials",
         return emptyResult;
       }
 
-      // Get all embeddings and metadata (limited to prevent memory issues)
-      const limit = Math.min(fileCount, 1000);
+      // Read every embedded file the store will enumerate in one pass; the
+      // O(n^2) embedding tiers are capped separately below.
+      const limit = Math.min(fileCount, DUPLICATE_SCAN_ROW_LIMIT);
       const result = await this.vectorDb.peekFiles(limit);
 
       if (!result.ids || result.ids.length < 2) {
@@ -2331,11 +2341,17 @@ Examples of good names: "Q4 Financial Reports", "Employee Onboarding Materials",
       }
 
       // === TIER 2+3: embedding-based pairs (only over non-exact members) ===
-      const embeddingIds = [];
+      const embeddingCandidates = [];
       for (const id of embeddings.keys()) {
         if (exactMembers.has(id)) continue;
-        if (embeddings.get(id)?.vector?.length) embeddingIds.push(id);
+        if (embeddings.get(id)?.vector?.length) embeddingCandidates.push(id);
       }
+      const embeddingIds = embeddingCandidates.slice(0, DUPLICATE_EMBEDDING_COMPARE_LIMIT);
+      const embeddingCompareCapped = embeddingCandidates.length > embeddingIds.length;
+      // The read returned a full page while the store reports more files, so
+      // rows past the page were never seen by any tier.
+      const scannedFiles = result.ids.length;
+      const rowScanCapped = scannedFiles >= limit && fileCount > limit;
 
       /** @type {any[]} */
       const duplicatePairs = [];
@@ -2478,7 +2494,27 @@ Examples of good names: "Q4 Financial Reports", "Employee Onboarding Materials",
       const limitedNear = limitedFlat.filter((g) => g.tier === 'nearIdentical');
       const limitedRelated = limitedFlat.filter((g) => g.tier === 'related');
       const totalDuplicates = limitedFlat.reduce((sum, g) => sum + g.memberCount, 0);
-      const truncated = pairsLimitReached || flat.length > limitedFlat.length;
+      const truncated =
+        pairsLimitReached ||
+        flat.length > limitedFlat.length ||
+        embeddingCompareCapped ||
+        rowScanCapped;
+      const warnings = [];
+      if (rowScanCapped) {
+        warnings.push(
+          `Scanned ${scannedFiles.toLocaleString('en-US')} of ${fileCount.toLocaleString('en-US')} indexed files; the rest were not checked.`
+        );
+      }
+      if (embeddingCompareCapped) {
+        warnings.push(
+          `Similar-content matching compared the first ${embeddingIds.length.toLocaleString('en-US')} of ${embeddingCandidates.length.toLocaleString('en-US')} files; exact copies were checked across all scanned files.`
+        );
+      }
+      if (pairsLimitReached) {
+        warnings.push(
+          `Results truncated: exceeded ${MAX_PAIRS_LIMIT} pairs limit. Consider increasing threshold.`
+        );
+      }
 
       logger.info('[ClusteringService] Found duplicates (tiered)', {
         exactCount: limitedExact.length,
@@ -2503,14 +2539,15 @@ Examples of good names: "Q4 Financial Reports", "Employee Onboarding Materials",
           exactCount: limitedExact.length,
           nearIdenticalCount: limitedNear.length,
           relatedCount: limitedRelated.length,
-          truncated
+          truncated,
+          scannedFiles,
+          totalFiles: fileCount,
+          comparedFiles: embeddingIds.length
         },
         threshold,
         tierThresholds: { nearIdenticalMin, relatedMin },
         truncated,
-        warning: pairsLimitReached
-          ? `Results truncated: exceeded ${MAX_PAIRS_LIMIT} pairs limit. Consider increasing threshold.`
-          : undefined
+        warning: warnings.length > 0 ? warnings.join(' ') : undefined
       };
       if (generationAtStart === this._vectorDataGeneration) {
         this._duplicateScanCache = {

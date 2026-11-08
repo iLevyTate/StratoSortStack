@@ -3,7 +3,8 @@
  * Search-tab state + logic for the Unified Search modal (§I Phase 3).
  *
  * Owns the query (+ debounce), search execution (hybrid embeddings search
- * with timeout, request-id stale-guard, and validated responses), result
+ * with timeout, request-id stale-guard, superseded-search abort, and
+ * validated responses), result
  * selection, bulk-selection ids, view mode, and the derived memos
  * (grouped results, id→index map, status label). `searchResults` is
  * consumed OUTSIDE the tab too — chat context and convert-to-graph — so
@@ -14,6 +15,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createLogger } from '../../../../shared/logger';
+import { IPC_CHANNELS } from '../../../../shared/constants';
 import { TIMEOUTS } from '../../../../shared/performanceConstants';
 import { getFileCategory } from '../../ui/FileIcon';
 import { addToRecentSearches } from '../SearchAutocomplete';
@@ -28,6 +30,38 @@ import {
 const logger = createLogger('useSearchTab');
 
 const ENABLE_SEARCH_TRACE_LOGS = process.env.NODE_ENV === 'development';
+
+/** Per-renderer sequence for the abortKey tagging each search-tab invoke. */
+let searchAbortKeySeq = 0;
+
+/** @returns {string} a key unique within this renderer (preload-scoped) */
+function nextSearchAbortKey() {
+  searchAbortKeySeq += 1;
+  return `search-tab-${searchAbortKeySeq}`;
+}
+
+/**
+ * Ask main to stop this tab's in-flight EMBEDDINGS.SEARCH invoke (its
+ * handler's event.abortSignal fires and SearchService bails at the next
+ * stage). The abort names the invoke's own abortKey, so other searches on
+ * the same channel — e.g. the chat tab's name resolution — are untouched.
+ * Fire-and-forget: the aborted invoke still settles (with a cancelled
+ * response) and the request-id guard drops it.
+ *
+ * @param {string} abortKey - key passed as `options.abortKey` to embeddings.search
+ * @param {string} reason
+ */
+function abortInFlightSearch(abortKey, reason) {
+  try {
+    window?.electronAPI?.system?.abortInvoke?.({
+      channel: IPC_CHANNELS.EMBEDDINGS.SEARCH,
+      abortKey,
+      reason
+    });
+  } catch {
+    // Non-fatal: without the bridge the stale search just runs to completion.
+  }
+}
 
 /**
  * @param {{
@@ -97,6 +131,14 @@ export function useSearchTab({ isOpen, activeTab, defaultTopK, error, setError }
   useEffect(() => {
     if (activeTab !== 'search') return undefined;
     let cancelled = false;
+    // True while this run's EMBEDDINGS.SEARCH invoke has not settled. The
+    // cleanup (newer query, tab/modal change, unmount) aborts it so a
+    // superseded search stops holding the single inference slot ahead of
+    // the live one.
+    let invokeInFlight = false;
+    // Tags this run's invoke so the abort cancels only it, not other
+    // EMBEDDINGS.SEARCH callers (chat name resolution) on the same channel.
+    const abortKey = nextSearchAbortKey();
 
     const run = async () => {
       if (!isOpen) return;
@@ -129,12 +171,22 @@ export function useSearchTab({ isOpen, activeTab, defaultTopK, error, setError }
           topK: defaultTopK,
           mode: 'hybrid',
           correctSpelling: true,
-          expandSynonyms: true
+          expandSynonyms: true,
+          abortKey
         });
 
         if (!searchPromise || typeof searchPromise.then !== 'function') {
           throw new Error('Search API is not available. Check that embeddings are initialized.');
         }
+        invokeInFlight = true;
+        const markSettled = () => {
+          invokeInFlight = false;
+        };
+        // .catch: the race below observes the rejection; this branch only
+        // tracks settlement.
+        Promise.resolve(searchPromise)
+          .finally(markSettled)
+          .catch(() => {});
 
         let searchTimeoutId;
         let response;
@@ -142,15 +194,15 @@ export function useSearchTab({ isOpen, activeTab, defaultTopK, error, setError }
           response = await Promise.race([
             searchPromise,
             new Promise((_, reject) => {
-              searchTimeoutId = setTimeout(
-                () =>
-                  reject(
-                    new Error(
-                      'Search timed out. The index may still be loading — please try again.'
-                    )
-                  ),
-                TIMEOUTS.SEMANTIC_QUERY
-              );
+              searchTimeoutId = setTimeout(() => {
+                // We stop waiting, so main should stop working on it too.
+                if (invokeInFlight && !cancelled && lastSearchRef.current === requestId) {
+                  abortInFlightSearch(abortKey, 'search-timeout');
+                }
+                reject(
+                  new Error('Search timed out. The index may still be loading — please try again.')
+                );
+              }, TIMEOUTS.SEMANTIC_QUERY);
             })
           ]);
         } finally {
@@ -217,6 +269,10 @@ export function useSearchTab({ isOpen, activeTab, defaultTopK, error, setError }
     run();
     return () => {
       cancelled = true;
+      if (invokeInFlight) {
+        invokeInFlight = false;
+        abortInFlightSearch(abortKey, 'search-superseded');
+      }
     };
     // searchRefreshTrigger triggers re-search when files are moved/deleted
     // eslint-disable-next-line react-hooks/exhaustive-deps -- setError is a stable setState-backed callback
