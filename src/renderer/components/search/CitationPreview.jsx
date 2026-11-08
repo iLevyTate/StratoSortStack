@@ -8,6 +8,30 @@ import normalizeList from '../../utils/normalizeList';
 import { useSelector } from 'react-redux';
 import { selectRedactPaths } from '../../store/selectors';
 
+/**
+ * Relevance badge for a chat source. semanticScore is the raw cosine score;
+ * a keyword-only source has semanticScore null (and keywordRelevance set) and
+ * is labelled as a keyword match rather than shown as 0% (or as its raw,
+ * unbounded BM25 score). A source without semanticScore at all is an older
+ * saved turn and keeps the fused score it was shown with.
+ * @param {Record<string, any>} source
+ * @returns {{ kind: 'semantic' | 'keyword' | 'none', pct: number }}
+ */
+export function getSourceRelevance(source) {
+  const semantic = source?.semanticScore;
+  if (typeof semantic === 'number') return { kind: 'semantic', pct: Math.round(semantic * 100) };
+  if (semantic === undefined && typeof source?.score === 'number') {
+    return { kind: 'semantic', pct: Math.round(source.score * 100) };
+  }
+  if (typeof source?.keywordRelevance === 'number') {
+    return { kind: 'keyword', pct: Math.round(source.keywordRelevance * 100) };
+  }
+  return { kind: 'none', pct: 0 };
+}
+
+export const KEYWORD_MATCH_LABEL = 'Keyword match';
+export const KEYWORD_MATCH_TITLE = 'Found by keyword search; no semantic relevance score';
+
 export default function CitationPreview({ source, onOpen, style }) {
   const redactPaths = useSelector(selectRedactPaths);
 
@@ -16,7 +40,9 @@ export default function CitationPreview({ source, onOpen, style }) {
 
   if (!source) return null;
 
-  const scorePct = Math.round((source.semanticScore ?? source.score ?? 0) * 100);
+  const relevance = getSourceRelevance(source);
+  // Only a semantic score drives the color scale.
+  const scorePct = relevance.kind === 'semantic' ? relevance.pct : 0;
   const displayPath = source.path
     ? formatDisplayPath(source.path, { redact: redactPaths, segments: 2 })
     : '';
@@ -63,19 +89,31 @@ export default function CitationPreview({ source, onOpen, style }) {
             </Text>
           )}
         </div>
-        <Text
-          as="div"
-          variant="tiny"
-          className={`font-bold tabular-nums px-1.5 py-0.5 rounded-full shrink-0 ${
-            scorePct >= 70
-              ? 'bg-stratosort-success/10 text-stratosort-success'
-              : scorePct >= 50
-                ? 'bg-stratosort-blue/10 text-stratosort-blue'
-                : 'bg-system-gray-100 text-system-gray-500'
-          }`}
-        >
-          {scorePct}%
-        </Text>
+        {relevance.kind === 'semantic' && (
+          <Text
+            as="div"
+            variant="tiny"
+            className={`font-bold tabular-nums px-1.5 py-0.5 rounded-full shrink-0 ${
+              scorePct >= 70
+                ? 'bg-stratosort-success/10 text-stratosort-success'
+                : scorePct >= 50
+                  ? 'bg-stratosort-blue/10 text-stratosort-blue'
+                  : 'bg-system-gray-100 text-system-gray-500'
+            }`}
+          >
+            {scorePct}%
+          </Text>
+        )}
+        {relevance.kind === 'keyword' && (
+          <Text
+            as="div"
+            variant="tiny"
+            title={KEYWORD_MATCH_TITLE}
+            className="font-medium px-1.5 py-0.5 rounded-full shrink-0 bg-system-gray-100 text-system-gray-500"
+          >
+            {KEYWORD_MATCH_LABEL}
+          </Text>
+        )}
       </div>
 
       {/* Subject line */}
@@ -155,6 +193,7 @@ CitationPreview.propTypes = {
     snippet: PropTypes.string,
     score: PropTypes.number,
     semanticScore: PropTypes.number,
+    keywordRelevance: PropTypes.number,
     fileId: PropTypes.string,
     summary: PropTypes.string,
     purpose: PropTypes.string,

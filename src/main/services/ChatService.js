@@ -83,6 +83,14 @@ const MODEL_NOT_READY_CODES = new Set(['NO_MODEL', 'LLAMA_002', 'LLAMA_MODEL_NOT
 // not an error.
 const OUTPUT_TRUNCATED_NOTICE =
   '[Response cut short: the cloud provider reached its output token limit. Ask a follow-up to continue.]';
+// Same notice for the local model, which stops at the output-token cap that
+// LlamaService clamps to the free context (small on CPU / low-VRAM profiles).
+const LOCAL_OUTPUT_TRUNCATED_NOTICE =
+  '[Response cut short: the local model reached its output token limit. Ask a follow-up to continue.]';
+
+/** @param {{ truncatedBy?: string } | null | undefined} stream */
+const truncationNoticeFor = (stream) =>
+  stream?.truncatedBy === 'local' ? LOCAL_OUTPUT_TRUNCATED_NOTICE : OUTPUT_TRUNCATED_NOTICE;
 
 // Query-intent detectors extracted to chat/queryIntent.js (direct unit
 // oracles in test/chat/queryIntent.test.js). The `_is*` methods below stay
@@ -309,6 +317,9 @@ Now respond as JSON:`;
         const result = await this.llamaService.analyzeText(prompt, { format: 'json' });
         if (result?.success) {
           const parsed = this._parseResponse(result.response, []);
+          if (result.truncated === true) {
+            parsed.modelAnswer.push({ text: LOCAL_OUTPUT_TRUNCATED_NOTICE });
+          }
           await this._saveMemoryTurn(memory, cleanQuery, {
             text: this._formatForMemory(parsed),
             documentAnswer: parsed.documentAnswer || [],
@@ -402,15 +413,6 @@ Now respond as JSON:`;
       gapAnalysisIntent,
       contradictions
     };
-    let assistantForMemory = {
-      text: this._formatForMemory(parsed, retrieval.sources),
-      documentAnswer: parsed.documentAnswer,
-      modelAnswer: parsed.modelAnswer,
-      sources: retrieval.sources,
-      followUps: parsed.followUps || [],
-      meta: queryMeta
-    };
-
     // Smart fallback if model returns nothing (improves UX)
     if (parsed.documentAnswer.length === 0 && parsed.modelAnswer.length === 0) {
       const dropped = /** @type {any} */ (retrieval.meta)?.droppedLowRelevance || 0;
@@ -427,19 +429,19 @@ Now respond as JSON:`;
           text: `I found ${retrieval.sources.length} related document${retrieval.sources.length > 1 ? 's' : ''} but couldn't extract a specific answer. You can explore the sources below directly.`
         });
       }
-      // Re-format for memory since we added a fallback response
-      assistantForMemory = {
-        text: this._formatForMemory(parsed, retrieval.sources),
-        documentAnswer: parsed.documentAnswer,
-        modelAnswer: parsed.modelAnswer,
-        sources: retrieval.sources,
-        followUps: parsed.followUps || [],
-        meta: queryMeta
-      };
-      await this._saveMemoryTurn(memory, cleanQuery, assistantForMemory);
-    } else {
-      await this._saveMemoryTurn(memory, cleanQuery, assistantForMemory);
     }
+    // The local model stopped at its output-token cap: the answer is a prefix.
+    if (llamaResult.truncated === true) {
+      parsed.modelAnswer.push({ text: LOCAL_OUTPUT_TRUNCATED_NOTICE });
+    }
+    await this._saveMemoryTurn(memory, cleanQuery, {
+      text: this._formatForMemory(parsed, retrieval.sources),
+      documentAnswer: parsed.documentAnswer,
+      modelAnswer: parsed.modelAnswer,
+      sources: retrieval.sources,
+      followUps: parsed.followUps || [],
+      meta: queryMeta
+    });
 
     return {
       success: true,
@@ -652,7 +654,7 @@ Now respond as JSON:`;
 
           const parsed = this._parseResponse(fullResponse, []);
           if (conversationalStream.truncated) {
-            parsed.modelAnswer.push({ text: OUTPUT_TRUNCATED_NOTICE });
+            parsed.modelAnswer.push({ text: truncationNoticeFor(conversationalStream) });
           }
           await this._saveMemoryTurn(
             memory,
@@ -821,7 +823,7 @@ Now respond as JSON:`;
         parsed.modelAnswer.push({ text: fallbackText });
       }
       if (retrievalStream.truncated) {
-        parsed.modelAnswer.push({ text: OUTPUT_TRUNCATED_NOTICE });
+        parsed.modelAnswer.push({ text: truncationNoticeFor(retrievalStream) });
       }
 
       // Do not emit a final full-prose { type: 'chunk' }: streaming preview deltas
@@ -987,7 +989,11 @@ Now respond as JSON:`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     let fullResponse = '';
-    let outputTruncated = false;
+    // Every generation branch below sets these (or throws).
+    /** @type {boolean|undefined} */
+    let outputTruncated;
+    /** @type {string|undefined} */
+    let outputTruncatedBy;
     try {
       const cloudProviderOnce = forceLocal ? null : this._resolveGenerateBackend('chat');
       // _streamWithLocalFallback accumulates via onToken and falls back to
@@ -1030,6 +1036,8 @@ Now respond as JSON:`;
             maxTokens: 1024
           });
           if (!fullResponse) fullResponse = result?.response || '';
+          outputTruncated = result?.truncated === true;
+          outputTruncatedBy = 'local';
         }
       } else {
         // generateTextStreaming returns `{ response }` not a plain string —
@@ -1046,6 +1054,8 @@ Now respond as JSON:`;
           maxTokens: 1024
         });
         if (!fullResponse) fullResponse = result?.response || '';
+        outputTruncated = result?.truncated === true;
+        outputTruncatedBy = 'local';
       }
     } catch (err) {
       if (err?.name === 'AbortError' || controller.signal.aborted) {
@@ -1107,7 +1117,7 @@ Now respond as JSON:`;
     const answerParts = [];
     for (const item of parsed.documentAnswer) answerParts.push(renumber(item.text));
     for (const item of parsed.modelAnswer) answerParts.push(renumber(item.text));
-    if (outputTruncated) answerParts.push(OUTPUT_TRUNCATED_NOTICE);
+    if (outputTruncated) answerParts.push(truncationNoticeFor({ truncatedBy: outputTruncatedBy }));
     const answer = answerParts.filter(Boolean).join('\n\n');
 
     await this._mcpSessions.saveMemoryTurn(memory, cleanQuery, answer);
@@ -1474,7 +1484,7 @@ Now respond as JSON:`;
    * @param {string} params.prompt
    * @param {AbortSignal} params.signal
    * @param {Function} params.onToken
-   * @returns {Promise<{text: string, viaFallback: boolean, fallbackReason?: string, truncated?: boolean}>}
+   * @returns {Promise<{text: string, viaFallback: boolean, fallbackReason?: string, truncated?: boolean, truncatedBy?: string}>}
    */
   async _streamWithLocalFallback({ cloudProvider, prompt, signal, onToken }) {
     const localStream = async () => {
@@ -1483,11 +1493,16 @@ Now respond as JSON:`;
         fullResponse += token;
         if (typeof onToken === 'function') onToken(token);
       };
-      await this.llamaService.generateTextStreaming({
+      const result = await this.llamaService.generateTextStreaming({
         prompt,
         signal,
         onToken: wrapToken
       });
+      // LlamaService reports `truncated: true` when generation stopped at the
+      // output-token cap rather than at end-of-generation.
+      if (result?.truncated === true) {
+        return { text: fullResponse, viaFallback: false, truncated: true, truncatedBy: 'local' };
+      }
       return { text: fullResponse, viaFallback: false };
     };
 
@@ -1508,7 +1523,9 @@ Now respond as JSON:`;
       };
     } catch (err) {
       // Don't fall back on user-initiated abort — that's not a cloud failure.
-      if (err?.name === 'AbortError') throw err;
+      // Check the signal too: a provider that wraps the abort in a transient
+      // code (NETWORK_ERROR) must not start a local generation after a cancel.
+      if (err?.name === 'AbortError' || signal?.aborted) throw err;
 
       const code = err && err.name === 'AIProviderError' ? err.code : null;
       // tokensEmitted guard: if the cloud stream died AFTER streaming tokens

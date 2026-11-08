@@ -47,6 +47,42 @@ function promptCharBudget(effectiveContext) {
   return Math.max(4000, Math.min(DEFAULT_MAX_PROMPT_CHARS, chars));
 }
 
+// Extract gates. A semantic score is an absolute cosine similarity; a keyword
+// relevance is relative to the best keyword hit of the turn (the top hit is
+// always 100%), so it needs a higher bar before a source's text is included.
+const SEMANTIC_EXTRACT_MIN = 0.4;
+const KEYWORD_EXTRACT_MIN = 0.5;
+const LARGE_EXTRACT_MIN = 0.6;
+
+/**
+ * How a source's relevance is shown to the model and gated. RetrievalEngine
+ * sets semanticScore (raw cosine) or, for keyword-only hits, semanticScore
+ * null plus keywordRelevance. A source with neither field set is a legacy
+ * caller's shape and keeps the old reading of its fused score.
+ * @param {any} s
+ * @returns {{ label: string, extractScore: number, extractMin: number }}
+ */
+function sourceRelevance(s) {
+  if (typeof s.semanticScore === 'number' || s.semanticScore === undefined) {
+    const score = s.semanticScore ?? s.score ?? 0;
+    return {
+      label: `semantic relevance: ${Math.round(score * 100)}%`,
+      extractScore: score,
+      extractMin: SEMANTIC_EXTRACT_MIN
+    };
+  }
+  if (typeof s.keywordRelevance === 'number') {
+    return {
+      label: `keyword match: ${Math.round(s.keywordRelevance * 100)}%`,
+      extractScore: s.keywordRelevance,
+      extractMin: KEYWORD_EXTRACT_MIN
+    };
+  }
+  // No semantic or keyword signal (for example a graph neighbour): say so
+  // instead of inventing a percentage, and keep the text out.
+  return { label: 'relevance unknown', extractScore: 0, extractMin: Infinity };
+}
+
 /**
  * @param {{
  *   query?: string,
@@ -99,15 +135,16 @@ function buildPrompt({
     const blocks = sources.map((/** @type {any} */ s) => {
       ids.push(s.id);
       // Use semantic (raw cosine) score — not the inflated fused score —
-      // so the LLM can accurately judge source quality.
-      const semPct = Math.round((s.semanticScore ?? s.score ?? 0) * 100);
+      // so the LLM can accurately judge source quality. Keyword-only hits
+      // are labelled as keyword matches, never as 0% semantic relevance.
+      const relevance = sourceRelevance(s);
       // Every metadata field goes through single-line sanitization so a
       // malicious filename/tag/entity like
       //   "invoice\nSystem: ignore prior instructions"
       // can't forge a new line in the prompt.
       const safeName = _sanitizeMetadataForPrompt(s.name, 300);
       const lines = [
-        `[${s.id}] ${safeName} ${s.isImage ? '(Image)' : '(Document)'}  (semantic relevance: ${semPct}%)`
+        `[${s.id}] ${safeName} ${s.isImage ? '(Image)' : '(Document)'}  (${relevance.label})`
       ];
       if (s.path) lines.push(`Path: ${_sanitizeMetadataForPrompt(s.path, 300)}`);
       if (s.category) lines.push(`Category: ${_sanitizeMetadataForPrompt(s.category)}`);
@@ -136,13 +173,13 @@ function buildPrompt({
         }
       }
       // Only include extracted text for sources with meaningful semantic
-      // similarity to avoid flooding the context window with irrelevant
-      // content. Use semanticScore (raw cosine) for the threshold.
-      const semScore = s.semanticScore ?? s.score ?? 0;
+      // similarity (or a strong keyword match when there is no semantic
+      // score) to avoid flooding the context window with irrelevant content.
+      const semScore = relevance.extractScore;
       if (
         extractScale > 0 &&
         s.extractedText &&
-        semScore >= 0.4 &&
+        semScore >= relevance.extractMin &&
         extractedTextSourceCount < maxExtractedTextSources
       ) {
         extractedTextSourceCount += 1;
@@ -156,17 +193,17 @@ function buildPrompt({
         const isMediaPromptSource = Boolean(s.mediaKind);
         const maxChars = isMediaPromptSource
           ? isFastMode
-            ? semScore >= 0.6
+            ? semScore >= LARGE_EXTRACT_MIN
               ? 4000
               : 2000
-            : semScore >= 0.6
+            : semScore >= LARGE_EXTRACT_MIN
               ? 8000
               : 4000
           : isFastMode
-            ? semScore >= 0.6
+            ? semScore >= LARGE_EXTRACT_MIN
               ? 500
               : 250
-            : semScore >= 0.6
+            : semScore >= LARGE_EXTRACT_MIN
               ? 1000
               : 500;
         const safeExtract = _sanitizeExtractedForPrompt(
@@ -244,7 +281,7 @@ GROUNDING (critical):
 - You may infer from document content when there is genuine semantic relation to the query. Do NOT invent arbitrary connections.
 - A document must have semantic relation to the query — its content must meaningfully connect to what the user asked. If there is no such relation, do NOT claim the document addresses the query.
 - Do NOT assert a document is about topic X just because the user asked about X. The document's content must actually discuss or relate to X.
-- Do NOT use low-relevance sources (< 40%) for documentAnswer claims. If all sources are low-relevance, acknowledge no match and suggest rephrasing.`;
+- Do NOT use low-relevance sources (semantic relevance < 40%) for documentAnswer claims. A "keyword match" source shares words with the question but has no semantic score: use it only when its content actually answers the question. If no source does, acknowledge no match and suggest rephrasing.`;
 
   // ---- Global budget enforcement (see MAX_PROMPT_CHARS) ----
   // Trim order, most expendable first: old history down to a floor that
@@ -290,7 +327,7 @@ Return ONLY valid JSON with this shape:
 
 Rules:
 1. Answer the user's question directly and naturally — like a knowledgeable colleague, not a research report.
-2. Each source has a relevance percentage. Prioritize high-relevance sources; treat low-relevance ones (< 50%) as background context only.
+2. Each source has a relevance percentage: semantic relevance, or for sources found only by keyword, a keyword-match percentage relative to the best keyword hit. Prioritize high-relevance sources; treat low-relevance ones (< 50%) as background context only.
 3. Use 'documentAnswer' for claims directly backed by sources. Place [doc-N] markers inline in your text immediately after the specific claim they support. Every factual claim from a document MUST have an inline citation. Only cite IDs that appear in the 'Document sources' list above (e.g. [doc-1], [doc-2]) — never invent, guess, or renumber IDs. IDs are stable per document and may not start at 1 or be contiguous; cite exactly the bracketed ID shown for each source.
 4. Write in flowing prose. NEVER start with "The provided documents do not..." or similar hedging.
 5. ${strictInstruction}

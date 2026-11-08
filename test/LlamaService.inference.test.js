@@ -243,7 +243,7 @@ describe('LlamaService – inference methods', () => {
 
       const result = await service.analyzeText('Say hello', { maxTokens: 256 });
 
-      expect(result).toEqual({ success: true, response: 'AI says hello' });
+      expect(result).toEqual({ success: true, response: 'AI says hello', truncated: false });
       expect(service.generateText).toHaveBeenCalledWith(
         expect.objectContaining({ prompt: 'Say hello', maxTokens: 256 })
       );

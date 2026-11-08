@@ -244,6 +244,15 @@ class RetrievalEngine {
       finalResults = enrichmentSafeResults;
     }
 
+    // Raw BM25 scores are unbounded; a keyword-only hit without a fused
+    // keywordScore (the bm25-fallback shape) is scaled by the best BM25 hit in
+    // this result set, the same scaling SearchService applies in hybrid mode.
+    const maxBm25Score = finalResults.reduce(
+      (/** @type {number} */ max, /** @type {any} */ r) =>
+        r?.source === 'bm25' && typeof r.score === 'number' && r.score > max ? r.score : max,
+      0
+    );
+
     const sources = finalResults.map((/** @type {any} */ result, /** @type {any} */ index) => {
       const fileId = result?.id;
       const metadata = result?.metadata || {};
@@ -294,9 +303,21 @@ class RetrievalEngine {
             ? hybrid.chunkRawScore
             : null;
       // If neither vector nor chunk search found this result (BM25-only),
-      // rawSemantic is null → semanticScore falls back to 0, signaling
-      // that there is no embedding-backed relevance.
-      const semanticScore = rawSemantic !== null ? rawSemantic : 0;
+      // there is no semantic score: semanticScore stays null rather than a
+      // made-up 0, and keywordRelevance (0-1, relative to the best keyword
+      // hit) carries the keyword signal so the prompt and UI can label the
+      // source as a keyword match instead of "0% relevant".
+      const semanticScore = rawSemantic;
+      /** @type {number|null} */
+      let keywordRelevance = null;
+      if (rawSemantic === null) {
+        if (typeof hybrid.keywordScore === 'number') {
+          keywordRelevance = hybrid.keywordScore;
+        } else if (result?.source === 'bm25' && typeof result.score === 'number') {
+          keywordRelevance =
+            maxBm25Score > 0 ? Math.min(1, Math.max(0, result.score / maxBm25Score)) : 0;
+        }
+      }
 
       return {
         id: `doc-${index + 1}`,
@@ -329,8 +350,12 @@ class RetrievalEngine {
         entities: metadata.keyEntities || [],
         dates: metadata.dates || [],
         score: result?.score || 0,
-        // Raw cosine similarity from embedding search (0-1, absolute quality)
+        // Raw cosine similarity from embedding search (0-1, absolute
+        // quality); null when no embedding leg found this source.
         semanticScore,
+        // Keyword-only sources: BM25 relevance relative to the best keyword
+        // hit (0-1); null when semanticScore is set or no keyword signal.
+        keywordRelevance,
         confidence: metadata.confidence || 0,
         matchDetails: result?.matchDetails || {},
         // Image-specific fields
@@ -355,7 +380,8 @@ class RetrievalEngine {
     const relevantSources = strictScope
       ? sources
       : sources.filter((/** @type {any} */ s) => {
-          if (s.semanticScore >= CHAT_MIN_SEMANTIC_SCORE) return true;
+          if (typeof s.semanticScore === 'number' && s.semanticScore >= CHAT_MIN_SEMANTIC_SCORE)
+            return true;
           const h = s.matchDetails?.hybrid || {};
           const hasVec =
             typeof h.vectorRawScore === 'number' || typeof h.chunkRawScore === 'number';
@@ -380,7 +406,7 @@ class RetrievalEngine {
           droppedScores: dropped
             .map((/** @type {any} */ s) => ({
               fused: (s.score ?? 0).toFixed(3),
-              semantic: (s.semanticScore ?? 0).toFixed(3),
+              semantic: typeof s.semanticScore === 'number' ? s.semanticScore.toFixed(3) : 'none',
               keyword: (s.matchDetails?.hybrid?.keywordScore ?? 0).toFixed(3)
             }))
             .slice(0, 3)

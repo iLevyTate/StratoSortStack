@@ -17,6 +17,14 @@ const { create, insertMultiple, search: oramaSearch } = require('@orama/orama');
 // @ts-expect-error @orama/stemmers/english lacks a named export in its declaration; runtime shape is `{ english }`
 const { english } = require('@orama/stemmers/english');
 const ORAMA_TOKENIZER_CONFIG = { stemmer: english, stemming: true };
+
+// The BM25 build runs on the Electron main process. Orama's insertMultiple is
+// fully synchronous (its `timeout` option is a busy-wait, not a yield), so the
+// build inserts small batches and hands the event loop back to IPC, progress
+// events and other windows whenever a time slice is used up.
+const BM25_BUILD_INSERT_BATCH = 16;
+const BM25_BUILD_SLICE_MS = 12;
+const yieldToEventLoop = () => new Promise((resolve) => setImmediate(resolve));
 const fs = require('fs').promises;
 const path = require('path');
 const { createLogger } = require('../../shared/logger');
@@ -193,6 +201,17 @@ class SearchService {
 
     // Lock to prevent concurrent index builds (race condition fix)
     this._indexBuildPromise = null;
+    // Bumped by clearIndex()/cleanup() so a build that yielded mid-way does not
+    // commit an index after the service was cleared or shut down.
+    this._bm25BuildEpoch = 0;
+    // Bumped by invalidateIndex(). A build records the value it snapshotted the
+    // history at, so an invalidation that lands while the build yields is not
+    // lost: the build commits as stale and later callers get a fresh build.
+    this._bm25InvalidationSeq = 0;
+    /** @type {number|null} invalidation seq the in-flight build snapshotted at (null = not yet) */
+    this._indexBuildSnapshotSeq = null;
+    /** @type {Promise<any>|null} fresh build queued behind an in-flight one that was invalidated */
+    this._indexFollowUpBuildPromise = null;
 
     // during batch operations (e.g., multi-file move/rename/delete)
     this._rebuildDebounceTimer = null;
@@ -343,16 +362,46 @@ class SearchService {
   async buildBM25Index() {
     // Prevent concurrent index builds - return existing promise if building
     if (this._indexBuildPromise) {
-      logger.debug('[SearchService] Index build already in progress, waiting...');
-      return this._indexBuildPromise;
+      const snapshotSeq = this._indexBuildSnapshotSeq;
+      if (snapshotSeq === null || snapshotSeq === this._bm25InvalidationSeq) {
+        logger.debug('[SearchService] Index build already in progress, waiting...');
+        return this._indexBuildPromise;
+      }
+      // The in-flight build read the history before the latest invalidation,
+      // so its result would miss that change: queue one fresh build after it.
+      if (!this._indexFollowUpBuildPromise) {
+        const inFlight = this._indexBuildPromise;
+        /** @type {Promise<any>} */
+        const followUp = inFlight
+          .catch(/** @returns {void} */ () => {})
+          .then(
+            /** @returns {Promise<any>} */ () => {
+              if (this._indexFollowUpBuildPromise === followUp) {
+                this._indexFollowUpBuildPromise = null;
+              }
+              return this.buildBM25Index();
+            }
+          );
+        this._indexFollowUpBuildPromise = followUp;
+      }
+      return this._indexFollowUpBuildPromise;
     }
 
-    this._indexBuildPromise = this._doBuildBM25Index();
-    try {
-      return await this._indexBuildPromise;
-    } finally {
-      this._indexBuildPromise = null;
-    }
+    this._indexBuildSnapshotSeq = null;
+    const build = (async () => {
+      try {
+        return await this._doBuildBM25Index();
+      } finally {
+        // Release the lock before the build's promise settles, so a follow-up
+        // build chained on it starts a new build instead of joining this one.
+        if (this._indexBuildPromise === build) {
+          this._indexBuildPromise = null;
+          this._indexBuildSnapshotSeq = null;
+        }
+      }
+    })();
+    this._indexBuildPromise = build;
+    return build;
   }
 
   /**
@@ -360,10 +409,15 @@ class SearchService {
    * @private
    */
   async _doBuildBM25Index() {
+    const buildEpoch = this._bm25BuildEpoch;
+    const superseded = () => buildEpoch !== this._bm25BuildEpoch;
     try {
       logger.info('[SearchService] Building BM25 index...');
 
       await this.history.initialize();
+      // Everything invalidated up to here is in the snapshot below.
+      const invalidationSeq = this._bm25InvalidationSeq;
+      if (this._indexBuildPromise && !superseded()) this._indexBuildSnapshotSeq = invalidationSeq;
       const entries = this.history.analysisHistory?.entries || {};
       // De-dupe by canonical file ID (path-based) and prefer the most recent analysis entry.
       // This is required because analysis history uses UUIDs per analysis run, while semantic search uses path IDs.
@@ -405,11 +459,13 @@ class SearchService {
         return [];
       };
 
-      // Release old index and document map before building new ones to avoid
-      // holding both old and new data structures in memory simultaneously.
-      // This prevents doubling memory usage during rebuilds.
+      // Release the old Orama index (the large structure) before building the
+      // new one so both are not held in memory at once. The build yields to the
+      // event loop, so the previous documentMap stays published until the commit
+      // below: enrichment readers (chat retrieval, graph expansion) keep the last
+      // known metadata instead of seeing an empty map mid-build. Searches wait on
+      // the build because a null index reads as stale.
       this.bm25Index = null;
-      this.documentMap = new Map();
 
       // Build index into local variables first so a build failure doesn't leave partial state behind.
       const nextDocumentMap = new Map();
@@ -435,7 +491,13 @@ class SearchService {
       });
 
       const indexDocs = [];
+      let sliceStart = Date.now();
       for (const doc of documents) {
+        if (Date.now() - sliceStart >= BM25_BUILD_SLICE_MS) {
+          await yieldToEventLoop();
+          if (superseded()) return { success: false, indexed: 0, error: 'BM25 build superseded' };
+          sliceStart = Date.now();
+        }
         const analysis = doc.analysis || {};
         const organization = doc.organization || {};
 
@@ -518,16 +580,29 @@ class SearchService {
         });
       }
 
-      if (indexDocs.length > 0) {
-        await insertMultiple(nextIndex, indexDocs);
+      for (let i = 0; i < indexDocs.length; i += BM25_BUILD_INSERT_BATCH) {
+        if (Date.now() - sliceStart >= BM25_BUILD_SLICE_MS) {
+          await yieldToEventLoop();
+          if (superseded()) return { success: false, indexed: 0, error: 'BM25 build superseded' };
+          sliceStart = Date.now();
+        }
+        await insertMultiple(nextIndex, indexDocs.slice(i, i + BM25_BUILD_INSERT_BATCH));
       }
+      if (superseded()) return { success: false, indexed: 0, error: 'BM25 build superseded' };
 
       // Commit the new index atomically.
       this.bm25Index = nextIndex;
       this.documentMap = nextDocumentMap;
 
-      this.indexBuiltAt = Date.now();
+      // An invalidation that arrived while the build yielded is not reflected
+      // in this index: publish it (better than none) but keep it stale so the
+      // next search rebuilds instead of trusting it for INDEX_STALE_MS.
+      const invalidatedDuringBuild = invalidationSeq !== this._bm25InvalidationSeq;
+      this.indexBuiltAt = invalidatedDuringBuild ? 0 : Date.now();
       this.indexVersion++;
+      if (invalidatedDuringBuild) {
+        logger.info('[SearchService] BM25 index invalidated during build; marked stale');
+      }
 
       // Clear legacy serialized caches (Orama index is kept in memory)
       this._serializedIndex = null;
@@ -2760,6 +2835,7 @@ class SearchService {
    * Clear the BM25 index
    */
   clearIndex() {
+    this._bm25BuildEpoch++;
     this.bm25Index = null;
     this.documentMap.clear();
     this.indexBuiltAt = null;
@@ -2775,6 +2851,9 @@ class SearchService {
    */
   invalidateIndex(/** @type {any} */ options = {}) {
     const { reason = 'manual', oldPath, newPath } = options;
+
+    // Also covers a build in progress (see _doBuildBM25Index / buildBM25Index).
+    this._bm25InvalidationSeq++;
 
     // Mark index as stale by setting indexBuiltAt to past
     if (this.indexBuiltAt) {
@@ -3647,12 +3726,15 @@ class SearchService {
     if (typeof this.vectorDb?.removeListener === 'function' && this._vectorDbMutationListener) {
       this.vectorDb.removeListener('search-data-mutated', this._vectorDbMutationListener);
     }
+    this._bm25BuildEpoch++;
     this.bm25Index = null;
     this.documentMap.clear();
     this._serializedIndex = null;
     this._serializedDocMap = null;
     this.indexBuiltAt = null;
     this._indexBuildPromise = null;
+    this._indexBuildSnapshotSeq = null;
+    this._indexFollowUpBuildPromise = null;
 
     logger.info('[SearchService] Cleanup complete');
   }

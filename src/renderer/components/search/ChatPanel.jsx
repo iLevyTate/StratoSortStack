@@ -24,6 +24,7 @@ import normalizeList from '../../utils/normalizeList';
 import { selectRedactPaths } from '../../store/selectors';
 import { CHAT_PERSONAS, DEFAULT_CHAT_PERSONA_ID } from '../../../shared/chatPersonas';
 import CitationRenderer from './CitationRenderer';
+import { getSourceRelevance, KEYWORD_MATCH_LABEL, KEYWORD_MATCH_TITLE } from './CitationPreview';
 import ContradictionCard from './ContradictionCard';
 import ComparisonTable from './ComparisonTable';
 import GapAnalysisCard from './GapAnalysisCard';
@@ -308,9 +309,9 @@ const SourceList = React.memo(function SourceList({ sources, onOpenSource }) {
       {sources.map((source, index) => {
         const tags = normalizeList(source.tags).slice(0, 4);
         const entities = normalizeList(source.entities).slice(0, 4);
-        const rawSemantic =
-          typeof source.semanticScore === 'number' ? source.semanticScore : source.score;
-        const scorePct = typeof rawSemantic === 'number' ? Math.round(rawSemantic * 100) : 0;
+        const relevance = getSourceRelevance(source);
+        // Only a semantic score drives the color scale.
+        const scorePct = relevance.kind === 'semantic' ? relevance.pct : 0;
         const imageSrc = normalizeImageSource(
           source.previewImage || source.imagePath || source.thumbnail || source.image
         );
@@ -361,19 +362,31 @@ const SourceList = React.memo(function SourceList({ sources, onOpenSource }) {
                   </Text>
                 )}
               </div>
-              <Text
-                as="span"
-                variant="tiny"
-                className={`font-bold tabular-nums shrink-0 px-1.5 py-0.5 rounded-full ${
-                  scorePct >= 70
-                    ? 'bg-stratosort-success/10 text-stratosort-success'
-                    : scorePct >= 50
-                      ? 'bg-stratosort-blue/10 text-stratosort-blue'
-                      : 'bg-system-gray-100 text-system-gray-400'
-                }`}
-              >
-                {scorePct}%
-              </Text>
+              {relevance.kind === 'semantic' && (
+                <Text
+                  as="span"
+                  variant="tiny"
+                  className={`font-bold tabular-nums shrink-0 px-1.5 py-0.5 rounded-full ${
+                    scorePct >= 70
+                      ? 'bg-stratosort-success/10 text-stratosort-success'
+                      : scorePct >= 50
+                        ? 'bg-stratosort-blue/10 text-stratosort-blue'
+                        : 'bg-system-gray-100 text-system-gray-400'
+                  }`}
+                >
+                  {scorePct}%
+                </Text>
+              )}
+              {relevance.kind === 'keyword' && (
+                <Text
+                  as="span"
+                  variant="tiny"
+                  title={KEYWORD_MATCH_TITLE}
+                  className="font-medium shrink-0 px-1.5 py-0.5 rounded-full bg-system-gray-100 text-system-gray-500"
+                >
+                  {KEYWORD_MATCH_LABEL}
+                </Text>
+              )}
               {source.path ? (
                 <Button
                   variant="ghost"
