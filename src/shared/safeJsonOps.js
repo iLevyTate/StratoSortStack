@@ -122,6 +122,54 @@ function tryParse(text) {
   }
 }
 
+const POLLUTION_KEYS = ['__proto__', 'constructor', 'prototype'];
+
+/**
+ * Same result as {@link tryParse}, for large persisted files.
+ *
+ * A reviver costs one JavaScript call per value, and a vector store holds
+ * millions of numbers, so parsing hundreds of MB that way blocks the main
+ * process for seconds. This parses natively, then removes the same keys in one
+ * pass over objects only.
+ *
+ * @param {string} text - JSON string to parse
+ * @returns {{success: boolean, value: *, error: Error|null}}
+ */
+function tryParseLarge(text) {
+  if (text === null || text === undefined) {
+    return { success: false, value: null, error: new Error('Input is null or undefined') };
+  }
+
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch (error) {
+    return { success: false, value: null, error };
+  }
+
+  /** @type {any[]} */
+  const pending = [value];
+  while (pending.length > 0) {
+    const node = pending.pop();
+    if (Array.isArray(node)) {
+      for (let i = 0; i < node.length; i++) {
+        const item = node[i];
+        if (item !== null && typeof item === 'object') pending.push(item);
+      }
+      continue;
+    }
+    if (node === null || typeof node !== 'object') continue;
+    for (const key of POLLUTION_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(node, key)) delete node[key];
+    }
+    for (const key in node) {
+      const item = node[key];
+      if (item !== null && typeof item === 'object') pending.push(item);
+    }
+  }
+  return { success: true, value, error: null };
+}
+
 /**
  * Deep clone an object using JSON serialization
  * Note: This will not preserve functions, undefined values, or circular references
@@ -183,6 +231,7 @@ module.exports = {
   safeStringify,
   parseJsonLines,
   tryParse,
+  tryParseLarge,
   jsonClone,
   deepClone,
   stableStringify

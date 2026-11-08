@@ -96,9 +96,9 @@ const TIMEOUTS = {
   // this bounds the hidden period when ready-to-show is late (GPU process hang,
   // slow renderer bootstrap). The window is force-shown once this elapses.
   WINDOW_SHOW_FALLBACK: 4000,
-  // Heavyweight coordinated startup waits for the first paint (show or
-  // did-finish-load) before it starts, capped here so a headless or stuck
-  // renderer still initialises services.
+  // Heavyweight coordinated startup waits for the window to be shown before
+  // it starts, capped here so a headless or stuck renderer still initialises
+  // services.
   FIRST_PAINT_GATE: 3000,
   // First show can wait on GPU model warmup + renderer bootstrap; mutex must not expire early.
   WINDOW_CREATION_READY: 60000,

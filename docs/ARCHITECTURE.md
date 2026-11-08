@@ -174,11 +174,12 @@ Orchestrates the boot sequence with progress reporting to the splash screen:
   process exit and a visible window, so a software-rendered session cannot clear it. On Windows and
   macOS Chromium's GPU rasterization and zero-copy switches are left at their per-driver defaults;
   Linux keeps forcing both, as earlier releases did (`getForcedRasterSwitches()`).
-- **First-paint gate** (`core/firstPaintGate.js`): coordinated startup and `runBackgroundSetup()`
-  wait until the window has been shown or its document has finished loading, capped at
-  `TIMEOUTS.FIRST_PAINT_GATE` (3 s), so the synchronous stretches of AI bring-up (node-llama-cpp
-  import, GPU probing) are deferred past document load and, in the normal case, past the first
-  visible frame instead of competing with it on the main-process thread.
+- **First-paint gate** (`core/firstPaintGate.js`): coordinated startup, `runBackgroundSetup()` and
+  the semantic search pre-warm (`whenFirstPaintGateReleased()`) wait until the window has been
+  shown, capped at `TIMEOUTS.FIRST_PAINT_GATE` (3 s), so the synchronous stretches of AI bring-up
+  (node-llama-cpp import, GPU probing, the vector store load) run after the first visible frame
+  instead of competing with it on the main-process thread. The document finishing loading does not
+  release it: that fires before `ready-to-show`, and the window is shown 100 ms after that.
 - **Last-known-good AI backend**: `LlamaService` hands `initLlamaWithBackend()`
   (`utils/llamaBackendSelector.js`) a record from `utils/llamaBackendCache.js`, stored as
   `userData/gpu-backend-cache.json`. When the record's fingerprint (platform, arch, app version,

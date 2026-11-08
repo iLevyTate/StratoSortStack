@@ -132,6 +132,62 @@ describe('OramaVectorService save safety', () => {
       expect(docs[0]).toEqual(expect.objectContaining({ id: 'file:a' }));
     });
 
+    test('the saved bytes are exactly what one JSON.stringify of them gives', async () => {
+      await service.upsertFile({ id: 'file:a', vector: vector(0.25), meta: { path: '/x/a.txt' } });
+      await service.upsertFile({ id: 'file:b', vector: vector(0.5), meta: { path: '/x/b"q.txt' } });
+      await save();
+
+      const raw = await fsp.readFile(path.join(service._dataPath, 'files.json.lz4'));
+      const docsStore = service._databases.files.data.docs;
+      expect((await uncompress(raw)).toString('utf8')).toBe(
+        JSON.stringify({ docs: { docs: docsStore.docs, count: docsStore.count } })
+      );
+      const sidecar = await fsp.readFile(
+        path.join(service._dataPath, 'files.sidecar.json'),
+        'utf8'
+      );
+      expect(sidecar).toBe(JSON.stringify(Object.fromEntries(service._embeddingStore.files)));
+    });
+
+    test('a large save yields to the event loop instead of blocking it', async () => {
+      const many = Array.from({ length: 800 }, (_, i) => ({
+        id: `chunk:big:${i}`,
+        vector: vector(0.123456789 + i / 1e6),
+        meta: { fileId: 'file:big', chunkIndex: i }
+      }));
+      await service.batchUpsertFileChunks(many);
+      // Count event-loop turns, and note the turn the first and the last
+      // passage are serialized in.
+      let turns = 0;
+      let running = true;
+      const turn = () => {
+        turns += 1;
+        if (running) setImmediate(turn);
+      };
+      setImmediate(turn);
+      const realStringify = JSON.stringify;
+      /** @type {number[]} turns elapsed between the first and the last passage, per save */
+      const spans = [];
+      let firstAt = 0;
+      jest.spyOn(JSON, 'stringify').mockImplementation(function (value, ...rest) {
+        if (value && typeof value === 'object' && value.id === 'chunk:big:0') firstAt = turns;
+        if (value && typeof value === 'object' && value.id === 'chunk:big:799') {
+          spans.push(turns - firstAt);
+        }
+        return realStringify.call(JSON, value, ...rest);
+      });
+      try {
+        await service.persistAll();
+      } finally {
+        running = false;
+      }
+      // ~7 MB of passage JSON: the event loop ran while it was being built.
+      expect(spans.length).toBeGreaterThan(0);
+      expect(Math.min(...spans)).toBeGreaterThan(0);
+      const saved = await readSaved('fileChunks');
+      expect(Object.keys(saved.docs.docs)).toHaveLength(800);
+    });
+
     test('a file saved that way comes back with its vector after a restart', async () => {
       await service.upsertFile({ id: 'file:a', vector: vector(0.3), meta: { path: '/x/a.txt' } });
       await save();
@@ -167,13 +223,16 @@ describe('OramaVectorService save safety', () => {
   });
 
   describe('a collection too large to save', () => {
-    /** Make stringify fail only for the files collection's saved JSON. */
+    /**
+     * Make the files collection's saved JSON fail as if past the longest
+     * string V8 can build. A save serializes it one document at a time, so
+     * the failure comes from the document file:a.
+     */
     function failFilesStringify() {
       const realStringify = JSON.stringify;
       const calls = { files: 0 };
       jest.spyOn(JSON, 'stringify').mockImplementation(function (value, ...rest) {
-        const docs = value?.docs?.docs;
-        if (docs && Object.values(docs).some((doc) => doc?.id === 'file:a')) {
+        if (value && typeof value === 'object' && value.id === 'file:a') {
           calls.files += 1;
           throw new RangeError('Invalid string length');
         }
@@ -224,6 +283,155 @@ describe('OramaVectorService save safety', () => {
       const ids = Object.values((await readSaved('files')).docs.docs).map((doc) => doc.id);
       expect(ids).toEqual(['file:a']);
     });
+
+    test('its embedding sidecar is not rewritten either while it stays too large', async () => {
+      await save();
+      await service.upsertFile({ id: 'file:a', vector: vector(), meta: { path: '/x/a.txt' } });
+      failFilesStringify();
+      await save();
+      const sidecarPath = path.join(service._dataPath, 'files.sidecar.json');
+      const sidecarIds = async () =>
+        Object.keys(JSON.parse(await fsp.readFile(sidecarPath, 'utf8')));
+      const before = await sidecarIds();
+
+      await service.upsertFile({ id: 'file:b', vector: vector(), meta: { path: '/x/b.txt' } });
+      await save();
+
+      expect(await sidecarIds()).toEqual(before);
+      expect(before).not.toContain('file:b');
+    });
+
+    test('a sidecar too long to build is reported as too large, not retried as a failure', async () => {
+      await save();
+      await service.batchUpsertFileChunks([
+        { id: 'chunk:a:0', vector: vector(), meta: { fileId: 'file:a', chunkIndex: 0 } }
+      ]);
+      await service.upsertFile({ id: 'file:a', vector: vector(), meta: { path: '/x/a.txt' } });
+      const realStringify = JSON.stringify;
+      const calls = { sidecar: 0, blob: 0 };
+      jest.spyOn(JSON, 'stringify').mockImplementation(function (value, ...rest) {
+        // The fileChunks sidecar is keyed by chunk id (the blob by Orama's
+        // internal ids), so a chunk id as a key means the sidecar.
+        if (typeof value === 'string' && value.startsWith('chunk:')) {
+          calls.sidecar += 1;
+          throw new RangeError('Invalid string length');
+        }
+        if (value && typeof value === 'object' && String(value.id).startsWith('chunk:')) {
+          calls.blob += 1;
+        }
+        return realStringify.call(JSON, value, ...rest);
+      });
+
+      await save();
+      await service.batchUpsertFileChunks([
+        { id: 'chunk:a:1', vector: vector(), meta: { fileId: 'file:a', chunkIndex: 1 } }
+      ]);
+      await save();
+
+      expect(persistFailures()).toBe(0);
+      expect(service._persistPending).toBe(false);
+      expect(mockTracker.raise).toHaveBeenCalledWith(
+        expect.objectContaining({ code: 'orama.too-large:fileChunks' })
+      );
+      // Not re-run on the next round, and the larger blob is not attempted.
+      expect(calls.sidecar).toBe(1);
+      expect(calls.blob).toBe(0);
+      const files = await readSaved('files');
+      expect(Object.values(files.docs.docs).map((doc) => doc.id)).toContain('file:a');
+    });
+
+    test('is tried again after a while even when it has as many documents as when it failed', async () => {
+      await save();
+      await service.upsertFile({ id: 'file:a', vector: vector(), meta: { path: '/x/a.txt' } });
+      await service.upsertFile({ id: 'file:b', vector: vector(), meta: { path: '/x/b.txt' } });
+      const calls = failFilesStringify();
+      await save();
+      expect(calls.files).toBe(1);
+
+      // Swap a document: same count, smaller payload. Not retried straight away.
+      jest.restoreAllMocks();
+      await service.deleteFileEmbedding('file:b');
+      await service.upsertFile({ id: 'file:c', vector: vector(), meta: { path: '/x/c.txt' } });
+      await save();
+      expect(mockTracker.clear).not.toHaveBeenCalledWith('orama.too-large:files');
+
+      const later = Date.now() + 31 * 60 * 1000;
+      jest.spyOn(Date, 'now').mockReturnValue(later);
+      await service.upsertFile({ id: 'file:d', vector: vector(), meta: { path: '/x/d.txt' } });
+      await save();
+
+      expect(mockTracker.clear).toHaveBeenCalledWith('orama.too-large:files');
+      const ids = Object.values((await readSaved('files')).docs.docs).map((doc) => doc.id);
+      expect(ids.sort()).toEqual(['file:a', 'file:c', 'file:d']);
+    });
+
+    test('the last save before quitting tries it once more', async () => {
+      await save();
+      await service.upsertFile({ id: 'file:a', vector: vector(), meta: { path: '/x/a.txt' } });
+      failFilesStringify();
+      await save();
+
+      jest.restoreAllMocks();
+      await service.upsertFile({ id: 'file:c', vector: vector(), meta: { path: '/x/c.txt' } });
+      const dir = service._dataPath;
+      await service.shutdown();
+
+      const raw = await fsp.readFile(path.join(dir, 'files.json.lz4'));
+      const saved = JSON.parse((await uncompress(raw)).toString('utf8'));
+      expect(
+        Object.values(saved.docs.docs)
+          .map((doc) => doc.id)
+          .sort()
+      ).toEqual(['file:a', 'file:c']);
+    });
+
+    test('the last save before quitting tries it even with no write since it failed', async () => {
+      await save();
+      await service.upsertFile({ id: 'file:a', vector: vector(), meta: { path: '/x/a.txt' } });
+      failFilesStringify();
+      await save();
+
+      jest.restoreAllMocks();
+      const dir = service._dataPath;
+      await service.shutdown();
+
+      const raw = await fsp.readFile(path.join(dir, 'files.json.lz4'));
+      const saved = JSON.parse((await uncompress(raw)).toString('utf8'));
+      expect(Object.values(saved.docs.docs).map((doc) => doc.id)).toEqual(['file:a']);
+    });
+
+    test('the last save before quitting tries it even after a save round skipped it', async () => {
+      await save();
+      await service.upsertFile({ id: 'file:a', vector: vector(), meta: { path: '/x/a.txt' } });
+      await service.upsertFile({ id: 'file:b', vector: vector(), meta: { path: '/x/b.txt' } });
+      const calls = failFilesStringify();
+      await save();
+      expect(calls.files).toBe(1);
+
+      // Same count, smaller payload: the next round skips it, and the
+      // shutdown save after that round still writes the session's changes.
+      jest.restoreAllMocks();
+      await service.deleteFileEmbedding('file:b');
+      await service.upsertFile({ id: 'file:c', vector: vector(), meta: { path: '/x/c.txt' } });
+      logger.info.mockClear();
+      await save();
+      expect(mockTracker.clear).not.toHaveBeenCalledWith('orama.too-large:files');
+      // The skipped round does not claim it saved the collection.
+      expect(logger.info).not.toHaveBeenCalledWith(
+        '[OramaVectorService] Persisted databases',
+        expect.objectContaining({ collections: expect.arrayContaining(['files']) })
+      );
+      const dir = service._dataPath;
+      await service.shutdown();
+
+      const raw = await fsp.readFile(path.join(dir, 'files.json.lz4'));
+      const saved = JSON.parse((await uncompress(raw)).toString('utf8'));
+      expect(
+        Object.values(saved.docs.docs)
+          .map((doc) => doc.id)
+          .sort()
+      ).toEqual(['file:a', 'file:c']);
+    });
   });
 
   describe('a collection too large to read', () => {
@@ -265,6 +473,34 @@ describe('OramaVectorService save safety', () => {
       expect(await fsp.readFile(path.join(service._dataPath, 'fileChunks.sidecar.json'))).toEqual(
         sidecar
       );
+    });
+
+    test('a readable .bak beside it is not restored and then saved over it', async () => {
+      await service.batchUpsertFileChunks([
+        { id: 'chunk:old:0', vector: vector(), meta: { fileId: 'file:old', chunkIndex: 0 } }
+      ]);
+      const dir = service._dataPath;
+      const primary = path.join(dir, 'fileChunks.json.lz4');
+      await restart(async () => {
+        await fsp.copyFile(primary, `${primary}.bak`);
+        await fsp.writeFile(
+          primary,
+          await compress(Buffer.from(`{"docs":{"docs":{},"note":"${TOO_LARGE_MARKER}"}}`, 'utf8'))
+        );
+      });
+      const blob = await fsp.readFile(primary);
+      const bak = await fsp.readFile(`${primary}.bak`);
+
+      await service.batchUpsertFileChunks([
+        { id: 'chunk:new:0', vector: vector(), meta: { fileId: 'file:new', chunkIndex: 0 } }
+      ]);
+      await service.persistAll();
+
+      expect(mockTracker.raise).toHaveBeenCalledWith(
+        expect.objectContaining({ code: 'orama.too-large:fileChunks' })
+      );
+      expect(await fsp.readFile(primary)).toEqual(blob);
+      expect(await fsp.readFile(`${primary}.bak`)).toEqual(bak);
     });
 
     test('a deliberate reset replaces it and saving resumes', async () => {

@@ -26,6 +26,8 @@ Changes you will notice:
   Until you do, no video frame is sent.
 - Video frames are extracted and sent only with **Describe video keyframes** on.
 - A full disk shows a banner, and the smart-folder and Downloads watchers wait until it can save.
+- Files added to smart folders while the app was closed start analyzing about 2 minutes after
+  launch, 25 at a time, instead of all at once.
 - The first launch after updating may re-embed files whose search vectors were missing, so expect
   some embedding activity shortly after startup (capped per launch).
 - Building from source needs Node 24 (`.nvmrc` 24.22.1). The installed app is unaffected; it already
@@ -138,6 +140,18 @@ Changes you will notice:
     flushed on quit.
   - While analysis runs, the window's saved state (results, file states, selection) is written at
     most every 30 s instead of every 1 to 5 s.
+- **Launch no longer stalls while the app catches up.**
+  - Reading the search index back at startup is about six times faster. The check that keeps
+    `__proto__` and `constructor` keys out of a loaded file had run once for every number in every
+    embedding; it now runs once per object after a normal parse. On a 253 MB test index the read
+    went from about 40 s to about 6 s.
+  - Files added to a smart folder while the app was closed are picked up 2 minutes after launch, 25
+    at a time, and the next 25 wait until the previous ones are analyzed. They had all been queued
+    at once while the window was still opening. A file not reached before you quit is found again on
+    the next launch. A folder you add while the app runs is still scanned at once.
+  - The search service warms up only after the window is on screen. It had started on a 1 s timer,
+    and the rest of startup's heavy work had been released as soon as the page loaded, which is
+    before the window is shown.
 - **Each analyzed file is indexed once.** The smart-folder and Downloads watchers no longer embed a
   document's passages or an image's vector a second time after analysis already queued them.
 - **OCR after vision uses Tesseract only.** When Tesseract finds no text in an image that vision has
