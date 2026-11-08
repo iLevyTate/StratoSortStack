@@ -1785,22 +1785,11 @@ app
         // timeout wins the race against `ipcRenderer.invoke`, and the main-side
         // ipcRegistry wrapper has already associated that requestId with an
         // AbortController (exposed to handlers as `event.abortSignal`).
+        // Payload validation and sender scoping (a window may only abort its
+        // own invokes) live in the registry.
         const ipcAbortRegistry = require('./core/ipcAbortRegistry');
-        const abortInvokeHandler = (/** @type {any} */ _event, /** @type {any} */ payload) => {
-          try {
-            const requestId =
-              payload && typeof payload === 'object' && typeof payload.requestId === 'string'
-                ? payload.requestId
-                : null;
-            if (!requestId) return;
-            const reason =
-              payload && typeof payload.reason === 'string' && payload.reason.length <= 64
-                ? payload.reason
-                : 'ipc-timeout';
-            ipcAbortRegistry.abort(requestId, reason);
-          } catch (err) {
-            logger.debug(`[IPC] abort-invoke handler error: ${err?.message || err}`);
-          }
+        const abortInvokeHandler = (/** @type {any} */ event, /** @type {any} */ payload) => {
+          ipcAbortRegistry.handleAbortInvokeMessage(event, payload);
         };
         registerListener(ipcMain, IPC_CHANNELS.SYSTEM.ABORT_INVOKE, abortInvokeHandler);
 

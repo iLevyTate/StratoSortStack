@@ -1567,6 +1567,26 @@ async function handleScoreFiles({ safeEnsureInit, logger }, event, { query, file
 }
 
 /**
+ * Response for a search the renderer superseded (system.abortInvoke fired
+ * event.abortSignal). Same failure shape as any other unsuccessful search;
+ * `cancelled` lets a caller tell it apart. The renderer's request-id guard
+ * already drops it, so it never reaches the UI.
+ */
+function searchCancelledResponse() {
+  return {
+    success: false,
+    error: 'Search cancelled',
+    errorCode: ERROR_CODES.OPERATION_CANCELLED,
+    cancelled: true
+  };
+}
+
+/**
+ * Superseded searches must not keep running: the renderer aborts the
+ * in-flight invoke when a newer query starts, and `event.abortSignal` is
+ * threaded into SearchService.hybridSearch so the stale search stops at its
+ * next stage instead of holding the inference slot ahead of the live query.
+ *
  * @param {SemanticHandlerDeps} deps
  * @param {IpcMainInvokeEvent} event
  * @param {{ query?: string, topK?: number, mode?: string, minScore?: number, chunkWeight?: number, chunkTopK?: number, expandSynonyms?: boolean, correctSpelling?: boolean, rerank?: boolean, rerankTopN?: number, graphExpansion?: boolean, graphExpansionWeight?: number, graphExpansionMaxNeighbors?: number, chunkContext?: boolean, chunkContextMaxNeighbors?: number }} [payload]
@@ -1603,6 +1623,7 @@ async function handleSearch(
   const initErr = await safeEnsureInit();
   if (initErr) return initErr;
   const { MAX_TOP_K } = LIMITS;
+  const signal = event?.abortSignal || undefined;
 
   let cleanQuery;
   try {
@@ -1740,12 +1761,15 @@ async function handleSearch(
       correctSpelling: Boolean(correctSpelling),
       // Re-ranking options
       rerank: Boolean(rerank),
-      rerankTopN
+      rerankTopN,
+      ...(signal && { signal })
     };
 
+    if (signal?.aborted) return searchCancelledResponse();
     const result = await service.hybridSearch(cleanQuery, searchOptions);
 
     if (!result.success) {
+      if (signal?.aborted) return searchCancelledResponse();
       const requiresRebuild = isDimensionMismatchError({ message: result.error });
       if (effectiveMode !== 'bm25') {
         logger.warn('[EMBEDDINGS] Search failed, attempting BM25 fallback', {
@@ -1793,6 +1817,14 @@ async function handleSearch(
       }
     };
   } catch (e) {
+    // Superseded by a newer query: not an error, and no BM25 retry for a
+    // caller that is gone.
+    if (signal?.aborted) {
+      logger.debug('[EMBEDDINGS] Search cancelled (superseded)', {
+        reason: typeof signal.reason === 'string' ? signal.reason : undefined
+      });
+      return searchCancelledResponse();
+    }
     const requiresRebuild = isDimensionMismatchError(e);
     logger.error('[EMBEDDINGS] Search failed:', {
       topK,

@@ -84,6 +84,113 @@ describe('ipcAbortRegistry', () => {
   });
 });
 
+describe('ipcAbortRegistry sender scoping', () => {
+  let registry;
+
+  beforeEach(() => {
+    jest.resetModules();
+    registry = require('../src/main/core/ipcAbortRegistry');
+    registry._reset();
+  });
+
+  const fromSender = (id) => ({ sender: { id } });
+
+  test('abort message from the registering sender aborts only that request', () => {
+    const a = registry.register('rq-s1-a', 'embeddings:search', 1);
+    const b = registry.register('rq-s1-b', 'embeddings:search', 1);
+
+    expect(
+      registry.handleAbortInvokeMessage(fromSender(1), {
+        requestId: 'rq-s1-a',
+        channel: 'embeddings:search',
+        reason: 'search-superseded'
+      })
+    ).toBe(true);
+    expect(a.aborted).toBe(true);
+    expect(a.reason).toBe('search-superseded');
+    expect(b.aborted).toBe(false);
+  });
+
+  test('abort message from a different webContents is ignored', () => {
+    const signal = registry.register('rq-owned-by-1', 'embeddings:search', 1);
+    expect(
+      registry.handleAbortInvokeMessage(fromSender(2), {
+        requestId: 'rq-owned-by-1',
+        reason: 'renderer-cancel'
+      })
+    ).toBe(false);
+    expect(signal.aborted).toBe(false);
+  });
+
+  test('abort message without a sender id is ignored', () => {
+    const signal = registry.register('rq-owned-by-1', 'c', 1);
+    expect(registry.handleAbortInvokeMessage({}, { requestId: 'rq-owned-by-1' })).toBe(false);
+    expect(registry.handleAbortInvokeMessage(null, { requestId: 'rq-owned-by-1' })).toBe(false);
+    expect(signal.aborted).toBe(false);
+  });
+
+  test('entries registered without a sender cannot be aborted over IPC', () => {
+    const signal = registry.register('rq-no-sender', 'c');
+    expect(registry.handleAbortInvokeMessage(fromSender(1), { requestId: 'rq-no-sender' })).toBe(
+      false
+    );
+    expect(signal.aborted).toBe(false);
+  });
+
+  test('abort message for an unknown id or malformed payload is ignored', () => {
+    const signal = registry.register('rq-known', 'c', 1);
+    expect(registry.handleAbortInvokeMessage(fromSender(1), { requestId: 'rq-unknown' })).toBe(
+      false
+    );
+    expect(registry.handleAbortInvokeMessage(fromSender(1), null)).toBe(false);
+    expect(registry.handleAbortInvokeMessage(fromSender(1), 'rq-known')).toBe(false);
+    expect(registry.handleAbortInvokeMessage(fromSender(1), { requestId: 42 })).toBe(false);
+    expect(registry.handleAbortInvokeMessage(fromSender(1), { requestId: 'rq known' })).toBe(false);
+    expect(signal.aborted).toBe(false);
+  });
+
+  test('abort message naming a different channel than the registered one is ignored', () => {
+    const signal = registry.register('rq-chan', 'chat:query-stream', 1);
+    expect(
+      registry.handleAbortInvokeMessage(fromSender(1), {
+        requestId: 'rq-chan',
+        channel: 'embeddings:search'
+      })
+    ).toBe(false);
+    expect(signal.aborted).toBe(false);
+  });
+
+  test('unsafe or oversized reasons fall back to the default reason', () => {
+    const a = registry.register('rq-reason-a', 'c', 1);
+    const b = registry.register('rq-reason-b', 'c', 1);
+    registry.handleAbortInvokeMessage(fromSender(1), {
+      requestId: 'rq-reason-a',
+      reason: 'evil\nreason'
+    });
+    registry.handleAbortInvokeMessage(fromSender(1), {
+      requestId: 'rq-reason-b',
+      reason: 'x'.repeat(65)
+    });
+    expect(a.reason).toBe('ipc-timeout');
+    expect(b.reason).toBe('ipc-timeout');
+  });
+
+  test('a duplicate id from another sender gets no signal and cannot unregister the owner', () => {
+    const owner = registry.register('rq-shared', 'c', 1);
+    expect(registry.register('rq-shared', 'c', 2)).toBeNull();
+    registry.unregister('rq-shared', 2);
+    expect(registry.size()).toBe(1);
+    expect(registry.handleAbortInvokeMessage(fromSender(1), { requestId: 'rq-shared' })).toBe(true);
+    expect(owner.aborted).toBe(true);
+  });
+
+  test('internal aborts (shutdown) are not sender-gated', () => {
+    const signal = registry.register('rq-internal', 'c', 7);
+    expect(registry.abortAll('shutdown')).toBe(1);
+    expect(signal.aborted).toBe(true);
+  });
+});
+
 describe('ipcRegistry abort envelope stripping', () => {
   let ipcRegistry;
   let abortRegistry;
@@ -252,6 +359,44 @@ describe('ipcRegistry abort envelope stripping', () => {
     await expect(handlerPromise).rejects.toThrow('aborted');
     expect(finished).toBe(true);
     // Registry cleanup still happens in `finally`.
+    expect(abortRegistry.size()).toBe(0);
+  });
+
+  test('the wrapper scopes the abort key to the invoking webContents', async () => {
+    let capturedSignal;
+    let release;
+    ipcRegistry.registerHandler(ipcMain, 'test:sender-scoped', async (event) => {
+      capturedSignal = event.abortSignal;
+      await new Promise((r) => {
+        release = r;
+      });
+      return 'done';
+    });
+
+    const envelope = { __stratosortIpcMeta: { requestId: 'rq-sender-1' } };
+    const handlerPromise = handlers['test:sender-scoped'](makeEvent(), envelope);
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Another window (sender 2) that learned the id cannot cancel it.
+    expect(
+      abortRegistry.handleAbortInvokeMessage(
+        { sender: { id: 2 } },
+        { requestId: 'rq-sender-1', channel: 'test:sender-scoped' }
+      )
+    ).toBe(false);
+    expect(capturedSignal.aborted).toBe(false);
+
+    // The invoking window (sender 1) can.
+    expect(
+      abortRegistry.handleAbortInvokeMessage(
+        { sender: { id: 1 } },
+        { requestId: 'rq-sender-1', channel: 'test:sender-scoped', reason: 'renderer-cancel' }
+      )
+    ).toBe(true);
+    expect(capturedSignal.aborted).toBe(true);
+
+    release();
+    await expect(handlerPromise).resolves.toBe('done');
     expect(abortRegistry.size()).toBe(0);
   });
 });

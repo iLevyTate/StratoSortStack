@@ -56,6 +56,32 @@ const MIN_RESULT_SCORE = THRESHOLDS.MIN_SIMILARITY_SCORE;
 const VECTOR_SEARCH_TIMEOUT = TIMEOUTS.SEMANTIC_QUERY;
 
 /**
+ * AbortError for a hybrid search whose caller walked away (the renderer
+ * superseded the query). Recognised by `name` so callers can tell it apart
+ * from a real failure and skip error logging / fallbacks.
+ *
+ * @param {string} [stage] - pipeline stage the abort was observed at
+ * @returns {Error & { code?: string, stage?: string }}
+ */
+function createSearchAbortError(stage) {
+  const error = /** @type {Error & { code?: string, stage?: string }} */ (
+    new Error(stage ? `Search aborted (${stage})` : 'Search aborted')
+  );
+  error.name = 'AbortError';
+  error.code = 'ABORT_ERR';
+  if (stage) error.stage = stage;
+  return error;
+}
+
+/**
+ * @param {AbortSignal | null | undefined} signal
+ * @param {string} [stage]
+ */
+function throwIfSearchAborted(signal, stage) {
+  if (signal?.aborted) throw createSearchAbortError(stage);
+}
+
+/**
  * Default search options (from performanceConstants.SEARCH)
  */
 const DEFAULT_OPTIONS = {
@@ -857,7 +883,11 @@ class SearchService {
       checkAborted();
       // Reuse precomputed embedding if provided (avoids redundant LLM call in hybrid mode)
       const precomputedEmbedding = normalizePrecomputedEmbedding(options.precomputedEmbedding);
-      const embedResult = precomputedEmbedding || (await this.embedding.embedText(query));
+      const embedResult =
+        precomputedEmbedding ||
+        (await (signal
+          ? this.embedding.embedText(query, { signal })
+          : this.embedding.embedText(query)));
       checkAborted();
       if (!embedResult || !embedResult.vector) {
         logger.warn('[SearchService] Failed to generate query embedding');
@@ -945,6 +975,9 @@ class SearchService {
       // message — swallowing it into [] leaves search silently keyword-only
       // forever and starves the rebuild-prompt path in ipc/semantic.js.
       if (error?.isDimensionMismatch) throw error;
+      // Cancelled (caller abort or our own timeout): not a failure — no error
+      // log; let the caller decide (hybrid rethrows, the timeout race drops it).
+      if (signal?.aborted) throw error?.name === 'AbortError' ? error : createSearchAbortError();
       // Hybrid search passes propagateErrors so a hard vector failure degrades
       // to the explicit bm25-fallback mode (same as a timeout) instead of
       // silently fusing an empty vector leg — which caps combined scores at
@@ -1625,6 +1658,11 @@ class SearchService {
       clearTimeout(timeoutId);
       ac.abort();
       if (error?.isDimensionMismatch) throw error;
+      // The caller's search was cancelled: surface the abort instead of a
+      // vector-leg error, which would send hybrid down the BM25 fallback.
+      if (options.signal?.aborted) {
+        throw error?.name === 'AbortError' ? error : createSearchAbortError('vector-query');
+      }
       logger.warn('[SearchService] Vector search error, falling back:', error?.message);
       return { results: [], timedOut: false, error: error?.message || String(error) };
     }
@@ -1637,9 +1675,12 @@ class SearchService {
    *
    * @param {string} query - Query text used for semantic embedding
    * @param {number} timeout - Timeout in milliseconds
+   * @param {AbortSignal | null} [signal] - caller cancel: forwarded to embedText
+   *   (a queued embed is dropped, a running one's result discarded) and raced
+   *   so the search rejects with an AbortError at once instead of waiting.
    * @returns {Promise<{embedding: {vector:number[]}|null, timedOut: boolean, error: string|null}>}
    */
-  async _buildQueryEmbeddingWithTimeout(query, timeout = VECTOR_SEARCH_TIMEOUT) {
+  async _buildQueryEmbeddingWithTimeout(query, timeout = VECTOR_SEARCH_TIMEOUT, signal = null) {
     if (!this.embedding || typeof this.embedding.embedText !== 'function') {
       return {
         embedding: null,
@@ -1649,9 +1690,14 @@ class SearchService {
     }
 
     let timeoutId = null;
+    /** @type {(() => void) | null} */
+    let detachAbort = null;
     try {
+      throwIfSearchAborted(signal, 'before-embedding');
       const embeddingPromise = Promise.resolve()
-        .then(() => this.embedding.embedText(query))
+        .then(() =>
+          signal ? this.embedding.embedText(query, { signal }) : this.embedding.embedText(query)
+        )
         .then((rawEmbedding) => {
           const normalized = normalizePrecomputedEmbedding(rawEmbedding);
           if (!normalized) {
@@ -1671,7 +1717,8 @@ class SearchService {
         });
       });
 
-      const result = await Promise.race([
+      /** @type {Promise<any>[]} */
+      const racers = [
         embeddingPromise,
         new Promise((resolve) => {
           timeoutId = setTimeout(
@@ -1684,12 +1731,27 @@ class SearchService {
             timeout
           );
         })
-      ]);
+      ];
+      if (signal) {
+        racers.push(
+          new Promise((_, reject) => {
+            const onAbort = () => reject(createSearchAbortError('embedding'));
+            signal.addEventListener('abort', onAbort, { once: true });
+            detachAbort = () => signal.removeEventListener('abort', onAbort);
+          })
+        );
+      }
+      const result = await Promise.race(racers);
 
       clearTimeout(timeoutId);
+      detachAbort?.();
       return result;
     } catch (error) {
       clearTimeout(timeoutId);
+      detachAbort?.();
+      if (signal?.aborted) {
+        throw error?.name === 'AbortError' ? error : createSearchAbortError('embedding');
+      }
       return {
         embedding: null,
         timedOut: false,
@@ -1890,11 +1952,21 @@ class SearchService {
    * - Timeout fallback to BM25-only on vector search timeout
    * - Minimum score filtering for quality control
    *
+   * Cancellation: `options.signal` (e.g. the IPC handler's event.abortSignal,
+   * fired when the renderer supersedes a query) is checked between stages —
+   * before embedding, after embedding, before the vector query, before
+   * rerank and before caching — and forwarded to the query embedding. An
+   * aborted search rejects with an AbortError (not logged as an error, no
+   * BM25 fallback) and is never cached. Identical concurrent searches still
+   * share one execution; it is only cancelled once every caller sharing it
+   * has aborted, and never while a caller without a signal is attached.
+   *
    * @param {string} query
    * @param {any} [options]
    * @returns {Promise<any>}
    */
   async hybridSearch(query, /** @type {any} */ options = {}) {
+    const signal = options.signal || null;
     const {
       topK = DEFAULT_OPTIONS.topK,
       mode: requestedMode = DEFAULT_OPTIONS.mode,
@@ -1937,6 +2009,7 @@ class SearchService {
     if (!query || typeof query !== 'string' || query.trim().length < 2) {
       return { success: false, results: [], error: 'Query too short' };
     }
+    throwIfSearchAborted(signal, 'before-start');
 
     // BM25 can use synonym expansion, while vector/chunk search should use
     // spelling-corrected text (without synonym stuffing) for cleaner embeddings.
@@ -1971,11 +2044,13 @@ class SearchService {
     }
 
     const inFlight = this._searchInFlight.get(cacheKey);
-    if (inFlight) {
+    // An execution already cancelled (all its callers aborted) can't serve a
+    // new caller; start a fresh one instead of inheriting its AbortError.
+    if (inFlight && !inFlight.controller.signal.aborted) {
       logger.debug('[SearchService] Joining in-flight search', {
         queryLength: normalizedQuery.length
       });
-      const result = await inFlight;
+      const result = await this._joinSharedSearch(inFlight, signal);
       return {
         ...result,
         results: (result.results || []).map((/** @type {any} */ r) => ({ ...r }))
@@ -1983,7 +2058,14 @@ class SearchService {
     }
 
     const searchDataRevision = this._searchDataRevision;
-    const searchPromise = this._executeHybridSearchInternal(query, normalizedQuery, cacheKey, {
+    /** @type {{ promise: Promise<any>, controller: AbortController, liveSignalConsumers: number, pinned: boolean }} */
+    const shared = {
+      promise: Promise.resolve(null),
+      controller: new AbortController(),
+      liveSignalConsumers: 0,
+      pinned: false
+    };
+    shared.promise = this._executeHybridSearchInternal(query, normalizedQuery, cacheKey, {
       topK,
       mode,
       minScore,
@@ -2008,16 +2090,70 @@ class SearchService {
       graphExpansionMaxNeighbors,
       graphExpansionMinWeight,
       graphExpansionDecay,
-      searchDataRevision
+      searchDataRevision,
+      // An owner without a signal pins the execution (it can never be
+      // cancelled), so only signalled owners hand a signal down.
+      signal: signal ? shared.controller.signal : null
     });
-    this._searchInFlight.set(cacheKey, searchPromise);
-    try {
-      return await searchPromise;
-    } finally {
-      if (this._searchInFlight.get(cacheKey) === searchPromise) {
+    // Drop the entry when the EXECUTION settles (not when this caller
+    // returns): an aborted caller leaves early while a joiner may still be
+    // waiting on the same execution.
+    const dropEntry = () => {
+      if (this._searchInFlight.get(cacheKey) === shared) {
         this._searchInFlight.delete(cacheKey);
       }
+    };
+    // .catch: the execution's own rejection is observed by every joined
+    // caller; this branch only needs the settle.
+    shared.promise.finally(dropEntry).catch(() => {});
+    this._searchInFlight.set(cacheKey, shared);
+    return this._joinSharedSearch(shared, signal);
+  }
+
+  /**
+   * Attach one caller to a shared hybrid-search execution. A caller without a
+   * signal pins the execution (it can no longer be cancelled). A caller with
+   * a signal rejects with an AbortError as soon as its own signal fires; the
+   * execution itself is aborted only when no pinned or live caller remains.
+   *
+   * @param {{ promise: Promise<any>, controller: AbortController, liveSignalConsumers: number, pinned: boolean }} shared
+   * @param {AbortSignal | null} signal
+   * @returns {Promise<any>}
+   * @private
+   */
+  _joinSharedSearch(shared, signal) {
+    if (!signal) {
+      shared.pinned = true;
+      return shared.promise;
     }
+    shared.liveSignalConsumers += 1;
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const onAbort = () => {
+        if (settled) return;
+        settled = true;
+        shared.liveSignalConsumers -= 1;
+        if (!shared.pinned && shared.liveSignalConsumers <= 0) {
+          shared.controller.abort(signal.reason);
+        }
+        reject(createSearchAbortError('superseded'));
+      };
+      const finish = (/** @type {() => void} */ fn) => {
+        signal.removeEventListener('abort', onAbort);
+        if (settled) return;
+        settled = true;
+        shared.liveSignalConsumers -= 1;
+        fn();
+      };
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+      signal.addEventListener('abort', onAbort, { once: true });
+      shared.promise
+        .then((value) => finish(() => resolve(value)))
+        .catch((error) => finish(() => reject(error)));
+    });
   }
 
   async _executeHybridSearchInternal(
@@ -2046,7 +2182,8 @@ class SearchService {
       graphExpansionMaxEdges,
       graphExpansionMaxNeighbors,
       graphExpansionMinWeight,
-      graphExpansionDecay
+      graphExpansionDecay,
+      signal = null
     } = options;
 
     systemAnalytics.recordSearchRequest({ mode });
@@ -2113,6 +2250,7 @@ class SearchService {
     }
 
     try {
+      throwIfSearchAborted(signal, 'before-retrieval');
       // Log collection and index status to aid troubleshooting
       try {
         const stats = await this.vectorDb?.getStats?.();
@@ -2139,11 +2277,13 @@ class SearchService {
       if (this.isIndexStale()) {
         await this.buildBM25Index();
       }
+      throwIfSearchAborted(signal, 'before-retrieval');
 
       // Handle different search modes
       if (mode === 'bm25') {
         // Use expanded query for BM25 (benefits from synonyms)
         const results = await this.bm25Search(processedQuery, topK);
+        throwIfSearchAborted(signal, 'after-bm25');
         let filtered = this._filterByScore(results, minScore);
         try {
           const { validResults, ghostCount } = await this._validateFileExistence(filtered);
@@ -2160,7 +2300,10 @@ class SearchService {
       }
 
       if (mode === 'vector') {
-        const results = await this.vectorSearch(semanticQuery, topK);
+        const results = signal
+          ? await this.vectorSearch(semanticQuery, topK, { signal })
+          : await this.vectorSearch(semanticQuery, topK);
+        throwIfSearchAborted(signal, 'after-vector-query');
         this.enrichResults(results);
         let filtered = this._filterByScore(results, minScore);
         try {
@@ -2182,13 +2325,17 @@ class SearchService {
       // Hybrid mode: combine both search types with timeout protection
       // generating the same query embedding twice (saves one LLM inference call per search)
       const bm25Promise = this.bm25Search(processedQuery, topK * 2);
+      // An abort below can leave before awaiting this leg; keep its rejection
+      // handled (the await further down still observes it).
+      bm25Promise.catch(() => {});
       let precomputedEmbedding = normalizePrecomputedEmbedding(options.precomputedEmbedding);
       let embeddingTimedOut = false;
       let embeddingFailureReason = null;
       if (!precomputedEmbedding) {
         const embeddingResult = await this._buildQueryEmbeddingWithTimeout(
           semanticQuery,
-          VECTOR_SEARCH_TIMEOUT
+          VECTOR_SEARCH_TIMEOUT,
+          signal
         );
         precomputedEmbedding = embeddingResult.embedding;
         embeddingTimedOut = Boolean(embeddingResult.timedOut);
@@ -2201,7 +2348,9 @@ class SearchService {
         }
       }
 
+      throwIfSearchAborted(signal, 'after-embedding');
       const bm25Results = await bm25Promise;
+      throwIfSearchAborted(signal, 'before-vector-query');
       if (!precomputedEmbedding) {
         systemAnalytics.recordSearchFallback('query_embedding_unavailable');
         let filtered = this._filterByScore(bm25Results.slice(0, topK), minScore);
@@ -2251,7 +2400,8 @@ class SearchService {
         await Promise.all([
           this._vectorSearchWithTimeout(semanticQuery, topK * 2, undefined, {
             precomputedEmbedding,
-            propagateErrors: true
+            propagateErrors: true,
+            ...(signal && { signal })
           }),
           safeChunkWeight > 0 && resolvedChunkTopK > 0
             ? this.chunkSearch(semanticQuery, topK * 2, resolvedChunkTopK, {
@@ -2263,6 +2413,7 @@ class SearchService {
               })
             : Promise.resolve([])
         ]);
+      throwIfSearchAborted(signal, 'after-vector-query');
       const vectorHealth =
         typeof this.vectorDb?.getVectorHealth === 'function'
           ? this.vectorDb.getVectorHealth()
@@ -2526,6 +2677,7 @@ class SearchService {
 
       const scoredResults = graphExpansionResult.results;
       let filteredResults = await this._validateTopCandidates(scoredResults, topK);
+      throwIfSearchAborted(signal, 'before-rerank');
 
       // Apply LLM re-ranking if enabled
       let reranked = false;
@@ -2541,6 +2693,9 @@ class SearchService {
           const rerankStartTime = Date.now();
           const RERANK_TIMEOUT_MS = TIMEOUTS.API_REQUEST_SLOW;
           const rerankAbortController = new AbortController();
+          // The caller's cancel stops the per-candidate LLM scoring too.
+          const onCallerAbort = () => rerankAbortController.abort();
+          signal?.addEventListener('abort', onCallerAbort, { once: true });
           let rerankTimeoutId = null;
           try {
             filteredResults = await Promise.race([
@@ -2559,16 +2714,19 @@ class SearchService {
               })
             ]);
           } finally {
+            signal?.removeEventListener('abort', onCallerAbort);
             if (rerankTimeoutId) {
               clearTimeout(rerankTimeoutId);
             }
           }
+          throwIfSearchAborted(signal, 'rerank');
           reranked = true;
 
           logger.debug('[SearchService] Re-ranking complete', {
             latencyMs: Date.now() - rerankStartTime
           });
         } catch (rerankErr) {
+          if (signal?.aborted) throw createSearchAbortError('rerank');
           logger.warn('[SearchService] Re-ranking failed, using fusion order:', rerankErr.message);
         }
       }
@@ -2751,6 +2909,8 @@ class SearchService {
         }
       };
 
+      // An aborted search is never returned or cached as a result.
+      throwIfSearchAborted(signal, 'before-cache');
       // Cache successful hybrid results for quick re-use
       if (options.searchDataRevision === this._searchDataRevision) {
         this._searchCache.set(cacheKey, hybridResult);
@@ -2758,6 +2918,11 @@ class SearchService {
 
       return hybridResult;
     } catch (error) {
+      // Cancellation is not a failure: no error log and no BM25 fallback
+      // (that would be the same superseded work under another name).
+      if (signal?.aborted) {
+        throw error?.name === 'AbortError' ? error : createSearchAbortError();
+      }
       logger.error('[SearchService] Hybrid search failed:', error);
 
       // Last resort: try BM25-only on complete failure
