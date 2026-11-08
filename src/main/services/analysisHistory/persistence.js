@@ -18,7 +18,11 @@ const {
   shouldUseSqliteBackend,
   isSqliteTransientError
 } = require('../../utils/sqliteStore');
-const { compressSync: compress, uncompressSync: uncompress } = require('../../../shared/lz4Codec');
+const {
+  compressSync: compress,
+  uncompressSync: uncompress,
+  isLz4BindingAvailable
+} = require('../../../shared/lz4Codec');
 const { tryParse: safeJsonTryParse } = require('../../../shared/safeJsonOps');
 
 // Persisted state is user-writable on disk. Route every parse through
@@ -55,6 +59,27 @@ const SQLITE_COMPRESSION_ENABLED =
   String(process.env.STRATOSORT_SQLITE_COMPRESS || 'true').toLowerCase() !== 'false';
 
 const sqliteStores = new Map();
+const LZ4_UNAVAILABLE_CODE = 'LZ4_UNAVAILABLE';
+
+/**
+ * Without the lz4-napi binding the codec passes bytes through unchanged, so a
+ * genuine LZ4 blob would fail to parse and be taken for corruption, and the
+ * loaders would back up and delete a healthy database. A blob that is not
+ * plain JSON cannot be told apart from LZ4 then: hold it as a transient
+ * failure (the service goes read-only) and leave the database alone.
+ * @param {any} parseError
+ */
+function createLz4UnavailableError(parseError) {
+  const err = /** @type {Error & { code?: string, transient?: boolean, originalError?: any }} */ (
+    new Error(
+      'Stored analysis history is not plain JSON and the LZ4 codec is unavailable to decode it'
+    )
+  );
+  err.code = LZ4_UNAVAILABLE_CODE;
+  err.transient = true;
+  err.originalError = parseError;
+  return err;
+}
 
 function getSqliteDbPath(/** @type {any} */ referencePath) {
   return path.join(path.dirname(referencePath), SQLITE_DB_NAME);
@@ -88,6 +113,7 @@ function getSqliteStore(/** @type {any} */ referencePath) {
       const text = buffer.toString('utf8');
       const firstAttempt = safeJsonTryParse(text);
       if (firstAttempt.success) return firstAttempt.value;
+      if (isLz4BindingAvailable === false) throw createLz4UnavailableError(firstAttempt.error);
       try {
         const decompressed = uncompress(buffer);
         const secondAttempt = safeJsonTryParse(decompressed.toString('utf8'));
@@ -331,7 +357,7 @@ async function loadConfig(configPath, getDefaultConfig, saveConfig) {
       await backupSqliteDb(configPath, error);
       // Fall through to JSON fallback
     }
-    if (isSqliteTransientError(error)) {
+    if (error?.code === LZ4_UNAVAILABLE_CODE || isSqliteTransientError(error)) {
       error.transient = true;
       throw error;
     }
@@ -499,7 +525,7 @@ async function loadHistory(
       await backupSqliteDb(historyPath, error);
       // Fall through to JSON fallback
     }
-    if (isSqliteTransientError(error)) {
+    if (error?.code === LZ4_UNAVAILABLE_CODE || isSqliteTransientError(error)) {
       error.transient = true;
       throw error;
     }
@@ -605,7 +631,7 @@ async function loadIndex(indexPath, createEmptyIndex, saveIndex) {
       await backupSqliteDb(indexPath, error);
       // Fall through to JSON fallback
     }
-    if (isSqliteTransientError(error)) {
+    if (error?.code === LZ4_UNAVAILABLE_CODE || isSqliteTransientError(error)) {
       error.transient = true;
       throw error;
     }

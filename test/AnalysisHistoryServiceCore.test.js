@@ -412,6 +412,47 @@ describe('AnalysisHistoryServiceCore', () => {
       expect(entry.analysis.transcript).toContain('quarterly review');
     });
 
+    // import-extraction-4: the writer stamps partialContent when the analysis
+    // saw only part of the file. Zod strips undeclared keys and the entry
+    // literal lists every stored field, so the flag must survive both.
+    test('keeps partialContent from the writer through the stored entry', async () => {
+      const { recordAnalysisResult } = require('../src/main/ipc/analysisUtils');
+      const record = async (filePath, partialContent) => {
+        const recording = recordAnalysisResult({
+          filePath,
+          result: {
+            category: 'Reports',
+            summary: 'Large export',
+            extractionMethod: 'content',
+            partialContent
+          },
+          processingTime: 10,
+          modelType: 'llm',
+          analysisHistory: service,
+          logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
+          fileStats: { size: 4096, mtimeMs: 1790639260670 }
+        });
+        let settled = false;
+        recording.finally(() => {
+          settled = true;
+        });
+        for (let i = 0; i < 50 && !settled; i++) await flushWriteBuffer();
+        await recording;
+        return Object.values(service.analysisHistory.entries).find(
+          (e) => e.originalPath === filePath
+        );
+      };
+
+      const partial = await record('/docs/huge-log.txt', true);
+      expect(partial).toBeDefined();
+      expect(partial.analysis.partialContent).toBe(true);
+      expect(partial.analysis.extractionMethod).toBe('content');
+
+      const complete = await record('/docs/small.txt', false);
+      expect(complete).toBeDefined();
+      expect(complete.analysis).not.toHaveProperty('partialContent');
+    });
+
     test('updates history totals', async () => {
       const recordPromise = service.recordAnalysis(mockFileInfo, mockAnalysisResults);
       await flushWriteBuffer();
@@ -1173,7 +1214,70 @@ describe('AnalysisHistoryServiceCore', () => {
       await expect(
         service.updateEntryPaths([{ oldPath: '/moved/a.pdf', newPath: '/moved/b.pdf' }])
       ).rejects.toMatchObject({ code: 'HISTORY_PERSIST_FAILED' });
-      expect(service.initialized).toBe(false);
+      // Only the failed move is undone in memory; nothing else is discarded.
+      expect(service.initialized).toBe(true);
+      expect(entry.organization.actual).toBe('/moved/a.pdf');
+    });
+
+    const ENOSPC = () =>
+      Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' });
+    const savedEntryPaths = (call) =>
+      Object.values(call[1].entries).map((e) => e.organization?.actual || e.originalPath);
+
+    test("a failed path update keeps other files' held entries and retries them", async () => {
+      const tracker = require('../src/main/services/DegradedStateTracker');
+      tracker.getInstance()._reset();
+      await record('a.pdf');
+      await record('b.pdf');
+      expect(persistence.saveHistory).not.toHaveBeenCalled();
+      expect(service.hasUnsavedChanges()).toBe(true);
+
+      persistence.saveHistory.mockRejectedValueOnce(ENOSPC());
+      await expect(
+        service.updateEntryPaths([{ oldPath: '/batch/a.pdf', newPath: '/moved/a.pdf' }])
+      ).rejects.toMatchObject({ code: 'HISTORY_PERSIST_FAILED' });
+
+      // The move is undone; b.pdf (and a.pdf's analysis) are still held.
+      expect(service.initialized).toBe(true);
+      expect(service.hasUnsavedChanges()).toBe(true);
+      const entries = Object.values(service.analysisHistory.entries);
+      expect(entries.map((e) => e.originalPath).sort()).toEqual(['/batch/a.pdf', '/batch/b.pdf']);
+      expect(entries.every((e) => e.organization?.actual !== '/moved/a.pdf')).toBe(true);
+      expect(tracker.isStorageFull()).toBe(true);
+
+      // The coalesced retry writes both held entries once the disk accepts.
+      await jest.advanceTimersByTimeAsync(service.HISTORY_SAVE_MIN_INTERVAL_MS);
+      expect(persistence.saveHistory).toHaveBeenCalledTimes(2);
+      expect(savedEntryPaths(persistence.saveHistory.mock.calls[1]).sort()).toEqual([
+        '/batch/a.pdf',
+        '/batch/b.pdf'
+      ]);
+      expect(service.hasUnsavedChanges()).toBe(false);
+    });
+
+    test("a failed remove keeps other files' held entries and retries them", async () => {
+      await record('a.pdf');
+      await record('b.pdf');
+
+      persistence.saveHistory.mockRejectedValueOnce(ENOSPC());
+      const result = await service.removeEntriesByPath('/batch/a.pdf');
+      expect(result.removed).toBe(0);
+
+      expect(service.initialized).toBe(true);
+      expect(service.hasUnsavedChanges()).toBe(true);
+      expect(
+        Object.values(service.analysisHistory.entries)
+          .map((e) => e.originalPath)
+          .sort()
+      ).toEqual(['/batch/a.pdf', '/batch/b.pdf']);
+
+      await jest.advanceTimersByTimeAsync(service.HISTORY_SAVE_MIN_INTERVAL_MS);
+      expect(persistence.saveHistory).toHaveBeenCalledTimes(2);
+      expect(savedEntryPaths(persistence.saveHistory.mock.calls[1]).sort()).toEqual([
+        '/batch/a.pdf',
+        '/batch/b.pdf'
+      ]);
+      expect(service.hasUnsavedChanges()).toBe(false);
     });
   });
 });

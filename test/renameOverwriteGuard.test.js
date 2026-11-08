@@ -81,8 +81,12 @@ const ALLOWED_BARE_RENAMES = {
     reason: 'legacy-format quarantine to a Date.now()-unique name'
   },
   'src/main/services/ProcessingStateService.js': {
-    count: 1,
-    reason: 'temp->final atomic-write swap for processing state'
+    count: 2,
+    reason:
+      'temp->final atomic-write swap for processing state; and _releaseShieldedState, which ' +
+      'moves a held unreadable journal onto the .unreadable.<ts> copy taken of those same ' +
+      'bytes (renameNoReplace would hit that copy with EEXIST forever; the first quarantine ' +
+      'and the no-copy release both use renameNoReplace)'
   },
   'src/main/services/ai/AIKeyStore.js': {
     count: 1,

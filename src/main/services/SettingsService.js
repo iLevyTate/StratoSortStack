@@ -66,6 +66,12 @@ class SettingsService {
     this.defaults = this._buildRuntimeDefaults();
     this._cache = null;
     this._cacheTimestamp = 0;
+    // Cache objects that are only the defaults standing in for settings that
+    // could not be read (missing or unrecoverable settings.json). Tracked by
+    // identity so save()'s cache rollback keeps the mark. Auto-recovery must
+    // not snapshot these as "current settings" (see _attemptAutoRecovery).
+    /** @type {WeakSet<object>} */
+    this._defaultsFallbackCaches = new WeakSet();
     this._cacheTtlMs = 2_000; // short TTL to avoid repeated disk reads
     this._fileWatcher = null;
     this._debounceTimer = null;
@@ -109,9 +115,11 @@ class SettingsService {
       maxBackups: this.maxBackups,
       defaults: this.defaults,
       loadSettings: () => {
-        // restoreFromBackup always createBackup()s first. During auto-recovery
-        // settings.json is still corrupt, so calling load() here would re-enter
-        // _attemptAutoRecovery unboundedly. Serve cache/defaults instead.
+        // restoreFromBackup snapshots the current settings before it restores
+        // (unless told not to). During auto-recovery settings.json is still
+        // corrupt, so calling load() here would re-enter _attemptAutoRecovery
+        // unboundedly. Serve the cache instead (auto-recovery skips the
+        // snapshot when there is no cache; see _attemptAutoRecovery).
         if (this._recoveryInProgress) {
           return Promise.resolve(this._cache || { ...this.defaults });
         }
@@ -390,14 +398,26 @@ class SettingsService {
         }
       }
 
-      const merged = { ...this.defaults };
-      this._cache = merged;
-      this._cacheTimestamp = Date.now();
+      const merged = this._cacheDefaultsFallback();
       if (err && !isNotFoundError(err)) {
         logger.warn(`[SettingsService] Recovery failed, using defaults`);
       }
       return merged;
     }
+  }
+
+  /**
+   * Cache a copy of the defaults in place of settings that could not be read,
+   * marked so auto-recovery never snapshots it as the user's settings.
+   * @private
+   * @returns {Record<string, any>}
+   */
+  _cacheDefaultsFallback() {
+    const fallback = { ...this.defaults };
+    this._defaultsFallbackCaches.add(fallback);
+    this._cache = fallback;
+    this._cacheTimestamp = Date.now();
+    return fallback;
   }
 
   /**
@@ -427,6 +447,11 @@ class SettingsService {
         );
       }
 
+      // The snapshot of the current settings is taken at most once per pass:
+      // each later attempt would write the same settings again and rotate
+      // out one more genuine backup.
+      let snapshotTaken = false;
+
       // Try backups in order (most recent first)
       for (const backup of backupsToTry) {
         try {
@@ -436,38 +461,54 @@ class SettingsService {
             (this._backupService?.backupDir
               ? path.join(this._backupService.backupDir, backup.filename)
               : backup.filename);
-          const result = await this._backupService.restoreFromBackup(backupPath, async (merged) => {
-            // Same write path as public restore(): mutex + internal-change flag
-            // so the watcher does not treat the recovery write as external and
-            // re-enter load()/recovery.
-            return this._withMutex(async (/** @type {any} */ cancellation) => {
-              if (cancellation.timedOut) {
-                throw new Error('Operation cancelled: mutex timed out, skipping disk write');
+          // With no cache (startup with a corrupt settings.json), or a cache
+          // that is only the defaults a failed load fell back to, the only
+          // "current settings" to snapshot would be the defaults, written as
+          // the newest automatic backup where they rotate out a genuine one.
+          // Any other cache holds settings this session read or saved: keep
+          // those, once.
+          const preRestoreBackup =
+            !snapshotTaken && this._cache != null && !this._defaultsFallbackCaches.has(this._cache);
+          const result = await this._backupService.restoreFromBackup(
+            backupPath,
+            async (merged) => {
+              // restoreFromBackup snapshots right before it calls this.
+              if (preRestoreBackup) {
+                snapshotTaken = true;
               }
-              this._isInternalChange = true;
-              try {
-                const saveResult = await backupAndReplace(
-                  this.settingsPath,
-                  JSON.stringify(merged, null, 2)
-                );
-                if (!saveResult.success) {
-                  throw new Error(saveResult.error || 'Failed to save restored settings');
+              // Same write path as public restore(): mutex + internal-change flag
+              // so the watcher does not treat the recovery write as external and
+              // re-enter load()/recovery.
+              return this._withMutex(async (/** @type {any} */ cancellation) => {
+                if (cancellation.timedOut) {
+                  throw new Error('Operation cancelled: mutex timed out, skipping disk write');
                 }
-                return { success: true };
-              } finally {
-                if (this._internalChangeTimer) {
-                  clearTimeout(this._internalChangeTimer);
-                }
-                const internalChangeResetDelayMs = this._debounceDelay + 200;
-                this._internalChangeTimer = setTimeout(() => {
-                  if (!this._isShuttingDown) {
-                    this._isInternalChange = false;
+                this._isInternalChange = true;
+                try {
+                  const saveResult = await backupAndReplace(
+                    this.settingsPath,
+                    JSON.stringify(merged, null, 2)
+                  );
+                  if (!saveResult.success) {
+                    throw new Error(saveResult.error || 'Failed to save restored settings');
                   }
-                  this._internalChangeTimer = null;
-                }, internalChangeResetDelayMs);
-              }
-            });
-          });
+                  return { success: true };
+                } finally {
+                  if (this._internalChangeTimer) {
+                    clearTimeout(this._internalChangeTimer);
+                  }
+                  const internalChangeResetDelayMs = this._debounceDelay + 200;
+                  this._internalChangeTimer = setTimeout(() => {
+                    if (!this._isShuttingDown) {
+                      this._isInternalChange = false;
+                    }
+                    this._internalChangeTimer = null;
+                  }, internalChangeResetDelayMs);
+                }
+              });
+            },
+            { preRestoreBackup }
+          );
 
           if (result.success) {
             logger.info(
@@ -1309,9 +1350,7 @@ class SettingsService {
         logger.info(
           '[SettingsService] Settings file missing after external change, using defaults'
         );
-        const fallbackSettings = { ...this.defaults };
-        this._cache = fallbackSettings;
-        this._cacheTimestamp = Date.now();
+        const fallbackSettings = this._cacheDefaultsFallback();
         await this._propagateExternalSettingsChange(fallbackSettings, {
           source: 'external-missing',
           eventType,

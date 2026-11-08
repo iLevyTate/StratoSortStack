@@ -8,6 +8,15 @@ const { RETRY } = require('../../shared/performanceConstants');
 const { crossPlatformBasename } = require('../../shared/crossPlatformUtils');
 const { normalizePathForIndex } = require('../../shared/pathSanitization');
 
+/**
+ * No-replace rename for setting an unreadable journal aside. Loaded lazily
+ * so this service does not pull the atomic-ops module in at require time.
+ * @param {string} source
+ * @param {string} dest
+ */
+const renameNoReplace = (source, dest) =>
+  require('../../shared/atomicFileOperations').renameNoReplace(source, dest);
+
 const logger = createLogger('ProcessingStateService');
 
 // Cleanup thresholds: how long completed/failed entries are retained before eviction
@@ -17,6 +26,12 @@ const READY_ENTRY_TTL_MS = 14 * 24 * 60 * 60 * 1000; // 14 days for durable read
 const MAX_READY_ENTRIES = 2000; // Hard ceiling to prevent unbounded queue growth
 const DEFAULT_READY_QUERY_LIMIT = 1000; // Cap IPC hydration payload size by default
 const SWEEP_INTERVAL_MS = 5 * 60 * 1000; // Run sweep every 5 minutes
+// Read errors that usually clear within a moment (an antivirus or indexer
+// holding processing-state.json without share-read, a permission flap during
+// a sync client's rewrite). loadState retries these before deciding the
+// journal cannot be read. Same set and cadence as UndoRedoService.
+const TRANSIENT_JOURNAL_READ_CODES = new Set(['EBUSY', 'EPERM', 'EACCES', 'EAGAIN']);
+const JOURNAL_READ_RETRY_DELAYS_MS = [100, 250, 500];
 const getSafeTimestamp = (/** @type {any} */ value) => {
   const timestamp = new Date(value || 0).getTime();
   return Number.isFinite(timestamp) ? timestamp : 0;
@@ -97,6 +112,17 @@ class ProcessingStateService {
 
     // Periodic cleanup interval reference (set during initialize, cleared on destroy)
     this._sweepInterval = null;
+
+    this._journalReadRetryDelaysMs = JOURNAL_READ_RETRY_DELAYS_MS;
+    // Set when the journal on disk could not be read and could not be moved
+    // aside: the quarantine path it is moved to before the next write. While
+    // set, writes are refused so the unread journal is never replaced.
+    /** @type {string | null} */
+    this._shieldedStatePath = null;
+    // True when _shieldedStatePath already holds a copy of the live journal,
+    // so releasing replaces that copy instead of refusing to overwrite it.
+    this._shieldedCopyMade = false;
+    this._shieldWarned = false;
   }
 
   /**
@@ -182,17 +208,22 @@ class ProcessingStateService {
       await this.loadState();
       this.initialized = true;
       this._startSweepInterval();
-    } catch {
-      try {
+    } catch (loadError) {
+      // loadState already handles a missing, corrupt or unreadable journal,
+      // so anything reaching here is unexpected (e.g. the post-load
+      // normalization save failed). Never persist an empty state over a
+      // journal that may not have been read: keep what was loaded, or start
+      // empty with the live path shielded from writes.
+      logger.error('[ProcessingStateService] Failed to load processing state', {
+        error: /** @type {any} */ (loadError)?.message,
+        code: /** @type {any} */ (loadError)?.code
+      });
+      if (!this.state) {
         this.state = this.createEmptyState();
-        await this._saveStateInternal();
-        this.initialized = true;
-        this._startSweepInterval();
-      } catch (saveError) {
-        logger.error('[ProcessingStateService] Failed to save initial state:', saveError.message);
-        this.initialized = false;
-        throw saveError;
+        this._shieldedStatePath = `${this.statePath}.unreadable.${Date.now()}`;
       }
+      this.initialized = true;
+      this._startSweepInterval();
     }
   }
 
@@ -214,9 +245,153 @@ class ProcessingStateService {
     };
   }
 
-  async loadState() {
+  /**
+   * Read the journal, retrying the codes a passing file hold produces.
+   * @private
+   * @returns {Promise<string>}
+   */
+  async _readStateWithRetry() {
+    const delays = this._journalReadRetryDelaysMs;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await fs.readFile(this.statePath, 'utf8');
+      } catch (error) {
+        const code = /** @type {any} */ (error)?.code;
+        if (!TRANSIENT_JOURNAL_READ_CODES.has(code) || attempt >= delays.length) throw error;
+        logger.debug('[ProcessingStateService] Processing state busy; retrying read', {
+          code,
+          attempt: attempt + 1
+        });
+        await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+      }
+    }
+  }
+
+  /**
+   * The journal exists but cannot be read. It holds the organize resume
+   * journal and the durable ready queue, so writing an empty state over it
+   * would turn a passing hold into permanent loss. Move the bytes aside
+   * (rename, else copy); when neither works leave the file exactly as it is
+   * and refuse writes until it can be moved (see _releaseShieldedState).
+   * @private
+   * @param {any} readError
+   */
+  async _preserveUnreadableState(readError) {
+    const quarantinePath = `${this.statePath}.unreadable.${Date.now()}`;
+    const code = readError?.code || 'read-error';
+    /** @type {'moved' | 'copied' | null} */
+    let preserved = null;
     try {
-      const raw = await fs.readFile(this.statePath, 'utf8');
+      await renameNoReplace(this.statePath, quarantinePath);
+      preserved = 'moved';
+    } catch (renameError) {
+      try {
+        await fs.copyFile(this.statePath, quarantinePath);
+        preserved = 'copied';
+      } catch (copyError) {
+        logger.warn('[ProcessingStateService] Could not set unreadable processing state aside', {
+          path: this.statePath,
+          renameError: /** @type {any} */ (renameError)?.message,
+          copyError: /** @type {any} */ (copyError)?.message
+        });
+      }
+    }
+    this.state = this.createEmptyState();
+    if (preserved !== 'moved') {
+      // The original is still at the live path: shield it from writes.
+      this._shieldedStatePath = quarantinePath;
+      this._shieldedCopyMade = preserved === 'copied';
+    }
+    logger.error(
+      '[ProcessingStateService] Processing state unreadable; starting with an empty state',
+      {
+        path: this.statePath,
+        code,
+        preserved,
+        quarantinePath: preserved ? quarantinePath : null
+      }
+    );
+    const kept = path.basename(quarantinePath);
+    const message =
+      preserved === 'moved'
+        ? `The organize and analysis journal could not be read (${code}) and was set aside as ${kept}. Interrupted organize batches will not resume.`
+        : preserved === 'copied'
+          ? `The organize and analysis journal could not be read (${code}). A copy was kept as ${kept}; the original is left in place and this session's progress stays in memory until it can be set aside.`
+          : `The organize and analysis journal could not be read (${code}). The file was left untouched and this session's progress stays in memory until it can be set aside.`;
+    try {
+      require('./DegradedStateTracker')
+        .getInstance()
+        .raise({
+          code: 'processing-state.journal-unreadable',
+          subsystem: 'organize',
+          severity: 'warning',
+          message,
+          detail: {
+            path: this.statePath,
+            code,
+            preserved,
+            quarantinePath: preserved ? quarantinePath : null,
+            error: readError?.message || null
+          }
+        });
+    } catch (flagError) {
+      logger.debug('[ProcessingStateService] Could not raise degraded flag', {
+        error: /** @type {any} */ (flagError)?.message
+      });
+    }
+  }
+
+  /**
+   * While the live journal is shielded, try once more to move it aside.
+   * Returns true when the path is free to write.
+   * @private
+   */
+  async _releaseShieldedState() {
+    if (!this._shieldedStatePath) return true;
+    try {
+      if (this._shieldedCopyMade) {
+        // The destination is the copy taken of these same bytes; replace it
+        // with the original (a no-replace rename would fail on it forever).
+        await fs.rename(this.statePath, this._shieldedStatePath);
+      } else {
+        await renameNoReplace(this.statePath, this._shieldedStatePath);
+      }
+    } catch (error) {
+      if (/** @type {any} */ (error)?.code !== 'ENOENT') {
+        if (!this._shieldWarned) {
+          this._shieldWarned = true;
+          logger.warn(
+            '[ProcessingStateService] Unreadable processing state still in place; keeping state in memory only',
+            { path: this.statePath, error: /** @type {any} */ (error)?.message }
+          );
+        }
+        return false;
+      }
+    }
+    logger.info(
+      '[ProcessingStateService] Unreadable processing state set aside; persisting again',
+      {
+        quarantinePath: this._shieldedStatePath
+      }
+    );
+    this._shieldedStatePath = null;
+    this._shieldedCopyMade = false;
+    return true;
+  }
+
+  async loadState() {
+    let raw;
+    try {
+      raw = await this._readStateWithRetry();
+    } catch (readError) {
+      if (isNotFoundError(readError)) {
+        this.state = this.createEmptyState();
+      } else {
+        await this._preserveUnreadableState(readError);
+      }
+      return;
+    }
+    try {
       const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
         const shapeError = /** @type {Error & { code?: string }} */ (
@@ -328,6 +503,12 @@ class ProcessingStateService {
    * corrupt and resets — silently discarding in-flight batches.
    */
   async _performAtomicWrite(/** @type {any} */ stateSnapshot) {
+    if (!(await this._releaseShieldedState())) {
+      // The unread journal is still at the live path. Keep this session's
+      // state in memory rather than replace it; the degraded flag raised by
+      // _preserveUnreadableState explains the gap.
+      return;
+    }
     await this.ensureParentDirectory(this.statePath);
     const tempPath = `${this.statePath}.tmp.${require('crypto').randomUUID()}`;
     /** @type {import('fs/promises').FileHandle | null} */
