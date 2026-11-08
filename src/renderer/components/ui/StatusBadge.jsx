@@ -22,7 +22,10 @@ function StatusBadge({
     success: 'bg-stratosort-success/10 text-stratosort-success border-stratosort-success/50',
     warning: 'bg-stratosort-warning/10 text-stratosort-warning border-stratosort-warning/50',
     error: 'bg-stratosort-danger/10 text-stratosort-danger border-stratosort-danger/50',
-    info: 'bg-stratosort-blue/10 text-stratosort-blue border-stratosort-blue/45'
+    // Brand blue text on its own 10% tint is 4.01:1 in the default navy theme,
+    // under the 4.5:1 floor for this 12-14px text (axe color-contrast). The
+    // tint and border carry the hue; the label uses the theme's body text.
+    info: 'bg-stratosort-blue/10 text-system-gray-900 border-stratosort-blue/45'
   };
   const sizeClasses = {
     sm: 'text-xs px-2.5 py-1',
@@ -37,7 +40,7 @@ function StatusBadge({
       success: 'border-stratosort-success/30 bg-stratosort-success/10 text-stratosort-success',
       warning: 'border-stratosort-warning/30 bg-stratosort-warning/10 text-stratosort-warning',
       error: 'border-stratosort-danger/30 bg-stratosort-danger/10 text-stratosort-danger',
-      info: 'border-stratosort-blue/30 bg-stratosort-blue/10 text-stratosort-blue',
+      info: 'border-stratosort-blue/30 bg-stratosort-blue/10 text-system-gray-900',
       neutral: 'border-border-soft bg-system-gray-100 text-system-gray-500'
     };
     return (
