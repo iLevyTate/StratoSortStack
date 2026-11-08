@@ -74,6 +74,14 @@ const logger = typeof createLogger === 'function' ? createLogger('SmartFolderWat
 
 // How often held work looks again while the disk is full (see DegradedStateTracker.isStorageFull).
 const STORAGE_FULL_RECHECK_MS = 60_000;
+// The launch delta scan (K-04) can find hundreds of files, and each analysis
+// saves the vector store and rebuilds search. Run it after the window has
+// settled, and hand files over a batch at a time once the queue is idle.
+const STARTUP_SCAN_DELAY_MS = 2 * 60_000;
+const STARTUP_SCAN_BATCH_SIZE = 25;
+const STARTUP_SCAN_BATCH_GAP_MS = 30_000;
+// How often a paced wait checks whether the queue has gone idle.
+const STARTUP_SCAN_POLL_MS = 1000;
 if (typeof createLogger !== 'function' && logger?.setContext) {
   logger.setContext('SmartFolderWatcher');
 }
@@ -268,6 +276,12 @@ class SmartFolderWatcher {
     this.stabilityThreshold = 3000; // 3 seconds - file must be stable for this long
     this.queueProcessInterval = 2000; // Process queue every 2 seconds
     this.maxConcurrentAnalysis = 2; // Max files to analyze at once (synced from settings)
+    this.startupScanDelayMs = STARTUP_SCAN_DELAY_MS;
+    this.startupScanBatchSize = STARTUP_SCAN_BATCH_SIZE;
+    this.startupScanBatchGapMs = STARTUP_SCAN_BATCH_GAP_MS;
+    this.startupScanPollMs = STARTUP_SCAN_POLL_MS;
+    /** @type {Set<() => void>} paced startup-scan waits, woken by stop() */
+    this._startupScanWakers = new Set();
     // Watch subdirectories up to 10 levels deep by default — same depth the
     // manual scanner uses, so live `add`/`change` events and manual rescans
     // see the same files. Earlier post-2.0.9 builds shipped a default of 5
@@ -716,7 +730,8 @@ class SmartFolderWatcher {
       // added or changed while the app was closed were never seen, and the
       // reconcile only ever removed (F-193 / K-04). `_needsAnalysis` skips
       // everything already indexed, so the steady-state cost is one stat and
-      // one history lookup per file.
+      // one history lookup per file. The scan is paced (see
+      // _runStartupDeltaScan) so it never competes with the launch itself.
       this._bgWork.track(
         this._reconcileOrphanedEntries()
           .catch((err) => {
@@ -724,7 +739,7 @@ class SmartFolderWatcher {
           })
           .then(() => {
             if (this._isStopping || !this.isRunning) return null;
-            return this.scanForUnanalyzedFiles();
+            return this._runStartupDeltaScan();
           })
           .catch((err) => {
             logger.warn('[SMART-FOLDER-WATCHER] Startup delta scan failed:', {
@@ -749,6 +764,9 @@ class SmartFolderWatcher {
   async stop() {
     logger.info('[SMART-FOLDER-WATCHER] Stopping...');
     this._isStopping = true;
+    // End any paced startup-scan wait now, before _bgWork.drain() below
+    // waits for that scan.
+    for (const wake of [...this._startupScanWakers]) wake();
 
     // K-07: flush before anything clears the queue below, so a shutdown
     // mid-reanalysis leaves the remaining work on disk for the next start.
@@ -3712,18 +3730,95 @@ class SmartFolderWatcher {
   }
 
   /**
+   * The launch delta scan (K-04), paced. Waits `startupScanDelayMs`, then
+   * queues at most `startupScanBatchSize` files at a time, waiting for the
+   * queue to go idle plus `startupScanBatchGapMs` before the next batch.
+   * Nothing is dropped: everything the scan finds is still queued in this
+   * session, and a file not reached before quit is found again next launch,
+   * because `_needsAnalysis` only skips what is already indexed.
+   * @returns {Promise<{scanned: number, queued: number} | null>} null when stopped first
+   */
+  async _runStartupDeltaScan() {
+    if (!(await this._waitWhileRunning(this.startupScanDelayMs))) return null;
+
+    const pace = async () => {
+      while (this._hasQueuedOrRunningAnalysis()) {
+        if (!(await this._waitWhileRunning(this.startupScanPollMs))) return false;
+      }
+      return this._waitWhileRunning(this.startupScanBatchGapMs);
+    };
+
+    logger.info('[SMART-FOLDER-WATCHER] Scanning for unanalyzed files...');
+    let scanned = 0;
+    let queued = 0;
+    for (const folderPath of this.watchedPaths) {
+      if (this._isStopping || !this.isRunning) break;
+      const result = await this.scanFolderForUnanalyzedFiles(folderPath, {
+        batchSize: this.startupScanBatchSize,
+        pace
+      });
+      scanned += result.scanned;
+      queued += result.queued;
+    }
+    logger.info('[SMART-FOLDER-WATCHER] Scan complete:', { scanned, queued });
+    return { scanned, queued };
+  }
+
+  /**
+   * True while any analysis is queued, overflowing or in flight.
+   * @returns {boolean}
+   */
+  _hasQueuedOrRunningAnalysis() {
+    return (
+      this.analysisQueue.length > 0 ||
+      this._pendingReanalyzeItems.length > 0 ||
+      this._inFlightItems.size > 0 ||
+      this.isProcessingQueue
+    );
+  }
+
+  /**
+   * Wait `ms`, ending early when stop() runs. stop() drains tracked
+   * background work, so a plain long sleep here would hold up shutdown.
+   * @param {number} ms
+   * @returns {Promise<boolean>} true if the watcher is still running
+   */
+  _waitWhileRunning(ms) {
+    if (this._isStopping || !this.isRunning) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      /** @type {any} */
+      let timer = null;
+      const finish = () => {
+        clearTimeout(timer);
+        this._startupScanWakers.delete(finish);
+        resolve(!this._isStopping && this.isRunning);
+      };
+      timer = setTimeout(finish, Math.max(0, ms));
+      if (typeof timer?.unref === 'function') timer.unref();
+      this._startupScanWakers.add(finish);
+    });
+  }
+
+  /**
    * Scan ONE folder and queue the files that still need analysis (new,
    * changed, or never embedded — `_needsAnalysis` decides). Used for every
    * watched folder at startup and for a folder the user just added while the
    * app is running (F-194 / K-05), so a folder is never "watched" without its
    * existing contents being picked up. Never throws: an unreadable folder
    * reports zero.
+   *
+   * With `options.pace`, queueing stops after every `options.batchSize`
+   * files until `pace()` resolves; `pace()` resolving false ends the scan.
    * @param {string} folderPath
+   * @param {{ batchSize?: number, pace?: () => Promise<boolean> }} [options]
    * @returns {Promise<{scanned: number, queued: number}>}
    */
-  async scanFolderForUnanalyzedFiles(folderPath) {
+  async scanFolderForUnanalyzedFiles(folderPath, options = {}) {
+    const { pace } = options;
+    const batchSize = Math.max(1, options.batchSize || 1);
     let scanned = 0;
     let queued = 0;
+    let queuedSincePause = 0;
     /** @type {Set<string> | null} built on first overflow, then reused */
     let overflowKeys = null;
     try {
@@ -3732,6 +3827,10 @@ class SmartFolderWatcher {
 
       for (const file of files) {
         if (this._isStopping) break;
+        if (pace && queuedSincePause >= batchSize) {
+          if (!(await pace())) break;
+          queuedSincePause = 0;
+        }
         let stats;
         try {
           stats = await fs.stat(file);
@@ -3753,6 +3852,7 @@ class SmartFolderWatcher {
         if (this.analysisQueue.length < MAX_ANALYSIS_QUEUE_SIZE) {
           this._enqueueAnalysisItem(item);
           queued++;
+          queuedSincePause++;
           continue;
         }
         // Queue full: spill into the overflow buffer the queue drains after
@@ -3771,6 +3871,7 @@ class SmartFolderWatcher {
         overflowKeys.add(key);
         this._pendingReanalyzeItems.push({ ...item, dedupKey: key });
         queued++;
+        queuedSincePause++;
       }
       if (overflowKeys) this._scheduleQueuePersist();
     } catch (error) {

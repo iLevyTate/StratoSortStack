@@ -1517,12 +1517,12 @@ describe('SmartFolderWatcher', () => {
       }
     }
 
-    test('start() schedules scanForUnanalyzedFiles after the reconcile', async () => {
+    test('start() schedules the delta scan after the reconcile', async () => {
       const order = [];
       watcher._reconcileOrphanedEntries = jest.fn(async () => {
         order.push('reconcile');
       });
-      watcher.scanForUnanalyzedFiles = jest.fn(async () => {
+      watcher._runStartupDeltaScan = jest.fn(async () => {
         order.push('scan');
         return { scanned: 0, queued: 0 };
       });
@@ -1530,26 +1530,147 @@ describe('SmartFolderWatcher', () => {
       expect(await watcher.start()).toBe(true);
       await flush();
 
-      expect(watcher.scanForUnanalyzedFiles).toHaveBeenCalledTimes(1);
+      expect(watcher._runStartupDeltaScan).toHaveBeenCalledTimes(1);
       expect(order).toEqual(['reconcile', 'scan']);
     });
 
     test('a failed reconcile does not cancel the delta scan', async () => {
       watcher._reconcileOrphanedEntries = jest.fn().mockRejectedValue(new Error('history busy'));
-      watcher.scanForUnanalyzedFiles = jest.fn().mockResolvedValue({ scanned: 0, queued: 0 });
+      watcher._runStartupDeltaScan = jest.fn().mockResolvedValue({ scanned: 0, queued: 0 });
 
       expect(await watcher.start()).toBe(true);
       await flush();
 
-      expect(watcher.scanForUnanalyzedFiles).toHaveBeenCalledTimes(1);
+      expect(watcher._runStartupDeltaScan).toHaveBeenCalledTimes(1);
     });
 
     test('a failed delta scan is swallowed (start already returned true)', async () => {
       watcher._reconcileOrphanedEntries = jest.fn().mockResolvedValue();
-      watcher.scanForUnanalyzedFiles = jest.fn().mockRejectedValue(new Error('EACCES'));
+      watcher._runStartupDeltaScan = jest.fn().mockRejectedValue(new Error('EACCES'));
 
       expect(await watcher.start()).toBe(true);
       await expect(flush()).resolves.toBeUndefined();
+    });
+  });
+
+  // Q4: the delta scan used to start the moment the watcher did and queue
+  // every file it found at once (146–901 analyses at launch on one library),
+  // each one saving the vector store and rebuilding search while the window
+  // was still opening. It now waits, then hands files over in batches.
+  describe('paced startup delta scan', () => {
+    const FILES = Array.from({ length: 60 }, (_, i) => `/docs/${i}.pdf`);
+
+    beforeEach(() => {
+      watcher.isRunning = true;
+      watcher._isStopping = false;
+      watcher.watchedPaths = new Set(['/docs']);
+      watcher.startupScanDelayMs = 0;
+      watcher.startupScanBatchGapMs = 0;
+      watcher.startupScanPollMs = 5;
+      watcher._scanDirectory = jest.fn().mockResolvedValue(FILES);
+      fs.stat.mockResolvedValue({ mtime: new Date('2026-01-01T00:00:00Z'), size: 10 });
+      watcher._needsAnalysis = jest.fn().mockResolvedValue(true);
+      // Queue items without starting analysis, so the test controls when
+      // the queue goes idle.
+      watcher._enqueueAnalysisItem = jest.fn((item) => watcher.analysisQueue.push(item));
+    });
+
+    afterEach(() => {
+      watcher.isRunning = false;
+    });
+
+    async function waitFor(predicate) {
+      const deadline = Date.now() + 5000;
+      while (!predicate()) {
+        if (Date.now() > deadline) throw new Error('timed out');
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+    }
+
+    test('nothing is scanned before the launch delay has passed', async () => {
+      watcher.startupScanDelayMs = 200;
+      const run = watcher._runStartupDeltaScan();
+
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      expect(watcher._scanDirectory).not.toHaveBeenCalled();
+
+      watcher.analysisQueue.length = 0;
+      watcher._enqueueAnalysisItem = jest.fn();
+      await expect(run).resolves.toEqual({ scanned: 60, queued: 60 });
+    });
+
+    test('queues one batch, then waits for the queue to go idle before the next', async () => {
+      const run = watcher._runStartupDeltaScan();
+
+      await waitFor(() => watcher.analysisQueue.length === 25);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(watcher.analysisQueue).toHaveLength(25);
+
+      // An in-flight analysis still counts as busy.
+      watcher.analysisQueue.length = 0;
+      watcher._inFlightItems.set('/docs/0.pdf', { filePath: '/docs/0.pdf' });
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(watcher.analysisQueue).toHaveLength(0);
+
+      watcher._inFlightItems.clear();
+      await waitFor(() => watcher.analysisQueue.length === 25);
+      expect(watcher.analysisQueue[0].filePath).toBe('/docs/25.pdf');
+
+      watcher.analysisQueue.length = 0;
+      await waitFor(() => watcher.analysisQueue.length === 10);
+      watcher.analysisQueue.length = 0;
+
+      await expect(run).resolves.toEqual({ scanned: 60, queued: 60 });
+      expect(watcher._enqueueAnalysisItem).toHaveBeenCalledTimes(60);
+    });
+
+    test('stop() during the launch delay ends the scan at once, without scanning', async () => {
+      watcher.startupScanDelayMs = 60 * 60_000;
+      const run = watcher._runStartupDeltaScan();
+
+      await watcher.stop();
+
+      await expect(run).resolves.toBeNull();
+      expect(watcher._scanDirectory).not.toHaveBeenCalled();
+      expect(watcher._startupScanWakers.size).toBe(0);
+    });
+
+    test('stop() while waiting between batches ends the scan', async () => {
+      watcher.startupScanBatchGapMs = 60 * 60_000;
+      const run = watcher._runStartupDeltaScan();
+      await waitFor(() => watcher.analysisQueue.length === 25);
+      watcher.analysisQueue.length = 0;
+
+      await watcher.stop();
+      await expect(run).resolves.toEqual({ scanned: 60, queued: 25 });
+    });
+
+    // Regression: the wait used to poll delay(), which this suite stubs to
+    // resolve at once, so start() spun until Jest ran out of memory.
+    test('start() leaves the scan waiting on a timer that stop() ends', async () => {
+      watcher.isRunning = false;
+      watcher.startupScanDelayMs = 60 * 60_000;
+      watcher._reconcileOrphanedEntries = jest.fn().mockResolvedValue();
+      // start() validates each folder as a directory; this suite's file stat
+      // has no isDirectory().
+      fs.stat.mockResolvedValue({ isDirectory: () => true });
+      const { delay } = require('../src/shared/promiseUtils');
+      delay.mockClear();
+
+      expect(await watcher.start()).toBe(true);
+      await waitFor(() => watcher._startupScanWakers.size === 1);
+      expect(delay).not.toHaveBeenCalled();
+
+      await watcher.stop();
+      expect(watcher._startupScanWakers.size).toBe(0);
+      expect(watcher._scanDirectory).not.toHaveBeenCalled();
+    });
+
+    test('a folder added by the user is still scanned in one go', async () => {
+      await expect(watcher.scanFolderForUnanalyzedFiles('/docs')).resolves.toEqual({
+        scanned: 60,
+        queued: 60
+      });
     });
   });
 

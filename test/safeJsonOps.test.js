@@ -7,6 +7,7 @@ const {
   safeStringify,
   parseJsonLines,
   tryParse,
+  tryParseLarge,
   jsonClone,
   deepClone,
   stableStringify
@@ -107,6 +108,60 @@ describe('safeJsonOps', () => {
     test('handles all invalid lines', () => {
       const text = 'not json\nalso not json\nstill not json';
       expect(parseJsonLines(text)).toEqual([]);
+    });
+  });
+
+  describe('tryParseLarge', () => {
+    const POLLUTED = JSON.stringify({
+      docs: {
+        docs: {
+          1: { id: 'a', embedding: [0.1, 0.2], meta: '{}' },
+          2: { id: 'b', embedding: [0.3, { nested: true, prototype: 1 }] }
+        }
+      },
+      list: [{ x: 1 }, [{ y: 2 }]]
+    })
+      .replace('"meta":"{}"', '"meta":"{}","__proto__":{"polluted":true},"constructor":{"c":1}')
+      .replace('"x":1', '"x":1,"__proto__":{"polluted":true}')
+      .replace('"y":2', '"y":2,"constructor":{"c":1}');
+
+    test('matches tryParse on prototype-pollution keys at every depth', () => {
+      const large = tryParseLarge(POLLUTED);
+      expect(large.success).toBe(true);
+      expect(large.value).toEqual(tryParse(POLLUTED).value);
+
+      const doc = large.value.docs.docs[1];
+      expect(Object.prototype.hasOwnProperty.call(doc, '__proto__')).toBe(false);
+      expect(Object.prototype.hasOwnProperty.call(doc, 'constructor')).toBe(false);
+      expect(Object.prototype.hasOwnProperty.call(large.value.list[0], '__proto__')).toBe(false);
+      expect(Object.prototype.hasOwnProperty.call(large.value.list[1][0], 'constructor')).toBe(
+        false
+      );
+      expect(large.value.docs.docs[2].embedding[1]).toEqual({ nested: true });
+      expect(/** @type {any} */ ({}).polluted).toBeUndefined();
+    });
+
+    test('a top-level pollution key is removed', () => {
+      const { value } = tryParseLarge('{"__proto__":{"polluted":true},"ok":1}');
+      expect(value).toEqual({ ok: 1 });
+      expect(Object.prototype.hasOwnProperty.call(value, '__proto__')).toBe(false);
+    });
+
+    test('keeps numbers, strings and arrays as JSON.parse gives them', () => {
+      const text = JSON.stringify({ v: [1, 2.5, -3], s: 'constructor', n: null, b: false });
+      expect(tryParseLarge(text).value).toEqual(JSON.parse(text));
+      expect(tryParseLarge('[1,2,3]').value).toEqual([1, 2, 3]);
+      expect(tryParseLarge('42').value).toBe(42);
+    });
+
+    test('reports invalid JSON and missing input the same way as tryParse', () => {
+      const bad = tryParseLarge('{not json');
+      expect(bad.success).toBe(false);
+      expect(bad.value).toBeNull();
+      expect(bad.error).toBeInstanceOf(SyntaxError);
+
+      expect(tryParseLarge(null).success).toBe(false);
+      expect(tryParseLarge(undefined).error.message).toBe('Input is null or undefined');
     });
   });
 

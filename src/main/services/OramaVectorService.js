@@ -62,7 +62,7 @@ const { isDiskFullError } = require('../../shared/errorClassifier');
 const { sweepOrphanUserDataTmpFiles } = require('./userDataTmpSweeper');
 const { attachErrorCode } = require('../../shared/errorHandlingUtils');
 const { replaceFileWithRetry } = require('../../shared/atomicFile');
-const { tryParse: safeJsonTryParse } = require('../../shared/safeJsonOps');
+const { tryParseLarge: parsePersistedJson } = require('../../shared/safeJsonOps');
 const { compress, uncompress } = require('../../shared/lz4Codec');
 const { resolveEmbeddingDimension } = require('../../shared/embeddingDimensions');
 const { cosineSimilarity } = require('../../shared/vectorMath');
@@ -1838,7 +1838,7 @@ class OramaVectorService extends EventEmitter {
       // injected by on-disk tampering or a bug in an upstream writer are
       // stripped rather than fed back into runtime prototypes.
       let parsed;
-      const persistParse = safeJsonTryParse(data);
+      const persistParse = parsePersistedJson(data);
       if (persistParse.success) {
         parsed = persistParse.value;
       }
@@ -2011,7 +2011,7 @@ class OramaVectorService extends EventEmitter {
         const sidecarRaw = await fs.readFile(sidecarPath, 'utf-8');
         // Sidecar is persisted, user-writable state: strip prototype-pollution
         // keys during parse.
-        const parsedSidecar = safeJsonTryParse(sidecarRaw).value;
+        const parsedSidecar = parsePersistedJson(sidecarRaw).value;
         if (parsedSidecar && typeof parsedSidecar === 'object') {
           /** @type {Record<string, any>} */
           const normalizedSidecar = {};

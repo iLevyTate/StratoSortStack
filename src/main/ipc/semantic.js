@@ -34,6 +34,7 @@ const {
   RETRY
 } = require('../../shared/performanceConstants');
 const { createHandler, safeHandle, safeSend, z } = require('./ipcWrappers');
+const { whenFirstPaintGateReleased } = require('../core/firstPaintGate');
 const { schemas: validationSchemas } = require('./validationSchemas');
 const { cosineSimilarity, padOrTruncateVector } = require('../../shared/vectorMath');
 const { validateFileOperationPath } = require('../../shared/pathSanitization');
@@ -4095,19 +4096,31 @@ function registerEmbeddingsIpc(servicesOrParams) {
   // Start background initialization after a shorter delay to pre-warm the service
   // but handlers will work correctly even if called before this completes.
   // before the pre-warm fires (prevents stale callback after shutdown).
+  //
+  // The pre-warm loads the vector store, which can block this thread for
+  // seconds. It waits for the first-paint gate, as the rest of heavy startup
+  // does; on a 1 s timer from IPC registration it raced the first frame.
   /** @type {ReturnType<typeof setTimeout>|null} */
   let _preWarmTimerId = null;
+  let _preWarmCancelled = false;
   if (process.env.NODE_ENV !== 'test') {
-    setImmediate(() => {
-      // Use setImmediate to ensure IPC handlers are registered first
-      _preWarmTimerId = setTimeout(() => {
-        _preWarmTimerId = null;
-        ensureInitialized().catch((error) => {
-          logger.warn('[SEMANTIC] Background pre-warm failed (non-fatal):', error.message);
-          // Non-fatal - handlers will retry with proper backoff when called
-        });
-      }, 1000); // 1 second delay for pre-warming, handlers use retries if called earlier
-    });
+    whenFirstPaintGateReleased()
+      .then(
+        /** @returns {undefined} */ () => {
+          if (_preWarmCancelled) return undefined;
+          _preWarmTimerId = setTimeout(() => {
+            _preWarmTimerId = null;
+            ensureInitialized().catch((error) => {
+              logger.warn('[SEMANTIC] Background pre-warm failed (non-fatal):', error.message);
+              // Non-fatal - handlers will retry with proper backoff when called
+            });
+          }, 1000); // 1 second delay for pre-warming, handlers use retries if called earlier
+          return undefined;
+        }
+      )
+      .catch(() => {
+        // The gate promise never rejects; handlers initialize on first use anyway.
+      });
   }
 
   // Reusable Zod schemas for handler validation
@@ -4575,6 +4588,7 @@ function registerEmbeddingsIpc(servicesOrParams) {
   // We only perform cheap synchronous cleanup (clearing a timer).
   const { app } = require('electron');
   app.once('before-quit', () => {
+    _preWarmCancelled = true;
     if (_preWarmTimerId) {
       try {
         clearTimeout(_preWarmTimerId);
