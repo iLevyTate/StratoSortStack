@@ -177,13 +177,13 @@ const { isDiskFullError } = require('../../shared/errorClassifier');
 const { sweepOrphanUserDataTmpFiles } = require('./userDataTmpSweeper');
 const { attachErrorCode } = require('../../shared/errorHandlingUtils');
 const { replaceFileWithRetry } = require('../../shared/atomicFile');
-const { tryParseLarge: parsePersistedJson } = require('../../shared/safeJsonOps');
+const { compress, isLz4BindingAvailable, lz4BindingError } = require('../../shared/lz4Codec');
 const {
-  compress,
-  uncompress,
-  isLz4BindingAvailable,
-  lz4BindingError
-} = require('../../shared/lz4Codec');
+  normalizeEmbeddingVector,
+  loadPersistedCollection,
+  loadPersistedSidecar,
+  loadInWorker
+} = require('../workers/oramaRestoreLoader');
 const { resolveEmbeddingDimension } = require('../../shared/embeddingDimensions');
 const { cosineSimilarity } = require('../../shared/vectorMath');
 const { getEmbeddingModel, loadLlamaConfig, getLlamaService } = require('../llamaUtils');
@@ -257,6 +257,14 @@ const STORAGE_FULL_RETRY_MS = 60_000;
 const PERSIST_COMPRESSION_ENABLED =
   String(process.env.STRATOSORT_ORAMA_COMPRESS || 'true').toLowerCase() !== 'false' &&
   isLz4BindingAvailable;
+
+// Saved files smaller than this are parsed on the main thread even when the
+// restore worker is on: starting a thread costs more than parsing them (a
+// 4 MB collection parses in about 12 ms).
+const RESTORE_WORKER_MIN_BYTES = 4 * 1024 * 1024;
+// The restore worker's first failure is logged once per process; later
+// services (tests, re-initialize) read in-process quietly.
+let restoreWorkerFailureLogged = false;
 
 // The longest string V8 can build. A collection's saved JSON is one string,
 // so past this the save throws instead of writing. Warn well before it.
@@ -595,10 +603,21 @@ class OramaVectorService extends EventEmitter {
     });
 
     // Embedding sidecar store – Orama's restore() loses vector data (v3.1.x bug),
-    // so we cache embeddings separately, keyed by collection name → Map<docId, number[]>.
+    // so embeddings are also kept separately, keyed by collection name →
+    // Map<docId, number[]>, and saved as `<name>.sidecar.json`. It is durable
+    // state, not a cache: restore repairs vectors from it, so it holds every
+    // document of its collection and is never capped. Its entries reference
+    // the same arrays as the Orama documents (~20-60 bytes each on top of
+    // them); see docs/ORAMA_VECTOR_SIDECAR.md.
     /** @type {Record<string, any>} */
     this._embeddingStore = {};
-    this._maxEmbeddingStoreSize = 10000;
+
+    // Restore parses saved files in a worker_thread (oramaRestoreWorker)
+    // unless that is turned off or failed once this session.
+    /** @type {string | null} why the restore worker is not used, once it failed */
+    this._restoreWorkerDisabledReason = null;
+    /** smaller saved files are parsed in-process (tests lower this) */
+    this._restoreWorkerMinBytes = RESTORE_WORKER_MIN_BYTES;
 
     // Bounded concurrency for batch upsert paths to improve throughput without
     // overwhelming DB writes or event-loop latency.
@@ -676,26 +695,7 @@ class OramaVectorService extends EventEmitter {
    * @private
    */
   _normalizeEmbeddingVector(/** @type {any} */ value, /** @type {any} */ expectedDim = null) {
-    let vector = null;
-    if (Array.isArray(value)) {
-      vector = value;
-    } else if (ArrayBuffer.isView(value)) {
-      vector = Array.from(/** @type {any} */ (value));
-    } else if (value && typeof value === 'object') {
-      const keys = Object.keys(value);
-      if (keys.length > 0 && keys.every((k) => /^\d+$/.test(k))) {
-        keys.sort((a, b) => Number(a) - Number(b));
-        vector = keys.map((k) => value[k]);
-      }
-    }
-
-    if (!Array.isArray(vector) || vector.length === 0) return null;
-    if (Number.isFinite(expectedDim) && expectedDim > 0 && vector.length !== expectedDim)
-      return null;
-
-    const normalized = vector.map((n) => Number(n));
-    if (normalized.some((n) => !Number.isFinite(n))) return null;
-    return normalized;
+    return normalizeEmbeddingVector(value, expectedDim);
   }
 
   _getVectorHealthSnapshot() {
@@ -1952,32 +1952,104 @@ class OramaVectorService extends EventEmitter {
   }
 
   /**
+   * Whether restore parses saved files in a worker_thread. On by default;
+   * off under tests unless STRATOSORT_ORAMA_RESTORE_WORKER=true, off for the
+   * rest of the session once the worker failed.
+   * @private
+   * @returns {boolean}
+   */
+  _restoreWorkerEnabled() {
+    if (this._restoreWorkerDisabledReason) return false;
+    const setting = String(process.env.STRATOSORT_ORAMA_RESTORE_WORKER || '').toLowerCase();
+    if (setting === 'false' || setting === '0') return false;
+    if (setting === 'true' || setting === '1') return true;
+    return !(process.env.NODE_ENV === 'test' || process.env.JEST_WORKER_ID);
+  }
+
+  /**
+   * Read, decode and parse one saved file: in the restore worker when it is
+   * enabled and the file is big enough to be worth a thread, otherwise (or
+   * when the worker fails) in-process with the same loader. Both give the
+   * same result; see workers/oramaRestoreLoader.js.
+   * @private
+   * @param {{ kind: 'collection', filePath: string, decompress: boolean } | { kind: 'sidecar', filePath: string, dimension: number | null }} request
+   * @returns {Promise<{ result: any, parsedIn: 'worker' | 'main' }>}
+   */
+  async _loadPersistedFile(request) {
+    if (this._restoreWorkerEnabled()) {
+      let size = -1;
+      try {
+        size = (await fs.stat(request.filePath)).size;
+      } catch {
+        // Missing or unreadable: the in-process read reports why.
+      }
+      if (size >= 0 && size >= this._restoreWorkerMinBytes) {
+        let workerPath = null;
+        try {
+          workerPath = require('../utils/workerPools').resolveWorkerPath('oramaRestoreWorker');
+        } catch (error) {
+          logger.debug('[OramaVectorService] Could not resolve the restore worker', {
+            error: /** @type {any} */ (error)?.message
+          });
+        }
+        if (workerPath) {
+          try {
+            return { result: await loadInWorker(workerPath, request), parsedIn: 'worker' };
+          } catch (error) {
+            this._disableRestoreWorker(/** @type {any} */ (error)?.message || String(error));
+          }
+        } else {
+          this._disableRestoreWorker('oramaRestoreWorker bundle not found');
+        }
+      }
+    }
+    const result =
+      request.kind === 'sidecar'
+        ? await loadPersistedSidecar(request.filePath, { dimension: request.dimension })
+        : await loadPersistedCollection(request.filePath, { decompress: request.decompress });
+    return { result, parsedIn: 'main' };
+  }
+
+  /**
+   * @private
+   * @param {string} reason
+   */
+  _disableRestoreWorker(reason) {
+    this._restoreWorkerDisabledReason = reason;
+    if (restoreWorkerFailureLogged) return;
+    restoreWorkerFailureLogged = true;
+    logger.warn(
+      '[OramaVectorService] Restore worker unavailable; reading saved collections on the main thread',
+      { reason }
+    );
+  }
+
+  /**
    * Read and parse a collection's rolling `.bak`.
    * @private
    * @param {string} name - collection name, for logs
    * @param {string} bakPath
-   * @returns {Promise<{data: string, parsed: any} | null>} null when missing or unparseable
+   * @returns {Promise<{ loaded: any, parsedIn: 'worker' | 'main' } | null>} null when missing or unparseable
    */
   async _readPersistenceBak(name, bakPath) {
-    try {
-      const raw = await fs.readFile(bakPath);
-      const data = (PERSIST_COMPRESSION_ENABLED ? await uncompress(raw) : raw).toString('utf8');
-      const bakParse = parsePersistedJson(data);
-      if (!bakParse.success) {
-        logger.warn(`[OramaVectorService] .bak for ${name} does not parse either`, {
-          error: bakParse.error?.message
-        });
-        return null;
-      }
-      return { data, parsed: bakParse.value };
-    } catch (error) {
-      if (/** @type {any} */ (error)?.code !== 'ENOENT') {
+    const { result, parsedIn } = await this._loadPersistedFile({
+      kind: 'collection',
+      filePath: bakPath,
+      decompress: PERSIST_COMPRESSION_ENABLED
+    });
+    if (result.status === 'ok') return { loaded: result, parsedIn };
+    if (result.status === 'read-error') {
+      if (result.error?.code !== 'ENOENT') {
         logger.debug(`[OramaVectorService] .bak fallback failed for ${name}`, {
-          error: /** @type {any} */ (error)?.message
+          error: result.error?.message
         });
       }
       return null;
     }
+    logger.warn(`[OramaVectorService] .bak for ${name} does not parse either`, {
+      error: result.error?.message
+    });
+    return null;
   }
 
   /**
@@ -2004,9 +2076,16 @@ class OramaVectorService extends EventEmitter {
       // Without the .bak fallback the rolling backup written on each persist was
       // unreachable: a crash that corrupted the primary write left no path to
       // recover and forced a quarantine + reindex.
-      let data;
+      // `loaded` is the first source that read to some text: its parsed
+      // documents ('ok') or the parse failure ('parse-error'). Read, decode
+      // and parse happen together (in the restore worker when enabled), and
+      // each source's read failure is handled exactly as before.
+      /** @type {any} */
+      let loaded = null;
+      /** @type {'worker' | 'main'} */
+      let parsedIn = 'main';
       let usedCompressed = false;
-      let dataSource = null; // tracks where `data` came from for accurate quarantine
+      let dataSource = null; // tracks where `loaded` came from for accurate quarantine
       // A file that decompresses past the longest string V8 can build is not
       // damaged; it is only too large for this reader. Never quarantine it.
       let tooLargeToRead = false;
@@ -2015,6 +2094,16 @@ class OramaVectorService extends EventEmitter {
       // write that older copy over the unread file, and the next .bak
       // rotation would drop the last copy of it.
       let activeTooLarge = false;
+      /**
+       * @param {string} filePath
+       * @param {boolean} decompress
+       */
+      const loadSource = async (filePath, decompress) => {
+        const read = await this._loadPersistedFile({ kind: 'collection', filePath, decompress });
+        if (read.result.status === 'read-error') throw read.result.error;
+        parsedIn = read.parsedIn;
+        return read.result;
+      };
       try {
         if (!isLz4BindingAvailable) {
           // Undecodable here, not corrupt: decoding would hand the raw LZ4
@@ -2025,10 +2114,10 @@ class OramaVectorService extends EventEmitter {
             code: 'LZ4_BINDING_UNAVAILABLE'
           });
         }
-        const compressed = await fs.readFile(compressedPath);
-        data = (await uncompress(compressed)).toString('utf8');
+        const fromCompressed = await loadSource(compressedPath, true);
         usedCompressed = true;
         dataSource = compressedPath;
+        if (fromCompressed.status !== 'empty') loaded = fromCompressed;
       } catch (error) {
         if (isStringTooLongError(error)) {
           tooLargeToRead = true;
@@ -2051,10 +2140,11 @@ class OramaVectorService extends EventEmitter {
           }
         }
       }
-      if (!data && !activeTooLarge) {
+      if (!loaded && !activeTooLarge) {
         try {
-          data = await fs.readFile(persistPath, 'utf-8');
+          const fromJson = await loadSource(persistPath, false);
           dataSource = persistPath;
+          if (fromJson.status !== 'empty') loaded = fromJson;
         } catch (jsonError) {
           if (isStringTooLongError(jsonError)) {
             tooLargeToRead = true;
@@ -2070,21 +2160,17 @@ class OramaVectorService extends EventEmitter {
       // .bak fallback: try the rolling backup of whichever primary path the
       // current install would use. Only consulted when both primaries above
       // failed — otherwise we'd risk reading stale data over the live primary.
-      if (!data && !activeTooLarge) {
+      if (!loaded && !activeTooLarge) {
         const activePath = PERSIST_COMPRESSION_ENABLED ? compressedPath : persistPath;
         const bakPath = `${activePath}.bak`;
         try {
-          if (PERSIST_COMPRESSION_ENABLED) {
-            const compressed = await fs.readFile(bakPath);
-            data = (await uncompress(compressed)).toString('utf8');
-            usedCompressed = true;
-          } else {
-            data = await fs.readFile(bakPath, 'utf-8');
-          }
+          const fromBak = await loadSource(bakPath, PERSIST_COMPRESSION_ENABLED);
+          if (PERSIST_COMPRESSION_ENABLED) usedCompressed = true;
           dataSource = bakPath;
           logger.warn(
             `[OramaVectorService] Restored ${name} from .bak rolling backup; primary was unreadable`
           );
+          if (fromBak.status !== 'empty') loaded = fromBak;
         } catch (bakError) {
           if (isStringTooLongError(bakError)) {
             tooLargeToRead = true;
@@ -2099,7 +2185,7 @@ class OramaVectorService extends EventEmitter {
       // No data found anywhere (compressed, uncompressed, .bak all missing).
       // This is the expected state on a fresh install — return a clean DB
       // without logging error noise.
-      if (!data) {
+      if (!loaded) {
         if (tooLargeToRead) {
           // Start empty for this session, but never save it: an empty
           // collection written over the unread file would lose it for good.
@@ -2114,17 +2200,12 @@ class OramaVectorService extends EventEmitter {
         return await create({ schema, components: { tokenizer: ORAMA_TOKENIZER_CONFIG } });
       }
 
-      // Parse the persisted JSON to extract raw documents.
-      // Route through safeJsonOps so any `__proto__` / `constructor` keys
-      // injected by on-disk tampering or a bug in an upstream writer are
-      // stripped rather than fed back into runtime prototypes.
-      let parsed;
-      const persistParse = parsePersistedJson(data);
-      if (persistParse.success) {
-        parsed = persistParse.value;
-      }
-      if (!persistParse.success) {
-        const parseError = persistParse.error || new Error('Unknown persistence parse failure');
+      // The loader parsed with safeJsonOps.tryParseLarge, so any `__proto__`
+      // / `constructor` keys injected by on-disk tampering or a bug in an
+      // upstream writer were stripped rather than fed back into runtime
+      // prototypes.
+      if (loaded.status === 'parse-error') {
+        const parseError = loaded.error || new Error('Unknown persistence parse failure');
         logger.error(`[OramaVectorService] Failed to parse ${name} persistence`, {
           error: parseError.message,
           dataSource
@@ -2155,8 +2236,8 @@ class OramaVectorService extends EventEmitter {
         const fromBak =
           dataSource === bakPath ? null : await this._readPersistenceBak(name, bakPath);
         if (fromBak) {
-          data = fromBak.data;
-          parsed = fromBak.parsed;
+          loaded = fromBak.loaded;
+          parsedIn = fromBak.parsedIn;
           usedCompressed = PERSIST_COMPRESSION_ENABLED;
           dataSource = bakPath;
           logger.warn(
@@ -2182,13 +2263,12 @@ class OramaVectorService extends EventEmitter {
         }
       }
 
-      const rawDocs = parsed?.docs?.docs;
-      if (!rawDocs || typeof rawDocs !== 'object') {
+      /** @type {any[] | null} */
+      const docList = loaded.docList;
+      if (!docList) {
         logger.debug(`[OramaVectorService] No documents in ${name} persistence, creating fresh DB`);
         return await create({ schema, components: { tokenizer: ORAMA_TOKENIZER_CONFIG } });
       }
-
-      const docList = Object.values(rawDocs).filter((d) => d && d.id);
 
       // Detect embedding dimension from the first doc that has a vector
       let restoredDim = null;
@@ -2304,27 +2384,14 @@ class OramaVectorService extends EventEmitter {
         }
       }
 
-      let sidecarData = null;
-      try {
-        const sidecarPath = path.join(this._dataPath, `${name}.sidecar.json`);
-        const sidecarRaw = await fs.readFile(sidecarPath, 'utf-8');
-        // Sidecar is persisted, user-writable state: strip prototype-pollution
-        // keys during parse.
-        const parsedSidecar = parsePersistedJson(sidecarRaw).value;
-        if (parsedSidecar && typeof parsedSidecar === 'object') {
-          /** @type {Record<string, any>} */
-          const normalizedSidecar = {};
-          for (const [docId, emb] of Object.entries(parsedSidecar)) {
-            const normalized = this._normalizeEmbeddingVector(emb, this._dimension);
-            if (normalized) {
-              normalizedSidecar[docId] = normalized;
-            }
-          }
-          sidecarData = normalizedSidecar;
-        }
-      } catch {
-        // No sidecar file or parse error -- not critical
-      }
+      // Not critical: a missing or unparseable sidecar reads as null.
+      const sidecarRead = await this._loadPersistedFile({
+        kind: 'sidecar',
+        filePath: path.join(this._dataPath, `${name}.sidecar.json`),
+        dimension: this._dimension
+      });
+      /** @type {import('../workers/oramaRestoreLoader').SidecarVectors | null} */
+      const sidecarData = sidecarRead.result;
 
       for (const doc of docList) {
         try {
@@ -2332,7 +2399,7 @@ class OramaVectorService extends EventEmitter {
           // Missing embeddings are recovered from sidecar when possible.
           // If unavailable, use a zero-vector placeholder so BM25 recall is preserved.
           if (!doc.embedding || !doc.embedding.length) {
-            const sidecarEmbedding = sidecarData?.[doc.id];
+            const sidecarEmbedding = sidecarData?.get(doc.id);
             if (Array.isArray(sidecarEmbedding) && sidecarEmbedding.length === this._dimension) {
               doc.embedding = sidecarEmbedding;
               restoredMissingFromSidecarCount++;
@@ -2429,12 +2496,24 @@ class OramaVectorService extends EventEmitter {
       const lostEmbeddings = insertedCount - embeddingStore.size;
       if (lostEmbeddings > 0) {
         let repaired = 0;
-        if (sidecarData && typeof sidecarData === 'object') {
-          for (const [docId, emb] of Object.entries(sidecarData)) {
-            if (!embeddingStore.has(docId) && Array.isArray(emb) && emb.length > 0) {
+        if (sidecarData) {
+          for (const docId of sidecarData.ids()) {
+            if (embeddingStore.has(docId)) continue;
+            const emb = sidecarData.get(docId);
+            if (Array.isArray(emb) && emb.length > 0) {
               try {
+                // Orama 3.x update() is remove(id) + insert(doc): it stores
+                // exactly the doc it is given. A vectors-only doc dropped every
+                // other field, and with no `id` insert() minted a random one.
+                // Merge onto the stored row; a sidecar entry with no row is
+                // skipped (remove() of a missing id is a silent no-op, so
+                // update() would have inserted a phantom vectors-only row).
+                const existing = await getByID(db, docId);
+                if (!existing) continue;
                 const updateDoc =
-                  name === 'files' ? { embedding: emb, hasVector: true } : { embedding: emb };
+                  name === 'files'
+                    ? { ...existing, id: docId, embedding: emb, hasVector: true }
+                    : { ...existing, id: docId, embedding: emb };
                 await update(db, docId, updateDoc);
                 embeddingStore.set(docId, emb);
                 repaired++;
@@ -2470,7 +2549,9 @@ class OramaVectorService extends EventEmitter {
         failed: failedCount,
         placeholderEmbeddings: placeholderEmbeddingCount,
         restoredMissingFromSidecar: restoredMissingFromSidecarCount,
-        embeddingsCached: embeddingStore.size
+        embeddingsCached: embeddingStore.size,
+        parsedIn,
+        sidecarParsedIn: sidecarRead.parsedIn
       });
 
       // Recovery path: the prior session may have raised
@@ -2550,9 +2631,13 @@ class OramaVectorService extends EventEmitter {
 
       if (PERSIST_COMPRESSION_ENABLED && !usedCompressed) {
         try {
-          const compressed = /** @type {any} */ (
-            await compress(/** @type {any} */ (Buffer.from(data, 'utf8')))
-          );
+          // A worker parse keeps no text on this thread; the bytes it read
+          // are still on disk (`dataSource` is the plain .json here).
+          const raw =
+            typeof loaded.text === 'string'
+              ? Buffer.from(loaded.text, 'utf8')
+              : await fs.readFile(/** @type {string} */ (dataSource));
+          const compressed = /** @type {any} */ (await compress(/** @type {any} */ (raw)));
           await writeFileAtomic(compressedPath, compressed);
           await fs.rename(persistPath, `${persistPath}.legacy.${Date.now()}`);
           logger.info(`[OramaVectorService] Migrated ${name} persistence to LZ4`);
@@ -3834,15 +3919,11 @@ class OramaVectorService extends EventEmitter {
     // Update embedding sidecar store
     if (doc.embedding && doc.embedding.length > 0) {
       if (!this._embeddingStore.files) this._embeddingStore.files = new Map();
+      // Never evicted while the document exists: the saved sidecar is what
+      // restore repairs vectors from, and an evicted entry made restore treat
+      // a live document as missing its vector (re-embed churn, and a search
+      // that silently dropped every document past the old 10,000 cap).
       this._embeddingStore.files.set(file.id, doc.embedding);
-      // Evict oldest entries if embedding store exceeds cap
-      if (this._embeddingStore.files.size > this._maxEmbeddingStoreSize) {
-        const iter = this._embeddingStore.files.keys();
-        const evictedId = iter.next().value;
-        this._embeddingStore.files.delete(evictedId);
-        // Mark evicted entry in Orama so repair doesn't assume vector exists
-        this._markSidecarEvicted(evictedId);
-      }
     }
 
     this._invalidateCacheForFile(file.id);
@@ -4798,14 +4879,8 @@ class OramaVectorService extends EventEmitter {
     // Update sidecar embedding store for folders
     if (doc.embedding && doc.embedding.length > 0) {
       if (!this._embeddingStore.folders) this._embeddingStore.folders = new Map();
+      // Durable, like the files sidecar: never evicted while the folder exists.
       this._embeddingStore.folders.set(folder.id, doc.embedding);
-
-      // Prevent unbounded memory growth
-      if (this._embeddingStore.folders.size > this._maxEmbeddingStoreSize) {
-        const iter = this._embeddingStore.folders.keys();
-        const evictedId = iter.next().value;
-        this._embeddingStore.folders.delete(evictedId);
-      }
     }
 
     this._invalidateCacheForFolder();
@@ -6266,7 +6341,11 @@ class OramaVectorService extends EventEmitter {
 
   /**
    * Mark a sidecar-evicted entry in Orama so repair doesn't assume its vector exists.
-   * Non-blocking fire-and-forget — eviction is a hot path inside upsertFile.
+   * Non-blocking fire-and-forget.
+   *
+   * Nothing in this service evicts sidecar entries any more (the sidecar is
+   * durable and uncapped; see the constructor). Only tests still call this;
+   * remove it together with them.
    */
   _markSidecarEvicted(/** @type {any} */ fileId) {
     if (!this._databases?.files) return;

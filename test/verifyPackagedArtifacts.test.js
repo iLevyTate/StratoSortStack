@@ -25,15 +25,9 @@ const VERSION = '9.9.9';
 // The webpack.main.config.js worker entries that electron-builder.json
 // asarUnpack must place on disk (worker_threads cannot start from inside
 // app.asar; workerPools.resolveWorkerPath tries app.asar.unpacked/dist first).
-const WORKER_BUNDLES = [
-  'ocrWorker',
-  'embeddingWorker',
-  'logExportWorker',
-  'textExtractionWorker',
-  'imagePreprocessWorker',
-  'umapProjectionWorker',
-  'settingsImportParserWorker'
-];
+// Derived from webpack.main.config.js, like the verifier itself, so a new
+// worker entry cannot leave this list stale.
+const WORKER_BUNDLES = getWorkerBundleNames();
 
 function seedUnpackedWorkers(resources) {
   WORKER_BUNDLES.forEach((name) => {
@@ -652,7 +646,21 @@ describe('verify-packaged-artifacts worker bundles and asar integrity', () => {
   });
 
   test('worker bundle list comes from the webpack main entries', () => {
-    expect(getWorkerBundleNames().sort()).toEqual([...WORKER_BUNDLES].sort());
+    // Pinned so a worker silently dropped from webpack.main.config.js fails
+    // here instead of only in a packaged build.
+    expect(WORKER_BUNDLES).not.toContain('main');
+    expect([...WORKER_BUNDLES].sort()).toEqual(
+      [
+        'embeddingWorker',
+        'imagePreprocessWorker',
+        'logExportWorker',
+        'ocrWorker',
+        'oramaRestoreWorker',
+        'settingsImportParserWorker',
+        'textExtractionWorker',
+        'umapProjectionWorker'
+      ].sort()
+    );
   });
 
   test('electron-builder asarUnpack unpacks every webpack worker bundle', () => {
