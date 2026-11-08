@@ -34,6 +34,7 @@ const {
 const { NavigationPage } = require('./helpers/pageObjects');
 const { PHASES } = require('./helpers/testFixtures');
 const { pressOpenSearchShortcut } = require('./helpers/e2eShortcuts');
+const { createSyntheticFiles, seedAnalyzedFiles } = require('./helpers/seedState');
 
 // Impacts that FAIL the test. Ratcheted critical → critical+serious on
 // 2026-07-02 when every audited screen (incl. dark/light themes, search modal,
@@ -147,9 +148,12 @@ test.describe('Accessibility (axe)', () => {
   });
 
   test('Organize phase has no critical violations', async () => {
-    // Organize is only reachable from Discover (PHASE_TRANSITIONS.welcome
-    // excludes it), so step through Discover the way a user does. It opens
-    // with no analyzed files, which is the empty state this audits.
+    // Organize opens only from Discover, and only once a file is analyzed.
+    // Seed one analyzed file (real analysis needs a model), then step through
+    // Discover the way a user does. This audits the review queue with that
+    // file in it: the file grid, bulk actions and the move bar.
+    const files = createSyntheticFiles(app, ['a11y-quarterly-budget.txt']);
+    await seedAnalyzedFiles(window, files);
     await nav.goToPhase(PHASES.DISCOVER);
     await nav.goToPhase(PHASES.ORGANIZE);
     await window.waitForTimeout(500);

@@ -21,16 +21,28 @@ const { test, expect } = require('@playwright/test');
 const { launchApp, closeApp, waitForAppReady } = require('./helpers/electronApp');
 const { NavigationPage } = require('./helpers/pageObjects');
 const { PHASES } = require('./helpers/testFixtures');
+const { createSyntheticFiles, seedAnalyzedFiles } = require('./helpers/seedState');
+
+const SEEDED_FILE_NAME = 'quarterly-budget.txt';
+
+// Block reasons from uiSlice (TRANSITION_BLOCK_REASONS and
+// PHASE_PREREQUISITE_REASONS): a closed tab's tooltip, which is also its
+// accessible description, states why.
+const ORGANIZE_FROM_WELCOME_REASON = 'Organize opens from Discover. Go to Discover first.';
+const ORGANIZE_NEEDS_ANALYZED_FILE_REASON = 'Analyze at least one file first.';
+const COMPLETE_NEEDS_ORGANIZED_FILE_REASON = 'Process at least one file to view results.';
 
 /**
- * Open the Organize phase the way a user does. Organize is not reachable from
- * Welcome (PHASE_TRANSITIONS.welcome lists only Setup and Discover), so the
- * Organize tab stays disabled until the app is on Discover. Probing it from
- * Welcome used to make every "requires navigation" test skip itself.
- * goToPhase throws when a step is unreachable, so a real navigation
- * regression fails these tests instead of skipping them.
+ * Open the Organize phase the way a user does. Organize opens only from
+ * Discover, and only once Discover has an analyzed file (the same check as
+ * Discover's Continue). Real analysis needs a model, so one analyzed file is
+ * seeded into the persisted state first; the app then reaches Organize
+ * through its real tabs. goToPhase throws when a step is unreachable, so a
+ * navigation regression fails these tests instead of skipping them.
  */
-async function goToOrganize(nav, window) {
+async function goToOrganize(app, nav, window) {
+  const files = createSyntheticFiles(app, [SEEDED_FILE_NAME]);
+  await seedAnalyzedFiles(window, files);
   await nav.goToPhase(PHASES.DISCOVER);
   await nav.goToPhase(PHASES.ORGANIZE);
   await window.waitForTimeout(500);
@@ -60,11 +72,46 @@ test.describe('Organize Phase - Navigation', () => {
   });
 
   test('should show Organize button state correctly', async () => {
-    // Check the button state - should be disabled without analyzed files
-    const organizeButton = window.locator('button:has-text("Organize")');
-    const isDisabled = await organizeButton.isDisabled().catch(() => true);
-    console.log('[Test] Organize button disabled (expected without files):', isDisabled);
-    // Button state is valid either way - we're testing the button exists and has a state
+    // A fresh launch is on Welcome, and Organize opens only from Discover.
+    const organizeButton = new NavigationPage(window).getPhaseButton(PHASES.ORGANIZE);
+    await expect(organizeButton).toHaveAttribute('aria-disabled', 'true');
+    await expect(organizeButton).toHaveAccessibleDescription(ORGANIZE_FROM_WELCOME_REASON);
+  });
+});
+
+test.describe('Organize Phase - Closed without analyzed files', () => {
+  let app;
+  let window;
+  let nav;
+
+  test.beforeEach(async () => {
+    const result = await launchApp();
+    app = result.app;
+    window = result.window;
+    await waitForAppReady(window);
+    nav = new NavigationPage(window);
+    await nav.goToPhase(PHASES.DISCOVER);
+  });
+
+  test.afterEach(async () => {
+    await closeApp(app);
+  });
+
+  test('should keep Organize closed with the Discover reason when no files', async () => {
+    // Organize used to open on an empty queue. Now Discover must have an
+    // analyzed file first, and the closed tab says so.
+    const organizeButton = nav.getPhaseButton(PHASES.ORGANIZE);
+    await expect(organizeButton).toHaveAttribute('aria-disabled', 'true');
+    await expect(organizeButton).toHaveAccessibleDescription(ORGANIZE_NEEDS_ANALYZED_FILE_REASON);
+    expect(await nav.isPhaseAccessible(PHASES.ORGANIZE)).toBe(false);
+
+    // Clicking the closed tab explains itself and stays on Discover.
+    await organizeButton.click({ force: true });
+    await expect(window.getByText(ORGANIZE_NEEDS_ANALYZED_FILE_REASON).first()).toBeVisible({
+      timeout: 5000
+    });
+    expect(await nav.getActivePhase()).toBe(PHASES.DISCOVER);
+    await expect(window.getByTestId('phase-discover-content')).toBeVisible();
   });
 });
 
@@ -79,7 +126,7 @@ test.describe('Organize Phase - File Section (requires navigation)', () => {
     window = result.window;
     await waitForAppReady(window);
     nav = new NavigationPage(window);
-    await goToOrganize(nav, window);
+    await goToOrganize(app, nav, window);
   });
 
   test.afterEach(async () => {
@@ -88,17 +135,11 @@ test.describe('Organize Phase - File Section (requires navigation)', () => {
 
   test('should have files ready section when on Organize phase', async () => {
     const filesSectionHeading = window.locator('h2:has-text("Files ready for organization")');
-    const isVisible = await filesSectionHeading.isVisible().catch(() => false);
-    console.log('[Test] Files ready section visible:', isVisible);
-    expect(isVisible).toBe(true);
-  });
-
-  test('should show empty state when no files', async () => {
-    const emptyState = window.locator(
-      ':has-text("No files ready yet"), :has-text("All files organized")'
-    );
-    const count = await emptyState.count();
-    console.log('[Test] Empty state elements:', count);
+    await expect(filesSectionHeading).toBeVisible();
+    // The seeded analyzed file is the one queued for review.
+    await expect(window.getByText('1 file', { exact: true })).toBeVisible();
+    await expect(window.getByText(SEEDED_FILE_NAME).first()).toBeVisible();
+    await expect(window.getByText('No files ready yet')).toHaveCount(0);
   });
 
   test('should have back to Discovery button when on Organize phase', async () => {
@@ -110,9 +151,12 @@ test.describe('Organize Phase - File Section (requires navigation)', () => {
 
   test('should have View Results button when on Organize phase', async () => {
     const viewResultsButton = window.locator('button:has-text("View Results")');
-    const isVisible = await viewResultsButton.isVisible().catch(() => false);
-    console.log('[Test] View Results button visible:', isVisible);
-    expect(isVisible).toBe(true);
+    await expect(viewResultsButton).toBeVisible();
+    // Nothing is organized yet, so results stay closed: the button and the tab.
+    await expect(viewResultsButton).toBeDisabled();
+    const completeTab = nav.getPhaseButton(PHASES.COMPLETE);
+    await expect(completeTab).toHaveAttribute('aria-disabled', 'true');
+    await expect(completeTab).toHaveAccessibleDescription(COMPLETE_NEEDS_ORGANIZED_FILE_REASON);
   });
 });
 
@@ -127,7 +171,7 @@ test.describe('Organize Phase - Quick Access Toolbar (requires navigation)', () 
     window = result.window;
     await waitForAppReady(window);
     nav = new NavigationPage(window);
-    await goToOrganize(nav, window);
+    await goToOrganize(app, nav, window);
   });
 
   test.afterEach(async () => {
@@ -135,16 +179,15 @@ test.describe('Organize Phase - Quick Access Toolbar (requires navigation)', () 
   });
 
   test('should have status button when on Organize phase', async () => {
-    const statusButton = window.locator('button:has-text("Ready")');
-    const isVisible = await statusButton.isVisible().catch(() => false);
-    console.log('[Test] Status button visible:', isVisible);
-    expect(isVisible).toBe(true);
+    const statusButton = window.locator('button[aria-label^="View file status"]');
+    await expect(statusButton).toBeVisible();
+    await expect(statusButton).toContainText('1 Ready');
   });
 
   test('should have smart folders button when folders configured', async () => {
+    // A fresh profile has the default Uncategorized folder.
     const foldersButton = window.locator('button:has-text("Smart Folders")');
-    const count = await foldersButton.count();
-    console.log('[Test] Smart Folders button count:', count);
+    await expect(foldersButton.first()).toBeVisible();
   });
 });
 
@@ -159,7 +202,7 @@ test.describe('Organize Phase - Undo/Redo Integration (requires navigation)', ()
     window = result.window;
     await waitForAppReady(window);
     nav = new NavigationPage(window);
-    await goToOrganize(nav, window);
+    await goToOrganize(app, nav, window);
   });
 
   test.afterEach(async () => {
@@ -170,9 +213,8 @@ test.describe('Organize Phase - Undo/Redo Integration (requires navigation)', ()
     const undoButton = window.locator('button[aria-label*="Undo"], button:has-text("Undo")');
     const redoButton = window.locator('button[aria-label*="Redo"], button:has-text("Redo")');
 
-    const undoCount = await undoButton.count();
-    const redoCount = await redoButton.count();
-    console.log('[Test] Undo buttons:', undoCount, 'Redo buttons:', redoCount);
+    await expect(undoButton.first()).toBeVisible();
+    await expect(redoButton.first()).toBeVisible();
   });
 });
 
@@ -192,17 +234,18 @@ test.describe('Organize Phase - API Integration', () => {
   });
 
   test('should have file organization API available', async () => {
+    // Organize moves files through files.organize / files.performOperation.
     const hasAPI = await window.evaluate(() => {
       const files = window.electronAPI?.files;
       return {
-        hasMove: typeof files?.move === 'function',
-        hasRename: typeof files?.rename === 'function',
-        hasCopy: typeof files?.copy === 'function'
+        hasOrganize: typeof files?.organize === 'function',
+        hasPerformOperation: typeof files?.performOperation === 'function'
       };
     });
 
     console.log('[Test] File operations API:', hasAPI);
-    // At least move should be available for organization
+    expect(hasAPI.hasOrganize).toBe(true);
+    expect(hasAPI.hasPerformOperation).toBe(true);
   });
 
   test('should expose organize.batch IPC (dry-run preview and commits)', async () => {
@@ -253,7 +296,7 @@ test.describe('Organize Phase - Modals (requires navigation)', () => {
     window = result.window;
     await waitForAppReady(window);
     nav = new NavigationPage(window);
-    await goToOrganize(nav, window);
+    await goToOrganize(app, nav, window);
   });
 
   test.afterEach(async () => {
@@ -261,34 +304,22 @@ test.describe('Organize Phase - Modals (requires navigation)', () => {
   });
 
   test('should open status overview modal', async () => {
-    const statusButton = window.locator('button:has-text("Ready")');
-    if (await statusButton.isVisible().catch(() => false)) {
-      await statusButton.click();
-      await window.waitForTimeout(300);
+    await window.locator('button[aria-label^="View file status"]').click();
+    const dialog = window.getByRole('dialog', { name: /file status overview/i });
+    await expect(dialog).toBeVisible({ timeout: 5000 });
 
-      const modalTitle = window.locator(
-        'h2:has-text("File Status Overview"), h3:has-text("File Status Overview")'
-      );
-      const isVisible = await modalTitle.isVisible().catch(() => false);
-      console.log('[Test] Status modal visible:', isVisible);
-
-      await window.keyboard.press('Escape');
-    }
+    // The footer Close button; Escape depends on where focus landed.
+    await dialog.getByRole('button', { name: 'Close', exact: true }).last().click();
+    await expect(dialog).toBeHidden({ timeout: 5000 });
   });
 
   test('should open smart folders modal when available', async () => {
-    const foldersButton = window.locator('button:has-text("Smart Folders")');
-    if (await foldersButton.isVisible().catch(() => false)) {
-      await foldersButton.click();
-      await window.waitForTimeout(300);
+    await window.locator('button:has-text("Smart Folders")').first().click();
+    const dialog = window.getByRole('dialog', { name: /target smart folders/i });
+    await expect(dialog).toBeVisible({ timeout: 5000 });
 
-      const modalTitle = window.locator(':has-text("Target Smart Folders")');
-      const count = await modalTitle.count();
-      console.log('[Test] Smart folders modal elements:', count);
-
-      await window.keyboard.press('Escape');
-    } else {
-      console.log('[Test] Smart folders button not visible (no folders configured)');
-    }
+    // The footer Close button; Escape depends on where focus landed.
+    await dialog.getByRole('button', { name: 'Close', exact: true }).last().click();
+    await expect(dialog).toBeHidden({ timeout: 5000 });
   });
 });

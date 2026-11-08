@@ -16,6 +16,7 @@ const { test, expect } = require('@playwright/test');
 const { launchApp, closeApp, waitForAppReady } = require('./helpers/electronApp');
 const { pressOpenSearchShortcut } = require('./helpers/e2eShortcuts');
 const { NavigationPage } = require('./helpers/pageObjects');
+const { createSyntheticFiles, seedAnalyzedFiles } = require('./helpers/seedState');
 const { PHASES, SELECTORS, TIMEOUTS } = require('./helpers/testFixtures');
 
 test.describe('Beta Workflow — Setup Phase', () => {
@@ -311,6 +312,9 @@ test.describe('Beta Workflow — Organize Phase', () => {
   });
 
   test('should navigate to Organize phase', async () => {
+    // Organize opens once Discover has an analyzed file; seed one (real
+    // analysis needs a model).
+    await seedAnalyzedFiles(window, createSyntheticFiles(app, ['beta-invoice.txt']));
     await nav.goToPhase(PHASES.DISCOVER);
     await window.waitForTimeout(400);
     const success = await nav.goToPhase(PHASES.ORGANIZE);
@@ -330,29 +334,17 @@ test.describe('Beta Workflow — Organize Phase', () => {
     expect(phaseContent).toBe(true);
   });
 
-  test('should show empty state when no files analyzed', async () => {
+  test('should keep Organize closed when no files analyzed', async () => {
+    // With nothing analyzed, Organize no longer opens on an empty queue: the
+    // tab stays closed and its tooltip gives Discover's reason.
     await nav.goToPhase(PHASES.DISCOVER);
-    await window.waitForTimeout(400);
-    const organizeOk = await nav.goToPhase(PHASES.ORGANIZE);
-    expect(organizeOk).toBe(true);
-    await window.waitForTimeout(500);
-
-    const organizeState = await window.evaluate(() => {
-      const text = document.body.textContent || '';
-      return {
-        hasNoFiles: text.includes('No files') || text.includes('no files ready'),
-        hasSmartFolderTab: text.includes('Smart Folders') || text.includes('Smart Folder'),
-        hasReadyTab: text.includes('Ready') || text.includes('Ready to Organize'),
-        hasOrganizeHeading: /organize/i.test(text)
-      };
-    });
-
-    expect(
-      organizeState.hasNoFiles ||
-        organizeState.hasSmartFolderTab ||
-        organizeState.hasReadyTab ||
-        organizeState.hasOrganizeHeading
-    ).toBe(true);
+    const organizeTab = nav.getPhaseButton(PHASES.ORGANIZE);
+    await expect(organizeTab).toHaveAttribute('aria-disabled', 'true');
+    await expect(organizeTab).toHaveAccessibleDescription('Analyze at least one file first.');
+    // Clicking the closed tab does not leave Discover.
+    await organizeTab.click({ force: true });
+    await window.waitForTimeout(300);
+    expect(await nav.getActivePhase()).toBe(PHASES.DISCOVER);
   });
 
   test('should have undo/redo API available', async () => {
