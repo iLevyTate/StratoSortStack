@@ -140,6 +140,19 @@ async function captureSourceMetadata(sourcePath) {
   }
 }
 
+/**
+ * @param {string} filePath
+ * @returns {Promise<boolean>}
+ */
+async function pathExists(filePath) {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** @param {unknown} destination */
 function destinationTargetsUncategorized(destination) {
   const normalized = String(destination || '')
@@ -478,6 +491,9 @@ async function handleBatchOrganize(params) {
       const batchStartTime = Date.now();
       let shouldRollback = false;
       let rollbackReason = null;
+      // Permission failures since the last successful move; a run of them
+      // means permissions are gone for the batch, not for one file.
+      let consecutivePermissionFailures = 0;
       const processedKeys = new Set(); // For idempotency
       const mkdirPromises = new Map(); // Deduplicate mkdir across concurrent pLimit workers
       let postBatchPersistence = { undoRecorded: true, pathIndexUpdated: true };
@@ -724,7 +740,15 @@ async function handleBatchOrganize(params) {
             // the first worker creates the promise, all others await it.
             const destDir = path.dirname(op.destination);
             if (!mkdirPromises.has(destDir)) {
-              mkdirPromises.set(destDir, fs.mkdir(destDir, { recursive: true }));
+              mkdirPromises.set(
+                destDir,
+                fs.mkdir(destDir, { recursive: true }).catch((mkdirError) => {
+                  // Never cache a failure for the whole batch: a later op to
+                  // this folder retries the mkdir instead of reusing it.
+                  mkdirPromises.delete(destDir);
+                  throw mkdirError;
+                })
+              );
             }
             await mkdirPromises.get(destDir);
 
@@ -738,16 +762,51 @@ async function handleBatchOrganize(params) {
 
             // Handle file move with collision handling
             // TOCTOU fix: removed verifySourceFile pre-check, handle ENOENT from move directly
-            let moveResult;
-            try {
-              // Use timeout for file operations to prevent hangs
-              moveResult = await withTimeout(
+            // Use timeout for file operations to prevent hangs
+            const moveWithTimeout = () =>
+              withTimeout(
                 performFileMove(op, log, computeFileChecksum, abortController.signal),
                 TIMEOUTS.FILE_COPY,
                 `File move ${path.basename(op.source)}`
               );
-            } catch (moveError) {
-              if (moveError.code === 'ENOENT') {
+            let moveResult;
+            try {
+              moveResult = await moveWithTimeout();
+            } catch (firstMoveError) {
+              let moveError = firstMoveError;
+              // A rename ENOENT is either a missing source or a destination
+              // folder removed after the mkdir above (user, sync client).
+              // Nothing moved in either case. When the source is still
+              // there, recreate the folder (the per-batch mkdir is cached)
+              // and retry once instead of calling the source missing.
+              if (moveError.code === 'ENOENT' && (await pathExists(op.source))) {
+                log.warn('[FILE-OPS] Destination folder missing at move time, recreating', {
+                  batchId,
+                  index: i,
+                  destination: path.basename(op.destination)
+                });
+                mkdirPromises.delete(destDir);
+                // Same hard-cancel gate as before the first attempt.
+                if (shouldRollback || abortController.signal.aborted) {
+                  if (!shouldRollback) recordCancelledOp(op);
+                  return;
+                }
+                try {
+                  await fs.mkdir(destDir, { recursive: true });
+                  moveResult = await moveWithTimeout();
+                  moveError = null;
+                } catch (retryError) {
+                  moveError = retryError;
+                  if (retryError.code === 'ENOENT' && (await pathExists(op.source))) {
+                    const missingDir = /** @type {NodeJS.ErrnoException} */ (
+                      new Error(`Destination folder missing: ${destDir}`)
+                    );
+                    missingDir.code = 'ENOENT';
+                    throw missingDir;
+                  }
+                }
+              }
+              if (moveError && moveError.code === 'ENOENT') {
                 log.warn('[FILE-OPS] Source file not found (ENOENT), cannot move', {
                   batchId,
                   index: i,
@@ -766,7 +825,7 @@ async function handleBatchOrganize(params) {
                 failCount++;
                 return;
               }
-              throw moveError;
+              if (moveError) throw moveError;
             }
 
             if (moveResult && moveResult.cancelled) {
@@ -803,6 +862,7 @@ async function handleBatchOrganize(params) {
               // Verify state is consistent (dest exists, source gone)
               await verifyMoveCompletion(op.source, resolvedDestination, log);
 
+              consecutivePermissionFailures = 0;
               // A duplicate skip still mutates disk state by deleting the source file.
               // Track it so a later critical failure can restore the original path.
               completedOperations.push({
@@ -860,6 +920,7 @@ async function handleBatchOrganize(params) {
             // Post-move verification: ensure destination exists and source is gone
             await verifyMoveCompletion(op.source, op.destination, log);
 
+            consecutivePermissionFailures = 0;
             // Push to completedOperations IMMEDIATELY after verify so rollback
             // can restore this file if another concurrent task triggers abort
             completedOperations.push({
@@ -880,8 +941,10 @@ async function handleBatchOrganize(params) {
 
             // Not awaited: the done mark need not be durable before the next
             // op starts. A crash here leaves the op in_progress with its
-            // source metadata, which is exactly the state resume recognises
-            // the destination occupant from. Only the started mark above is
+            // source metadata, from which resume recognises the moved file at
+            // the planned destination or, after a collision walk / UUID
+            // fallback, under its suffixed sibling name (OrganizeResumeService
+            // findMovedSibling). Only the started mark above is
             // awaited (it must precede the rename). completeOrganizeBatch at
             // the end awaits a flush that covers every mark issued before it.
             void processingState?.markOrganizeOpDone?.(batchId, i, {
@@ -923,8 +986,15 @@ async function handleBatchOrganize(params) {
             await processingState?.markOrganizeOpError?.(batchId, i, errorMessage);
 
             // Determine if critical error (always triggers rollback) or if
-            // strict mode makes any failure terminal.
-            const isCriticalError = isCriticalFileError(error);
+            // strict mode makes any failure terminal. One permission denial
+            // is a per-file failure; a run of them is systemic.
+            let isCriticalError = isCriticalFileError(error);
+            if (isPermissionFileError(error)) {
+              consecutivePermissionFailures++;
+              if (consecutivePermissionFailures >= PERMISSION_FAILURE_ESCALATION_THRESHOLD) {
+                isCriticalError = true;
+              }
+            }
             const rollbackThisFailure = isCriticalError || strictMode;
 
             if (rollbackThisFailure) {
@@ -1013,7 +1083,7 @@ async function handleBatchOrganize(params) {
         // batch can never resurface in getIncompleteOrganizeBatches and be
         // auto-replayed at next launch.
         if (shouldRollback && completedOperations.length > 0) {
-          return await executeRollback(
+          const rollbackOutcome = await executeRollback(
             completedOperations,
             results,
             failCount,
@@ -1022,6 +1092,38 @@ async function handleBatchOrganize(params) {
             log,
             processingState
           );
+          // Moves the rollback could NOT undo stood on disk: tell the
+          // renderer about them (finally block) and give them an undo entry
+          // and path-index update, like the moves of a batch that finished.
+          // Restored moves get neither.
+          const unrestored = reconcileRolledBackResults(
+            rollbackOutcome,
+            completedOperations,
+            rollbackReason
+          );
+          if (unrestored.length > 0) {
+            movesToBroadcast = unrestored;
+            try {
+              await recordUndoAndUpdateDatabase(
+                batch,
+                rollbackOutcome.results,
+                unrestored.length,
+                undoBatchId,
+                getServiceIntegration,
+                log,
+                abortController.signal,
+                unrestored
+              );
+            } catch (persistError) {
+              // Best-effort: the rollback outcome must still reach the caller.
+              log.warn('[FILE-OPS] Failed to persist moves a rollback could not undo', {
+                batchId,
+                count: unrestored.length,
+                error: persistError?.message || String(persistError)
+              });
+            }
+          }
+          return rollbackOutcome;
         }
 
         // Record undo and update database BEFORE marking the batch complete.
@@ -1268,7 +1370,7 @@ async function handleBatchOrganize(params) {
  * therefore must trigger rollback regardless of the caller's strict flag.
  *
  * Grouped by root cause:
- *  - Permissions:      EACCES, EPERM, EROFS
+ *  - Read-only FS:     EROFS
  *  - Storage/quota:    ENOSPC, EDQUOT, EFBIG
  *  - IO integrity:     EIO, checksum mismatch, verification failed
  *  - Path integrity:   ENAMETOOLONG, EUUID_EXHAUSTED,
@@ -1287,10 +1389,19 @@ async function handleBatchOrganize(params) {
  * nested smart-folder trees on Windows. Demoting it to per-file failure
  * preserves the v2.0.9 outcome (organize the rest, surface the failure
  * for the one file).
+ *
+ * NOTE: `EACCES` / `EPERM` (and their mapped FILE_ACCESS_DENIED /
+ * PERMISSION_DENIED) are NOT critical on their own either. The same codes
+ * are FILE_LOCK_ERROR_CODES above: a Windows AV/indexer hold, a
+ * delete-pending handle, or one source folder the user cannot write
+ * surfaces as EPERM/EACCES for that one file, and rolling back every other
+ * completed move for it discarded the whole organize. A run of
+ * PERMISSION_FAILURE_ESCALATION_THRESHOLD permission failures with no
+ * successful move in between is still treated as systemic (permissions
+ * revoked on the destination) and rolls the batch back; see
+ * isPermissionFileError and its use in handleBatchOrganize.
  */
 const CRITICAL_ERROR_CODES = new Set([
-  'EACCES',
-  'EPERM',
   'EROFS',
   'ENOSPC',
   'EDQUOT',
@@ -1312,13 +1423,37 @@ const CRITICAL_ERROR_CODES = new Set([
 const CRITICAL_MAPPED_ERROR_CODES = new Set([
   'DISK_FULL',
   'QUOTA_EXCEEDED',
-  'FILE_ACCESS_DENIED',
-  'PERMISSION_DENIED',
   'IO_ERROR',
   'TOO_MANY_OPEN_FILES'
 ]);
 
 const CRITICAL_MESSAGE_FRAGMENTS = ['checksum mismatch', 'verification failed'];
+
+const PERMISSION_ERROR_CODES = new Set([
+  'EACCES',
+  'EPERM',
+  'FILE_ACCESS_DENIED',
+  'PERMISSION_DENIED'
+]);
+
+/**
+ * Permission failures in a row (no successful move in between) after which
+ * the batch treats them as systemic and rolls back, as it does for ENOSPC.
+ */
+const PERMISSION_FAILURE_ESCALATION_THRESHOLD = 3;
+
+/**
+ * Whether a failed op's error is a permission/access denial. On its own that
+ * is a per-file failure (see CRITICAL_ERROR_CODES); repeated, it escalates.
+ * @param {any} error
+ * @returns {boolean}
+ */
+function isPermissionFileError(error) {
+  if (!error || typeof error !== 'object') return false;
+  if (typeof error.code === 'string' && PERMISSION_ERROR_CODES.has(error.code)) return true;
+  const originalCode = error.metadata?.originalCode;
+  return typeof originalCode === 'string' && PERMISSION_ERROR_CODES.has(originalCode);
+}
 
 /**
  * Check if an error is critical enough to trigger rollback regardless of
@@ -1344,6 +1479,74 @@ function isCriticalFileError(error) {
   }
   const message = typeof error.message === 'string' ? error.message : '';
   return CRITICAL_MESSAGE_FRAGMENTS.some((fragment) => message.includes(fragment));
+}
+
+/**
+ * Rewrite the per-op results of a rolled-back batch to match the disk.
+ * executeRollback hands back the rows pushed before the rollback, so every
+ * completed op still read `success: true` and the renderer filed restored
+ * files under destinations the rollback had just emptied. A restored op
+ * becomes `success: false, rolledBack: true`; an op whose restore failed
+ * keeps `success: true` (the file really is at its destination) and gains
+ * `rollbackFailed: true`. A completed op that never pushed its row (it
+ * finished while the failing op was already rolling back) gets one. Mutates
+ * the rows array in place.
+ * @param {any} rollbackOutcome - executeRollback's return value
+ * @param {Array<{ index: number, source: string, destination: string, rollbackAction?: string }>} completedOperations
+ * @param {string|null} rollbackReason
+ * @returns {Array<{ index: number, source: string, destination: string, rollbackAction?: string }>}
+ *   completed ops that are still at their destination
+ */
+function reconcileRolledBackResults(rollbackOutcome, completedOperations, rollbackReason) {
+  /** @type {Array<Record<string, any>> | null} */
+  const rows = Array.isArray(rollbackOutcome?.results) ? rollbackOutcome.results : null;
+  const rollbackResults = Array.isArray(rollbackOutcome?.rollbackResults)
+    ? rollbackOutcome.rollbackResults
+    : null;
+  if (!rows || !rollbackResults) return [];
+  /** @type {Map<string, { success: boolean, error?: string }>} */
+  const outcomeBySource = new Map();
+  for (const rr of rollbackResults) {
+    if (rr && typeof rr.file === 'string') outcomeBySource.set(rr.file, rr);
+  }
+  const unrestored = [];
+  for (const completed of completedOperations) {
+    const outcome = outcomeBySource.get(completed.source);
+    if (!outcome) continue;
+    const rowIndex = rows.findIndex(
+      (r) => r && r.success === true && r.source === completed.source
+    );
+    // An op that completed while the failing op was already rolling the
+    // batch back never pushed its row; every op that changed the disk
+    // still gets one.
+    const row =
+      rowIndex !== -1
+        ? rows[rowIndex]
+        : {
+            source: completed.source,
+            destination: completed.destination,
+            operation: 'move',
+            ...(completed.rollbackAction === 'restore_duplicate_source'
+              ? { skipped: true, reason: 'duplicate' }
+              : {})
+          };
+    /** @type {Record<string, any>} */
+    let rewritten;
+    if (outcome.success) {
+      rewritten = {
+        ...row,
+        success: false,
+        rolledBack: true,
+        error: rollbackReason || 'Batch rolled back'
+      };
+    } else {
+      unrestored.push(completed);
+      rewritten = { ...row, success: true, rollbackFailed: true, rollbackError: outcome.error };
+    }
+    if (rowIndex !== -1) rows[rowIndex] = rewritten;
+    else rows.push(rewritten);
+  }
+  return unrestored;
 }
 
 /**
@@ -1417,31 +1620,42 @@ async function performFileMove(op, log, checksumFn, abortSignal = null) {
   const baseName = ext.length > 0 ? op.destination.slice(0, -ext.length) : op.destination;
   let operationComplete = false;
 
+  const advanceToNextCandidate = () => {
+    counter++;
+    // Single source of truth so preview and execute produce identical
+    // suffixed paths; see formatNumberedCollisionCandidate at top of file.
+    uniqueDestination = formatNumberedCollisionCandidate(op.destination, counter);
+    const maxPathLength = getEffectiveMaxPathLength();
+    if (uniqueDestination.length > maxPathLength) {
+      const err = /** @type {NodeJS.ErrnoException} */ (
+        new Error(
+          `Destination path exceeds platform limit (${uniqueDestination.length} > ${maxPathLength})`
+        )
+      );
+      err.code = 'PATH_TOO_LONG';
+      throw err;
+    }
+  };
+
   while (!operationComplete && counter < MAX_NUMERIC_RETRIES) {
     try {
       await renameWithRetry(op.source, uniqueDestination, log);
       operationComplete = true;
     } catch (renameError) {
       if (renameError.code === 'EEXIST') {
-        counter++;
-        // Single source of truth so preview and execute produce identical
-        // suffixed paths; see formatNumberedCollisionCandidate at top of file.
-        uniqueDestination = formatNumberedCollisionCandidate(op.destination, counter);
-        const maxPathLength = getEffectiveMaxPathLength();
-        if (uniqueDestination.length > maxPathLength) {
-          const err = /** @type {NodeJS.ErrnoException} */ (
-            new Error(
-              `Destination path exceeds platform limit (${uniqueDestination.length} > ${maxPathLength})`
-            )
-          );
-          err.code = 'PATH_TOO_LONG';
-          throw err;
-        }
+        advanceToNextCandidate();
         continue;
       } else if (renameError.code === 'EXDEV') {
-        // Cross-device move
-        await performCrossDeviceMove(op.source, uniqueDestination, log, checksumFn);
-        operationComplete = true;
+        // Cross-device move. Another writer can take the name while the copy
+        // runs; the no-replace publish then refuses and the walk moves on to
+        // the next suffix, exactly like a same-device EEXIST.
+        try {
+          await performCrossDeviceMove(op.source, uniqueDestination, log, checksumFn);
+          operationComplete = true;
+        } catch (crossDeviceError) {
+          if (!isNameTakenError(crossDeviceError)) throw crossDeviceError;
+          advanceToNextCandidate();
+        }
       } else {
         throw renameError;
       }
@@ -1454,6 +1668,20 @@ async function performFileMove(op, log, checksumFn, abortSignal = null) {
   }
 
   return { destination: uniqueDestination };
+}
+
+/**
+ * Whether a failed move means "that name is taken": a raw EEXIST, or the
+ * FileSystemError(FILE_EXISTS) crossDeviceMove wraps its publish-time EEXIST in.
+ * @param {any} error
+ * @returns {boolean}
+ */
+function isNameTakenError(error) {
+  return (
+    error?.code === 'EEXIST' ||
+    error?.code === 'FILE_EXISTS' ||
+    error?.metadata?.originalCode === 'EEXIST'
+  );
 }
 
 /**
@@ -1541,8 +1769,13 @@ async function performUUIDFallback(op, baseName, ext, log, checksumFn) {
     } catch (error) {
       if (error.code === 'EEXIST') continue;
       if (error.code === 'EXDEV') {
-        await performCrossDeviceMove(op.source, uniqueDestination, log, checksumFn);
-        return uniqueDestination;
+        try {
+          await performCrossDeviceMove(op.source, uniqueDestination, log, checksumFn);
+          return uniqueDestination;
+        } catch (crossDeviceError) {
+          if (isNameTakenError(crossDeviceError)) continue;
+          throw crossDeviceError;
+        }
       }
       throw error;
     }

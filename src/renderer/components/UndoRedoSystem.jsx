@@ -930,6 +930,17 @@ export function UndoRedoProvider({ children }) {
       try {
         const result = await actionConfig.execute();
 
+        // Main rolled the batch back after a critical error: the moves were
+        // reversed and main recorded no history for them, so a local entry
+        // would aim Undo at main's previous action. The caller's onExecute
+        // owns the one error message for it.
+        if (result?.rolledBack === true) {
+          logger.warn('Action rolled back by main; not added to undo history', {
+            description: actionConfig.description
+          });
+          return result;
+        }
+
         undoStack.push({
           type: actionConfig.type,
           description: actionConfig.description,
