@@ -7,6 +7,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { builtinModules } = require('module');
 const { INTEGRITY_PROTECTED_PATHS } = require('./verify-electron-fuses-config');
 
 const REQUIRED_NATIVE_MODULE_PATHS = [
@@ -278,17 +279,23 @@ let workerBundleNamesCache = null;
  */
 function getWorkerBundleNames() {
   if (!workerBundleNamesCache) {
-    const configs = require('../webpack.main.config.js')({}, { mode: 'production' });
-    const mainConfig = (Array.isArray(configs) ? configs : [configs]).find(
-      (config) =>
-        config && config.entry && Object.prototype.hasOwnProperty.call(config.entry, 'main')
+    workerBundleNamesCache = Object.keys(getMainWebpackConfig().entry).filter(
+      (name) => name !== 'main'
     );
-    if (!mainConfig) {
-      throw new Error('webpack.main.config.js has no config with a "main" entry');
-    }
-    workerBundleNamesCache = Object.keys(mainConfig.entry).filter((name) => name !== 'main');
   }
   return workerBundleNamesCache;
+}
+
+/** The webpack.main.config.js config that builds dist/main.js and the workers. */
+function getMainWebpackConfig() {
+  const configs = require('../webpack.main.config.js')({}, { mode: 'production' });
+  const mainConfig = (Array.isArray(configs) ? configs : [configs]).find(
+    (config) => config && config.entry && Object.prototype.hasOwnProperty.call(config.entry, 'main')
+  );
+  if (!mainConfig) {
+    throw new Error('webpack.main.config.js has no config with a "main" entry');
+  }
+  return mainConfig;
 }
 
 function verifyUnpackedWorkerBundles(resources, labelPrefix, workerNames = getWorkerBundleNames()) {
@@ -298,6 +305,284 @@ function verifyUnpackedWorkerBundles(resources, labelPrefix, workerNames = getWo
       `${labelPrefix} unpacked worker bundle ${name}.js (worker_threads cannot load it from app.asar; check asarUnpack in electron-builder.json)`
     );
   });
+}
+
+// Modules the runtime provides that never resolve from node_modules.
+const RUNTIME_PROVIDED_MODULES = new Set(['electron']);
+
+/**
+ * Package name of a bare require/import specifier ('pino', '@img/colour',
+ * 'tesseract.js/src/x' -> 'tesseract.js'), or null for relative and absolute
+ * paths, URLs, Node built-ins and Electron.
+ */
+function toPackageName(specifier) {
+  if (typeof specifier !== 'string' || specifier === '') return null;
+  if (/^[./]/.test(specifier) || specifier.includes(':')) return null;
+  const segments = specifier.split('/');
+  const name = specifier.startsWith('@') ? segments.slice(0, 2).join('/') : segments[0];
+  if (builtinModules.includes(name) || RUNTIME_PROVIDED_MODULES.has(name)) return null;
+  return name;
+}
+
+/** Removes block comments and whole-line `//` comments (JSDoc mentions are not requires). */
+function stripComments(source) {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .filter((line) => !/^\s*\/\//.test(line))
+    .join('\n');
+}
+
+const LITERAL_REQUIRE_OR_IMPORT = /\b(?:require|import)\(\s*(['"`])([^'"`]+)\1\s*\)/g;
+
+/**
+ * Packages a script loads at runtime through a literal `require('x')` or
+ * `import('x')`. In a webpack bundle those are exactly the externals: every
+ * bundled module became `__webpack_require__(id)`.
+ *
+ * @param {string} source
+ * @returns {string[]} sorted package names
+ */
+function listExternalPackages(source) {
+  const names = new Set();
+  for (const match of stripComments(String(source)).matchAll(LITERAL_REQUIRE_OR_IMPORT)) {
+    const name = toPackageName(match[2]);
+    if (name) names.add(name);
+  }
+  return [...names].sort();
+}
+
+/**
+ * Directory of `packageName` as Node resolves it from `fromDir`, walking up
+ * node_modules folders but never above `rootDir`.
+ */
+function findPackageDir(rootDir, fromDir, packageName) {
+  const root = path.resolve(rootDir);
+  let dir = path.resolve(fromDir);
+  for (;;) {
+    const candidate = path.join(dir, 'node_modules', ...packageName.split('/'));
+    if (fs.existsSync(path.join(candidate, 'package.json'))) return candidate;
+    if (dir === root) return null;
+    const parent = path.dirname(dir);
+    if (parent === dir || !parent.startsWith(root)) return null;
+    dir = parent;
+  }
+}
+
+function readPackageDependencies(packageDir) {
+  const manifest = JSON.parse(fs.readFileSync(path.join(packageDir, 'package.json'), 'utf8'));
+  return {
+    required: Object.keys(manifest.dependencies || {}),
+    optional: Object.keys(manifest.optionalDependencies || {})
+  };
+}
+
+/**
+ * Walks the dependency closure of `rootPackages` as Node resolves it from
+ * `startDir`, confined to `rootDir`.
+ *
+ * @param {object} options
+ * @param {string} options.rootDir Resolution never looks above this directory
+ * @param {string} options.startDir Where the requiring script lives
+ * @param {string[]} options.rootPackages Packages the script requires
+ * @param {(fromDir: string, name: string) => boolean} [options.isShippedElsewhere]
+ *   For an optional dependency that does not resolve: true when the build
+ *   still ships it where resolution cannot reach it (a defect), false when it
+ *   is simply not installed for this platform.
+ * @returns {{ resolved: Map<string, string[]>, missing: Array<{ name: string, chain: string[] }> }}
+ *   `resolved` maps each package directory to the require chain that reached it.
+ */
+function walkDependencyClosure({ rootDir, startDir, rootPackages, isShippedElsewhere }) {
+  /** @type {Map<string, string[]>} */
+  const resolved = new Map();
+  const missing = [];
+  const queue = rootPackages.map((name) => ({
+    name,
+    fromDir: startDir,
+    chain: [name],
+    optional: false
+  }));
+  while (queue.length > 0) {
+    const { name, fromDir, chain, optional } = queue.shift();
+    const packageDir = findPackageDir(rootDir, fromDir, name);
+    if (!packageDir) {
+      if (!optional || (isShippedElsewhere && isShippedElsewhere(fromDir, name))) {
+        missing.push({ name, chain });
+      }
+      continue;
+    }
+    if (resolved.has(packageDir)) continue;
+    resolved.set(packageDir, chain);
+    const { required, optional: optionalDeps } = readPackageDependencies(packageDir);
+    required.forEach((dep) =>
+      queue.push({ name: dep, fromDir: packageDir, chain: [...chain, dep], optional: false })
+    );
+    optionalDeps.forEach((dep) =>
+      queue.push({ name: dep, fromDir: packageDir, chain: [...chain, dep], optional: true })
+    );
+  }
+  return { resolved, missing };
+}
+
+/**
+ * Every package an unpacked worker bundle requires at runtime, with its full
+ * dependency closure, must resolve inside app.asar.unpacked. A worker bundle
+ * runs from app.asar.unpacked/dist, so Node resolves its externals against
+ * app.asar.unpacked/node_modules and each package's dependencies from beside
+ * that package: nothing in that walk reaches app.asar/node_modules, where
+ * dist/main.js finds the same packages. A dependency left in app.asar is a
+ * worker that crashes on load in packaged builds only (the 2026-11 embedding
+ * worker: "Cannot find module 'pino-std-serializers'").
+ *
+ * @returns {string[]} one line per unresolvable package (empty when sound)
+ */
+function findUnresolvedWorkerExternals(resources, workerNames = getWorkerBundleNames()) {
+  const unpackedRoot = path.join(resources, 'app.asar.unpacked');
+  const distDir = path.join(unpackedRoot, 'dist');
+  let asarHeader = null;
+  try {
+    asarHeader = readAsarHeader(path.join(resources, 'app.asar'));
+  } catch {
+    asarHeader = null;
+  }
+  // An optional dependency is a defect only when the build ships it (in
+  // app.asar) on the walk-up path the worker cannot reach.
+  const isShippedElsewhere = (fromDir, name) => {
+    if (!asarHeader) return false;
+    let relative = path.relative(unpackedRoot, fromDir).split(path.sep).join('/');
+    for (;;) {
+      const candidate = [relative, 'node_modules', name].filter(Boolean).join('/');
+      if (findAsarEntry(asarHeader, candidate)) return true;
+      if (!relative) return false;
+      const parent = path.posix.dirname(relative);
+      relative = parent === '.' ? '' : parent;
+    }
+  };
+  const problems = new Set();
+  workerNames.forEach((name) => {
+    const bundlePath = path.join(distDir, `${name}.js`);
+    if (!fs.existsSync(bundlePath)) return; // verifyUnpackedWorkerBundles reports it
+    const { missing } = walkDependencyClosure({
+      rootDir: unpackedRoot,
+      startDir: distDir,
+      rootPackages: listExternalPackages(fs.readFileSync(bundlePath, 'utf8')),
+      isShippedElsewhere
+    });
+    missing.forEach(({ chain }) => problems.add(`${name}.js: ${chain.join(' -> ')}`));
+  });
+  return [...problems];
+}
+
+function verifyWorkerExternalsResolve(
+  resources,
+  labelPrefix,
+  workerNames = getWorkerBundleNames()
+) {
+  const problems = findUnresolvedWorkerExternals(resources, workerNames);
+  if (problems.length > 0) {
+    throw new Error(
+      `${labelPrefix} worker bundles require packages missing from app.asar.unpacked ` +
+        '(a worker resolves its requires from app.asar.unpacked/node_modules, never from ' +
+        `app.asar): ${problems.join('; ')}. Add them to asarUnpack in electron-builder.json.`
+    );
+  }
+}
+
+/** True when webpack leaves `request` as a runtime require (an external). */
+function isWebpackExternal(externals, request) {
+  for (const external of Array.isArray(externals) ? externals : [externals]) {
+    if (typeof external === 'function') {
+      let result;
+      external({ request }, (_error, value) => {
+        result = value;
+      });
+      if (result) return true;
+    } else if (external && Object.prototype.hasOwnProperty.call(external, request)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Packages each worker entry requires at runtime, read from its source module
+ * graph: relative requires are followed, bare ones kept when webpack leaves
+ * them external. The source-level twin of listExternalPackages on a bundle.
+ *
+ * @returns {Map<string, string[]>} worker name -> sorted external packages
+ */
+function getWorkerExternalPackagesFromSource(repoRoot = path.join(__dirname, '..')) {
+  const config = getMainWebpackConfig();
+  const result = new Map();
+  for (const name of getWorkerBundleNames()) {
+    const seen = new Set();
+    const externals = new Set();
+    const queue = [path.resolve(repoRoot, String(config.entry[name]))];
+    while (queue.length > 0) {
+      const file = queue.shift();
+      if (seen.has(file)) continue;
+      seen.add(file);
+      const source = stripComments(fs.readFileSync(file, 'utf8'));
+      for (const match of source.matchAll(LITERAL_REQUIRE_OR_IMPORT)) {
+        const specifier = match[2];
+        if (specifier.startsWith('.')) {
+          const base = path.resolve(path.dirname(file), specifier);
+          const target = [base, `${base}.js`, path.join(base, 'index.js')].find(
+            (candidate) => candidate.endsWith('.js') && fs.existsSync(candidate)
+          );
+          if (target) queue.push(target);
+          continue;
+        }
+        const packageName = toPackageName(specifier);
+        if (packageName && isWebpackExternal(config.externals, specifier)) {
+          externals.add(packageName);
+        }
+      }
+    }
+    result.set(name, [...externals].sort());
+  }
+  return result;
+}
+
+/**
+ * Static twin of findUnresolvedWorkerExternals, run against the repo: every
+ * package in the installed dependency closure of a worker external must match
+ * an electron-builder.json asarUnpack pattern, or the packaged worker cannot
+ * load it. electron-builder re-hoists the production tree when it packs it
+ * (tesseract.js/node_modules/node-fetch ships as node_modules/node-fetch), so
+ * a pattern has to cover the package wherever it lands: both its path in the
+ * repo and a top-level node_modules/<name> must match.
+ *
+ * @returns {string[]} one line per package asarUnpack leaves inside app.asar
+ */
+function findWorkerExternalsOutsideAsarUnpack({
+  repoRoot = path.join(__dirname, '..'),
+  asarUnpack = JSON.parse(fs.readFileSync(path.join(repoRoot, 'electron-builder.json'), 'utf8'))
+    .asarUnpack || [],
+  workerExternals = getWorkerExternalPackagesFromSource(repoRoot)
+} = {}) {
+  const { minimatch } = require('minimatch');
+  const problems = [];
+  for (const [name, rootPackages] of workerExternals) {
+    const { resolved, missing } = walkDependencyClosure({
+      rootDir: repoRoot,
+      startDir: path.join(repoRoot, 'dist'),
+      rootPackages
+    });
+    missing.forEach(({ chain }) => problems.push(`${name}: ${chain.join(' -> ')} (not installed)`));
+    const isUnpacked = (relativeDir) =>
+      asarUnpack.some((pattern) =>
+        minimatch(`${relativeDir}/package.json`, String(pattern), { dot: true })
+      );
+    for (const [packageDir, chain] of resolved) {
+      const relative = path.relative(repoRoot, packageDir).split(path.sep).join('/');
+      const hoisted = `node_modules/${chain[chain.length - 1]}`;
+      if (!isUnpacked(relative) || !isUnpacked(hoisted)) {
+        problems.push(`${name}: ${chain.join(' -> ')} (${relative})`);
+      }
+    }
+  }
+  return problems;
 }
 
 function findAsarEntry(header, relativePath) {
@@ -534,6 +819,7 @@ function verifyWindowsArtifacts(buildRoot, arch, version = readPackageVersion())
   ensureExists(resources, 'Windows resources directory');
   verifyAsarContents(path.join(resources, 'app.asar'), 'Windows app.asar');
   verifyUnpackedWorkerBundles(resources, 'Windows');
+  verifyWorkerExternalsResolve(resources, 'Windows');
   ensureExists(
     path.join(resources, 'assets', 'runtime', 'llama-server.exe'),
     'Windows runtime binary'
@@ -578,6 +864,7 @@ function verifyMacArtifacts(buildRoot, arch) {
     );
     verifyAsarContents(path.join(resources, 'app.asar'), 'macOS app.asar');
     verifyUnpackedWorkerBundles(resources, 'macOS');
+    verifyWorkerExternalsResolve(resources, 'macOS');
     ensureExists(path.join(resources, 'assets', 'runtime', 'llama-server'), 'macOS runtime binary');
     ensureExecutable(
       path.join(resources, 'assets', 'runtime', 'ffmpeg', 'ffmpeg'),
@@ -604,6 +891,7 @@ function verifyLinuxArtifacts(buildRoot, arch) {
   ensureExists(resources, 'Linux resources directory');
   verifyAsarContents(path.join(resources, 'app.asar'), 'Linux app.asar');
   verifyUnpackedWorkerBundles(resources, 'Linux');
+  verifyWorkerExternalsResolve(resources, 'Linux');
   ensureExists(path.join(resources, 'assets', 'runtime', 'llama-server'), 'Linux vision runtime');
   ensureExecutable(
     path.join(resources, 'assets', 'runtime', 'ffmpeg', 'ffmpeg'),
@@ -664,6 +952,10 @@ module.exports = {
   getRequiredWhisperVariantPackages,
   getWindowsZipArtifactName,
   getWorkerBundleNames,
+  getWorkerExternalPackagesFromSource,
+  findUnresolvedWorkerExternals,
+  findWorkerExternalsOutsideAsarUnpack,
+  listExternalPackages,
   MAC_V8_CONTEXT_SNAPSHOT_BY_ARCH,
   NODE_LLAMA_CPP_BUILD_ONLY_FILES,
   NODE_LLAMA_CPP_RUNTIME_FILES,
@@ -679,6 +971,7 @@ module.exports = {
   verifyAsarContents,
   verifyRequiredFiles,
   verifyUnpackedWorkerBundles,
+  verifyWorkerExternalsResolve,
   verifyWhisperVariantFolders,
   verifyWindowsArtifacts
 };

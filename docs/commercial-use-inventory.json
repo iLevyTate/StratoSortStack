@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-08T21:41:28.880Z",
+  "generatedAt": "2026-11-09T01:36:45.556Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
@@ -23078,7 +23078,10 @@
       "**/node_modules/lz4-napi/**/*",
       "**/node_modules/@antoniomuso/lz4-napi-*/**/*",
       "**/node_modules/pino/**/*",
+      "**/node_modules/{@pinojs/redact,atomic-sleep,on-exit-leak-free,pino-abstract-transport,pino-std-serializers,process-warning,quick-format-unescaped,real-require,safe-stable-stringify,sonic-boom,split2}/**/*",
       "**/node_modules/thread-stream/**/*",
+      "**/node_modules/{detect-libc,semver}/**/*",
+      "**/node_modules/{bmp-js,idb-keyval,is-url,node-fetch,opencollective-postinstall,regenerator-runtime,tr46,wasm-feature-detect,webidl-conversions,whatwg-url,zlibjs}/**/*",
       "**/node_modules/piscina/**/*",
       "dist/{ocrWorker,embeddingWorker,logExportWorker,textExtractionWorker,imagePreprocessWorker,umapProjectionWorker,settingsImportParserWorker,oramaRestoreWorker}.js"
     ],
