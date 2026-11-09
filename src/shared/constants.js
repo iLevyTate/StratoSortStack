@@ -153,6 +153,11 @@ const IPC_CHANNELS = {
     ABORT_INVOKE: 'system:abort-invoke',
     GET_LEGAL_NOTICES: 'system:get-legal-notices',
     OPEN_LEGAL_DOCUMENT: 'system:open-legal-document',
+    // Windows: run the bundled, Microsoft-signed Visual C++ Redistributable
+    // (ai.vc-runtime-missing banner "Install now"). No payload.
+    INSTALL_VC_RUNTIME: 'system:install-vc-runtime',
+    // Quit gracefully and start again (e.g. after installing that runtime).
+    RELAUNCH_APP: 'system:relaunch-app',
     // Live Activity panel: a window subscribes to stream sanitized log
     // entries; main pushes them in batches on LIVE_LOG_BATCH (event-only).
     LIVE_LOG_SUBSCRIBE: 'system:live-log:subscribe',

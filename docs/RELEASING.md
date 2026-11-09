@@ -326,6 +326,16 @@ exactly how the settings-import worker broke in #441 — so development runs pro
 - [ ] **A settings import** — exercises `settingsImportParserWorker` (the #441 regression surface).
 - [ ] **Analyze a document and an image** — exercises `textExtractionWorker` and
       `imagePreprocessWorker`.
+- [ ] **Visual C++ Redistributable on a clean Windows** (Windows Sandbox has none:
+      `C:\Windows\System32\msvcp140.dll` and `vcruntime140.dll` absent). Confirm
+      `resources\assets\runtime\vcredist\vc_redist.<arch>.exe` is still Microsoft-signed in the
+      installed copy (`Get-AuthenticodeSignature`: `Valid`, signer `O=Microsoft Corporation`, not
+      Kennedy Applied Sciences). Interactive install: one UAC prompt for Microsoft's installer, a
+      `/passive` progress window, then both DLLs exist and local AI loads with no banner. Repeat
+      declining the UAC prompt: the download-page prompt appears, and in the app **Install now** →
+      UAC → **Restart StratoSort** brings local AI up. Silent install (`/S`): runs `/quiet` without
+      dialogs. An auto-update (`--updated`) must not run it. On the zip build, **Install now** works
+      the same way.
 - [ ] **Tamper test.** Edit one byte inside `app.asar`, then launch: the app **must refuse to
       start**. A successful launch means asar integrity is not being enforced.
 - [ ] **Fuses on the built binary.** `npx @electron/fuses read --app <path to the app>` and compare
@@ -472,6 +482,16 @@ Windows signing uses Azure Trusted Signing (account `stratosort-signing`, certif
 are hardcoded in `scripts/configure-win-signing.js`. The workflow injects `win.azureSignOptions`
 into the per-arch electron-builder config at build time via that script — the block is intentionally
 absent from the committed configs so local and fork builds stay unsigned without Azure credentials.
+
+electron-builder signs every `.exe` it copies through `extraResources` (bundled `ffmpeg.exe` and
+`llama-server.exe` included). The bundled Microsoft Visual C++ Redistributable must keep Microsoft's
+own signature — the installer and the app both refuse it otherwise — so `win.signExts` in
+`electron-builder.json` excludes `vc_redist.x64.exe` / `vc_redist.arm64.exe` (pinned by
+`test/electron-builder-config.test.js`), and `scripts/verify-packaged-artifacts.js` fails if the
+packaged copy's sha256 differs from the staged one or, on a Windows host, if it is not
+Microsoft-signed. Business/commercially licensed builds must confirm Visual Studio redistribution
+licensing before shipping it (`docs/COMMERCIAL_COMPLIANCE.md`).
+
 Credential sources:
 
 - `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` (repo **Variables**) + `AZURE_CLIENT_SECRET` (repo

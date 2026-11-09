@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { fetchDegradedState, dismissDegradedFlag } from '../../store/slices/systemSlice';
-import { whisperIpc } from '../../services/ipc';
+import { whisperIpc, systemIpc } from '../../services/ipc';
 import { createLogger } from '../../../shared/logger';
 
 const bannerLogger = createLogger('DegradedStateBanner');
@@ -16,12 +16,21 @@ const bannerLogger = createLogger('DegradedStateBanner');
 const VC_REDIST_DOWNLOAD_PAGE_URL =
   'https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist';
 
+function openVcRedistDownloadPage() {
+  window.open(VC_REDIST_DOWNLOAD_PAGE_URL, '_blank', 'noopener,noreferrer');
+}
+
 /**
  * Action codes the banner knows how to invoke. Each entry maps the
- * `flag.detail.action.code` set by the main-process subsystem to the
- * concrete renderer function that executes it. Adding a new actionable
- * flag means: (a) raise it from the service with `detail.action.code`,
- * and (b) wire the executor here.
+ * `flag.detail.action.code` (or `flag.detail.secondaryAction.code`) set by
+ * the main-process subsystem to the concrete renderer function that executes
+ * it. Adding a new actionable flag means: (a) raise it from the service with
+ * `detail.action.code`, and (b) wire the executor here.
+ *
+ * An executor resolves to `{ success: false, error }` on failure (shown
+ * inline as "Action failed"). It may also resolve to `{ notice }` (a status
+ * line shown under the message) and `{ followUp: 'restart' }` (replace the
+ * flag's buttons with "Restart StratoSort").
  */
 const ACTION_EXECUTORS = {
   'whisper.install-model': async () => {
@@ -39,12 +48,58 @@ const ACTION_EXECUTORS = {
     }
     return fullRebuild();
   },
-  'ai.open-vc-redist-download': async () => {
+  'ai.install-vc-runtime': async () => {
     // Raised by LlamaService when the native engine cannot load because the
-    // Microsoft Visual C++ Redistributable is missing. Opens Microsoft's
-    // download page in the browser, only on this click; nothing downloads
-    // in-app. The flag stays up: the engine needs an app restart afterwards.
-    window.open(VC_REDIST_DOWNLOAD_PAGE_URL, '_blank', 'noopener,noreferrer');
+    // Microsoft Visual C++ Redistributable is missing. Windows packages carry
+    // Microsoft's signed installer; main verifies and runs it elevated (one
+    // UAC prompt). Nothing is downloaded. The flag stays up until the app
+    // restarts, because the engine only loads in a fresh process.
+    const result = await systemIpc.installVcRuntime();
+    if (result?.success) {
+      return {
+        followUp: 'restart',
+        notice: result.needsRestart
+          ? 'Installed. Windows needs a PC restart to finish; if local AI is still off after restarting StratoSort, restart your PC.'
+          : 'Installed. Restart StratoSort to turn local AI on.'
+      };
+    }
+    if (result?.reason === 'not-bundled') {
+      // Dev build, or a package without the installer: same page as the
+      // "Open download page" button, opened by this click.
+      openVcRedistDownloadPage();
+      return {
+        notice:
+          "This copy of StratoSort doesn't include the installer, so Microsoft's download page was opened. Install it, then restart StratoSort."
+      };
+    }
+    if (result?.cancelled) {
+      return {
+        notice:
+          'Installation was cancelled. Click Install now to try again (Windows asks for permission), or use Open download page.'
+      };
+    }
+    const exitCode = typeof result?.exitCode === 'number' ? ` (exit code ${result.exitCode})` : '';
+    return {
+      success: false,
+      error: `${result?.error || 'The installer did not finish'}${exitCode}. Try Open download page instead.`
+    };
+  },
+  'ai.open-vc-redist-download': async () => {
+    // Opens Microsoft's download page in the browser, only on this click;
+    // nothing downloads in-app. The flag stays up: the engine needs an app
+    // restart afterwards.
+    openVcRedistDownloadPage();
+  }
+};
+
+/**
+ * Follow-up buttons that replace a flag's actions once an action asks for
+ * them (`{ followUp }` from an executor).
+ */
+const FOLLOW_UP_ACTIONS = {
+  restart: {
+    label: 'Restart StratoSort',
+    run: () => systemIpc.relaunchApp()
   }
 };
 
@@ -163,8 +218,7 @@ function DegradedStateBanner() {
   const [actionState, setActionState] = useState({});
 
   const runAction = useCallback(
-    async (flag) => {
-      const action = flag?.detail?.action;
+    async (flag, action = flag?.detail?.action) => {
       if (!action?.code) return;
       const executor = ACTION_EXECUTORS[action.code];
       if (!executor) {
@@ -177,7 +231,10 @@ function DegradedStateBanner() {
       // string comes from the flag's action payload so each
       // subsystem can phrase its own prompt.
       if (action.confirm && !window.confirm(action.confirm)) return;
-      setActionState((prev) => ({ ...prev, [flag.code]: { running: true } }));
+      setActionState((prev) => ({
+        ...prev,
+        [flag.code]: { running: true, runningCode: action.code }
+      }));
       try {
         const result = await executor();
         if (result && result.success === false) {
@@ -189,7 +246,15 @@ function DegradedStateBanner() {
         dispatch(fetchDegradedState());
         setActionState((prev) => {
           const next = { ...prev };
-          delete next[flag.code];
+          if (result?.notice || result?.followUp) {
+            next[flag.code] = {
+              running: false,
+              notice: result.notice,
+              followUp: FOLLOW_UP_ACTIONS[result.followUp] ? result.followUp : undefined
+            };
+          } else {
+            delete next[flag.code];
+          }
           return next;
         });
       } catch (error) {
@@ -205,6 +270,32 @@ function DegradedStateBanner() {
     },
     [dispatch]
   );
+
+  const runFollowUp = useCallback(async (flag, followUpKey) => {
+    const followUp = FOLLOW_UP_ACTIONS[followUpKey];
+    if (!followUp) return;
+    setActionState((prev) => ({
+      ...prev,
+      [flag.code]: { ...prev[flag.code], running: true, error: undefined }
+    }));
+    try {
+      // A successful relaunch quits this window; nothing to update after.
+      await followUp.run();
+    } catch (error) {
+      bannerLogger.error('Banner follow-up failed', {
+        followUp: followUpKey,
+        message: error?.message
+      });
+      setActionState((prev) => ({
+        ...prev,
+        [flag.code]: {
+          ...prev[flag.code],
+          running: false,
+          error: error?.message || 'Action failed'
+        }
+      }));
+    }
+  }, []);
 
   useEffect(() => {
     // Adaptive polling: start at base interval, exponentially back off when
@@ -325,7 +416,14 @@ function DegradedStateBanner() {
           : 'bg-system-yellow-50 text-system-yellow-900 border-system-yellow-200';
         const action = flag.detail?.action;
         const hasExecutor = action?.code && ACTION_EXECUTORS[action.code];
+        const secondaryAction = flag.detail?.secondaryAction;
+        const hasSecondary = secondaryAction?.code && ACTION_EXECUTORS[secondaryAction.code];
         const flagActionState = actionState[flag.code];
+        const running = !!flagActionState?.running;
+        const followUpKey = flagActionState?.followUp;
+        const followUp = followUpKey ? FOLLOW_UP_ACTIONS[followUpKey] : null;
+        const actionButtonClass =
+          'shrink-0 text-xs font-medium underline underline-offset-2 hover:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed';
         return (
           <div
             key={flag.code}
@@ -336,21 +434,50 @@ function DegradedStateBanner() {
             <span className="font-medium">{isError ? 'Degraded mode' : 'Warning'}:</span>
             <span className="flex-1 break-words">
               {flag.message}
+              {flagActionState?.notice ? (
+                <span className="block text-xs opacity-80 mt-1">{flagActionState.notice}</span>
+              ) : null}
               {flagActionState?.error ? (
                 <span className="block text-xs opacity-80 mt-1">
                   Action failed: {flagActionState.error}
                 </span>
               ) : null}
             </span>
-            {hasExecutor ? (
+            {followUp ? (
               <button
                 type="button"
-                className="shrink-0 text-xs font-medium underline underline-offset-2 hover:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed"
+                className={actionButtonClass}
+                onClick={() => runFollowUp(flag, followUpKey)}
+                disabled={running}
+                aria-label={followUp.label}
+              >
+                {running ? 'Working…' : followUp.label}
+              </button>
+            ) : null}
+            {!followUp && hasExecutor ? (
+              <button
+                type="button"
+                className={actionButtonClass}
                 onClick={() => runAction(flag)}
-                disabled={!!flagActionState?.running}
+                disabled={running}
                 aria-label={action.label}
               >
-                {flagActionState?.running ? 'Working…' : action.label}
+                {running && flagActionState?.runningCode !== secondaryAction?.code
+                  ? 'Working…'
+                  : action.label}
+              </button>
+            ) : null}
+            {!followUp && hasSecondary ? (
+              <button
+                type="button"
+                className={actionButtonClass}
+                onClick={() => runAction(flag, secondaryAction)}
+                disabled={running}
+                aria-label={secondaryAction.label}
+              >
+                {running && flagActionState?.runningCode === secondaryAction.code
+                  ? 'Working…'
+                  : secondaryAction.label}
               </button>
             ) : null}
             <button

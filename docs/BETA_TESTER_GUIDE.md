@@ -98,14 +98,16 @@ Always take the **newest** installer for your OS, not one from an older release.
 
 1. Double-click `StratoSortStack-Setup-….exe`.
 2. If **Windows SmartScreen** warns you: click **More info** → **Run anyway** (common for new apps).
-3. If the installer says local AI needs the **Microsoft Visual C++ Redistributable**, click **Yes**,
-   install the **x64** version (**ARM64** on Arm-based PCs) from Microsoft's page that opens, and
-   continue. A fresh Windows install (or Windows Sandbox) does not have it; most PCs already do.
+3. If the PC lacks the **Microsoft Visual C++ Redistributable** (a fresh Windows install or Windows
+   Sandbox does; most PCs already have it), the installer installs Microsoft's copy bundled with
+   StratoSort. Windows shows **one** User Account Control prompt for Microsoft's installer: click
+   **Yes**. If you click **No**, the installer offers Microsoft's download page instead.
 4. Finish the installer, then start **StratoSort Stack** from the Start menu or desktop shortcut.
 
-**If you see a red "Local AI needs the Microsoft Visual C++ Redistributable" banner:** click **Open
-download page**, install the redistributable, then restart StratoSort. Until then analysis, search
-and chat cannot run. Details:
+**If you see a red "Local AI needs the Microsoft Visual C++ Redistributable" banner** (you declined
+the prompt, or you use the zip build): click **Install now**, approve the Windows prompt, then click
+**Restart StratoSort**. If you cannot approve it, use **Open download page** and install it from
+Microsoft. Until then analysis, search and chat cannot run. Details:
 [Install Guide troubleshooting](./INSTALL_GUIDE.md#windows-local-ai-needs-the-microsoft-visual-c-redistributable).
 
 ### macOS

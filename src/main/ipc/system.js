@@ -908,6 +908,59 @@ function registerSystemIpc(servicesOrParams) {
       }
     })
   );
+
+  // Windows: install the Microsoft Visual C++ Redistributable bundled under
+  // resources/assets/runtime/vcredist (ai.vc-runtime-missing "Install now").
+  // The payload is void: the installer path comes from process.resourcesPath
+  // and the app arch only, and is Authenticode-verified before it runs
+  // (utils/vcRuntimeInstaller.js). A second click while one install runs
+  // joins it rather than starting another elevated installer.
+  /** @type {Promise<any> | null} */
+  let vcRuntimeInstallInFlight = null;
+  safeHandle(
+    ipcMain,
+    IPC_CHANNELS.SYSTEM.INSTALL_VC_RUNTIME,
+    createHandler({
+      logger,
+      context,
+      schema: schemas?.ipcVoidPayload,
+      handler: async () => {
+        if (!vcRuntimeInstallInFlight) {
+          const { installBundledVcRuntime } = require('../utils/vcRuntimeInstaller');
+          vcRuntimeInstallInFlight = installBundledVcRuntime({ logger }).finally(() => {
+            vcRuntimeInstallInFlight = null;
+          });
+        }
+        return vcRuntimeInstallInFlight;
+      }
+    })
+  );
+
+  // Quit through the normal graceful shutdown and start again afterwards
+  // (lifecycle.requestRelaunchAfterShutdown). Used after the VC++ runtime is
+  // installed: the native engine only loads in a fresh process.
+  safeHandle(
+    ipcMain,
+    IPC_CHANNELS.SYSTEM.RELAUNCH_APP,
+    createHandler({
+      logger,
+      context,
+      schema: schemas?.ipcVoidPayload,
+      handler: async () => {
+        try {
+          const { app } = require('electron');
+          const { requestRelaunchAfterShutdown } = require('../core/lifecycle');
+          requestRelaunchAfterShutdown('renderer-relaunch-request');
+          // Reply first; quitting tears down the window that is waiting.
+          setImmediate(() => app.quit());
+          return { success: true };
+        } catch (error) {
+          logger.error('[SYSTEM] Failed to relaunch', error);
+          return createErrorResponse(error);
+        }
+      }
+    })
+  );
 }
 
 module.exports = registerSystemIpc;

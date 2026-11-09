@@ -547,6 +547,22 @@ model from jsdelivr and caches it.
 | `STRATOSORT_TESSDATA_SHA256`  | (pinned) | Override the expected sha256. The default `eng` model is pinned in the script and always verified (mismatch aborts); other languages or a custom URL are verified only when this is set. |
 | `SKIP_TESSDATA_RUNTIME`       | `false`  | Skip the download step in CI / fast-dev workflows. The runtime resolver falls back to the userData cache, then the tesseract.js CDN default on first OCR.                                |
 
+### Microsoft Visual C++ Redistributable (Windows packages)
+
+`scripts/setup-vc-redist.js` (`npm run setup:vc-redist -- --arch=x64|arm64`, run by `dist:win*`)
+downloads Microsoft's `vc_redist.<arch>.exe` from `https://aka.ms/vc14/…` into
+`assets/runtime/vcredist/`, following redirects only to Microsoft hosts, and keeps it only if
+PowerShell `Get-AuthenticodeSignature` reports a Valid signature from O=Microsoft Corporation (the
+file is deleted and the build fails otherwise). Version, sha256 and signer go into
+`vc_redist.<arch>.json`. `--check` re-verifies presence, signature and manifest; `--refresh`
+re-downloads a staged copy; `--windows-host-only` (used by `dist` / `package`) does nothing off
+Windows. Windows packages ship the file via `win.extraResources`; the installer and the in-app
+**Install now** action run it when the runtime is missing.
+
+| Variable                           | Default | Purpose                                                                                                                                                                                                                                               |
+| :--------------------------------- | :------ | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `STRATOSORT_VC_REDIST_SKIP_VERIFY` | unset   | Build-time only. Authenticode can only be checked on Windows, so `setup:vc-redist` fails on macOS/Linux hosts unless this is `1`; then it stages (or `--check`s) the file unverified and records `verified: false`. Never set it for a release build. |
+
 ### Whisper variant resolution (audio/video transcription)
 
 `WhisperService` loads `@fugood/whisper.node` via a per-platform/per-GPU variant package. The loader

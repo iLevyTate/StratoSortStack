@@ -85,7 +85,19 @@
   "win": {
     "icon": "assets/icons/win/icon.ico",
     "target": ["nsis", "zip"],
-    "compression": "normal"
+    "compression": "normal",
+    "signExts": ["!vc_redist.x64.exe", "!vc_redist.arm64.exe"],
+    "extraResources": [
+      {
+        "from": "assets/runtime/vcredist/",
+        "to": "assets/runtime/vcredist/",
+        "filter": [
+          "vc_redist.${arch}.exe",
+          "vc_redist.${arch}.json",
+          "NOTICE.md"
+        ]
+      }
+    ]
   },
   "nsis": {
     "oneClick": false,
@@ -152,7 +164,8 @@
         "icons/mac/icon.icns",
         "icons/png/*.png",
         "entitlements.mac.plist",
-        "runtime/**"
+        "runtime/**",
+        "!runtime/vcredist/**"
       ]
     },
     {

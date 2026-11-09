@@ -1225,7 +1225,8 @@ function createMainWindow() {
       'microsoft.com',
       'docs.microsoft.com',
       // Visual C++ Redistributable download page, opened only from the
-      // "Open download page" action on the ai.vc-runtime-missing banner.
+      // "Open download page" action on the ai.vc-runtime-missing banner (or
+      // by "Install now" when this build has no bundled installer).
       'learn.microsoft.com',
       'huggingface.co'
     ];

@@ -61,6 +61,16 @@ risk classification used by the compliance gate is in `docs/commercial-use-inven
   `child_process.spawn()` only — no static or dynamic linking into the application). Sources and
   obligations: see `assets/runtime/ffmpeg/NOTICE.md` (also shipped in the installer).
 
+- **Microsoft Visual C++ Redistributable v14** (`assets/runtime/vcredist/vc_redist.x64.exe` or
+  `vc_redist.arm64.exe`; Windows packages only) Publisher: Microsoft Corporation. Source:
+  Microsoft's permanent links `https://aka.ms/vc14/vc_redist.x64.exe` /
+  `https://aka.ms/vc14/vc_redist.arm64.exe`, staged by `scripts/setup-vc-redist.js` during
+  `npm run dist:win*`. Distributed unmodified (Microsoft's own Authenticode signature, not
+  re-signed) as Distributable Code under the Microsoft Visual Studio license terms; Microsoft's
+  license terms are shown by the installer when it runs interactively. Version and checksum are
+  recorded in the `vc_redist.<arch>.json` manifest next to it; see also
+  `assets/runtime/vcredist/NOTICE.md`. Copyright © Microsoft Corporation. All rights reserved.
+
 - **Tesseract OCR language data** (`assets/runtime/tessdata/eng.traineddata.gz`) Source: the
   `@tesseract.js-data/eng` package as served by `cdn.jsdelivr.net` (the same file tesseract.js would
   otherwise download), staged by `scripts/setup-tessdata-runtime.js` during `npm run dist*`.

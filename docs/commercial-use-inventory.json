@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-09T01:36:45.556Z",
+  "generatedAt": "2026-11-09T13:32:40.398Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
@@ -23126,7 +23126,8 @@
           "icons/mac/icon.icns",
           "icons/png/*.png",
           "entitlements.mac.plist",
-          "runtime/**"
+          "runtime/**",
+          "!runtime/vcredist/**"
         ]
       },
       {

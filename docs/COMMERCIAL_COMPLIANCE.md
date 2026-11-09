@@ -18,7 +18,8 @@ This document tracks whether StratoSort Stack is ready for commercial distributi
 - npm dependencies (direct + transitive) via `package-lock.json`
 - Runtime and packaging configuration via `electron-builder.json`
 - Downloaded model artifacts in `src/shared/modelRegistry.js`
-- Bundled runtime binaries (llama-server, FFmpeg) shipped under `assets/runtime/`
+- Bundled runtime binaries (llama-server, FFmpeg, and on Windows the Microsoft Visual C++
+  Redistributable) shipped under `assets/runtime/`
 - Asset and documentation licensing consistency
 
 ## Evidence Artifacts
@@ -30,6 +31,8 @@ This document tracks whether StratoSort Stack is ready for commercial distributi
 - Dependency audit process notes: see Appendix A below
 - Third-party attribution shipped with installer: `docs/THIRD_PARTY_NOTICES.md`
 - FFmpeg LGPL attribution shipped with installer: `assets/runtime/ffmpeg/NOTICE.md`
+- Visual C++ Redistributable notice shipped with Windows packages:
+  `assets/runtime/vcredist/NOTICE.md` (version, sha256 and signer in `vc_redist.<arch>.json`)
 
 ## Risk Summary (Current Snapshot)
 
@@ -58,12 +61,32 @@ This document tracks whether StratoSort Stack is ready for commercial distributi
 | Vision runtime (`llama-server`)  | bundled                   | bundled                     | bundled                   |
 | Tesseract.js WASM + lang data    | bundled                   | bundled                     | bundled                   |
 | FFmpeg (LGPL)                    | bundled                   | bundled (self-hosted build) | bundled (BtbN static)     |
+| Microsoft VC++ Redistributable   | bundled (see note below)  | not applicable              | not applicable            |
 | LLM/embedding/vision GGUF models | user-fetched at first run | user-fetched at first run   | user-fetched at first run |
 
 End-user post-install setup is limited to selecting and downloading model files. No other manual
 installation steps are required. Linux x64/arm64 dist builds bundle a static LGPL FFmpeg (BtbN);
 Windows arm64 ships without a bundled FFmpeg (no upstream LGPL build) and falls back to a system
 `ffmpeg` on `PATH`. The PATH fallback also applies when `SKIP_FFMPEG_RUNTIME=true`.
+
+### Microsoft Visual C++ Redistributable (Windows)
+
+Windows packages bundle Microsoft's unmodified `vc_redist.x64.exe` / `vc_redist.arm64.exe` (v14, the
+latest supported 2015-2022+ runtime, from `https://aka.ms/vc14/…`), which the installer and the
+in-app **Install now** action run when `msvcp140.dll` / `vcruntime140.dll` are missing.
+`scripts/setup-vc-redist.js` keeps the file only when its Authenticode signature is Valid and from
+O=Microsoft Corporation; `win.signExts` in `electron-builder.json` keeps our signing step from
+re-signing it; `scripts/verify-packaged-artifacts.js` checks the packaged copy's sha256 (and, on a
+Windows host, its Microsoft signature). The redistributable is Microsoft **Distributable Code**
+under the Microsoft Visual Studio license terms, not an npm dependency, so the inventory in
+`docs/commercial-use-inventory.json` does not list it.
+
+- **Personal / noncommercial builds:** fine to ship as is.
+- **Business / commercially licensed builds:** before shipping, the distributor must confirm it
+  holds a Visual Studio license whose terms cover redistribution of the Distributable Code (and meet
+  those terms, e.g. distributing it unmodified and only as part of the application). If that cannot
+  be confirmed, build without it (drop the `win.extraResources` entry): the installer and the app
+  then fall back to opening Microsoft's download page.
 
 ## Required Ongoing Discipline
 
@@ -75,6 +98,8 @@ Windows arm64 ships without a bundled FFmpeg (no upstream LGPL build) and falls 
    to users.
 5. Monitor Llama 3.2 Additional Commercial Terms (700M MAU threshold) — not a current concern at our
    scale.
+6. For a business/commercially licensed Windows build, confirm the Visual Studio redistribution
+   license for the bundled Visual C++ Redistributable before shipping (see above).
 
 ## Ongoing Verification
 

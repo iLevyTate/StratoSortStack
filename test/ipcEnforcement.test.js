@@ -123,12 +123,17 @@ describe('ipcEnforcement', () => {
     // bridge was retired (F-019) — a justified removal, so the pinned count was
     // bumped down to match.
     // Grew to 9 with SYSTEM.LIVE_LOG_BATCH (Live Activity panel push channel).
+    // The concurrency set grew to 23 with SYSTEM.INSTALL_VC_RUNTIME: one
+    // elevated Visual C++ Redistributable install at a time.
     test('EVENT_ONLY_CHANNELS has 9 entries', () => {
       expect(ipcEnforcement.EVENT_ONLY_CHANNELS.size).toBe(9);
     });
 
-    test('CONCURRENCY_LIMITED_CHANNELS has 22 entries', () => {
-      expect(ipcEnforcement.CONCURRENCY_LIMITED_CHANNELS.size).toBe(22);
+    test('CONCURRENCY_LIMITED_CHANNELS has 23 entries', () => {
+      expect(ipcEnforcement.CONCURRENCY_LIMITED_CHANNELS.size).toBe(23);
+      expect(ipcEnforcement.CONCURRENCY_LIMITED_CHANNELS.has('system:install-vc-runtime')).toBe(
+        true
+      );
     });
 
     test('DOWNLOADS_TRIAGE_MUTATION_CHANNELS has 3 entries', () => {

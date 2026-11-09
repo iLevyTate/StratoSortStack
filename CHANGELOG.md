@@ -82,6 +82,18 @@ Changes you will notice:
 
 ### Added
 
+- **The Windows installer installs the Microsoft Visual C++ Redistributable when it is missing.**
+  Windows packages now carry Microsoft's own, unmodified and Microsoft-signed redistributable (v14,
+  x64 or ARM64 to match the build). On a PC without it, such as a fresh Windows install, the
+  installer runs it; Windows asks once for administrator permission because the runtime is installed
+  for the whole PC, while StratoSort itself still installs per user. Auto-updates never run it. If
+  you decline or it fails, the installer offers Microsoft's download page as before. In the app, the
+  "Local AI needs the Microsoft Visual C++ Redistributable" banner now has **Install now** (runs the
+  bundled installer after checking its Microsoft signature, then offers **Restart StratoSort**) next
+  to **Open download page**, which also covers the Windows zip build. The file is fetched from
+  Microsoft at build time only; the app downloads nothing for it. Business or commercially licensed
+  builds must confirm Visual Studio redistribution licensing before shipping it
+  (`docs/COMMERCIAL_COMPLIANCE.md`).
 - **Cloud analysis for audio and video.** Audio and video can use the cloud Analysis provider.
   Speech is still transcribed on the machine (Whisper) and the transcript is sent; video frames
   follow the Privacy rules above. Still photos stay on the local vision model. If the cloud call
