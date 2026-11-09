@@ -412,6 +412,33 @@ feature on).
   through no UAC prompt and no **Install now**, and the memory-limited sandbox can time out the
   vision model.
 
+### Packaged smoke workflow (all platforms)
+
+`.github/workflows/packaged-smoke.yml` is dispatch-only and publishes nothing. Run it on the release
+branch before tagging (Actions → **Packaged Smoke** → **Run workflow**, or
+`gh workflow run packaged-smoke.yml --ref <branch>`). Each leg can be switched off with its input.
+
+- **Windows x64 and arm64** use the same Azure Trusted Signing steps as `release.yml`. With
+  `require_signing` on (the default), the leg fails unless our installer and app carry the Kennedy
+  Applied Sciences signature and `vc_redist.<arch>.exe` keeps Microsoft's, in the built package and
+  in the silently installed copy. That answers the Visual C++ item's signature check above.
+- **macOS arm64** builds unsigned (`CSC_IDENTITY_AUTO_DISCOVERY=false`), so it does not replace the
+  signed and notarized check in `mac-release.yml` and `verify-mac-signing.yml`.
+- **Linux x64** launches `release/build/linux-unpacked` (the files the AppImage wraps) under `xvfb`
+  with `--no-sandbox`.
+- **Every leg** launches the app with a throwaway profile through `scripts/packaged-launch-smoke.js`
+  (no model downloads, updater off). It passes only if coordinated startup completes, the native AI
+  engine loads, and the packaged OCR worker reads a synthetic image, with no `Cannot find module`,
+  worker error, `ERR_DLOPEN_FAILED`, integrity failure or failed startup in the log. A GPU backend
+  that fails and falls back to the CPU (Vulkan on the runner's Hyper-V GPU) is recorded under
+  `gpuFallbacks` and allowed; `NoBinaryFoundError` on the CPU backend fails the run. Logs, the
+  verdict and the Windows signature table are uploaded as
+  `packaged-smoke-<platform>-<arch>-<run number>`.
+- **Still manual.** The runners have no models and click nothing, so the vision model, Atlas, log
+  export, settings import, a large-library restore, the UAC and **Install now** paths, Defender
+  timing, the tamper test and the updater live smoke stay with the checklist and the Windows Sandbox
+  run above.
+
 ### Windows zip (no-install build)
 
 `StratoSortStack-<version>-win-x64.zip` is electron-builder's `zip` target (`win.target` in
