@@ -764,13 +764,45 @@ describe('uiSlice', () => {
         );
       });
 
-      test('Organize -> Results uses View results', () => {
+      test('Organize -> Complete uses View results', () => {
         expect(getPhaseNavigation('organize', 'complete', {}).reason).toBe(
           PHASE_PREREQUISITE_REASONS.needsProcessedFile
         );
         expect(
           getPhaseNavigation('organize', 'complete', { hasProcessedFiles: true }).allowed
         ).toBe(true);
+      });
+
+      // A returning user (the 24h state expiry cleared the queue but kept the
+      // organized history) must still reach Organize and Complete.
+      test('Discover -> Organize also opens with organized history and an empty queue', () => {
+        expect(getPhaseNavigation('discover', 'organize', { hasProcessedFiles: true })).toEqual({
+          allowed: true,
+          reason: null
+        });
+        expect(
+          getPhaseNavigation('discover', 'organize', {
+            hasProcessedFiles: true,
+            hasFailedFiles: true
+          }).allowed
+        ).toBe(true);
+        // First run (no history) keeps its guidance.
+        expect(getPhaseNavigation('discover', 'organize', {}).reason).toBe(
+          PHASE_PREREQUISITE_REASONS.needsAnalyzedFile
+        );
+      });
+
+      test('blocked reasons name the last step Complete, as its tab does', () => {
+        expect(getTransitionBlockReason('discover', 'complete')).toBe(
+          'Complete opens from Organize. Go to Organize first.'
+        );
+        PHASES_IN_ORDER.forEach((from) => {
+          PHASES_IN_ORDER.forEach((to) => {
+            const { reason } = getPhaseNavigation(from, to, {});
+            if (reason) expect(reason).not.toMatch(/\bresults?\b/i);
+          });
+        });
+        expect(PHASE_PREREQUISITE_REASONS.needsProcessedFile).toMatch(/Complete/);
       });
 
       test('a forward jump off the graph stays closed with the graph reason', () => {

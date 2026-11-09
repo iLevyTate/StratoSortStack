@@ -143,6 +143,48 @@ describe('one naming default for Discover and Settings', () => {
     expect(store.getState().ui.settings.namingConvention).toBe('subject-date');
   });
 
+  test('a failed save does not roll back over a newer change to the same key', async () => {
+    let failFirst = () => {};
+    saveMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          failFirst = () => resolve({ success: false, error: 'disk full' });
+        })
+    );
+    const store = makeStore({ namingConvention: 'subject-date' });
+
+    const first = store.dispatch(saveNamingDefaults({ convention: 'date-subject' }));
+    const second = await store.dispatch(saveNamingDefaults({ convention: 'keep-original' }));
+    expect(second.meta.requestStatus).toBe('fulfilled');
+
+    failFirst();
+    expect((await first).meta.requestStatus).toBe('rejected');
+    // The newer, saved value stays; only a key still holding the failed
+    // write's value is put back.
+    expect(store.getState().ui.settings.namingConvention).toBe('keep-original');
+  });
+
+  test('a failed save still restores keys the newer save did not touch', async () => {
+    let failFirst = () => {};
+    saveMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          failFirst = () => resolve({ success: false, error: 'disk full' });
+        })
+    );
+    const store = makeStore({ namingConvention: 'subject-date', separator: '-' });
+
+    const first = store.dispatch(
+      saveNamingDefaults({ namingConvention: 'date-subject', separator: '_' })
+    );
+    await store.dispatch(saveNamingDefaults({ namingConvention: 'keep-original' }));
+
+    failFirst();
+    await first;
+    expect(store.getState().ui.settings.namingConvention).toBe('keep-original');
+    expect(store.getState().ui.settings.separator).toBe('-');
+  });
+
   test('the dialog says it changes the default that Settings shows', () => {
     renderDiscover(makeStore());
     expect(screen.getByText(/default/i, { selector: 'p, span, div' })).toBeInTheDocument();

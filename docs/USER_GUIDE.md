@@ -45,10 +45,12 @@ StratoSort is organized into five phases. You move through them in order:
 
 The step tabs in the top bar follow the same rules as each step's own Continue button. A tab you
 cannot open yet is dimmed, and hovering or focusing it tells you why (for example, from Welcome,
-Discover needs a Smart Folder first; Organize needs at least one analyzed file; Results need at
-least one organized file). Going back to an earlier step is always allowed. While analysis runs or
-files are moving, the tabs pause until the work finishes; Settings stays available from the gear
-icon.
+Discover needs a Smart Folder first; Organize needs at least one analyzed file, or files you
+organized before; Complete needs at least one organized file). Going back to an earlier step is
+always allowed. While analysis runs, files are moving, or an undo or redo is running, the tabs pause
+until the work finishes, and so do the dashboard links, the Alt+arrow keys, **File > Select Files**
+and **Select Folder**, and the knowledge graph's Go to Discover. Settings stays available from the
+gear icon.
 
 Prefer one screen over steps? Choose **Dashboard** on the Welcome screen, or use the **Guided /
 Dashboard** toggle in the top bar, for a single overview screen. **Guided** (the phases above) is

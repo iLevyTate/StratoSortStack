@@ -2,13 +2,7 @@
 import { useEffect, useCallback, useMemo, useRef } from 'react';
 import { createLogger } from '../../shared/logger';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
-import {
-  openSettings,
-  setPhase,
-  setViewMode,
-  setCameFromDashboard,
-  getPhaseNavigation
-} from '../store/slices/uiSlice';
+import { openSettings, setPhase, getPhaseNavigation } from '../store/slices/uiSlice';
 import { useNotification } from '../contexts/NotificationContext';
 import { useUndoRedo } from '../components/UndoRedoSystem';
 import { PHASES, PHASE_METADATA, PHASE_ORDER } from '../../shared/constants';
@@ -17,7 +11,12 @@ import { canHotkeySwapSurface, hasActiveOverlay, isTopOverlay } from '../utils/o
 import { isEditableTarget } from '../utils/isEditableTarget';
 import { dispatchAcked } from '../utils/dispatchAcked';
 import { toggleShowLiveActivity } from '../store/thunks/liveActivityThunks';
-import { selectPhaseNavigationContext } from '../utils/phaseNavigation';
+import {
+  NAVIGATION_PAUSED_REASON,
+  selectIsNavigationPaused,
+  selectPhaseNavigationContext,
+  usePhaseJump
+} from '../utils/phaseNavigation';
 
 const logger = createLogger('useKeyboardShortcuts');
 
@@ -45,13 +44,12 @@ export function useKeyboardShortcuts() {
   const viewModeRef = useRef(viewMode);
   const navContextRef = useRef(navContext);
   // Same busy test as NavigationBar's isBlockedByOperation.
-  const isBusyInStore = useAppSelector(
-    (/** @type {any} */ state) =>
-      Boolean(state.ui?.isOrganizing) ||
-      Boolean(state.ui?.isLoading) ||
-      Boolean(state.analysis?.isAnalyzing)
-  );
+  const isBusyInStore = useAppSelector(selectIsNavigationPaused);
   const isBusy = isBusyInStore || Boolean(isUndoRedoExecuting);
+  // File-menu pickers reach Discover the way a dashboard link does: under the
+  // tabs' rule and pause, leaving the dashboard so the move is visible.
+  const jumpToPhase = usePhaseJump({ isUndoRedoExecuting, notify: showInfo });
+  const jumpToPhaseRef = useRef(jumpToPhase);
   const busyRef = useRef(isBusy);
   const undoActionRef = useRef(undoAction);
   const redoActionRef = useRef(redoAction);
@@ -75,6 +73,9 @@ export function useKeyboardShortcuts() {
     busyRef.current = isBusy;
   }, [isBusy]);
   useEffect(() => {
+    jumpToPhaseRef.current = jumpToPhase;
+  }, [jumpToPhase]);
+  useEffect(() => {
     undoActionRef.current = undoAction;
   }, [undoAction]);
   useEffect(() => {
@@ -96,13 +97,6 @@ export function useKeyboardShortcuts() {
     window.dispatchEvent(new CustomEvent('app:close-settings-request'));
   }, []);
 
-  // setViewMode clears the came-from-dashboard breadcrumb, so it must be
-  // dispatched first (same ordering as DashboardView.goToPhase).
-  const handleLeaveDashboard = useCallback(() => {
-    dispatch(setViewMode('phased'));
-    dispatch(setCameFromDashboard(true));
-  }, [dispatch]);
-
   const handleToggleLiveActivity = useCallback(() => {
     dispatch(/** @type {any} */ (toggleShowLiveActivity()));
   }, [dispatch]);
@@ -112,16 +106,9 @@ export function useKeyboardShortcuts() {
       openSettings: handleOpenSettings,
       requestCloseSettings,
       advancePhase: handleAdvancePhase,
-      leaveDashboard: handleLeaveDashboard,
       toggleLiveActivity: handleToggleLiveActivity
     }),
-    [
-      handleOpenSettings,
-      requestCloseSettings,
-      handleAdvancePhase,
-      handleLeaveDashboard,
-      handleToggleLiveActivity
-    ]
+    [handleOpenSettings, requestCloseSettings, handleAdvancePhase, handleToggleLiveActivity]
   );
 
   useEffect(() => {
@@ -236,7 +223,7 @@ export function useKeyboardShortcuts() {
 
         // Paused while work is in flight, exactly like the phase tabs.
         if (busyRef.current) {
-          showInfo('Navigation is paused until the current operation finishes.', 5200);
+          showInfo(NAVIGATION_PAUSED_REASON, 5200);
           return;
         }
         const targetPhase = phases[targetIndex];
@@ -276,28 +263,16 @@ export function useKeyboardShortcuts() {
     };
 
     const dispatchDiscoverEvent = (/** @type {any} */ eventName) => {
-      const targetPhase = PHASES?.DISCOVER ?? 'discover';
-      const current = currentPhaseRef.current;
       // This hook is App-level, so it is active on the dashboard surface —
-      // where phases render nothing. Leave the dashboard first, or the phase
-      // change (and the picker event) fires invisibly beneath it.
-      const leavingDashboard = viewModeRef.current === 'dashboard';
-      if (leavingDashboard) {
-        actions.leaveDashboard();
-      }
-      if (current !== targetPhase || leavingDashboard) {
-        if (current !== targetPhase) {
-          actions.advancePhase(targetPhase);
-        }
-        // Retry-until-acked: DiscoverPhase is a lazy chunk, so a single
-        // fixed-delay dispatch silently dropped the picker action whenever
-        // the chunk took longer than one tick to mount (cold renderer).
-        dispatchAckedOnce(eventName);
-        return;
-      }
-      // Already on discover — the chunk may STILL be mid-load right after a
-      // phase switch, so use the same acked dispatch (synchronous first
-      // attempt, retries only if unheard).
+      // where phases render nothing. The jump leaves the dashboard first, or
+      // the phase change (and the picker event) fires invisibly beneath it.
+      // Getting to Discover is a phase move: it follows the tabs' rule and
+      // pauses while work runs, and a refused move opens no picker.
+      if (!jumpToPhaseRef.current(PHASES?.DISCOVER ?? 'discover')) return;
+      // Retry-until-acked: DiscoverPhase is a lazy chunk, so a single
+      // fixed-delay dispatch silently dropped the picker action whenever the
+      // chunk took longer than one tick to mount (cold renderer), and right
+      // after a phase switch it may still be mid-load.
       dispatchAckedOnce(eventName);
     };
 

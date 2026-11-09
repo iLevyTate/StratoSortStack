@@ -189,7 +189,7 @@ describe('Alt+Arrow phase navigation follows the phase-tab rule', () => {
     );
   });
 
-  test('Alt+Right from Organize after a file was organized opens Results', () => {
+  test('Alt+Right from Organize after a file was organized opens Complete', () => {
     mockState = buildState({
       phase: 'organize',
       organizedFiles: [{ originalPath: '/docs/a.pdf', path: '/Invoices/a.pdf' }]
@@ -249,5 +249,116 @@ describe('Alt+Arrow phase navigation follows the phase-tab rule', () => {
     pressAlt('ArrowLeft');
 
     expect(setPhaseDispatches()).toEqual(['discover']);
+  });
+});
+
+// File menu Select files / Select folder (Ctrl+O / Ctrl+Shift+O) open
+// Discover's pickers. Getting to Discover is a phase move, so it follows the
+// same rule and the same pause as the tabs.
+describe('File menu pickers follow the phase-tab rule', () => {
+  let menuHandler = null;
+
+  function fireMenuAction(action) {
+    menuHandler(action);
+  }
+
+  function pickerEvents(spy) {
+    return spy.mock.calls.map(([event]) => event.type).filter((type) => type.startsWith('app:'));
+  }
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    mockDispatch.mockClear();
+    mockNotification.addNotification.mockClear();
+    mockNotification.showInfo.mockClear();
+    menuHandler = null;
+    window.electronAPI = {
+      events: {
+        onMenuAction: jest.fn((handler) => {
+          menuHandler = handler;
+          return () => {};
+        })
+      }
+    };
+  });
+
+  afterEach(() => {
+    jest.runOnlyPendingTimers();
+    jest.useRealTimers();
+    delete window.electronAPI;
+  });
+
+  test('from Welcome without a destination it stays put and says why', () => {
+    const spy = jest.spyOn(window, 'dispatchEvent');
+    try {
+      mockState = buildState({ phase: 'welcome', smartFolders: [UNCATEGORIZED] });
+      renderHook(() => useKeyboardShortcuts());
+
+      fireMenuAction('select-files');
+
+      expect(setPhaseDispatches()).toEqual([]);
+      expect(pickerEvents(spy)).toEqual([]);
+      expect(mockNotification.showInfo).toHaveBeenCalledWith(
+        PHASE_PREREQUISITE_REASONS.needsDestination,
+        5200
+      );
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('is paused while files are being organized', () => {
+    const spy = jest.spyOn(window, 'dispatchEvent');
+    try {
+      const state = buildState({ phase: 'organize' });
+      state.ui.isOrganizing = true;
+      mockState = state;
+      renderHook(() => useKeyboardShortcuts());
+
+      fireMenuAction('select-folder');
+
+      expect(setPhaseDispatches()).toEqual([]);
+      expect(pickerEvents(spy)).toEqual([]);
+      expect(mockNotification.showInfo).toHaveBeenCalledWith(
+        'Navigation is paused until the current operation finishes.',
+        5200
+      );
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('from Organize it goes back to Discover and opens the picker', () => {
+    const spy = jest.spyOn(window, 'dispatchEvent');
+    try {
+      mockState = buildState({ phase: 'organize' });
+      renderHook(() => useKeyboardShortcuts());
+
+      fireMenuAction('select-files');
+
+      expect(setPhaseDispatches()).toEqual(['discover']);
+      expect(pickerEvents(spy)).toContain('app:select-files');
+      expect(mockNotification.showInfo).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('already on Discover it opens the picker, even while analysis runs', () => {
+    const spy = jest.spyOn(window, 'dispatchEvent');
+    try {
+      const state = buildState({ phase: 'discover' });
+      state.analysis.isAnalyzing = true;
+      mockState = state;
+      renderHook(() => useKeyboardShortcuts());
+
+      fireMenuAction('select-files');
+
+      expect(setPhaseDispatches()).toEqual([]);
+      expect(pickerEvents(spy)).toContain('app:select-files');
+      expect(mockNotification.showInfo).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

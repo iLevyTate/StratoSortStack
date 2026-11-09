@@ -31,7 +31,7 @@ function canTransitionTo(/** @type {any} */ fromPhase, /** @type {any} */ toPhas
 /**
  * True when `toPhase` comes before `fromPhase` in PHASE_ORDER. Going back to
  * an earlier step is always allowed: nothing a later step does is lost by
- * looking at an earlier one, and the graph alone left Organize and Results
+ * looking at an earlier one, and the graph alone left Organize and Complete
  * with no way back to Setup.
  * @param {any} fromPhase
  * @param {any} toPhase
@@ -56,7 +56,7 @@ function canReachPhase(fromPhase, toPhase) {
 // is a step back.
 const TRANSITION_BLOCK_REASONS = {
   [PHASES.ORGANIZE]: 'Organize opens from Discover. Go to Discover first.',
-  [PHASES.COMPLETE]: 'Results open from Organize. Go to Organize first.'
+  [PHASES.COMPLETE]: 'Complete opens from Organize. Go to Organize first.'
 };
 
 /**
@@ -72,13 +72,14 @@ function getTransitionBlockReason(fromPhase, toPhase) {
 
 // Why a phase's own Continue button is disabled. Each text is the one that
 // button (or, for Welcome, its notice) shows, so a closed phase tab and the
-// in-phase button never give two different reasons.
+// in-phase button never give two different reasons. Steps are named by their
+// tab labels (PHASE_METADATA navLabel).
 const PHASE_PREREQUISITE_REASONS = {
   needsDestination: 'Add at least one smart folder first so files have somewhere to go.',
   needsSmartFolder: 'Add at least one destination to continue.',
   needsAnalyzedFile: 'Analyze at least one file first.',
   allAnalysisFailed: 'All files failed analysis. Retry them, or clear the queue and try again.',
-  needsProcessedFile: 'Process at least one file to view results.'
+  needsProcessedFile: 'Organize at least one file to open Complete.'
 };
 
 /**
@@ -87,7 +88,9 @@ const PHASE_PREREQUISITE_REASONS = {
  * @property {boolean} [hasSmartFolders] any smart folder exists (Setup's Continue rule)
  * @property {boolean} [hasAnalyzedFiles] at least one file in the queue is analyzed (Discover's Continue rule)
  * @property {boolean} [hasFailedFiles] at least one file in the queue failed analysis
- * @property {boolean} [hasProcessedFiles] at least one file was organized (Organize's View results rule)
+ * @property {boolean} [hasProcessedFiles] the organized history is not empty (Organize's View
+ *   results rule; it also opens Organize from Discover, so a returning user whose queue was
+ *   cleared can still reach Organize and Complete)
  */
 
 /**
@@ -172,9 +175,12 @@ const NAVIGATION_RULES = {
         // Discover requires at least one analyzed file. A total analysis
         // failure does not unlock it: Organize lists only analyzed files, so
         // there would be nothing to organize (matches DiscoverPhase's footer).
-        return Boolean(context.hasAnalyzedFiles);
+        // Organized history opens it too: after the 24h state expiry the
+        // queue is empty but the history (and Complete beyond Organize) is
+        // still there to look at.
+        return Boolean(context.hasAnalyzedFiles) || context.hasProcessedFiles === true;
       case PHASES?.ORGANIZE ?? 'organize':
-        // Organize requires at least one processed file to view results
+        // Organize requires organized history to open Complete (View results)
         return context.hasProcessedFiles;
       case PHASES?.COMPLETE ?? 'complete':
         // Complete phase can always start a new session
@@ -607,7 +613,9 @@ export const selectNamingDefaults = createSelector(
  * Change the default naming convention from anywhere in the renderer.
  * Updates the cached settings at once (so Discover and the dashboard follow),
  * then persists through settings:save, which broadcasts the merged settings
- * back. A failed save puts the previous values back.
+ * back. A failed save puts the previous values back, but only on keys that
+ * still hold this call's value: a newer change made while this save was in
+ * flight is never rolled back.
  */
 export const saveNamingDefaults = createAsyncThunk(
   'ui/saveNamingDefaults',
@@ -630,7 +638,13 @@ export const saveNamingDefaults = createAsyncThunk(
       }
       return settingsPatch;
     } catch (error) {
-      dispatch(uiSlice.actions.mergeNamingSettings(previous));
+      const current = /** @type {any} */ (getState()).ui?.settings || {};
+      /** @type {Record<string, string>} */
+      const rollback = {};
+      for (const [key, value] of Object.entries(previous)) {
+        if (current[key] === settingsPatch[key]) rollback[key] = value;
+      }
+      dispatch(uiSlice.actions.mergeNamingSettings(rollback));
       const message = error instanceof Error ? error.message : String(error);
       logger.warn('[uiSlice] Failed to save naming defaults', { error: message });
       return rejectWithValue(message);

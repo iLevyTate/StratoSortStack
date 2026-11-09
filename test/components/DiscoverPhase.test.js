@@ -105,8 +105,13 @@ jest.mock('../../src/renderer/store', () => ({
   }))
 }));
 
+const mockSelectorState = {
+  license: { snapshot: { state: 'free' } },
+  files: { organizedFiles: [], organizedPathIndex: {} }
+};
+
 jest.mock('../../src/renderer/store/hooks', () => ({
-  useAppSelector: jest.fn((selector) => selector({ license: { snapshot: { state: 'free' } } })),
+  useAppSelector: jest.fn((selector) => selector(mockSelectorState)),
   useAppDispatch: jest.fn(() => jest.fn())
 }));
 
@@ -197,7 +202,7 @@ describe('DiscoverPhase premium guidance', () => {
     jest.clearAllMocks();
     const { useAppSelector } = require('../../src/renderer/store/hooks');
     useAppSelector.mockImplementation((selector) =>
-      selector({ license: { snapshot: { state: 'free' } } })
+      selector({ ...mockSelectorState, license: { snapshot: { state: 'free' } } })
     );
   });
 
@@ -278,7 +283,10 @@ describe('DiscoverPhase premium guidance', () => {
     const pendingFile = { path: '/tmp/pending.pdf', name: 'pending.pdf', size: 100 };
 
     useAppSelector.mockImplementation((selector) =>
-      selector({ license: { snapshot: { state: 'trial_expired', daysLeft: 0 } } })
+      selector({
+        ...mockSelectorState,
+        license: { snapshot: { state: 'trial_expired', daysLeft: 0 } }
+      })
     );
     useDiscoverState.mockReturnValueOnce({
       ...defaults,
@@ -350,6 +358,44 @@ describe('DiscoverPhase premium guidance', () => {
     } finally {
       useDiscoverState.mockImplementation(originalDiscoverState);
       useAnalysis.mockImplementation(originalAnalysis);
+    }
+  });
+  // A returning user with organized history may continue to Organize even
+  // with nothing ready in the queue, the same rule the Organize tab follows.
+  test('organized history lets Continue open Organize even when nothing is ready', () => {
+    const { useDiscoverState } = require('../../src/renderer/phases/discover');
+    const { useAppSelector } = require('../../src/renderer/store/hooks');
+    const defaults = useDiscoverState();
+    const originalDiscoverState = useDiscoverState.getMockImplementation();
+    const originalSelector = useAppSelector.getMockImplementation();
+    const advancePhase = jest.fn();
+    useDiscoverState.mockImplementation(() => ({
+      ...defaults,
+      analysisResults: [],
+      fileStates: {},
+      fileStats: { total: 0, ready: 0, failed: 0, pending: 0 },
+      readySelectedFilesCount: 0,
+      actions: { setPhaseData: jest.fn(), advancePhase }
+    }));
+    useAppSelector.mockImplementation((selector) =>
+      selector({
+        ...mockSelectorState,
+        files: {
+          organizedFiles: [{ originalPath: '/tmp/a.pdf', path: '/out/a.pdf' }],
+          organizedPathIndex: {}
+        }
+      })
+    );
+
+    try {
+      render(<DiscoverPhase />);
+      const footer = screen.getByRole('button', { name: /Continue to Organize/i });
+      expect(footer).not.toBeDisabled();
+      fireEvent.click(footer);
+      expect(advancePhase).toHaveBeenCalledWith('organize');
+    } finally {
+      useDiscoverState.mockImplementation(originalDiscoverState);
+      useAppSelector.mockImplementation(originalSelector);
     }
   });
 });

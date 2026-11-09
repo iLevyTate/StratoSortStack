@@ -19,6 +19,8 @@ import {
 } from '../components/discover';
 import { FileListSkeleton } from '../components/ui/LoadingSkeleton';
 import store from '../store';
+import { useAppSelector } from '../store/hooks';
+import { selectOrganizedCount } from '../store/selectors';
 import { toCanonicalPath } from '../utils/canonicalPath';
 import {
   useDiscoverState,
@@ -32,6 +34,7 @@ const normalizeForComparison = toCanonicalPath;
 
 const logger = createLogger('DiscoverPhase');
 function DiscoverPhase() {
+  const organizedCount = useAppSelector(selectOrganizedCount);
   const {
     selectedFiles,
     analysisResults,
@@ -922,7 +925,9 @@ function DiscoverPhase() {
           // failed-only list cannot look clickable while onClick no-ops. A
           // total analysis failure does not unlock it: Organize needs at least
           // one analyzed file, so there would be nothing to organize there.
-          const canContinue = visibleReadyCount > 0;
+          // Organized history also opens Organize, the same rule as the tab
+          // (uiSlice getPhaseNavigation), so a returning user can reach it.
+          const canContinue = visibleReadyCount > 0 || organizedCount > 0;
           const disabledBecauseAnalyzing = isAnalyzing;
           const disabledBecauseNoReady = !canContinue;
 

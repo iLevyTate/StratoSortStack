@@ -76,7 +76,7 @@ test.describe('Full Pipeline — Analysis to Organize', () => {
     const completeTab = nav.getPhaseButton(PHASES.COMPLETE);
     await expect(completeTab).toHaveAttribute('aria-disabled', 'true');
     await expect(completeTab).toHaveAccessibleDescription(
-      'Process at least one file to view results.'
+      'Organize at least one file to open Complete.'
     );
     await expect(window.getByRole('button', { name: /View Results/i })).toBeDisabled();
   });

@@ -6,7 +6,9 @@
  * values NavigationBar reads) and the route a jump link takes under that rule.
  */
 import {
+  NAVIGATION_PAUSED_REASON,
   planPhaseRoute,
+  selectIsNavigationPaused,
   selectPhaseNavigationContext
 } from '../../src/renderer/utils/phaseNavigation';
 import { PHASE_PREREQUISITE_REASONS } from '../../src/renderer/store/slices/uiSlice';
@@ -120,5 +122,83 @@ describe('planPhaseRoute', () => {
       reached: false,
       reason: PHASE_PREREQUISITE_REASONS.allAnalysisFailed
     });
+  });
+});
+
+describe('returning user: organized history, empty queue', () => {
+  // The 24h state expiry resets the phase to Welcome and clears the queue,
+  // but keeps the organized history.
+  const returning = {
+    hasDestinationFolder: true,
+    hasSmartFolders: true,
+    hasAnalyzedFiles: false,
+    hasFailedFiles: false,
+    hasProcessedFiles: true
+  };
+
+  test('Organize is reachable from Welcome, Setup and Discover', () => {
+    expect(planPhaseRoute('welcome', 'organize', returning)).toEqual({
+      steps: ['discover', 'organize'],
+      reached: true,
+      reason: null
+    });
+    expect(planPhaseRoute('setup', 'organize', returning).reached).toBe(true);
+    expect(planPhaseRoute('discover', 'organize', returning)).toEqual({
+      steps: ['organize'],
+      reached: true,
+      reason: null
+    });
+  });
+
+  test('Complete opens from Organize', () => {
+    expect(planPhaseRoute('organize', 'complete', returning)).toEqual({
+      steps: ['complete'],
+      reached: true,
+      reason: null
+    });
+  });
+});
+
+describe('navigation pause', () => {
+  const ready = {
+    hasDestinationFolder: true,
+    hasSmartFolders: true,
+    hasAnalyzedFiles: true,
+    hasProcessedFiles: true
+  };
+
+  test('a paused route takes no step and says why, even going back', () => {
+    for (const [from, to] of [
+      ['welcome', 'organize'],
+      ['discover', 'organize'],
+      ['complete', 'setup']
+    ]) {
+      expect(planPhaseRoute(from, to, ready, { paused: true })).toEqual({
+        steps: [],
+        reached: false,
+        reason: NAVIGATION_PAUSED_REASON
+      });
+    }
+  });
+
+  test('staying put is not a move, so a pause does not refuse it', () => {
+    expect(planPhaseRoute('discover', 'discover', ready, { paused: true })).toEqual({
+      steps: [],
+      reached: true,
+      reason: null
+    });
+  });
+
+  test('the pause text is the one the tabs and Alt+arrows give', () => {
+    expect(NAVIGATION_PAUSED_REASON).toBe(
+      'Navigation is paused until the current operation finishes.'
+    );
+  });
+
+  test('selectIsNavigationPaused reads moves, loading and analysis in flight', () => {
+    expect(selectIsNavigationPaused({ ui: {}, analysis: {} })).toBe(false);
+    expect(selectIsNavigationPaused({ ui: { isOrganizing: true }, analysis: {} })).toBe(true);
+    expect(selectIsNavigationPaused({ ui: { isLoading: true }, analysis: {} })).toBe(true);
+    expect(selectIsNavigationPaused({ ui: {}, analysis: { isAnalyzing: true } })).toBe(true);
   });
 });

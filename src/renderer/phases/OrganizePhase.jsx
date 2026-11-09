@@ -54,7 +54,8 @@ import { resolveOrganizeDestination } from './organize/organizeDestination';
 import { useOrganizeNotificationFocus } from './organize/useOrganizeNotificationFocus';
 import { setFileStates as setFileStatesAction } from '../store/slices/filesSlice';
 import { updateAnalysisResult } from '../store/slices/analysisSlice';
-import { selectRedactPaths } from '../store/selectors';
+import { selectOrganizedCount, selectRedactPaths } from '../store/selectors';
+import { PHASE_PREREQUISITE_REASONS } from '../store/slices/uiSlice';
 import { formatDisplayPath } from '../utils/pathDisplay';
 import { toCanonicalPath } from '../utils/canonicalPath';
 import { useFileActions } from '../hooks/useFileActions';
@@ -65,6 +66,10 @@ function OrganizePhase() {
   const { executeAction } = useUndoRedo();
   const [viewingFileDetails, setViewingFileDetails] = React.useState(null);
   const redactPaths = useAppSelector(selectRedactPaths);
+  // Organized history, the count the Complete tab opens on (uiSlice
+  // getPhaseNavigation). The queue-derived processedFiles is empty for a
+  // returning user whose queue was cleared, so it must not gate View results.
+  const organizedCount = useAppSelector(selectOrganizedCount);
   const currentPhase = useAppSelector((state) => state.ui.currentPhase);
   const detailHeaderPath = useMemo(() => {
     const rawPath = viewingFileDetails?.path || viewingFileDetails?.analysis?.path || '';
@@ -871,12 +876,12 @@ function OrganizePhase() {
         </Button>
         <Button
           onClick={() => actions.advancePhase(PHASES?.COMPLETE ?? 'complete')}
-          disabled={processedFiles.length === 0 || isOrganizing}
+          disabled={organizedCount === 0 || isOrganizing}
           size="md"
           className="w-full sm:w-auto min-w-[180px]"
           title={
-            processedFiles.length === 0
-              ? 'Process at least one file to view results.'
+            organizedCount === 0
+              ? PHASE_PREREQUISITE_REASONS.needsProcessedFile
               : isOrganizing
                 ? 'Finishing current organize operation.'
                 : undefined

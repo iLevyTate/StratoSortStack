@@ -26,6 +26,11 @@ jest.mock('../../../src/renderer/store/slices/uiSlice', () => ({
 }));
 
 const mockNotification = { showInfo: jest.fn() };
+let mockUndoRedoExecuting = false;
+
+jest.mock('../../../src/renderer/components/UndoRedoSystem', () => ({
+  useUndoRedo: jest.fn(() => ({ isExecuting: mockUndoRedoExecuting }))
+}));
 
 jest.mock('../../../src/renderer/contexts/NotificationContext', () => ({
   useNotification: jest.fn(() => mockNotification)
@@ -162,9 +167,12 @@ function setupState({
   filesWithAnalysis = [],
   isAnalyzing = false,
   analysisProgress = null,
-  redactPaths = false
+  redactPaths = false,
+  isOrganizing = false,
+  isLoading = false
 } = {}) {
-  mockState = { ui: { currentPhase } };
+  // DashboardView only renders in dashboard view mode.
+  mockState = { ui: { currentPhase, viewMode: 'dashboard', isOrganizing, isLoading } };
   mockSelectorValues = {
     fileStats,
     smartFolders,
@@ -191,6 +199,7 @@ describe('DashboardView', () => {
     mockFormatDisplayFileName.mockClear();
     capturedDropHandler = null;
     mockIsDragging = false;
+    mockUndoRedoExecuting = false;
     setupState();
   });
 
@@ -395,7 +404,7 @@ describe('DashboardView', () => {
       expect(screen.getByText('0 of 0 files in flight')).toBeInTheDocument();
     });
 
-    test('the footer Failed chip deep-links to organize and an alert appears when files failed', () => {
+    test('the footer Failed chip opens Discover, where the alert says to retry them', () => {
       setupState({
         currentPhase: 'welcome',
         fileStats: { total: 3, ready: 1, failed: 2, pending: 0 }
@@ -403,10 +412,23 @@ describe('DashboardView', () => {
       render(<DashboardView />);
 
       expect(screen.getByRole('alert')).toHaveTextContent('2');
+      expect(screen.getByRole('alert')).toHaveTextContent('retry them in Discover');
       const failedChip = screen.getByText('2 failed').closest('button');
       expect(failedChip).not.toBeNull();
       fireEvent.click(failedChip);
-      expect(mockDispatch).toHaveBeenCalledWith({ type: 'ui/setPhase', payload: 'organize' });
+      expect(phasePayloads()).toEqual(['discover']);
+      expect(mockNotification.showInfo).not.toHaveBeenCalled();
+    });
+
+    test('from Organize the Failed chip goes back to Discover', () => {
+      setupState({
+        currentPhase: 'organize',
+        fileStats: { total: 3, ready: 1, failed: 2, pending: 0 }
+      });
+      render(<DashboardView />);
+
+      fireEvent.click(screen.getByText('2 failed').closest('button'));
+      expect(phasePayloads()).toEqual(['discover']);
     });
 
     test('the footer Failed indicator is inert and no alert renders when nothing failed', () => {
@@ -600,14 +622,14 @@ describe('DashboardView', () => {
       );
     });
 
-    test('when every file failed, Review failed stops at Discover with the retry reason', () => {
+    test('when every file failed, Review & organize stops at Discover with the retry reason', () => {
       setupState({
         currentPhase: 'welcome',
         fileStats: { total: 2, ready: 0, failed: 2, pending: 0 }
       });
       render(<DashboardView />);
 
-      fireEvent.click(screen.getByText('2 failed').closest('button'));
+      fireEvent.click(buttonFor('Review & organize'));
       expect(phasePayloads()).toEqual(['discover']);
       expect(mockNotification.showInfo).toHaveBeenCalledWith(
         'All files failed analysis. Retry them, or clear the queue and try again.',
@@ -659,6 +681,85 @@ describe('DashboardView', () => {
         dispatchSpy.mockRestore();
         jest.useRealTimers();
       }
+    });
+  });
+
+  describe('returning user: organized history, empty queue', () => {
+    // The 24h state expiry resets the phase to Welcome and clears the queue
+    // but keeps the organized history.
+    const history = [{ newName: 'a.pdf' }, { newName: 'b.pdf' }];
+
+    test.each(['welcome', 'setup', 'discover'])(
+      'from %s, View all results, the Organized stage and Review & organize open Organize',
+      (phase) => {
+        for (const open of [
+          () => fireEvent.click(buttonFor('View all results')),
+          () => fireEvent.click(buttonFor('Review & organize')),
+          () =>
+            fireEvent.click(
+              screen
+                .getAllByText('Organized')
+                .map((el) => el.closest('button'))
+                .find(Boolean)
+            )
+        ]) {
+          mockDispatch.mockClear();
+          mockNotification.showInfo.mockClear();
+          setupState({ currentPhase: phase, organizedFiles: history });
+          const { unmount } = render(<DashboardView />);
+          open();
+          expect(phasePayloads()[phasePayloads().length - 1]).toBe('organize');
+          expect(mockNotification.showInfo).not.toHaveBeenCalled();
+          unmount();
+        }
+      }
+    );
+
+    test('a first run with nothing analyzed or organized keeps its guidance', () => {
+      setupState({ currentPhase: 'welcome' });
+      render(<DashboardView />);
+
+      fireEvent.click(buttonFor('Review & organize'));
+      expect(phasePayloads()).toEqual(['discover']);
+      expect(mockNotification.showInfo).toHaveBeenCalledWith(
+        'Analyze at least one file first.',
+        5200
+      );
+    });
+  });
+
+  describe('navigation pause', () => {
+    const PAUSED = 'Navigation is paused until the current operation finishes.';
+
+    test.each([
+      ['analysis', { isAnalyzing: true, analysisProgress: { current: 1, total: 5 } }],
+      ['a file move', { isOrganizing: true }],
+      ['loading', { isLoading: true }]
+    ])('links pause while %s runs, like the tabs', (_label, busy) => {
+      setupState({
+        currentPhase: 'discover',
+        fileStats: { total: 5, ready: 1, failed: 0, pending: 4 },
+        ...busy
+      });
+      render(<DashboardView />);
+
+      fireEvent.click(buttonFor('Review & organize'));
+      expect(phasePayloads()).toEqual([]);
+      // Stays on the dashboard: nothing changed under it.
+      expect(mockDispatch).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'ui/setViewMode' })
+      );
+      expect(mockNotification.showInfo).toHaveBeenCalledWith(PAUSED, 5200);
+    });
+
+    test('links pause while undo/redo moves files', () => {
+      mockUndoRedoExecuting = true;
+      setupState({ currentPhase: 'organize' });
+      render(<DashboardView />);
+
+      fireEvent.click(buttonFor('Manage smart folders'));
+      expect(phasePayloads()).toEqual([]);
+      expect(mockNotification.showInfo).toHaveBeenCalledWith(PAUSED, 5200);
     });
   });
 

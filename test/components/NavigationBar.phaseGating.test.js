@@ -75,6 +75,7 @@ jest.mock('../../src/renderer/components/UndoRedoSystem', () => ({
 }));
 
 import NavigationBar from '../../src/renderer/components/NavigationBar';
+import TooltipManager from '../../src/renderer/components/TooltipManager';
 import { PHASE_PREREQUISITE_REASONS } from '../../src/renderer/store/slices/uiSlice';
 
 const UNCATEGORIZED = { id: 'uncat', name: 'Uncategorized', category: 'uncategorized' };
@@ -221,7 +222,7 @@ describe('NavigationBar phase tabs follow the in-phase prerequisites', () => {
     expect(setPhaseDispatches()).toContain('organize');
   });
 
-  test('Results stay closed on Organize until a file was organized', () => {
+  test('Complete stays closed on Organize until a file was organized', () => {
     mockState = buildState({ phase: 'organize' });
     const { container } = render(<NavigationBar />);
 
@@ -237,7 +238,7 @@ describe('NavigationBar phase tabs follow the in-phase prerequisites', () => {
     expect(tab(second.container, 'complete')).toHaveAttribute('aria-disabled', 'false');
   });
 
-  test('going back is always allowed, including Organize and Results back to Setup', () => {
+  test('going back is always allowed, including Organize and Complete back to Setup', () => {
     for (const phase of ['organize', 'complete']) {
       mockDispatch.mockClear();
       // No destination and nothing analyzed: forward prerequisites fail, but
@@ -263,5 +264,31 @@ describe('NavigationBar phase tabs follow the in-phase prerequisites', () => {
       'title',
       'Organize opens from Discover. Go to Discover first.'
     );
+  });
+
+  // USER_GUIDE: "hovering or focusing it tells you why". App mounts
+  // TooltipManager, which turns the tab's title into the app tooltip, shows
+  // it on keyboard focus, and keeps it as the accessible description.
+  test('focusing a dimmed tab shows why, visibly and to screen readers', () => {
+    mockState = buildState({ phase: 'welcome', smartFolders: [UNCATEGORIZED] });
+    const { container, unmount } = render(
+      <>
+        <NavigationBar />
+        <TooltipManager />
+      </>
+    );
+
+    const discover = tab(container, 'discover');
+    expect(discover).toHaveAttribute(
+      'aria-description',
+      PHASE_PREREQUISITE_REASONS.needsDestination
+    );
+
+    discover.focus();
+    expect(document.activeElement).toBe(discover);
+    const tooltip = document.body.querySelector('.tooltip-enhanced');
+    expect(tooltip).toHaveClass('show');
+    expect(tooltip).toHaveTextContent(PHASE_PREREQUISITE_REASONS.needsDestination);
+    unmount();
   });
 });
