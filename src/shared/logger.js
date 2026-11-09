@@ -409,6 +409,58 @@ function _getSharedDevTransport() {
 const SENSITIVE_KEY_PATTERN =
   /(token|password|passwd|secret|apikey|api[_-]?key|authorization|auth[_-]?header|credential|priv(ate)?[_-]?key|access[_-]?token|refresh[_-]?token|session[_-]?key|cookie|bearer)/i;
 
+// Inline secrets inside free-form strings (an error message carrying an
+// Authorization header, a URL query, a config dump). Key-name redaction above
+// only covers object fields. The cheap gate keeps the replace chain off the
+// hot path: every pattern below needs one of these substrings to match, so a
+// string without one cannot contain anything to redact.
+const INLINE_SECRET_GATE = /sk-|bearer|api[_-]?key|token|secret|passw|eyj|akia/i;
+// `key=value` / `key: value` / `"key":"value"` for secret-bearing names,
+// with optional `word_` / `word-` prefixes (access_token, x-api-key,
+// client_secret, db_password). The name must be followed directly by the
+// separator, so `tokens: 5`, `tokenizer=bpe` and `maxTokens=4096` (no
+// word boundary before "Tokens") do not match.
+const INLINE_SECRET_ASSIGNMENT_PATTERN =
+  /\b((?:[A-Za-z0-9]+[_-])*(api[_-]?key|token|secret|password|passwd))(["']?\s*[=:]\s*["']?)([^\s"'&,;)}\]]+)/gi;
+
+/**
+ * Redact token shapes from free-form text: JWTs, Bearer tokens, AWS access
+ * keys, OpenAI/Anthropic-style `sk-` keys, and secret-named assignments.
+ * Shared by the runtime logger (sanitizeLogData) and export redaction.
+ * @param {string} str
+ * @returns {string}
+ */
+function redactInlineSecrets(str) {
+  if (typeof str !== 'string' || str.length === 0 || !INLINE_SECRET_GATE.test(str)) {
+    return str;
+  }
+  let s = str;
+  s = s.replace(/\beyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\b/g, '[REDACTED_JWT]');
+  s = s.replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, 'Bearer [REDACTED]');
+  s = s.replace(/\bAKIA[0-9A-Z]{16}\b/g, '[REDACTED]');
+  // Anthropic (sk-ant-api03-…) and other hyphen/underscore-bearing keys.
+  s = s.replace(/\bsk-ant-[A-Za-z0-9_-]{20,}/g, '[REDACTED]');
+  s = s.replace(/\bsk-(?:live|proj|test)[-_][A-Za-z0-9_-]{10,}/gi, '[REDACTED]');
+  s = s.replace(/\bsk-[A-Za-z0-9_-]{20,}/g, '[REDACTED]');
+  s = s.replace(/\bsk-[A-Za-z0-9]{10,}\b/g, '[REDACTED]');
+  s = s.replace(
+    INLINE_SECRET_ASSIGNMENT_PATTERN,
+    (
+      /** @type {string} */ match,
+      /** @type {string} */ key,
+      /** @type {string} */ kind,
+      /** @type {string} */ sep,
+      /** @type {string} */ value
+    ) => {
+      if (value.startsWith('[REDACTED')) return match;
+      // `token: 512` is a count, not a credential.
+      if (/^token$/i.test(kind) && /^\d+$/.test(value)) return match;
+      return `${key}${sep}[REDACTED]`;
+    }
+  );
+  return s;
+}
+
 // Hard cap on recursion depth for sanitizeLogData, layered on top of the
 // WeakSet cycle guard inside the function: the seen-set stops cycles and
 // shared references, the depth cap stops pathologically deep (acyclic)
@@ -783,8 +835,11 @@ function sanitizeLogData(data, _depth = 0, _seen = undefined) {
   if (_depth > MAX_SANITIZE_DEPTH) {
     return '[REDACTED_DEPTH_EXCEEDED]';
   }
-  // Strings: redact common absolute path patterns
+  // Strings: redact inline secrets, then common absolute path patterns
   if (typeof data === 'string') {
+    // Secrets first: path redaction rewrites `/`-separated text, which would
+    // split a token (Bearer bodies may contain `/`) before it is matched.
+    const text = redactInlineSecrets(data);
     // Protect Node-internal module paths (`node:internal/...`) from path
     // redaction. These are public Node API references that appear in error
     // stacks and contain zero user info; redacting interior segments
@@ -793,7 +848,7 @@ function sanitizeLogData(data, _depth = 0, _seen = undefined) {
     // each occurrence with a sentinel before redaction, then restore.
     /** @type {string[]} */
     const nodeInternalSentinels = [];
-    let sanitized = data.replace(/node:internal\/[^\s)]+/g, (match) => {
+    let sanitized = text.replace(/node:internal\/[^\s)]+/g, (match) => {
       const idx = nodeInternalSentinels.length;
       nodeInternalSentinels.push(match);
       return `__STRATOSORT_NODEINTERNAL_${idx}__`;
@@ -1641,6 +1696,7 @@ module.exports = {
   createLogger,
   createSafeLogger,
   sanitizeLogData,
+  redactInlineSecrets,
   stripLogControlChars,
   addLiveRecordListener,
   removeLiveRecordListener,

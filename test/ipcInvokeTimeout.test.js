@@ -60,4 +60,11 @@ describe('getIpcInvokeTimeout', () => {
     expect(getIpcInvokeTimeout(IPC_CHANNELS.SYSTEM.LIVE_LOG_UNSUBSCRIBE)).toBe(5000);
     expect(getIpcInvokeTimeout(IPC_CHANNELS.SYSTEM.GET_METRICS)).toBe(1000);
   });
+
+  test('gives the VC++ runtime install more than the 10 min main-process ceiling, not USER_DIALOG', () => {
+    // Equal budgets let the preload time out while main was still waiting on
+    // vc_redist, which kept running; a retry then hit exit code 1618.
+    expect(getIpcInvokeTimeout(IPC_CHANNELS.SYSTEM.INSTALL_VC_RUNTIME)).toBe(11 * 60 * 1000);
+    expect(getIpcInvokeTimeout(IPC_CHANNELS.SYSTEM.INSTALL_VC_RUNTIME)).toBeGreaterThan(600000);
+  });
 });

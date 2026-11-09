@@ -72,6 +72,29 @@ const ACTION_EXECUTORS = {
           "This copy of StratoSort doesn't include the installer, so Microsoft's download page was opened. Install it, then restart StratoSort."
       };
     }
+    if (result?.reason === 'already-installed') {
+      // Main found the runtime present and did not run anything; the engine
+      // only picks it up in a fresh process.
+      return {
+        followUp: 'restart',
+        notice:
+          'The Microsoft Visual C++ Redistributable is already installed. Restart StratoSort to turn local AI on.'
+      };
+    }
+    if (result?.reason === 'signature-unreadable') {
+      // PowerShell could not report a signature at all (blocked or limited
+      // on managed PCs). Not evidence of a bad file, so no failure wording.
+      return {
+        notice:
+          "StratoSort couldn't check the installer's signature on this PC. Use Open download page instead."
+      };
+    }
+    if (result?.reason === 'install-in-progress') {
+      return {
+        notice:
+          'Another installation is running on this PC. Wait for it to finish, then click Install now again.'
+      };
+    }
     if (result?.cancelled) {
       return {
         notice:

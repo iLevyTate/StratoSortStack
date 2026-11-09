@@ -146,10 +146,15 @@ class NavigationPage {
       // Forward tabs follow the app's phase rule: from Welcome, Discover needs
       // a real destination folder, while Setup → Discover only needs a folder
       // to exist (a fresh profile has Uncategorized). Go the way a user would,
-      // through Setup, then try once more.
+      // through Setup, then try once more. Log the detour so a regression in
+      // direct navigation shows up in the run output; pass { viaSetup: false }
+      // to assert the direct path instead.
       if (viaSetup && phase !== PHASES.SETUP && current !== PHASES.SETUP) {
         const setupButton = this.getPhaseButton(PHASES.SETUP);
         if ((await setupButton.count()) > 0 && !(await setupButton.isDisabled())) {
+          console.log(
+            `[E2E] goToPhase: ${phase} closed from ${current ?? 'unknown'}, routing through Setup`
+          );
           await this.goToPhase(PHASES.SETUP, { timeoutMs, viaSetup: false });
           return this.goToPhase(phase, { timeoutMs, viaSetup: false });
         }

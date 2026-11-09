@@ -30,7 +30,7 @@ const SEEDED_FILE_NAME = 'quarterly-budget.txt';
 // accessible description, states why.
 const ORGANIZE_FROM_WELCOME_REASON = 'Organize opens from Discover. Go to Discover first.';
 const ORGANIZE_NEEDS_ANALYZED_FILE_REASON = 'Analyze at least one file first.';
-const COMPLETE_NEEDS_ORGANIZED_FILE_REASON = 'Process at least one file to view results.';
+const COMPLETE_NEEDS_ORGANIZED_FILE_REASON = 'Organize at least one file to open Complete.';
 
 /**
  * Open the Organize phase the way a user does. Organize opens only from

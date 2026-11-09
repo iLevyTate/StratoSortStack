@@ -249,13 +249,23 @@ function verifySignature(filePath, { platform, env }) {
         `${SKIP_VERIFY_ENV}=1 to stage it unverified.`
     );
   }
-  const verdict = authenticode.verifyMicrosoftSignatureSync(filePath, { env });
+  /** @type {{ exitCode?: number | null, stderr?: string, error?: string }} */
+  const diagnostics = {};
+  const verdict = authenticode.verifyMicrosoftSignatureSync(filePath, { env, diagnostics });
   if (!verdict.ok) {
     const info = verdict.info;
+    const why =
+      verdict.reason === 'unreadable'
+        ? ` PowerShell exit ${diagnostics.exitCode ?? 'n/a'}` +
+          (diagnostics.error ? `, error: ${diagnostics.error}` : '') +
+          (diagnostics.stderr ? `, stderr: ${diagnostics.stderr}` : '') +
+          '.'
+        : '';
     throw new Error(
       `${path.basename(filePath)} failed Authenticode verification (${verdict.reason}; ` +
         `status ${info?.status ?? 'unknown'}, signer ${info?.subject ?? 'none'}). ` +
-        'Expected a Valid signature from O=Microsoft Corporation.'
+        'Expected a Valid signature from O=Microsoft Corporation.' +
+        why
     );
   }
   return { verified: true, info: verdict.info };

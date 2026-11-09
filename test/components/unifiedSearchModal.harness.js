@@ -43,6 +43,16 @@ jest.mock('../../src/renderer/store/hooks', () => {
               ? 'insights'
               : mockUnifiedSearchModalHarnessState.graphInsightsSectionKey
         },
+        // Read by the graph's "Go to Discover" (usePhaseJump), which uses the
+        // phase-rule inputs the tabs read.
+        files: {
+          smartFolders: [],
+          selectedFiles: [],
+          fileStates: {},
+          organizedFiles: [],
+          organizedPathIndex: []
+        },
+        analysis: { results: [] },
         system: { redactPaths: false, redactPathsLoaded: true }
       })
     )

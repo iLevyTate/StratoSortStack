@@ -249,4 +249,13 @@ describe('FULL_REBUILD reports whether the rebuilt index reached disk', () => {
     );
     expect(metadata.clearRebuildInProgress).toHaveBeenCalled();
   });
+  test('a final save that skipped a rebuilt collection as too large is not reported persisted', async () => {
+    vectorDb.resetAll.mockResolvedValue({ persisted: false, error: new Error('EBUSY') });
+    vectorDb.persistAll.mockResolvedValue({ success: true, tooLargeToSave: ['fileChunks'] });
+
+    const result = await fullRebuildHandler()({}, {});
+
+    expect(result.persisted).toBe(false);
+    expect(metadata.clearRebuildInProgress).not.toHaveBeenCalled();
+  });
 });

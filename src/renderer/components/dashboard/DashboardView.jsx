@@ -12,8 +12,7 @@ import {
   CheckCircle2,
   AlertTriangle
 } from 'lucide-react';
-import { useAppDispatch, useAppSelector } from '../../store/hooks';
-import { setPhase, setViewMode, setCameFromDashboard } from '../../store/slices/uiSlice';
+import { useAppSelector } from '../../store/hooks';
 import {
   selectFileStats,
   selectSmartFolders,
@@ -38,8 +37,9 @@ import { Heading, Text, Caption } from '../ui/Typography';
 import AnalysisProgress from '../discover/AnalysisProgress';
 import KnowledgeStatsCard from './KnowledgeStatsCard';
 import { countDestinationFolders } from '../../utils/smartFolderDestinations';
-import { planPhaseRoute, selectPhaseNavigationContext } from '../../utils/phaseNavigation';
+import { usePhaseJump } from '../../utils/phaseNavigation';
 import { useNotification } from '../../contexts/NotificationContext';
+import { useUndoRedo } from '../UndoRedoSystem';
 
 const RECENT_LIMIT = 4;
 const QUEUE_PREVIEW_LIMIT = 4;
@@ -600,8 +600,6 @@ ActivityCard.propTypes = {
  * App.js branches to it based on `ui.viewMode`.
  */
 export default function DashboardView() {
-  const dispatch = useAppDispatch();
-  const currentPhase = useAppSelector((s) => s.ui.currentPhase);
   const stats = useAppSelector(selectFileStats);
   const smartFolders = useAppSelector(selectSmartFolders);
   const organizedFiles = useAppSelector(selectOrganizedFiles);
@@ -611,29 +609,17 @@ export default function DashboardView() {
   const progress = useAppSelector(selectAnalysisProgress);
   const redactPaths = useAppSelector(selectRedactPaths);
 
-  const navContext = useAppSelector(selectPhaseNavigationContext);
   const { showInfo } = useNotification();
+  const { isExecuting: isUndoRedoExecuting } = useUndoRedo();
 
   // Leaving the dashboard hands the user back to the phased flow at a chosen
   // step, under the phase tabs' rule (uiSlice.getPhaseNavigation): back is
-  // always open, forward only past steps whose Continue check passes. A step
-  // that is not one move away is reached through Discover, which every phase
-  // reaches; when a prerequisite is missing the route stops at the last step
-  // it may take and says why, the same notice a closed tab gives. Returns
-  // whether the target was reached.
-  const goToPhase = useCallback(
-    (target) => {
-      const route = planPhaseRoute(currentPhase, target, navContext);
-      dispatch(setViewMode('phased'));
-      // Leave a breadcrumb so the phased chrome can offer a one-click way home.
-      // setViewMode clears the flag, so this must follow it.
-      dispatch(setCameFromDashboard(true));
-      for (const step of route.steps) dispatch(setPhase(step));
-      if (!route.reached && route.reason) showInfo(route.reason, 5200);
-      return route.reached;
-    },
-    [dispatch, currentPhase, navContext, showInfo]
-  );
+  // always open, forward only past steps whose Continue check passes, and
+  // nothing moves while analysis, file moves or undo/redo run. A step that is
+  // not one move away is reached through Discover; when a prerequisite is
+  // missing the route stops at the last step it may take and says why, the
+  // same notice a closed tab gives. Returns whether the target was reached.
+  const goToPhase = usePhaseJump({ isUndoRedoExecuting, notify: showInfo });
 
   const goOrganize = useCallback(() => goToPhase('organize'), [goToPhase]);
   const goDiscover = useCallback(() => goToPhase('discover'), [goToPhase]);
@@ -803,7 +789,7 @@ export default function DashboardView() {
             <PipelineCard
               stats={stats}
               organizedCount={organizedCount}
-              onReviewFailed={goOrganize}
+              onReviewFailed={goDiscover}
               onPendingStage={stats.pending > 0 ? goDiscover : undefined}
               onReadyStage={stats.ready > 0 ? goOrganize : undefined}
               onOrganizedStage={organizedCount > 0 ? goOrganize : undefined}

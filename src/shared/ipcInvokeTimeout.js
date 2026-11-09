@@ -16,6 +16,16 @@ const { LIMITS: PERF_LIMITS, TIMEOUTS } = require('./performanceConstants');
 const LIVE_LOG_INVOKE_TIMEOUT_MS = 5000;
 
 /**
+ * SYSTEM.INSTALL_VC_RUNTIME waits for a UAC prompt plus Microsoft's
+ * installer. Main gives up after INSTALL_TIMEOUT_MS (10 min, in
+ * src/main/utils/vcRuntimeInstaller.js) and answers `timed-out`; this budget
+ * is a minute longer so that answer always reaches the renderer instead of a
+ * raw preload timeout. Pinned against the main value by
+ * test/vcRuntimeInstaller.test.js.
+ */
+const VC_RUNTIME_INSTALL_INVOKE_TIMEOUT_MS = 11 * 60 * 1000;
+
+/**
  * @param {string} channel
  * @returns {number} Timeout in milliseconds
  */
@@ -88,11 +98,13 @@ function getIpcInvokeTimeout(channel) {
     channel === IPC_CHANNELS.ANALYSIS_HISTORY.EXPORT_TRANSCRIPT ||
     channel === IPC_CHANNELS.SETTINGS.EXPORT ||
     channel === IPC_CHANNELS.SETTINGS.IMPORT ||
-    channel === IPC_CHANNELS.SYSTEM.EXPORT_LOGS ||
-    // UAC prompt + the Visual C++ Redistributable installer's own window.
-    channel === IPC_CHANNELS.SYSTEM.INSTALL_VC_RUNTIME
+    channel === IPC_CHANNELS.SYSTEM.EXPORT_LOGS
   ) {
     timeout = TIMEOUTS.USER_DIALOG || 600000;
+  }
+  // UAC prompt + the Visual C++ Redistributable installer's own window.
+  if (channel === IPC_CHANNELS.SYSTEM.INSTALL_VC_RUNTIME) {
+    timeout = VC_RUNTIME_INSTALL_INVOKE_TIMEOUT_MS;
   }
   if (
     channel === IPC_CHANNELS.SYSTEM.LIVE_LOG_SUBSCRIBE ||
@@ -104,5 +116,6 @@ function getIpcInvokeTimeout(channel) {
 }
 
 module.exports = {
+  VC_RUNTIME_INSTALL_INVOKE_TIMEOUT_MS,
   getIpcInvokeTimeout
 };

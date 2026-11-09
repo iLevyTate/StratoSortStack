@@ -201,6 +201,27 @@ Changes you will notice:
 
 ### Fixed
 
+- **An index file too large to load can no longer be overwritten by an automatic repair.** It stays
+  protected until you reset or rebuild that index. A session without the compression library no
+  longer saves over the compressed index or its vectors either.
+- One orphaned file no longer marks the whole search index unhealthy and triggers a full rebuild
+  after every analysis.
+- Quitting while a save of the search index is running waits for that save instead of cutting it
+  short.
+- Install now (Visual C++ runtime) works on locked-down PCs where PowerShell runs in constrained
+  mode, verifies and runs a private copy of Microsoft's installer, recognizes a declined admin
+  prompt, and does not prompt when the runtime is already installed. The installer license now says
+  the Microsoft runtime has its own terms.
+- A batch that lists the same file twice and is rolled back no longer reports that file as moved.
+  Recovery after a crash no longer picks a file when two identical copies could match.
+- A corrupt organize journal is kept under a .corrupt name instead of being overwritten.
+- On case-sensitive macOS volumes, renaming a file to a different-case name no longer replaces a
+  different existing file.
+- Logs and exported logs hide API keys and tokens written inside text, including Anthropic keys.
+- Development: automated runs never touch your own files. An isolated test profile now also gets its
+  own Documents and Downloads folders, so the default Uncategorized folder and the Downloads watcher
+  stay inside it.
+
 - **On a new PC without the Microsoft Visual C++ Redistributable, local AI now says why it is off.**
   A fresh Windows install does not include that runtime, and the AI engine needs it, so every AI
   feature failed with only a log error. The app now shows a banner with a link to Microsoft's
@@ -235,9 +256,10 @@ Changes you will notice:
   background thread, so the app stays responsive while a large library loads.
 - **Typing a new search cancels the previous one** instead of letting it run ahead of the new query.
   Cancelling a search affects only that search.
-- **Phase tabs, Alt+arrow keys and dashboard links follow one rule.** A tab that is blocked says why
-  in its tooltip and when clicked, going back is always allowed, and all of them pause while
-  analysis or file moves run.
+- **Phase tabs, Alt+arrow keys, dashboard links and the File menu follow one rule.** A tab that is
+  blocked says why in its tooltip and when clicked, going back is always allowed, and all of them
+  pause while analysis, file moves or undo run. Files you organized before keep Organize and
+  Complete open, so a returning user can reach their results.
 - **File naming has one setting.** Changing the naming convention in Discover changes the default in
   Settings, and the other way round.
 - **Creating a folder through a link that points outside your allowed locations** is refused with a
@@ -281,8 +303,8 @@ Changes you will notice:
 - Scanned PDFs are read past the first page (up to a page limit), large CSV files are read in part,
   and a partial read is marked as partial in the file's details.
 - First run: choosing the dashboard with only the Uncategorized folder now sends you to add a
-  destination, and Welcome, Setup and Discover agree on what counts as one. Files dropped from a
-  pick for being unsupported or too large are named in the message.
+  destination, and Welcome, Setup and Discover agree on what counts as one. Files left out of a pick
+  for being unsupported or too large are counted, by reason, in the message.
 - Development: end-to-end tests no longer download AI models.
 - **Startup repair re-embeds missing vectors under default settings.** The file-vector backfill
   asked whether embedding was allowed after organizing, which is refused under the default "during

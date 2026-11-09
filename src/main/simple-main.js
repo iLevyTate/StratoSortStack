@@ -28,7 +28,25 @@ app.name = 'StratoSort Stack';
 // Allow E2E benchmarks / tests to redirect the user-data directory to an
 // isolated location.  Must run before any code calls app.getPath('userData').
 if (process.env.STRATOSORT_E2E_USER_DATA) {
-  app.setPath('userData', process.env.STRATOSORT_E2E_USER_DATA);
+  const isolatedRoot = process.env.STRATOSORT_E2E_USER_DATA;
+  app.setPath('userData', isolatedRoot);
+  // An automated run must never read the tester's own files. The default
+  // Uncategorized smart folder is created under Documents and watched, and the
+  // Downloads watcher reads Downloads, so keep both inside the isolated root.
+  const nodePath = require('path');
+  const nodeFs = require('fs');
+  for (const [name, folder] of /** @type {const} */ ([
+    ['documents', 'Documents'],
+    ['downloads', 'Downloads']
+  ])) {
+    const dir = nodePath.join(isolatedRoot, folder);
+    try {
+      nodeFs.mkdirSync(dir, { recursive: true });
+      app.setPath(name, dir);
+    } catch {
+      /* best effort: the profile itself is already isolated */
+    }
+  }
 }
 
 // After webpack rebuilds, a cached main bundle can still reference old async chunk IDs while

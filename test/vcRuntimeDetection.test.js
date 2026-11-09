@@ -11,6 +11,7 @@ const {
   isNativeBinaryLoadError,
   vcRuntimeMissingMessage,
   readVcRuntimeRegistryInstalled,
+  isArm64Host,
   detectVcRuntime
 } = require('../src/main/utils/vcRuntimeDetection');
 
@@ -72,7 +73,8 @@ describe('detectVcRuntime', () => {
       arch: 'x64',
       env: WIN_ENV,
       fileExists,
-      readRegistryInstalled: async () => true
+      readRegistryInstalled: async () => true,
+      hostIsArm64: async () => false
     });
     expect(status).toEqual({
       applicable: true,
@@ -80,7 +82,8 @@ describe('detectVcRuntime', () => {
       missingDlls: [],
       systemDir: SYSTEM32,
       registryInstalled: true,
-      archLabel: 'x64'
+      archLabel: 'x64',
+      x64OnArm64Host: false
     });
     expect(fileExists.mock.calls.map(([p]) => p)).toEqual(
       VC_RUNTIME_DLLS.map((dll) => path.join(SYSTEM32, dll))
@@ -93,7 +96,8 @@ describe('detectVcRuntime', () => {
       arch: 'x64',
       env: WIN_ENV,
       fileExists: async () => false,
-      readRegistryInstalled: async () => null
+      readRegistryInstalled: async () => null,
+      hostIsArm64: async () => false
     });
     expect(status.present).toBe(false);
     expect(status.missingDlls).toEqual(['msvcp140.dll', 'vcruntime140.dll']);
@@ -123,10 +127,151 @@ describe('detectVcRuntime', () => {
       },
       readRegistryInstalled: async () => {
         throw new Error('reg.exe blocked');
+      },
+      hostIsArm64: async () => {
+        throw new Error('reg.exe blocked');
       }
     });
     expect(status.present).toBe(false);
     expect(status.registryInstalled).toBeNull();
+    expect(status.x64OnArm64Host).toBe(false);
+  });
+
+  describe('x64 build on an Arm64 PC', () => {
+    // System32 there holds the ARM64 runtime's DLLs, which x64 (emulated)
+    // code cannot load; only the x64 runtime's registry key says whether the
+    // x64 runtime is installed.
+    test('ARM64 DLLs in System32 but no x64 runtime: missing', async () => {
+      const status = await detectVcRuntime({
+        platform: 'win32',
+        arch: 'x64',
+        env: WIN_ENV,
+        fileExists: async () => true,
+        readRegistryInstalled: async () => null,
+        hostIsArm64: async () => true
+      });
+      expect(status).toMatchObject({
+        applicable: true,
+        present: false,
+        x64OnArm64Host: true,
+        registryInstalled: null,
+        archLabel: 'x64'
+      });
+    });
+
+    test('x64 runtime registered (Installed=1): present', async () => {
+      const status = await detectVcRuntime({
+        platform: 'win32',
+        arch: 'x64',
+        env: WIN_ENV,
+        fileExists: async () => true,
+        readRegistryInstalled: async () => true,
+        hostIsArm64: async () => true
+      });
+      expect(status).toMatchObject({ present: true, x64OnArm64Host: true });
+    });
+
+    test('Installed=0: missing', async () => {
+      const status = await detectVcRuntime({
+        platform: 'win32',
+        arch: 'x64',
+        env: WIN_ENV,
+        fileExists: async () => true,
+        readRegistryInstalled: async () => false,
+        hostIsArm64: async () => true
+      });
+      expect(status.present).toBe(false);
+    });
+
+    test('the registry read targets the x64 runtime key', async () => {
+      const spawnImpl = jest.fn(async (_cmd, args) => {
+        if (args[1].includes('Session Manager')) {
+          return { status: 0, stdout: '    PROCESSOR_ARCHITECTURE    REG_SZ    ARM64\r\n' };
+        }
+        return { status: 0, stdout: '    Installed    REG_DWORD    0x1\r\n' };
+      });
+      const status = await detectVcRuntime({
+        platform: 'win32',
+        arch: 'x64',
+        env: WIN_ENV,
+        fileExists: async () => true,
+        spawnImpl
+      });
+      expect(status).toMatchObject({
+        present: true,
+        x64OnArm64Host: true,
+        registryInstalled: true
+      });
+      const runtimeQuery = spawnImpl.mock.calls.find(([, args]) => args[1].includes('Runtimes'));
+      expect(runtimeQuery[1][1]).toBe(
+        'HKLM\\SOFTWARE\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes\\x64'
+      );
+    });
+
+    test('an arm64 build never asks about the host and goes by System32', async () => {
+      const hostIsArm64 = jest.fn(async () => true);
+      const status = await detectVcRuntime({
+        platform: 'win32',
+        arch: 'arm64',
+        env: WIN_ENV,
+        fileExists: async () => true,
+        readRegistryInstalled: async () => null,
+        hostIsArm64
+      });
+      expect(status).toMatchObject({ present: true, x64OnArm64Host: false });
+      expect(hostIsArm64).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe('isArm64Host', () => {
+  test('trusts PROCESSOR_ARCHITEW6432 / PROCESSOR_ARCHITECTURE without spawning', async () => {
+    const spawnImpl = jest.fn();
+    await expect(
+      isArm64Host({ env: { ...WIN_ENV, PROCESSOR_ARCHITEW6432: 'ARM64' }, spawnImpl })
+    ).resolves.toBe(true);
+    await expect(
+      isArm64Host({ env: { ...WIN_ENV, PROCESSOR_ARCHITECTURE: 'ARM64' }, spawnImpl })
+    ).resolves.toBe(true);
+    expect(spawnImpl).not.toHaveBeenCalled();
+  });
+
+  test('otherwise reads the machine-wide PROCESSOR_ARCHITECTURE (emulated x64 sees AMD64)', async () => {
+    const spawnImpl = jest.fn().mockResolvedValue({
+      status: 0,
+      stdout:
+        '\r\nHKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment\r\n    PROCESSOR_ARCHITECTURE    REG_SZ    ARM64\r\n'
+    });
+    await expect(
+      isArm64Host({ env: { ...WIN_ENV, PROCESSOR_ARCHITECTURE: 'AMD64' }, spawnImpl })
+    ).resolves.toBe(true);
+    const [cmd, args, options] = spawnImpl.mock.calls[0];
+    expect(cmd).toBe(path.join(SYSTEM32, 'reg.exe'));
+    expect(args).toEqual([
+      'query',
+      'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment',
+      '/v',
+      'PROCESSOR_ARCHITECTURE'
+    ]);
+    expect(options.shell).toBeUndefined();
+  });
+
+  test('AMD64 machine, a failed query or a throw: false', async () => {
+    await expect(
+      isArm64Host({
+        env: WIN_ENV,
+        spawnImpl: jest.fn().mockResolvedValue({
+          status: 0,
+          stdout: '    PROCESSOR_ARCHITECTURE    REG_SZ    AMD64\r\n'
+        })
+      })
+    ).resolves.toBe(false);
+    await expect(
+      isArm64Host({ env: WIN_ENV, spawnImpl: jest.fn().mockResolvedValue({ status: 1 }) })
+    ).resolves.toBe(false);
+    await expect(
+      isArm64Host({ env: WIN_ENV, spawnImpl: jest.fn().mockRejectedValue(new Error('x')) })
+    ).resolves.toBe(false);
   });
 });
 

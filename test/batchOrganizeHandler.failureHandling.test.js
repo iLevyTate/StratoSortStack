@@ -446,3 +446,27 @@ describe('rolled-back batch results', () => {
     expect(recordAction).not.toHaveBeenCalled();
   });
 });
+
+describe('rolled-back batch with a duplicate op', () => {
+  test('every row for a restored file reads not organized, including the duplicate-skip row', async () => {
+    const ops = makeOps(3);
+    // The same move twice: the second copy hits the idempotency skip and
+    // pushes its own success row for the same source.
+    const withDuplicate = [ops[0], { ...ops[0] }, ops[1], ops[2]];
+    mockState.renameHook = (s) => {
+      if (s === R('/src/doc3.pdf')) throw mockErr('ENOSPC', 'no space left on device');
+    };
+
+    const { result, recordAction } = await run(withDuplicate);
+
+    expect(result.rolledBack).toBe(true);
+    expect(mockState.files.get(R('/src/doc1.pdf'))).toBe('DOC-1');
+    const doc1Rows = result.results.filter((r) => r.source === R('/src/doc1.pdf'));
+    expect(doc1Rows.length).toBeGreaterThanOrEqual(2);
+    for (const row of doc1Rows) {
+      expect(row).toMatchObject({ success: false, rolledBack: true });
+    }
+    expect(result.results.filter((r) => r.success)).toEqual([]);
+    expect(recordAction).not.toHaveBeenCalled();
+  });
+});

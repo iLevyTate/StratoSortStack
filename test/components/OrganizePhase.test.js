@@ -16,17 +16,25 @@ jest.mock('../../src/renderer/components/UndoRedoSystem', () => ({
   useUndoRedo: jest.fn(() => ({ executeAction: jest.fn() }))
 }));
 
+// Organized history in the store (files.organizedFiles), which survives the
+// queue being cleared.
+let mockOrganizedHistory = [];
+
 jest.mock('../../src/renderer/store/hooks', () => ({
   useAppDispatch: jest.fn(() => jest.fn()),
   useAppSelector: jest.fn((selector) =>
     selector({
-      ui: { currentPhase: 'organize', organizeFocusRequest: null }
+      ui: { currentPhase: 'organize', organizeFocusRequest: null },
+      files: { organizedFiles: mockOrganizedHistory }
     })
   )
 }));
 
 jest.mock('../../src/renderer/store/selectors', () => ({
-  selectRedactPaths: jest.fn(() => false)
+  selectRedactPaths: jest.fn(() => false),
+  selectOrganizedCount: jest.fn((state) =>
+    Array.isArray(state?.files?.organizedFiles) ? state.files.organizedFiles.length : 0
+  )
 }));
 
 jest.mock('../../src/renderer/store/slices/filesSlice', () => ({
@@ -226,6 +234,27 @@ import OrganizePhase from '../../src/renderer/phases/OrganizePhase';
 describe('OrganizePhase premium preflight copy', () => {
   afterEach(() => {
     jest.clearAllMocks();
+    mockOrganizedHistory = [];
+  });
+
+  // The Complete tab opens on the organized history (selectOrganizedCount);
+  // View results reads the same count, so a returning user whose queue was
+  // cleared can still open Complete from here.
+  test('View results opens on organized history, like the Complete tab', () => {
+    mockOrganizedHistory = [{ originalPath: '/old/a.pdf', path: '/dest/a.pdf' }];
+    render(<OrganizePhase />);
+
+    const viewResults = screen.getByRole('button', { name: /View results/i });
+    expect(viewResults).not.toBeDisabled();
+  });
+
+  test('with no organized history View results says why, in the Complete tab words', () => {
+    const { PHASE_PREREQUISITE_REASONS } = require('../../src/renderer/store/slices/uiSlice');
+    render(<OrganizePhase />);
+
+    const viewResults = screen.getByRole('button', { name: /View results/i });
+    expect(viewResults).toBeDisabled();
+    expect(viewResults).toHaveAttribute('title', PHASE_PREREQUISITE_REASONS.needsProcessedFile);
   });
 
   test('renders premium review guidance and move-focused CTA copy', () => {

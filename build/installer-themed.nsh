@@ -54,13 +54,19 @@
 ; win.extraResources; staged and Authenticode-verified by scripts/setup-vc-redist.js; excluded from
 ; our own signing by win.signExts).
 ;
-; When the DLLs are missing from the native System32 and this is not an auto-update (the isUpdated flag,
-; the --updated flag electron-updater passes), the bundled redistributable runs:
+; When the runtime is missing and this is not an auto-update (the isUpdated flag, the --updated
+; flag electron-updater passes), the bundled redistributable runs:
 ;   interactive: /install /passive /norestart   (progress window only)
 ;   silent (/S): /install /quiet /norestart
+; "Missing" means the DLLs are absent from the native System32, except for an x64 package on an
+; Arm64 PC: System32 there holds the ARM64 runtime's DLLs, which the emulated x64 app cannot load,
+; so the x64 runtime's registry key (Runtimes\x64 Installed=1) decides instead.
 ; The runtime installs per-machine, so Windows shows a UAC prompt; this installer itself stays
 ; per-user and never elevates. Exit codes: 0 and 1638 (same or newer already installed) succeed,
-; 3010 succeeds but needs a reboot, 1602 / 1223 mean the user cancelled, anything else failed.
+; 3010 and 1641 succeed but need a reboot, 1602 / 1223 mean the user cancelled, 1618 means another
+; installation is running, anything else failed. This installer does not check the file's
+; signature itself; the app verifies it before its own "Install now" runs it, and
+; scripts/verify-packaged-artifacts.js fails a build whose copy is not Microsoft-signed.
 ; On cancel or failure an interactive install offers Microsoft's download page (only on Yes); a
 ; silent install just continues. Either way the app raises the ai.vc-runtime-missing banner at
 ; launch, whose "Install now" runs the same bundled file.
@@ -92,19 +98,42 @@
     ${EndIf}
 
     StrCpy $R7 "present"
-    ; NSIS runs as a 32-bit process: on 64-bit Windows $SYSDIR is redirected to SysWOW64 unless
-    ; file system redirection is off, and the app needs the native (x64/ARM64) runtime in System32.
-    ${If} ${RunningX64}
-      ${DisableX64FSRedirection}
-    ${EndIf}
-    ${IfNot} ${FileExists} "$SYSDIR\msvcp140.dll"
-      StrCpy $R7 "missing"
-    ${EndIf}
-    ${IfNot} ${FileExists} "$SYSDIR\vcruntime140.dll"
-      StrCpy $R7 "missing"
-    ${EndIf}
-    ${If} ${RunningX64}
-      ${EnableX64FSRedirection}
+    ; electron-builder defines APP_ARM64 only when the installer carries an arm64 package, and
+    ; installs that package on Arm64 PCs. Without it, an Arm64 PC gets the x64 app (emulated).
+    !ifndef APP_ARM64
+      ${If} ${IsNativeARM64}
+        StrCpy $R7 "x64-on-arm64"
+      ${EndIf}
+    !endif
+
+    ${If} $R7 == "x64-on-arm64"
+      ; System32 holds the ARM64 runtime's DLLs, which x64 code cannot load: ask the x64
+      ; runtime's own registry key (64-bit view) instead.
+      SetRegView 64
+      ClearErrors
+      ReadRegDWORD $R6 HKLM "SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64" "Installed"
+      ${If} ${Errors}
+      ${OrIf} $R6 <> 1
+        StrCpy $R7 "missing"
+      ${Else}
+        StrCpy $R7 "present"
+      ${EndIf}
+      SetRegView lastused
+    ${Else}
+      ; NSIS runs as a 32-bit process: on 64-bit Windows $SYSDIR is redirected to SysWOW64 unless
+      ; file system redirection is off, and the app needs the native (x64/ARM64) runtime in System32.
+      ${If} ${RunningX64}
+        ${DisableX64FSRedirection}
+      ${EndIf}
+      ${IfNot} ${FileExists} "$SYSDIR\msvcp140.dll"
+        StrCpy $R7 "missing"
+      ${EndIf}
+      ${IfNot} ${FileExists} "$SYSDIR\vcruntime140.dll"
+        StrCpy $R7 "missing"
+      ${EndIf}
+      ${If} ${RunningX64}
+        ${EnableX64FSRedirection}
+      ${EndIf}
     ${EndIf}
 
     ${If} $R7 == "missing"
@@ -138,7 +167,8 @@
         ${OrIf} $R6 == "1638"
           DetailPrint "Microsoft Visual C++ Redistributable is installed (exit code $R6)."
         ${ElseIf} $R6 == "3010"
-          DetailPrint "Microsoft Visual C++ Redistributable installed; Windows needs a restart to finish (exit code 3010)."
+        ${OrIf} $R6 == "1641"
+          DetailPrint "Microsoft Visual C++ Redistributable installed; Windows needs a restart to finish (exit code $R6)."
           ${IfNot} ${Silent}
             MessageBox MB_OK|MB_ICONINFORMATION "The Microsoft Visual C++ Redistributable was installed, but Windows needs a restart to finish. If StratoSort says local AI is unavailable, restart your PC." /SD IDOK
           ${EndIf}
@@ -146,6 +176,9 @@
         ${OrIf} $R6 == "1223"
           DetailPrint "Microsoft Visual C++ Redistributable installation was cancelled (exit code $R6)."
           !insertmacro StratoSortVcRuntimeDownloadPrompt "The Microsoft Visual C++ Redistributable was not installed because the installation was cancelled. StratoSort's local AI needs it."
+        ${ElseIf} $R6 == "1618"
+          DetailPrint "Microsoft Visual C++ Redistributable was not installed: another installation is running (exit code 1618)."
+          !insertmacro StratoSortVcRuntimeDownloadPrompt "The Microsoft Visual C++ Redistributable was not installed because another installation is running on this PC. StratoSort's local AI needs it; install it once the other installation has finished."
         ${Else}
           DetailPrint "Microsoft Visual C++ Redistributable installation failed (exit code $R6)."
           !insertmacro StratoSortVcRuntimeDownloadPrompt "The Microsoft Visual C++ Redistributable could not be installed (exit code $R6). StratoSort's local AI needs it."
@@ -163,8 +196,8 @@
 !macroend
 
 ; StratoSort Custom Installer Hooks
-; electron-builder already registers uninstaller, shortcuts, and file associations (with
-; unregisterFileAssociations on uninstall). Only handle setup markers and optional user-data cleanup.
+; electron-builder already registers the uninstaller and shortcuts (the app declares no file
+; associations). Handle only setup markers, the VC++ runtime and optional user-data cleanup.
 ; Electron userData on Windows is %APPDATA%\StratoSort Stack (Roaming), matching productName.
 !macro customInstall
   Delete "$INSTDIR\first-run.marker"

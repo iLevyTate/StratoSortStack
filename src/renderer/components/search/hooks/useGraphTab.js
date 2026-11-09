@@ -34,7 +34,9 @@ import {
 import { nextRequestId, isCurrentRequest } from '../../../utils/requestGuard';
 import { useGraphState } from '../../../hooks';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
-import { openSettings, setPhase, setGraphInsightsSection } from '../../../store/slices/uiSlice';
+import { openSettings, setGraphInsightsSection } from '../../../store/slices/uiSlice';
+import { usePhaseJump } from '../../../utils/phaseNavigation';
+import { useNotification } from '../../../contexts/NotificationContext';
 import { clearActiveEdgePin } from '../useEdgeInteraction';
 import { useDuplicateBadgeScan } from './useDuplicateBadgeScan';
 import { resolveGraphMiniMapPalette, getGraphMiniMapNodeColor } from '../graphViewConstants';
@@ -374,10 +376,16 @@ export function useGraphTab(
     onClose?.();
   }, [dispatch, onClose]);
 
+  // A phase move from outside the tab strip: the tabs' rule and pause apply,
+  // and the jump leaves the dashboard so the move is visible. Knowledge OS is
+  // mounted outside UndoRedoProvider, so only the store's busy flags (moves,
+  // loading, analysis) pause it here. A refused move keeps the graph open
+  // and says why.
+  const { showInfo } = useNotification();
+  const jumpToPhase = usePhaseJump({ notify: showInfo });
   const handleGoToDiscover = useCallback(() => {
-    onClose?.();
-    dispatch(setPhase(PHASES.DISCOVER));
-  }, [dispatch, onClose]);
+    if (jumpToPhase(PHASES.DISCOVER)) onClose?.();
+  }, [jumpToPhase, onClose]);
 
   // Graph filtering state
   const [activeFilters, setActiveFilters] = useState(getDefaultActiveFilters);

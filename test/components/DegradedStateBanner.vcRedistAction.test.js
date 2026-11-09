@@ -173,6 +173,72 @@ describe('DegradedStateBanner VC++ runtime actions', () => {
     expect(openSpy).not.toHaveBeenCalled();
   });
 
+  test('signature could not be checked on this PC: neutral notice, not a failure', async () => {
+    mockInstallVcRuntime.mockResolvedValue({
+      success: false,
+      cancelled: false,
+      exitCode: null,
+      reason: 'signature-unreadable',
+      error: "Couldn't check the installer's signature on this PC"
+    });
+    await renderBanner();
+
+    await click('Install now');
+
+    expect(
+      screen.getByText(
+        "StratoSort couldn't check the installer's signature on this PC. Use Open download page instead."
+      )
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Action failed/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/not Microsoft-signed/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open download page' })).toBeEnabled();
+    expect(openSpy).not.toHaveBeenCalled();
+  });
+
+  test('runtime already installed: says so and offers the app restart', async () => {
+    mockInstallVcRuntime.mockResolvedValue({
+      success: false,
+      cancelled: false,
+      exitCode: null,
+      reason: 'already-installed',
+      runtimePresent: true
+    });
+    await renderBanner();
+
+    await click('Install now');
+
+    expect(
+      screen.getByText(
+        'The Microsoft Visual C++ Redistributable is already installed. Restart StratoSort to turn local AI on.'
+      )
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Restart StratoSort' })).toBeInTheDocument();
+    expect(screen.queryByText(/Action failed/)).not.toBeInTheDocument();
+  });
+
+  test('another installation running (1618): asks to wait and keeps both buttons', async () => {
+    mockInstallVcRuntime.mockResolvedValue({
+      success: false,
+      cancelled: false,
+      exitCode: 1618,
+      reason: 'install-in-progress',
+      error: 'Another installation is already running on this PC'
+    });
+    await renderBanner();
+
+    await click('Install now');
+
+    expect(
+      screen.getByText(
+        'Another installation is running on this PC. Wait for it to finish, then click Install now again.'
+      )
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Action failed/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Install now' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Open download page' })).toBeEnabled();
+  });
+
   test('installer failure: shows the error with the exit code and keeps the fallback', async () => {
     mockInstallVcRuntime.mockResolvedValue({
       success: false,

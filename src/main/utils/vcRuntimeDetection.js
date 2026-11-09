@@ -9,8 +9,11 @@
  * one question that turns that opaque error into an actionable one: is the
  * runtime missing?
  *
- * Detection is local and read-only: it checks System32 for the DLLs and, for
- * diagnostics only, reads the VC++ runtime registry key. Nothing here touches
+ * Detection is local and read-only: it checks System32 for the DLLs and reads
+ * the VC++ runtime registry key (diagnostic only, except for an x64 build on
+ * an Arm64 PC: System32 there holds the ARM64 runtime's DLLs, which emulated
+ * x64 code cannot load, so the x64 runtime's own registry key decides whether
+ * the runtime this build needs is installed). Nothing here touches
  * the network; the download page is opened only when the user clicks the
  * banner action (see DegradedStateBanner).
  *
@@ -109,14 +112,53 @@ async function readVcRuntimeRegistryInstalled({
   }
 }
 
+/** Machine-wide environment; holds the native PROCESSOR_ARCHITECTURE. */
+const SYSTEM_ENVIRONMENT_KEY =
+  'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment';
+
+/**
+ * Whether Windows itself runs on Arm64. An x64 process emulated there sees
+ * PROCESSOR_ARCHITECTURE=AMD64 in its own environment, so unless
+ * PROCESSOR_ARCHITEW6432 says ARM64, the machine-wide value is read from the
+ * registry (Node has no IsWow64Process2). Resolves false when that cannot be
+ * read. Never rejects.
+ *
+ * @param {{ env?: NodeJS.ProcessEnv, spawnImpl?: typeof asyncSpawn }} [options]
+ * @returns {Promise<boolean>}
+ */
+async function isArm64Host({ env = process.env, spawnImpl = asyncSpawn } = {}) {
+  const fromEnv = [env.PROCESSOR_ARCHITEW6432, env.PROCESSOR_ARCHITECTURE].map((value) =>
+    String(value || '').toUpperCase()
+  );
+  if (fromEnv.includes('ARM64')) return true;
+  try {
+    const result = await spawnImpl(
+      path.join(systemDirFromEnv(env), 'reg.exe'),
+      ['query', SYSTEM_ENVIRONMENT_KEY, '/v', 'PROCESSOR_ARCHITECTURE'],
+      { timeout: REGISTRY_TIMEOUT_MS, windowsHide: true }
+    );
+    if (!result || result.status !== 0) return false;
+    const match = String(result.stdout || '').match(
+      /PROCESSOR_ARCHITECTURE\s+REG_(?:EXPAND_)?SZ\s+(\S+)/i
+    );
+    return Boolean(match && match[1].toUpperCase() === 'ARM64');
+  } catch {
+    return false;
+  }
+}
+
 /**
  * @typedef {Object} VcRuntimeStatus
  * @property {boolean} applicable   false off Windows; the other fields are then empty
- * @property {boolean} present      every required DLL exists in System32
- * @property {string[]} missingDlls
+ * @property {boolean} present      the runtime this build needs is installed: every required
+ *                                  DLL exists in System32, or, for an x64 build on an Arm64
+ *                                  PC, the x64 runtime's registry key says Installed=1
+ * @property {string[]} missingDlls DLLs absent from System32
  * @property {string | null} systemDir
- * @property {boolean | null} registryInstalled  diagnostic only
+ * @property {boolean | null} registryInstalled  Runtimes\<build arch> Installed; diagnostic
+ *                                  except on an x64-on-Arm64 host, where it decides `present`
  * @property {'x64' | 'ARM64' | null} archLabel
+ * @property {boolean} x64OnArm64Host  an x64 build running emulated on an Arm64 PC
  */
 
 /**
@@ -140,7 +182,9 @@ async function defaultFileExists(filePath) {
  *   arch?: string,
  *   env?: NodeJS.ProcessEnv,
  *   fileExists?: (filePath: string) => Promise<boolean>,
- *   readRegistryInstalled?: () => Promise<boolean | null>
+ *   readRegistryInstalled?: () => Promise<boolean | null>,
+ *   hostIsArm64?: () => Promise<boolean>,
+ *   spawnImpl?: typeof asyncSpawn
  * }} [options] injectable for tests
  * @returns {Promise<VcRuntimeStatus>}
  */
@@ -149,7 +193,9 @@ async function detectVcRuntime({
   arch = process.arch,
   env = process.env,
   fileExists = defaultFileExists,
-  readRegistryInstalled
+  readRegistryInstalled,
+  hostIsArm64,
+  spawnImpl = asyncSpawn
 } = {}) {
   if (platform !== 'win32') {
     return {
@@ -158,7 +204,8 @@ async function detectVcRuntime({
       missingDlls: [],
       systemDir: null,
       registryInstalled: null,
-      archLabel: null
+      archLabel: null,
+      x64OnArm64Host: false
     };
   }
   const systemDir = systemDirFromEnv(env);
@@ -175,16 +222,27 @@ async function detectVcRuntime({
     .then(() =>
       readRegistryInstalled
         ? readRegistryInstalled()
-        : readVcRuntimeRegistryInstalled({ arch, env })
+        : readVcRuntimeRegistryInstalled({ arch, env, spawnImpl })
     )
     .catch(/** @returns {null} */ () => null);
+  const installed = typeof registryInstalled === 'boolean' ? registryInstalled : null;
+  // Only an x64 build can be emulated; an arm64 build on Arm64 is native.
+  const x64OnArm64Host =
+    arch !== 'arm64' &&
+    (await Promise.resolve()
+      .then(() => (hostIsArm64 ? hostIsArm64() : isArm64Host({ env, spawnImpl })))
+      .then((value) => value === true)
+      .catch(() => false));
   return {
     applicable: true,
-    present: missingDlls.length === 0,
+    // On an Arm64 PC the System32 DLLs are the ARM64 runtime's; an x64 build
+    // needs the x64 runtime, which only its registry key reports.
+    present: x64OnArm64Host ? installed === true : missingDlls.length === 0,
     missingDlls,
     systemDir,
-    registryInstalled: typeof registryInstalled === 'boolean' ? registryInstalled : null,
-    archLabel: vcRuntimeArchLabel(arch)
+    registryInstalled: installed,
+    archLabel: vcRuntimeArchLabel(arch),
+    x64OnArm64Host
   };
 }
 
@@ -195,5 +253,6 @@ module.exports = {
   vcRuntimeArchLabel,
   vcRuntimeMissingMessage,
   readVcRuntimeRegistryInstalled,
+  isArm64Host,
   detectVcRuntime
 };

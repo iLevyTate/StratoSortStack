@@ -5,13 +5,19 @@
  * Corporation. The file path only ever travels in the child environment.
  */
 
+const path = require('path');
+const { spawnSync } = require('child_process');
 const {
+  SIGNATURE_SCRIPT,
   TARGET_ENV_VAR,
+  encodedCommandArgs,
+  powershellPath,
   evaluateMicrosoftSignature,
   parseAuthenticodeOutput,
   readAuthenticode,
   readAuthenticodeSync,
-  subjectHasOrganization
+  subjectHasOrganization,
+  windowsPowerShellEnv
 } = require('../src/main/utils/authenticode');
 
 const MS_SUBJECT =
@@ -101,5 +107,86 @@ describe('PowerShell invocation', () => {
         spawnSyncImpl: jest.fn(() => ({ status: 0, stdout: '' }))
       })
     ).toBeNull();
+  });
+});
+
+describe('signature script and ConstrainedLanguage mode', () => {
+  test('uses nothing ConstrainedLanguage rejects', () => {
+    // [pscustomobject] fails there with ConversionSupportedOnlyToCoreTypes, and
+    // .NET static calls with MethodInvocationNotSupportedInConstrainedLanguage.
+    expect(SIGNATURE_SCRIPT).not.toMatch(/\[pscustomobject\]/i);
+    expect(SIGNATURE_SCRIPT).not.toMatch(/\[Console\]::/);
+    expect(SIGNATURE_SCRIPT.split('\n')).toContain('@{');
+    expect(SIGNATURE_SCRIPT).toContain('} | ConvertTo-Json -Compress');
+  });
+
+  const describeWindows = process.platform === 'win32' ? describe : describe.skip;
+  describeWindows('real Windows PowerShell 5.1', () => {
+    const CLM_PREFIX =
+      "$ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage'\n" +
+      "if ($ExecutionContext.SessionState.LanguageMode -ne 'ConstrainedLanguage') { exit 99 }\n";
+    const notepad = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'notepad.exe');
+
+    test.each([
+      ['FullLanguage', ''],
+      ['ConstrainedLanguage', CLM_PREFIX]
+    ])(
+      '%s: reads a Microsoft-signed system file as Valid / O=Microsoft Corporation',
+      (_mode, prefix) => {
+        const result = spawnSync(powershellPath(), encodedCommandArgs(prefix + SIGNATURE_SCRIPT), {
+          // Same scrubbed environment the product uses: a runner step launched
+          // from PowerShell 7 exports a PSModulePath that breaks 5.1's signature cmdlets.
+          env: windowsPowerShellEnv(process.env, { [TARGET_ENV_VAR]: notepad }),
+          encoding: 'utf8',
+          windowsHide: true,
+          timeout: 60000
+        });
+        expect({ status: result.status, stderr: (result.stderr || '').slice(0, 600) }).toEqual({
+          status: 0,
+          stderr: expect.any(String)
+        });
+        const info = parseAuthenticodeOutput(result.stdout);
+        expect(info).toMatchObject({ status: 'Valid' });
+        expect(evaluateMicrosoftSignature(info)).toMatchObject({ ok: true, reason: 'valid' });
+      },
+      60000
+    );
+  });
+});
+
+describe('Windows PowerShell child environment', () => {
+  // GitHub's Windows runners run steps in PowerShell 7, which exports a
+  // PSModulePath listing its own module folders; Windows PowerShell 5.1 then
+  // loads PowerShell 7's security module and Get-AuthenticodeSignature fails.
+  test('drops PSModulePath in any casing and keeps everything else', () => {
+    const env = {
+      SystemRoot: 'C:/Windows',
+      PSModulePath: 'C:/Program Files/PowerShell/7/Modules',
+      psmodulepath: 'x',
+      KEEP_ME: '1'
+    };
+    const spawnSyncImpl = jest.fn(() => ({ status: 1, stdout: '', stderr: 'boom' }));
+    readAuthenticodeSync('C:/file.exe', { env, spawnSyncImpl });
+    const childEnv = spawnSyncImpl.mock.calls[0][2].env;
+    expect(Object.keys(childEnv).some((k) => k.toLowerCase() === 'psmodulepath')).toBe(false);
+    expect(childEnv.KEEP_ME).toBe('1');
+    expect(childEnv.SystemRoot).toBe('C:/Windows');
+    expect(Object.values(childEnv)).toContain('C:/file.exe');
+  });
+
+  test('a failed read reports the exit code and stderr through diagnostics', () => {
+    const diagnostics = {};
+    const result = readAuthenticodeSync('C:/file.exe', {
+      env: { SystemRoot: 'C:/Windows' },
+      diagnostics,
+      spawnSyncImpl: jest.fn(() => ({
+        status: 1,
+        stdout: '',
+        stderr: 'Get-AuthenticodeSignature : The term is not recognized\r\n  at line 3'
+      }))
+    });
+    expect(result).toBeNull();
+    expect(diagnostics.exitCode).toBe(1);
+    expect(diagnostics.stderr).toMatch(/not recognized at line 3/);
   });
 });

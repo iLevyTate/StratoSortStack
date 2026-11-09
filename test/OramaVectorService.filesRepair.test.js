@@ -107,3 +107,47 @@ describe('OramaVectorService files repair preserves fileHash (F-048)', () => {
     expect(after.find((d) => d.id === 'file-hash-1').fileHash).toBe(HASH);
   });
 });
+
+describe('OramaVectorService files health probe skips orphaned rows', () => {
+  let service;
+  const vec = (seed) => Array.from({ length: 768 }, (_, i) => Math.sin(seed * 31 + i));
+  const meta = (p) => ({ path: p, filePath: p, fileName: path.basename(p), fileType: 'document' });
+
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    app.getPath.mockReturnValue(TEMP_DIR);
+    service = new OramaVectorService();
+    await service.initialize();
+  });
+
+  afterEach(async () => {
+    await service.cleanup();
+  });
+
+  test('an orphaned row first in the sidecar does not fail the probe or trigger a rebuild', async () => {
+    await service.batchUpsertFiles([
+      { id: 'file:A', vector: vec(1), meta: meta('/lib/A.pdf') },
+      { id: 'file:C', vector: vec(3), meta: meta('/lib/C.pdf') }
+    ]);
+    await service.markEmbeddingsOrphaned(['file:A']);
+    const repair = jest.spyOn(service, '_repairFilesVectorIndexFromCurrentState');
+
+    await service.batchUpsertFiles([{ id: 'file:B', vector: vec(2), meta: meta('/lib/B.pdf') }]);
+
+    const health = service._getVectorHealthSnapshot();
+    expect(repair).not.toHaveBeenCalled();
+    expect(health.primaryHealthy).toBe(true);
+    expect(health.repairAttempts).toBe(0);
+  });
+
+  test('a collection whose every row is orphaned counts as healthy, not broken', async () => {
+    await service.batchUpsertFiles([{ id: 'file:A', vector: vec(1), meta: meta('/lib/A.pdf') }]);
+    await service.markEmbeddingsOrphaned(['file:A']);
+    const repair = jest.spyOn(service, '_repairFilesVectorIndexFromCurrentState');
+
+    const health = await service._ensurePrimaryVectorHealth({ reason: 'test', force: true });
+
+    expect(repair).not.toHaveBeenCalled();
+    expect(health.primaryHealthy).toBe(true);
+  });
+});

@@ -66,9 +66,12 @@ risk classification used by the compliance gate is in `docs/commercial-use-inven
   Microsoft's permanent links `https://aka.ms/vc14/vc_redist.x64.exe` /
   `https://aka.ms/vc14/vc_redist.arm64.exe`, staged by `scripts/setup-vc-redist.js` during
   `npm run dist:win*`. Distributed unmodified (Microsoft's own Authenticode signature, not
-  re-signed) as Distributable Code under the Microsoft Visual Studio license terms; Microsoft's
-  license terms are shown by the installer when it runs interactively. Version and checksum are
-  recorded in the `vc_redist.<arch>.json` manifest next to it; see also
+  re-signed) as Distributable Code under the Microsoft Visual Studio license terms; the installed
+  runtime is subject to Microsoft's license terms
+  (https://visualstudio.microsoft.com/license-terms/). StratoSort runs it only with `/passive` or
+  `/quiet`, so Microsoft's installer does not display those terms; the StratoSort Windows
+  installer's license screen notes that it may install this component under Microsoft's terms.
+  Version and checksum are recorded in the `vc_redist.<arch>.json` manifest next to it; see also
   `assets/runtime/vcredist/NOTICE.md`. Copyright © Microsoft Corporation. All rights reserved.
 
 - **Tesseract OCR language data** (`assets/runtime/tessdata/eng.traineddata.gz`) Source: the

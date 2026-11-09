@@ -365,6 +365,27 @@ describe('OramaVectorService save safety', () => {
       expect(ids.sort()).toEqual(['file:a', 'file:c', 'file:d']);
     });
 
+    test('a repair of it reports that the rebuilt index did not reach disk', async () => {
+      await save();
+      await service.upsertFile({ id: 'file:a', vector: vector(), meta: { path: '/x/a.txt' } });
+      failFilesStringify();
+
+      const repair = await service._repairFilesVectorIndexFromCurrentState();
+
+      expect(repair.repaired).toBe(true);
+      expect(repair.persisted).toBe(false);
+    });
+
+    test('a save report counts only the collections the caller names', () => {
+      const saved = { success: true, tooLargeToSave: ['files'] };
+      expect(service._reportSave('Files vector index rebuilt', saved, ['files'])).toEqual(
+        expect.objectContaining({ persisted: false })
+      );
+      expect(service._reportSave('Folders vector index rebuilt', saved, ['folders'])).toEqual({
+        persisted: true
+      });
+    });
+
     test('the last save before quitting tries it once more', async () => {
       await save();
       await service.upsertFile({ id: 'file:a', vector: vector(), meta: { path: '/x/a.txt' } });
@@ -501,6 +522,97 @@ describe('OramaVectorService save safety', () => {
       );
       expect(await fsp.readFile(primary)).toEqual(blob);
       expect(await fsp.readFile(`${primary}.bak`)).toEqual(bak);
+    });
+
+    /** Save `name` once, then restart with its blob replaced by one too large to read. */
+    async function plantTooLarge(name, seed) {
+      await seed();
+      const dir = service._dataPath;
+      await restart(async () => {
+        await fsp.writeFile(
+          path.join(dir, `${name}.json.lz4`),
+          await compress(Buffer.from(`{"docs":{"docs":{},"note":"${TOO_LARGE_MARKER}"}}`, 'utf8'))
+        );
+      });
+      const read = async (file) => fsp.readFile(path.join(dir, file)).catch(() => null);
+      return {
+        dir,
+        blob: await read(`${name}.json.lz4`),
+        sidecar: await read(`${name}.sidecar.json`),
+        bak: await read(`${name}.json.lz4.bak`),
+        read
+      };
+    }
+
+    /** A vector pointing mostly along one axis, far from the other axes. */
+    const axis = (i) => {
+      const v = new Array(768).fill(0.001);
+      v[i] = 1;
+      return v;
+    };
+
+    test('an automatic files index repair does not lift the block', async () => {
+      const before = await plantTooLarge('files', () =>
+        service.upsertFile({ id: 'file:old', vector: vector(), meta: { path: '/x/old.txt' } })
+      );
+      await service.upsertFile({ id: 'file:p', vector: axis(1), meta: { path: '/x/p.txt' } });
+      // The sidecar no longer matches the index: the health probe fails and
+      // would rebuild (replace) the files collection.
+      service._embeddingStore.files.set('file:p', axis(0));
+
+      await service._ensurePrimaryVectorHealth({ reason: 'test', force: true, autoRepair: true });
+      await service._repairFilesVectorIndexFromCurrentState();
+      await service.persistAll();
+
+      expect(await before.read('files.json.lz4')).toEqual(before.blob);
+      expect(await before.read('files.sidecar.json')).toEqual(before.sidecar);
+      expect(await before.read('files.json.lz4.bak')).toEqual(before.bak);
+      expect(mockTracker.clear).not.toHaveBeenCalledWith('orama.too-large:files');
+    });
+
+    test('a session that analyzes, orphans and analyzes again never saves over it', async () => {
+      const before = await plantTooLarge('files', () =>
+        service.upsertFile({ id: 'file:old', vector: vector(), meta: { path: '/x/old.txt' } })
+      );
+      const meta = (p) => ({ path: p, filePath: p, fileName: path.basename(p) });
+
+      await service.batchUpsertFiles([{ id: 'file:A', vector: axis(2), meta: meta('/x/A.pdf') }]);
+      await service.markEmbeddingsOrphaned(['file:A']);
+      await service.batchUpsertFiles([{ id: 'file:B', vector: axis(3), meta: meta('/x/B.pdf') }]);
+      await service.persistAll();
+      service._bakRotatedAt.clear();
+      await service.persistAll();
+
+      expect(await before.read('files.json.lz4')).toEqual(before.blob);
+      expect(await before.read('files.sidecar.json')).toEqual(before.sidecar);
+      expect(await before.read('files.json.lz4.bak')).toEqual(before.bak);
+    });
+
+    test('an automatic folders index repair does not lift the block', async () => {
+      const before = await plantTooLarge('folders', () =>
+        service.upsertFolder({ id: 'folder:old', vector: vector(), name: 'Old', path: '/x' })
+      );
+      await service.upsertFolder({ id: 'folder:p', vector: axis(1), name: 'P', path: '/p' });
+
+      const repair = await service._repairFoldersVectorIndexFromCurrentState();
+      await service.persistAll();
+
+      expect(repair.persisted).toBe(false);
+      expect(await before.read('folders.json.lz4')).toEqual(before.blob);
+      expect(await before.read('folders.sidecar.json')).toEqual(before.sidecar);
+      expect(mockTracker.clear).not.toHaveBeenCalledWith('orama.too-large:folders');
+    });
+
+    test('a deliberate files reset lifts the block', async () => {
+      await plantTooLarge('files', () =>
+        service.upsertFile({ id: 'file:old', vector: vector(), meta: { path: '/x/old.txt' } })
+      );
+
+      const reset = await service.resetFiles();
+
+      expect(reset.persisted).toBe(true);
+      expect((await readSaved('files')).docs.docs).toEqual({});
+      expect(mockTracker.clear).toHaveBeenCalledWith('orama.too-large:files');
     });
 
     test('a deliberate reset replaces it and saving resumes', async () => {

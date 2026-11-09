@@ -55,6 +55,63 @@ bytes per document: about 0.2-0.6 MB per 10,000 documents. The cap bounded none 
 as the document exists. Each document's vector is also written twice on disk, once in the collection
 blob and once in the sidecar (~15 KB each at 768 dims).
 
+## A saved file the store did not read is never saved over (2026-11-09)
+
+Two cases leave a collection's file on disk unread for the session: it decompresses past the longest
+string V8 can build (`too-large-to-read`), or the LZ4 binding did not load and the file is a
+`.json.lz4` (`lz4-unavailable`). Either way the collection starts this session without that data, so
+writing it would replace the library on disk with whatever the session holds.
+
+Such a collection is listed in `_saveBlocked` (collection name to reason). While it is listed, a
+save writes neither its blob nor its sidecar and rotates no `.bak` over it; the save result lists it
+in `saveBlocked`. The block used to be "the empty stand-in object is still the live collection", so
+the automatic files/folders index repair (run by the health probe after every batch upsert, and by
+an empty folder query) swapped in a new object, lifted the block and saved over the unread file. It
+is now a flag:
+
+- Automatic repairs never lift it, and the health checks skip auto-repair for a blocked collection.
+- Only a deliberate reset (`resetFiles`, `resetFolders`, `resetFileChunks`, `resetFeedbackMemory`,
+  `resetLearningPatterns`, and so `resetAll` / Full Rebuild) lifts `too-large-to-read`.
+- `lz4-unavailable` is never lifted in-session: a plain `.json` written now would be ignored next to
+  the `.lz4` once the binding loads (restore reads `.lz4` first), and its sidecar would replace the
+  one the `.lz4` needs. The session's changes to that collection stay in memory; the next launch
+  with the binding restores the untouched `.lz4` and its sidecar. `resetAll` reports
+  `persisted: false` while such a block remains. Collections that had no `.json.lz4` still save as
+  plain `.json` and are read back from it.
+- A save that replaces `<name>.json.lz4` no longer deletes a `<name>.json` newer than it (written by
+  an older binding-less session, or with compression off; restore did not read it). It is renamed to
+  `<name>.json.newer-than-lz4.<timestamp>.bak` and a warning is logged.
+
+Pinned by `test/OramaVectorService.saveSafety.test.js` ("a collection too large to read") and
+`test/OramaVectorService.lz4Unavailable.test.js`.
+
+### What "saved" means to callers
+
+`persistAll()` resolves `{ success, tooLargeToSave?, saveBlocked? }`. `success: true` means the
+round did not fail, not that every collection reached disk. Resets and repairs report through
+`_reportSave(what, saved, collections)`, which returns `persisted: false` when one of the named
+collections was skipped. Full Rebuild's retry save (`src/main/ipc/semantic.js`) does the same for
+`files`, `folders` and `fileChunks`, so `rebuildInProgress` stays set when the rebuilt index did not
+reach disk.
+
+### Files health probe
+
+The files probe searches with `where: { isOrphaned: false, hasVector: true }`, so it now picks its
+probe vector from a sidecar entry whose document is live (not orphaned, `hasVector` not false). It
+used the first sidecar entry before: when that row was orphaned the probe could never pass, so every
+batch upsert rebuilt and fully saved the files index and `primaryHealthy` stayed false. With no live
+row to probe the collection counts as healthy (`no-valid-probe`). Pinned by
+`test/OramaVectorService.filesRepair.test.js`.
+
+### Quitting during a save
+
+`cleanup()` waits for any running save (`_waitForSaveIdle`, the same wait `persistAll()` uses)
+before each final save round, and again before clearing the in-memory collections. Before, a
+`persistAll()` that started its save while cleanup waited made each final round return "A save is
+already running", and cleanup cleared `_databases` under that save (a TypeError, collections not
+written). If a save is still running after 120 s, cleanup logs an error and leaves the collections
+in memory instead of clearing them. Pinned by `test/OramaVectorService.cleanupRace.test.js`.
+
 ## Restore parses in a worker thread
 
 Reading a saved collection back (read, LZ4 decode, `JSON.parse`, prototype-pollution strip) used to

@@ -35,7 +35,17 @@ jest.mock('../src/renderer/store/hooks', () => ({
         currentPhase: mockCurrentPhase,
         showSettings: mockShowSettings,
         viewMode: mockViewMode
-      }
+      },
+      // Read by usePhaseJump (File-menu pickers), which uses the real
+      // phase-rule inputs; the rule itself is mocked to allow every move.
+      files: {
+        smartFolders: [],
+        selectedFiles: [],
+        fileStates: {},
+        organizedFiles: [],
+        organizedPathIndex: []
+      },
+      analysis: { results: [] }
     })
 }));
 
@@ -55,6 +65,7 @@ jest.mock('../src/renderer/store/slices/uiSlice', () => ({
 // for the rule itself against real state).
 const mockNavContext = { hasSmartFolders: true, hasAnalyzedFiles: true };
 jest.mock('../src/renderer/utils/phaseNavigation', () => ({
+  ...jest.requireActual('../src/renderer/utils/phaseNavigation'),
   selectPhaseNavigationContext: () => mockNavContext
 }));
 

@@ -218,4 +218,43 @@ describe('ProcessingStateService unreadable journal at startup', () => {
     const live = JSON.parse(fsSync.readFileSync(STATE_PATH, 'utf8'));
     expect(live.organize.batches).toEqual({});
   });
+  test.each([
+    ['a truncated journal (SyntaxError)', () => original.slice(0, Math.floor(original.length / 2))],
+    ['an array-root journal (wrong shape)', () => JSON.stringify([JSON.parse(original)])]
+  ])('%s is kept under a quarantine name before the reset', async (_label, makeContent) => {
+    const corrupt = makeContent();
+    fsSync.writeFileSync(STATE_PATH, corrupt, 'utf8');
+
+    await service.initialize();
+
+    expect(service.initialized).toBe(true);
+    const kept = listUserData().filter((name) => name.startsWith('processing-state.json.corrupt.'));
+    expect(kept).toHaveLength(1);
+    expect(fsSync.readFileSync(path.join(USER_DATA, kept[0]), 'utf8')).toBe(corrupt);
+    // The live journal is reset to a fresh, parseable state.
+    const live = JSON.parse(fsSync.readFileSync(STATE_PATH, 'utf8'));
+    expect(live.organize.batches).toEqual({});
+    expect(mockRaise).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: 'processing-state.journal-unreadable',
+        detail: expect.objectContaining({ quarantinePath: path.join(USER_DATA, kept[0]) })
+      })
+    );
+  });
+
+  test('a corrupt journal that cannot be set aside is left untouched', async () => {
+    fsSync.writeFileSync(STATE_PATH, '{ not json', 'utf8');
+    const realRename = fs.rename.bind(fs);
+    jest.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+      if (path.basename(String(from)) === 'processing-state.json') throw errorWithCode('EBUSY');
+      return realRename(from, to);
+    });
+    jest.spyOn(fs, 'copyFile').mockRejectedValue(errorWithCode('EACCES'));
+
+    await service.initialize();
+    await service.markAnalysisStart('/docs/c.pdf');
+    await service.flushSaveState();
+
+    expect(fsSync.readFileSync(STATE_PATH, 'utf8')).toBe('{ not json');
+  });
 });
