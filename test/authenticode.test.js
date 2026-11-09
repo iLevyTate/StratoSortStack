@@ -147,3 +147,40 @@ describe('signature script and ConstrainedLanguage mode', () => {
     );
   });
 });
+
+describe('Windows PowerShell child environment', () => {
+  // GitHub's Windows runners run steps in PowerShell 7, which exports a
+  // PSModulePath listing its own module folders; Windows PowerShell 5.1 then
+  // loads PowerShell 7's security module and Get-AuthenticodeSignature fails.
+  test('drops PSModulePath in any casing and keeps everything else', () => {
+    const env = {
+      SystemRoot: 'C:/Windows',
+      PSModulePath: 'C:/Program Files/PowerShell/7/Modules',
+      psmodulepath: 'x',
+      KEEP_ME: '1'
+    };
+    const spawnSyncImpl = jest.fn(() => ({ status: 1, stdout: '', stderr: 'boom' }));
+    readAuthenticodeSync('C:/file.exe', { env, spawnSyncImpl });
+    const childEnv = spawnSyncImpl.mock.calls[0][2].env;
+    expect(Object.keys(childEnv).some((k) => k.toLowerCase() === 'psmodulepath')).toBe(false);
+    expect(childEnv.KEEP_ME).toBe('1');
+    expect(childEnv.SystemRoot).toBe('C:/Windows');
+    expect(Object.values(childEnv)).toContain('C:/file.exe');
+  });
+
+  test('a failed read reports the exit code and stderr through diagnostics', () => {
+    const diagnostics = {};
+    const result = readAuthenticodeSync('C:/file.exe', {
+      env: { SystemRoot: 'C:/Windows' },
+      diagnostics,
+      spawnSyncImpl: jest.fn(() => ({
+        status: 1,
+        stdout: '',
+        stderr: 'Get-AuthenticodeSignature : The term is not recognized\r\n  at line 3'
+      }))
+    });
+    expect(result).toBeNull();
+    expect(diagnostics.exitCode).toBe(1);
+    expect(diagnostics.stderr).toMatch(/not recognized at line 3/);
+  });
+});

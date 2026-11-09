@@ -40,7 +40,12 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { asyncSpawn } = require('./asyncSpawnUtils');
-const { powershellPath, encodedCommandArgs, verifyMicrosoftSignature } = require('./authenticode');
+const {
+  powershellPath,
+  encodedCommandArgs,
+  verifyMicrosoftSignature,
+  windowsPowerShellEnv
+} = require('./authenticode');
 const { detectVcRuntime } = require('./vcRuntimeDetection');
 
 /** Path segments under the resources directory (matches electron-builder win.extraResources). */
@@ -223,7 +228,7 @@ async function runInstallerElevated(
   { env = process.env, spawnImpl = asyncSpawn } = {}
 ) {
   const result = await spawnImpl(powershellPath(env), encodedCommandArgs(ELEVATED_INSTALL_SCRIPT), {
-    env: { ...env, [INSTALLER_ENV_VAR]: installerPath },
+    env: windowsPowerShellEnv(env, { [INSTALLER_ENV_VAR]: installerPath }),
     timeout: INSTALL_TIMEOUT_MS,
     windowsHide: true
   });
