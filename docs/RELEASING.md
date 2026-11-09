@@ -332,7 +332,8 @@ image-preprocess and embedding workers crashed in v5.1.2
       already has a library and check that the `[OramaVectorService] Restored <name> database` log
       line carries `parsedIn: 'worker'`. Restore only uses the worker for saved files of 4 MB or
       more (smaller ones always log `parsedIn: 'main'`), so use a library that large; `'main'` on a
-      bigger file means the worker failed to load and restore fell back to the main thread.
+      bigger file means the worker failed to load and restore fell back to the main thread. The
+      packaged smoke workflow below checks this on every platform with a seeded 5 MB index.
 - [ ] **Worker dependency trees.** `verify:packaged-artifacts` (pre-flight step 6) fails when a
       worker bundle's externals, with their full dependency closure, do not resolve inside
       `app.asar.unpacked`. On the running app, confirm no log line shows a worker failing with
@@ -428,16 +429,20 @@ branch before tagging (Actions → **Packaged Smoke** → **Run workflow**, or
   with `--no-sandbox`.
 - **Every leg** launches the app with a throwaway profile through `scripts/packaged-launch-smoke.js`
   (no model downloads, updater off). It passes only if coordinated startup completes, the native AI
-  engine loads, and the packaged OCR worker reads a synthetic image, with no `Cannot find module`,
-  worker error, `ERR_DLOPEN_FAILED`, integrity failure or failed startup in the log. A GPU backend
-  that fails and falls back to the CPU (Vulkan on the runner's Hyper-V GPU) is recorded under
-  `gpuFallbacks` and allowed; `NoBinaryFoundError` on the CPU backend fails the run. Logs, the
-  verdict and the Windows signature table are uploaded as
-  `packaged-smoke-<platform>-<arch>-<run number>`.
+  engine loads, the packaged OCR worker reads a synthetic image, and a seeded search index is
+  restored through the restore worker, with no `Cannot find module`, worker error,
+  `ERR_DLOPEN_FAILED`, integrity failure or failed startup in the log. A GPU backend that fails and
+  falls back to the CPU (Vulkan on the runner's Hyper-V GPU) is recorded under `gpuFallbacks` and
+  allowed; `NoBinaryFoundError` on the CPU backend fails the run. Logs, the verdict and the Windows
+  signature table are uploaded as `packaged-smoke-<platform>-<arch>-<run number>`.
+- **Restore worker.** Before launch the script writes a 5 MB LZ4-compressed `fileChunks` collection
+  of 800 synthetic passages, in the app's own saved format, into the profile's `vector-db` folder.
+  That is past the 4 MB threshold, so the run fails unless the `Restored fileChunks database` line
+  shows `parsedIn: 'worker'` with all 800 documents inserted. A missing worker bundle or LZ4 binding
+  would otherwise fall back to the main thread silently.
 - **Still manual.** The runners have no models and click nothing, so the vision model, Atlas, log
-  export, settings import, a large-library restore, the UAC and **Install now** paths, Defender
-  timing, the tamper test and the updater live smoke stay with the checklist and the Windows Sandbox
-  run above.
+  export, settings import, the UAC and **Install now** paths, Defender timing, the tamper test and
+  the updater live smoke stay with the checklist and the Windows Sandbox run above.
 
 ### Windows zip (no-install build)
 
