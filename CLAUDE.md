@@ -39,7 +39,7 @@ src/renderer/components/ # React components organized by feature (discover/, org
 src/renderer/store/      # Redux slices, middleware (persistence, IPC), thunks, selectors
 src/shared/              # Cross-process utilities (logger, security, config schemas, constants)
 test/                    # 400+ test files (unit, integration, e2e, perf, stress)
-scripts/                 # 65 scripts/*.js files, most wired into npm (see package.json)
+scripts/                 # 58 scripts/*.js files, most wired into npm (see package.json)
 ```
 
 ### Data Flow
@@ -103,7 +103,7 @@ tree.
   `ci`) enforces a monotonic floor and blocks new .js under `COVERED_DIRS` (`src/shared`,
   `src/preload`, `src/main/{ipc,services,analysis,errors,utils,workers,transports,core}`,
   `src/renderer/{services,hooks,phases,store,utils,components}` today (every `.js` under `src/` is
-  now opted in — 475/475 as of 2026-11-05, and `GLOBAL_DIRECTIVE_FLOOR` matches at 475) — see
+  now opted in — 489/489 as of 2026-11-09, and `GLOBAL_DIRECTIVE_FLOOR` matches at 489) — see
   `scripts/verify-checkjs-ratchet.js` for the authoritative list) from landing without the
   directive. When adding a file to a covered dir: put `// @ts-check` on line 1 and fix the errors
   before commit. When opting in a new file elsewhere: bump `GLOBAL_DIRECTIVE_FLOOR` in
@@ -118,17 +118,26 @@ These are tracked gaps that the project slash commands help address:
    dark/light themes with `critical+serious` hard-fail. The graph-canvas keyboard path closed
    2026-07-03 (U-T14: React Flow node focus + selection toolbars, pinned by oracles). Remaining for
    a formal AA claim: a manual screen-reader pass (NVDA) only.
-2. **SW-40 packaged verification outstanding** — `asarUnpack` was narrowed from `dist/**/*` to the
-   seven worker entry bundles so main/preload/renderer stay inside the integrity-validated asar
-   (`verify:electron-fuses-config` now fails if a pattern unpacks `dist/main.js` again), and
-   `workerPools.resolveWorkerPath` prefers `app.asar.unpacked/dist/` when packaged, and
-   `getRendererIndexPath` prefers `app.asar/dist/index.html` (unpacked renderer is a legacy fallback
-   only). Before the next release a packaged build (`dist:win`) must be smoke-tested. **The
-   checklist now lives where a release actually runs it:**
-   [`docs/RELEASING.md` § Packaged-integrity checks (SW-40)](docs/RELEASING.md) — keep that the
-   single source and do not re-fork it here. Status as of 2026-10-03: **not done.** The packaging
-   change landed 2026-09-20; the newest packaged build on any dev machine is v4.0.6 (2026-07-06),
-   and the last GitHub release is v4.0.6 (2026-06-17), so nothing has exercised these paths.
+2. **SW-40 packaged verification: Windows x64 done, rest outstanding** — `asarUnpack` unpacks only
+   the eight worker entry bundles (`dist/{…,oramaRestoreWorker}.js`) plus the packages they require
+   at runtime (the pino, sharp and tesseract.js dependency closures), so main/preload/renderer stay
+   inside the integrity-validated asar. `verify:electron-fuses-config` fails if a pattern unpacks
+   `dist/main.js` again; `verify-packaged-artifacts` fails if a worker's externals do not resolve
+   inside `app.asar.unpacked`. On 2026-11-08/09 a Windows x64 build of main (installer + zip) passed
+   in Windows Sandbox (clean Windows 11, networking off): fuses match config, the renderer loads
+   from `app.asar`, a tampered asar header stops the app ("Integrity check failed for asar archive
+   entry"), silent install and first/second launch work, the zip launches and its updater skips with
+   the zip reason, the bundled VC++ runtime installs, local AI initializes, the OCR,
+   image-preprocess and embedding worker pools run, and four synthetic files analyze. The same test
+   on the published v5.1.2 (latest release, 2026-11-01) found local AI broken on clean PCs (missing
+   VC++ runtime, `NoBinaryFoundError`) and those workers crashing (`pino-std-serializers`); both are
+   fixed on main but **not yet released**. Not yet verified: Defender real-time-protection timing
+   (Sandbox disables Defender), the interactive UAC/decline path, the zip's **Install now**
+   click-through, whether an Azure-signed build keeps Microsoft's signature on `vc_redist`, the
+   vision model (timed out in the memory-limited sandbox), and macOS, Linux and Windows-arm64
+   packaged builds. The checklist lives in
+   [`docs/RELEASING.md` § Packaged-integrity checks](docs/RELEASING.md#packaged-integrity-checks) —
+   keep that the single source and do not re-fork it here.
 
 ### Resolved Gaps
 

@@ -1,6 +1,6 @@
 # StratoSort Stack Testing Guide
 
-**Applies to:** StratoSort Stack 5.0.x  
+**Applies to:** StratoSort Stack 5.1.x  
 **Purpose:** Single source of truth for manual QA and automated test expectations.
 
 ---
@@ -16,7 +16,7 @@ Every item should pass. If time is limited, focus on Sections A-C.
 - [ ] AI setup/readiness state is clear (either "Ready" badge or Model Setup Wizard is shown).
 - [ ] Existing settings load correctly (theme, preferences, configured smart folders).
 - [ ] Navigation bar renders all phase tabs (Welcome, Setup, Discover, Organize, Complete).
-- [ ] Clicking each nav tab transitions to the correct phase without errors.
+- [ ] Each nav tab either opens its phase or shows why it is closed; going back always works.
 - [ ] Window controls (minimize, maximize, close) work on all platforms.
 
 ### B. File Intake and Analysis
@@ -287,6 +287,24 @@ Notes:
   `test:critical-path:twice`; that script is local-only via `scripts/release-preflight.js`
   (skippable with `--skip-dist` / the quick preflight).
 - Use targeted test commands when iterating (`npm test -- <pattern>`).
+
+E2E automation notes:
+
+- Every `launchApp()` profile is isolated and seeded with `modelAutoDownloadSkipped: true`
+  (`E2E_SEED_SETTINGS` in `test/e2e/helpers/electronApp.js`), so a run never starts a model download
+  and needs no network. A spec that needs the first-run model wizard keeps the seed and calls
+  `openModelSetupWizardOffline()`, which brings the wizard up without downloading anything.
+- Specs that need analyzed files seed them with `seedAnalyzedFiles()` from
+  `test/e2e/helpers/seedState.js` (with `createSyntheticFiles()`) instead of running a live model.
+- `goToPhase()` in `test/e2e/helpers/pageObjects.js` routes through Setup when a forward tab is
+  closed and logs `[E2E] goToPhase: … routing through Setup` when it does. Pass
+  `{ viaSetup: false }` to test direct navigation.
+- **Coverage gap:** no Playwright spec covers the real first-run auto-download path
+  (`launchApp({ allowModelAutoDownload: true })` is used only by the Jest test of the seed itself).
+  Cover it by hand with the model-setup checks in section F. The clean-machine run in
+  [RELEASING.md § Clean-machine test with Windows Sandbox](RELEASING.md#clean-machine-test-with-windows-sandbox)
+  checks a packaged first run on a PC with no Visual C++ runtime, but it runs offline with the
+  models supplied, so it does not cover the download either.
 
 ---
 

@@ -310,10 +310,14 @@ npm test -- test/autoUpdater.test.js --runInBand --no-coverage
 ### Packaged-integrity checks
 
 Run these once per release on a packaged build. Every path below exists **only** when packaged:
-`main`, `preload` and the renderer live inside the integrity-validated `app.asar`, while seven
-worker entry bundles are unpacked beside it (`asarUnpack` in `electron-builder.json`). A worker that
-resolves fine in `npm run dev` can still fail to load from `app.asar.unpacked/dist/` — that is
-exactly how the settings-import worker broke in #441 — so development runs prove nothing here.
+`main`, `preload` and the renderer live inside the integrity-validated `app.asar`, while the eight
+worker entry bundles (every entry in `webpack.main.config.js` except `main`) and the packages they
+require at runtime are unpacked beside it (`asarUnpack` in `electron-builder.json`). A worker runs
+from `app.asar.unpacked/dist/` and resolves its `require`s only from
+`app.asar.unpacked/node_modules`, so one that loads fine in `npm run dev` can still fail when
+packaged — that is exactly how the settings-import worker broke in #441, and how the OCR,
+image-preprocess and embedding workers crashed in v5.1.2
+(`Cannot find module 'pino-std-serializers'`) — so development runs prove nothing here.
 
 - [ ] **Renderer loads from inside the asar.** `getRendererIndexPath()` prefers
       `app.asar/dist/index.html`; the unpacked renderer is a legacy fallback only. Confirm the
@@ -324,6 +328,15 @@ exactly how the settings-import worker broke in #441 — so development runs pro
 - [ ] **An Atlas UMAP projection** — exercises `umapProjectionWorker`.
 - [ ] **Log export** (Settings → Diagnostics) — exercises `logExportWorker`.
 - [ ] **A settings import** — exercises `settingsImportParserWorker` (the #441 regression surface).
+- [ ] **Vector-store restore at launch** — exercises `oramaRestoreWorker`. Relaunch a profile that
+      already has a library and check that the `[OramaVectorService] Restored <name> database` log
+      line carries `parsedIn: 'worker'`. Restore only uses the worker for saved files of 4 MB or
+      more (smaller ones always log `parsedIn: 'main'`), so use a library that large; `'main'` on a
+      bigger file means the worker failed to load and restore fell back to the main thread.
+- [ ] **Worker dependency trees.** `verify:packaged-artifacts` (pre-flight step 6) fails when a
+      worker bundle's externals, with their full dependency closure, do not resolve inside
+      `app.asar.unpacked`. On the running app, confirm no log line shows a worker failing with
+      `Cannot find module`.
 - [ ] **Analyze a document and an image** — exercises `textExtractionWorker` and
       `imagePreprocessWorker`.
 - [ ] **Visual C++ Redistributable on a clean Windows** (Windows Sandbox has none:
@@ -335,7 +348,9 @@ exactly how the settings-import worker broke in #441 — so development runs pro
       declining the UAC prompt: the download-page prompt appears, and in the app **Install now** →
       UAC → **Restart StratoSort** brings local AI up. Silent install (`/S`): runs `/quiet` without
       dialogs. An auto-update (`--updated`) must not run it. On the zip build, **Install now** works
-      the same way.
+      the same way. On an Arm64 PC, the x64 package must still install the x64 runtime although
+      System32 already has the ARM64 runtime's DLLs (afterwards
+      `HKLM\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64` has `Installed` = 1).
 - [ ] **Tamper test.** Edit one byte inside `app.asar`, then launch: the app **must refuse to
       start**. A successful launch means asar integrity is not being enforced.
 - [ ] **Fuses on the built binary.** `npx @electron/fuses read --app <path to the app>` and compare
@@ -360,6 +375,42 @@ Two more release-time runtime items pair with this pass, both verifiable only on
 - the **license smoke** on a fresh `--user-data-dir`: with no key, Settings → License reports `free`
   and every feature works; after pasting a valid key it reports `licensed` with the licensee and
   update window; a key whose update window ended before this build reports `version_not_covered`.
+
+### Clean-machine test with Windows Sandbox
+
+Windows Sandbox starts a clean Windows 11 with no Visual C++ runtime, no models and no profile, and
+discards it on close: the closest local stand-in for a new user's PC. It covers most of the
+packaged-integrity checks above without a VM (Windows Pro or Enterprise with the Windows Sandbox
+feature on).
+
+- **`.wsb` config.** `<Networking>Disable</Networking>`, so nothing can download a model or reach
+  GitHub and a missing local file fails instead of being fetched; `<VGpu>Disable</VGpu>`;
+  `<MemoryInMB>` of at least 5120. Map three host folders: the installer and zip read-only, the
+  models read-only, and an output folder writable. Start an unattended PowerShell script from
+  `<LogonCommand>`.
+- **Models.** Fill the host models folder with hard links (`New-Item -ItemType HardLink`) to the
+  `.gguf` files, so nothing is copied and the read-only mapping protects the originals. Inside the
+  sandbox, point `%APPDATA%\StratoSort Stack\models` at the mapped folder with a directory junction
+  (`mklink /J`) and seed `settings.json` with `modelAutoDownloadSkipped: true` and the `textModel`,
+  `visionModel` and `embeddingModel` file names.
+- **Downloads as a user gets them.** Copy the installer and zip into `%USERPROFILE%\Downloads` and
+  give each copy a mark of the web (a `Zone.Identifier` stream with `ZoneId=3`). `Expand-Archive`
+  does not carry the mark onto extracted files the way Explorer does, so add it to those too.
+- **Run.** Silent install (`/S`), then the installed app's first and second launch; extract the zip
+  to `C:\StratoSort` and launch it twice; then drop a few synthetic files into a watched smart
+  folder and wait for analysis. Close the app with `CloseMainWindow()` before force-killing it, and
+  copy `%APPDATA%\StratoSort Stack\logs` and `settings.json` to the output folder before the script
+  shuts the sandbox down.
+- **What to look for in the logs.** `[LlamaService] Initialized successfully` and no
+  `NoBinaryFoundError` or `ai.vc-runtime-missing` (how the runtime gets installed is the Visual C++
+  Redistributable item in [§ Packaged-integrity checks](#packaged-integrity-checks)); the OCR,
+  image-preprocess and embedding worker pools running with no `Cannot find module`; the zip copy's
+  updater skipping with "was not installed with the StratoSort Stack installer"; and, on a relaunch
+  with a large enough library, `parsedIn: 'worker'` on the `Restored … database` line.
+- **What it cannot show.** Sandbox turns Microsoft Defender off, so first-launch timing under
+  real-time protection still needs a real VM (the timing item above). An unattended run clicks
+  through no UAC prompt and no **Install now**, and the memory-limited sandbox can time out the
+  vision model.
 
 ### Windows zip (no-install build)
 
@@ -485,7 +536,9 @@ absent from the committed configs so local and fork builds stay unsigned without
 
 electron-builder signs every `.exe` it copies through `extraResources` (bundled `ffmpeg.exe` and
 `llama-server.exe` included). The bundled Microsoft Visual C++ Redistributable must keep Microsoft's
-own signature — the installer and the app both refuse it otherwise — so `win.signExts` in
+own signature — the app verifies the signature before its **Install now** runs it, and the
+packaged-artifact verifier fails a build whose copy is not Microsoft-signed (the NSIS installer runs
+the bundled file without a signature check of its own) — so `win.signExts` in
 `electron-builder.json` excludes `vc_redist.x64.exe` / `vc_redist.arm64.exe` (pinned by
 `test/electron-builder-config.test.js`), and `scripts/verify-packaged-artifacts.js` fails if the
 packaged copy's sha256 differs from the staged one or, on a Windows host, if it is not
