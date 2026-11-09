@@ -527,4 +527,75 @@ describe('autoUpdater', () => {
       expect(areAutomaticUpdatesEnabled()).toBe(false);
     });
   });
+
+  // Regression (clean-machine run, 2026-11): the zip copy sent
+  // { status: 'unsupported', reason } on APP_UPDATE, the event schema did not
+  // list that status, and strict safeSend blocked it with an error log on
+  // every launch. Drive every path that sends APP_UPDATE and validate each
+  // payload against the real schema so sender and contract cannot drift.
+  describe('every app:update payload satisfies the event schema', () => {
+    const setPlatform = (value) =>
+      Object.defineProperty(process, 'platform', { value, configurable: true });
+
+    afterEach(() => {
+      setPlatform(ORIGINAL_PLATFORM);
+    });
+
+    function sentUpdatePayloads() {
+      const { safeSend } = require('../src/main/ipc/ipcWrappers');
+      return safeSend.mock.calls
+        .filter(([, channel]) => channel === 'app:update')
+        .map(([, , payload]) => payload);
+    }
+
+    function expectAllValid(payloads) {
+      const { validateEventPayload } = jest.requireActual('../src/shared/ipcEventSchemas');
+      for (const payload of payloads) {
+        const result = validateEventPayload('app:update', payload);
+        expect({ payload, valid: result.valid }).toEqual({ payload, valid: true });
+      }
+    }
+
+    test('the unsupported status sent by a zip copy is valid', async () => {
+      setPlatform('win32');
+      mockElectronApp.isPackaged = true;
+      process.execPath = zipExe;
+      const mockWindow = { isDestroyed: jest.fn().mockReturnValue(false), webContents: {} };
+      mockGetAllWindows.mockReturnValue([mockWindow]);
+
+      const { initializeAutoUpdater } = require('../src/main/core/autoUpdater');
+      await initializeAutoUpdater(false, jest.fn().mockReturnValue(mockWindow));
+
+      const payloads = sentUpdatePayloads();
+      expect(payloads).toEqual([
+        { status: 'unsupported', reason: expect.stringMatching(/extracted from the zip/) }
+      ]);
+      expectAllValid(payloads);
+    });
+
+    test('every updater lifecycle status is valid', async () => {
+      setPlatform('win32');
+      mockElectronApp.isPackaged = true;
+      process.execPath = installedExe;
+      process.env.STRATOSORT_ENABLE_AUTO_UPDATES = 'true';
+      const mockWindow = { isDestroyed: jest.fn().mockReturnValue(false), webContents: {} };
+      mockGetAllWindows.mockReturnValue([mockWindow]);
+
+      const { initializeAutoUpdater } = require('../src/main/core/autoUpdater');
+      await initializeAutoUpdater(false, jest.fn().mockReturnValue(mockWindow));
+
+      mockAutoUpdaterHandlers.get('update-available')();
+      mockAutoUpdaterHandlers.get('update-not-available')();
+      mockAutoUpdaterHandlers.get('download-progress')({ percent: 42.5 });
+      mockAutoUpdaterHandlers.get('update-downloaded')();
+      mockAutoUpdaterHandlers.get('error')(new Error('feed unreachable'));
+      mockAutoUpdaterHandlers.get('error')(undefined);
+
+      const payloads = sentUpdatePayloads();
+      expect(payloads.map((p) => p.status)).toEqual(
+        expect.arrayContaining(['available', 'not-available', 'downloading', 'downloaded', 'error'])
+      );
+      expectAllValid(payloads);
+    });
+  });
 });

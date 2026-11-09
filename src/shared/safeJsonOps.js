@@ -9,6 +9,24 @@
  * @module shared/safeJsonOps
  */
 
+/**
+ * Drop a leading UTF-8 byte order mark (U+FEFF) so text saved by an editor
+ * that writes one (Windows Notepad, PowerShell 5.1 `Set-Content -Encoding
+ * UTF8`) still parses. JSON.parse rejects it ("Unexpected token '\uFEFF'"),
+ * and RFC 8259 lets a parser ignore it. A BOM can only be an encoding
+ * artifact at position 0, never part of a JSON value, so stripping it never
+ * changes what valid JSON means.
+ *
+ * @template T
+ * @param {T} text
+ * @returns {T}
+ */
+function stripBom(text) {
+  return typeof text === 'string' && text.charCodeAt(0) === 0xfeff
+    ? /** @type {T} */ (/** @type {unknown} */ (text.slice(1)))
+    : text;
+}
+
 // Reviver that strips prototype pollution keys
 /**
  * @param {string} key
@@ -39,7 +57,7 @@ function safeParse(text, fallback = null) {
   }
 
   try {
-    return JSON.parse(text, _safeReviver);
+    return JSON.parse(stripBom(text), _safeReviver);
   } catch {
     return fallback;
   }
@@ -83,7 +101,7 @@ function parseJsonLines(text) {
   }
 
   const PARSE_FAILED = Symbol('parse_failed');
-  return text
+  return stripBom(text)
     .split('\n')
     .filter((line) => line.trim())
     .map((line) => {
@@ -115,7 +133,7 @@ function tryParse(text) {
   }
 
   try {
-    const value = JSON.parse(text, _safeReviver);
+    const value = JSON.parse(stripBom(text), _safeReviver);
     return { success: true, value, error: null };
   } catch (error) {
     return { success: false, value: null, error };
@@ -142,7 +160,7 @@ function tryParseLarge(text) {
 
   let value;
   try {
-    value = JSON.parse(text);
+    value = JSON.parse(stripBom(text));
   } catch (error) {
     return { success: false, value: null, error };
   }
@@ -227,6 +245,7 @@ function stableStringify(value, indent = 0) {
 }
 
 module.exports = {
+  stripBom,
   safeParse,
   safeStringify,
   parseJsonLines,

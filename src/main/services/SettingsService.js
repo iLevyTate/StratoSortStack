@@ -20,6 +20,7 @@ const {
 } = require('../../shared/experienceMode');
 const { logger: baseLogger, createLogger } = require('../../shared/logger');
 const { isNotFoundError } = require('../../shared/errorClassifier');
+const { stripBom } = require('../../shared/safeJsonOps');
 const { createSingletonHelpers } = require('../../shared/singletonFactory');
 const { LIMITS, DEBOUNCE, TIMEOUTS, RETRY } = require('../../shared/performanceConstants');
 const { delay, createBackgroundWorkTracker } = require('../../shared/promiseUtils');
@@ -364,7 +365,9 @@ class SettingsService {
 
       let parsed;
       try {
-        parsed = JSON.parse(raw);
+        // settings.json is user-editable; Notepad and PowerShell 5.1 save it
+        // with a BOM, which must not read as corruption and reset settings.
+        parsed = JSON.parse(stripBom(raw));
       } catch (parseError) {
         // Specific handling for JSON syntax errors
         logger.error('[SettingsService] Settings file contains invalid JSON:', {
@@ -516,7 +519,7 @@ class SettingsService {
             );
             // Reload the restored settings
             const raw = await fs.readFile(this.settingsPath, 'utf-8');
-            const parsed = JSON.parse(raw);
+            const parsed = JSON.parse(stripBom(raw));
             const sanitized = this._normalizeParsedSettings(parsed);
             this._cache = sanitized;
             this._cacheTimestamp = Date.now();

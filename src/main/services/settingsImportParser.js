@@ -24,6 +24,7 @@
 const { Worker } = require('worker_threads');
 const { createLogger } = require('../../shared/logger');
 const { resolveWorkerPath } = require('../utils/workerPools');
+const { stripBom } = require('../../shared/safeJsonOps');
 
 const logger = createLogger('SettingsImportParser');
 
@@ -47,6 +48,9 @@ async function parseSettingsImportJson(jsonText, opts = {}) {
     return { ok: false, error: 'Expected a string payload' };
   }
   const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : DEFAULT_TIMEOUT_MS;
+  // An export re-saved in Notepad / PowerShell 5.1 starts with a BOM, which
+  // JSON.parse (here and in the worker) rejects as invalid JSON.
+  jsonText = stripBom(jsonText);
 
   let worker;
   try {

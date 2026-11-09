@@ -129,6 +129,31 @@ describe('SettingsBackupService', () => {
     expect(saveSettings).toHaveBeenCalledWith(expect.objectContaining({ theme: 'dark' }));
   });
 
+  test('restoreFromBackup accepts a backup re-saved with a UTF-8 BOM', async () => {
+    // Notepad / PowerShell 5.1 write a BOM when a user edits the file.
+    const service = new SettingsBackupService({
+      backupDir: BACKUP_DIR,
+      defaults: { theme: 'light' },
+      loadSettings: jest.fn()
+    });
+    const backup = {
+      timestamp: new Date().toISOString(),
+      appVersion: '2.0.0',
+      settings: { theme: 'dark' }
+    };
+    const crypto = require('crypto');
+    const hash = crypto.createHash('sha256').update(stableStringify(backup), 'utf8').digest('hex');
+    mockFs.readFile.mockResolvedValueOnce(
+      String.fromCharCode(0xfeff) + JSON.stringify({ ...backup, hash })
+    );
+
+    const saveSettings = jest.fn().mockResolvedValue();
+    const result = await service.restoreFromBackup(SETTINGS_FILE, saveSettings);
+
+    expect(result.success).toBe(true);
+    expect(saveSettings).toHaveBeenCalledWith(expect.objectContaining({ theme: 'dark' }));
+  });
+
   test('restoreFromBackup reports validation errors', async () => {
     validateSettings.mockReturnValueOnce({ valid: false, errors: ['bad'], warnings: [] });
     const service = new SettingsBackupService({

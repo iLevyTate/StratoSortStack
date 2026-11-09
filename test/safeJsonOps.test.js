@@ -10,7 +10,8 @@ const {
   tryParseLarge,
   jsonClone,
   deepClone,
-  stableStringify
+  stableStringify,
+  stripBom
 } = require('../src/shared/safeJsonOps');
 
 describe('safeJsonOps', () => {
@@ -329,6 +330,39 @@ describe('safeJsonOps', () => {
 
     test('pretty-prints when indent is 2', () => {
       expect(stableStringify({ b: 1, a: 2 }, 2)).toBe('{\n  "a": 2,\n  "b": 1\n}');
+    });
+  });
+
+  // Regression (clean-machine run, 2026-11): user-editable JSON saved by
+  // Notepad or PowerShell 5.1 `Set-Content -Encoding UTF8` starts with a UTF-8
+  // BOM, which JSON.parse rejects ("Unexpected token 'U+FEFF'").
+  describe('UTF-8 byte order mark', () => {
+    const BOM = String.fromCharCode(0xfeff);
+
+    test('stripBom drops only a leading BOM', () => {
+      expect(stripBom(BOM + '{"a":1}')).toBe('{"a":1}');
+      expect(stripBom('{"a":1}')).toBe('{"a":1}');
+      expect(stripBom(`{"a":"${BOM}"}`)).toBe(`{"a":"${BOM}"}`);
+      expect(stripBom(BOM + BOM + '1')).toBe(BOM + '1');
+      expect(stripBom(null)).toBeNull();
+    });
+
+    test('every parser accepts a BOM-prefixed document', () => {
+      const text = BOM + '{\r\n  "theme": "dark"\r\n}';
+      expect(JSON.parse.bind(null, text)).toThrow();
+
+      expect(safeParse(text)).toEqual({ theme: 'dark' });
+      expect(tryParse(text)).toEqual({ success: true, value: { theme: 'dark' }, error: null });
+      expect(tryParseLarge(text)).toEqual({
+        success: true,
+        value: { theme: 'dark' },
+        error: null
+      });
+      expect(parseJsonLines(BOM + '{"a":1}\n{"b":2}')).toEqual([{ a: 1 }, { b: 2 }]);
+    });
+
+    test('a BOM inside a value is kept', () => {
+      expect(tryParse(`["${BOM}x"]`).value).toEqual([`${BOM}x`]);
     });
   });
 });

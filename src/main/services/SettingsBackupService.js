@@ -16,7 +16,7 @@ const { EXPERIENCE_MODES, applyExperienceModeSettings } = require('../../shared/
 const { logger: baseLogger, createLogger } = require('../../shared/logger');
 const { LIMITS } = require('../../shared/performanceConstants');
 const { SETTINGS_SCHEMA_VERSION } = require('../../shared/constants');
-const { stableStringify } = require('../../shared/safeJsonOps');
+const { stableStringify, stripBom } = require('../../shared/safeJsonOps');
 
 const logger =
   typeof createLogger === 'function' ? createLogger('SettingsBackupService') : baseLogger;
@@ -153,7 +153,7 @@ class SettingsBackupService {
 
           try {
             const content = await fs.readFile(filePath, 'utf8');
-            const data = JSON.parse(content);
+            const data = JSON.parse(stripBom(content));
 
             const stats = await fs.stat(filePath);
 
@@ -222,7 +222,7 @@ class SettingsBackupService {
       // Read backup file. Use `let` so the version-strip branch below can
       // rebind to a copy without mutating the parsed input.
       const content = await fs.readFile(backupPath, 'utf8');
-      let backupData = JSON.parse(content);
+      let backupData = JSON.parse(stripBom(content));
 
       // Verify JSON structure
       if (!backupData || typeof backupData !== 'object') {
