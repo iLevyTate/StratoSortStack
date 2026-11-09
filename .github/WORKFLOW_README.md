@@ -15,6 +15,8 @@ This repository is configured with automated dependency updates and release buil
 ### 2. Dependabot Auto-merge (`.github/workflows/dependabot-automerge.yml`)
 
 - **Off unless the repo Variable `DEPENDABOT_AUTOMERGE` is `true`.**
+- Runs on `pull_request` (GitHub's documented Dependabot pattern), not `pull_request_target`, which
+  GitHub is blocking by default on public repos.
 - When on, enables GitHub auto-merge (squash) for patch and minor Dependabot updates; major updates
   wait for manual review.
 - Auto-merge waits only for checks that branch protection marks **required**. With no required
@@ -24,7 +26,8 @@ This repository is configured with automated dependency updates and release buil
 **Optional Setup**: If your repository has branch protection requiring PR approval:
 
 1. Create a Personal Access Token (PAT) with `repo` scope
-2. Add it as a repository secret named `DEPENDABOT_PAT`
+2. Add it as a **Dependabot** secret named `DEPENDABOT_PAT` (Settings → Secrets and variables →
+   Dependabot); runs triggered by Dependabot cannot read ordinary Actions secrets
 3. Uncomment the auto-approve step in the workflow
 
 ### 3. CI (`.github/workflows/ci.yml`)

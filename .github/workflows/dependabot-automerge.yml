@@ -1,6 +1,13 @@
 name: Dependabot Auto-merge
+# `pull_request`, not `pull_request_target`: this is GitHub's documented
+# Dependabot auto-merge pattern, and GitHub is making pull_request_target
+# blocked by default on public repos (a scheduled brownout already stopped this
+# workflow from starting on 2026-11-09). A Dependabot-triggered run gets a
+# read-only GITHUB_TOKEN that the `permissions` block below raises, and only
+# Dependabot secrets; the job needs neither a secret nor the base-branch
+# context that pull_request_target existed for.
 on:
-  pull_request_target:
+  pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
@@ -19,9 +26,14 @@ jobs:
     # when main has no rule requiring the CI checks, GitHub auto-merge has
     # nothing to wait for and merges the moment it is enabled (PRs #5, #6
     # and #8 merged ~12 s after opening, before CI started). Turn it on only
-    # after main requires the CI checks to pass.
+    # after main requires the CI checks to pass. If the variable ever does not
+    # reach a Dependabot-triggered run, the condition is false and the job
+    # skips, so the failure mode is "auto-merge off", never "merge unchecked".
+    #
+    # The repository check keeps forks of this repo from running the job.
     if: >-
       vars.DEPENDABOT_AUTOMERGE == 'true' &&
+      github.repository == 'iLevyTate/StratoSortStack' &&
       github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
