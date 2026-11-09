@@ -7,6 +7,16 @@ import { createLogger } from '../../../shared/logger';
 const bannerLogger = createLogger('DegradedStateBanner');
 
 /**
+ * Microsoft's "Latest supported Visual C++ Redistributable downloads" page.
+ * Must match VC_REDIST_DOWNLOAD_PAGE_URL in src/main/utils/vcRuntimeDetection.js
+ * (pinned by test). The URL lives here rather than in the flag payload so the
+ * renderer never opens a link the main process handed it; window.open routes
+ * through createWindow's setWindowOpenHandler host allowlist.
+ */
+const VC_REDIST_DOWNLOAD_PAGE_URL =
+  'https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist';
+
+/**
  * Action codes the banner knows how to invoke. Each entry maps the
  * `flag.detail.action.code` set by the main-process subsystem to the
  * concrete renderer function that executes it. Adding a new actionable
@@ -28,6 +38,13 @@ const ACTION_EXECUTORS = {
       throw new Error('Embeddings rebuild API is unavailable');
     }
     return fullRebuild();
+  },
+  'ai.open-vc-redist-download': async () => {
+    // Raised by LlamaService when the native engine cannot load because the
+    // Microsoft Visual C++ Redistributable is missing. Opens Microsoft's
+    // download page in the browser, only on this click; nothing downloads
+    // in-app. The flag stays up: the engine needs an app restart afterwards.
+    window.open(VC_REDIST_DOWNLOAD_PAGE_URL, '_blank', 'noopener,noreferrer');
   }
 };
 

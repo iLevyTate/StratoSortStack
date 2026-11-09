@@ -17,7 +17,7 @@ grab its AI models on first launch, and you are ready to go.
 
 | Requirement    | Details                                                                                                                                                                             |
 | :------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Windows**    | Windows 10 (22H2) or 11, x64 or arm64                                                                                                                                               |
+| **Windows**    | Windows 10 (22H2) or 11, x64 or arm64, with the Microsoft Visual C++ Redistributable installed (see [below](#windows-local-ai-needs-the-microsoft-visual-c-redistributable))        |
 | **macOS**      | macOS 13 (Ventura) or later, Apple Silicon (arm64) or Intel (x64)                                                                                                                   |
 | **Linux**      | x64 or arm64; AppImage or .deb (when attached to a release)                                                                                                                         |
 | **RAM**        | 8 GB minimum; 16 GB and a GPU with 8 GB for the Better Quality profile                                                                                                              |
@@ -96,8 +96,12 @@ optional and may not be attached to every release. The AppImage updates itself i
 3. The installer opens. Accept the license agreement, then click **Install**.
    - The app installs to your user profile (no admin required).
    - A **Start Menu** shortcut and a **Desktop** shortcut are created automatically.
-4. When the installer finishes, leave **"Run StratoSort Stack"** checked and click **Finish**.
-5. The first launch after installing can take 1 to 2 minutes while Windows Security scans the new
+4. If the installer says local AI needs the **Microsoft Visual C++ Redistributable**, click **Yes**
+   to open Microsoft's download page in your browser, download and run the redistributable for your
+   PC (**x64** for most PCs, **ARM64** on Arm-based PCs), then come back to the installer. Most PCs
+   already have it; a freshly installed Windows does not.
+5. When the installer finishes, leave **"Run StratoSort Stack"** checked and click **Finish**.
+6. The first launch after installing can take 1 to 2 minutes while Windows Security scans the new
    files; later launches are faster.
 
 <!-- prettier-ignore -->
@@ -314,6 +318,22 @@ needs a connection. Leave optional cloud AI off.
 
 Click **More info** then **Run anyway**. If the option is missing, your organization may block
 unsigned apps -- install on a personal device or contact your IT admin.
+
+### Windows: Local AI needs the Microsoft Visual C++ Redistributable
+
+If a red banner says _"Local AI needs the Microsoft Visual C++ Redistributable (x64), which isn't
+installed on this PC"_, analysis, search and chat cannot run until it is installed. StratoSort's AI
+engine uses Microsoft's C++ runtime DLLs (`msvcp140.dll`, `vcruntime140.dll`), which a fresh Windows
+install does not include and StratoSort does not bundle.
+
+1. Click **Open download page** on the banner (or go to
+   [Microsoft's Visual C++ Redistributable downloads](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)).
+   The page opens in your browser only when you click; nothing downloads in the background.
+2. Download and run the latest supported **Visual C++ Redistributable** for your PC: **x64** for
+   most PCs, **ARM64** on Arm-based PCs. Installing it needs administrator rights.
+3. Quit and restart StratoSort. The banner goes away once the AI engine loads.
+
+On a managed PC, ask your IT admin to deploy the Visual C++ 2015-2022 Redistributable.
 
 ### macOS: App won't open even after Right-click > Open
 

@@ -44,6 +44,48 @@
 !define MUI_UNABORTWARNING
 !define MUI_UNABORTWARNING_TEXT "Are you sure you want to cancel StratoSort Stack uninstallation?"
 
+; ============================================================================
+; MICROSOFT VISUAL C++ REDISTRIBUTABLE HINT
+; ============================================================================
+; The local AI engine (node-llama-cpp's prebuilt llama-addon.node and its ggml/llama DLLs) imports
+; MSVCP140.dll and VCRUNTIME140.dll. A fresh Windows install does not include the VC++ 2015-2022
+; runtime, and StratoSort does not redistribute it. When the DLLs are missing, an interactive
+; install offers to open Microsoft's download page in the browser (only on Yes; nothing downloads
+; here). Silent installs (auto-update, /S) are never interrupted. The app raises the same hint as
+; an in-app banner (ai.vc-runtime-missing) if the runtime is still missing at launch.
+; Include guards make these safe next to electron-builder's own includes of the same headers.
+!include "LogicLib.nsh"
+!include "x64.nsh"
+
+!define STRATOSORT_VC_REDIST_URL "https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist"
+
+!macro StratoSortVcRuntimeHint
+  ${IfNot} ${Silent}
+    Push $R9
+    StrCpy $R9 "present"
+    ; NSIS runs as a 32-bit process: on 64-bit Windows $SYSDIR is redirected to SysWOW64 unless
+    ; file system redirection is off, and the app needs the native (x64/ARM64) runtime in System32.
+    ${If} ${RunningX64}
+      ${DisableX64FSRedirection}
+    ${EndIf}
+    ${IfNot} ${FileExists} "$SYSDIR\msvcp140.dll"
+      StrCpy $R9 "missing"
+    ${EndIf}
+    ${IfNot} ${FileExists} "$SYSDIR\vcruntime140.dll"
+      StrCpy $R9 "missing"
+    ${EndIf}
+    ${If} ${RunningX64}
+      ${EnableX64FSRedirection}
+    ${EndIf}
+    ${If} $R9 == "missing"
+      ${If} ${Cmd} `MessageBox MB_YESNO|MB_ICONINFORMATION "StratoSort's local AI needs the Microsoft Visual C++ Redistributable, which isn't installed on this PC.$\r$\n$\r$\nOpen Microsoft's download page now? Choose the x64 version (ARM64 on Arm-based PCs), install it, then start StratoSort.$\r$\n$\r$\nYou can also install it later; StratoSort will show the same link." /SD IDNO IDYES`
+        ExecShell "open" "${STRATOSORT_VC_REDIST_URL}"
+      ${EndIf}
+    ${EndIf}
+    Pop $R9
+  ${EndIf}
+!macroend
+
 ; StratoSort Custom Installer Hooks
 ; electron-builder already registers uninstaller, shortcuts, and file associations (with
 ; unregisterFileAssociations on uninstall). Only handle setup markers and optional user-data cleanup.
@@ -56,6 +98,8 @@
   Delete "$APPDATA\StratoSort\dependency-setup-complete.marker"
   Delete "$APPDATA\StratoSort\first-run.marker"
   Delete "$LOCALAPPDATA\StratoSort\dependency-setup-complete.marker"
+
+  !insertmacro StratoSortVcRuntimeHint
 !macroend
 
 !macro customUnInstall

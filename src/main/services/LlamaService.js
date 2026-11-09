@@ -300,6 +300,12 @@ class LlamaService extends EventEmitter {
     this._visionInputCheckedAt = 0;
     this._visionCheckPromise = null; // Promise gate for _supportsVisionInput()
     this._initPromise = null; // Promise gate to prevent concurrent initialize() calls
+    // Sticky native-engine failure: once the llama binaries cannot load (e.g.
+    // NoBinaryFoundError because the VC++ runtime is missing), every later
+    // initialize() rethrows this instead of re-probing every backend and
+    // logging a stack per request. Cleared by shutdown().
+    /** @type {(Error & { code?: string }) | null} */
+    this._initFailure = null;
 
     // Concurrency gates
     this._configChangeGate = null;
@@ -1075,6 +1081,10 @@ class LlamaService extends EventEmitter {
    */
   async initialize() {
     if (this._initialized) return;
+    // The native engine could not load this session; a retry cannot succeed
+    // until the app restarts (or shutdown() resets state), so fail fast and
+    // quietly. The one clear log line was written when it first failed.
+    if (this._initFailure) throw this._initFailure;
 
     // Promise gate: concurrent callers all await the same initialization.
     // Without this, two concurrent calls both see _initialized = false and
@@ -1163,9 +1173,85 @@ class LlamaService extends EventEmitter {
         modelsPath: this._modelsPath
       });
     } catch (error) {
+      const { isNativeBinaryLoadError } = require('../utils/vcRuntimeDetection');
+      if (isNativeBinaryLoadError(error)) {
+        throw await this._recordNativeEngineFailure(/** @type {Error} */ (error));
+      }
       logger.error('[LlamaService] Initialization failed:', error);
       throw error;
     }
+  }
+
+  /**
+   * The llama native binaries failed to load. Diagnose once, log once, make
+   * the failure sticky for the session and return the error to throw.
+   *
+   * On Windows the usual cause on a clean machine is a missing Microsoft
+   * Visual C++ Redistributable (the prebuilt addon imports MSVCP140.dll and
+   * VCRUNTIME140.dll). Then a degraded-state flag with an "open download
+   * page" action is raised and the thrown error carries the user-facing
+   * message. Otherwise the original error is logged and rethrown as before.
+   *
+   * @private
+   * @param {Error} error
+   * @returns {Promise<Error & { code?: string }>}
+   */
+  async _recordNativeEngineFailure(error) {
+    const {
+      detectVcRuntime,
+      vcRuntimeMissingMessage,
+      VC_REDIST_DOWNLOAD_PAGE_URL
+    } = require('../utils/vcRuntimeDetection');
+    /** @type {Error & { code?: string }} */
+    let failure = error;
+    // detectVcRuntime never rejects; the catch keeps a diagnostic bug from
+    // masking the engine error itself.
+    const runtime = await detectVcRuntime().catch(/** @returns {null} */ () => null);
+    if (runtime?.applicable && !runtime.present) {
+      const message = vcRuntimeMissingMessage();
+      failure = /** @type {Error & { code?: string }} */ (new Error(message, { cause: error }));
+      failure.code = 'AI_VC_RUNTIME_MISSING';
+      logger.warn(
+        `[LlamaService] Local AI unavailable: Microsoft Visual C++ Redistributable (${runtime.archLabel}) ` +
+          `is not installed (missing ${runtime.missingDlls.join(', ')} in ${runtime.systemDir}). ` +
+          'Install it from Microsoft and restart StratoSort.',
+        {
+          engineError: error?.message,
+          registryInstalled: runtime.registryInstalled,
+          downloadPage: VC_REDIST_DOWNLOAD_PAGE_URL
+        }
+      );
+      try {
+        const { getInstance: getDegradedStateTracker } = require('./DegradedStateTracker');
+        getDegradedStateTracker().raise({
+          code: 'ai.vc-runtime-missing',
+          subsystem: 'ai',
+          severity: 'error',
+          message,
+          detail: {
+            missingDlls: runtime.missingDlls,
+            arch: runtime.archLabel,
+            registryInstalled: runtime.registryInstalled,
+            engineError: error?.message,
+            action: {
+              code: 'ai.open-vc-redist-download',
+              label: 'Open download page'
+            }
+          }
+        });
+      } catch (flagError) {
+        logger.debug('[LlamaService] Could not raise VC++ runtime degraded flag', {
+          error: /** @type {any} */ (flagError)?.message
+        });
+      }
+    } else {
+      logger.error(
+        '[LlamaService] Initialization failed: native engine binaries could not load',
+        error
+      );
+    }
+    this._initFailure = failure;
+    return failure;
   }
 
   /**
@@ -4665,6 +4751,7 @@ class LlamaService extends EventEmitter {
       // Clean up all references to prevent stale state
       this._initialized = false;
       this._initPromise = null;
+      this._initFailure = null;
       this._configLoaded = false;
       this._modelsPath = null; // Reset so re-initialization discovers fresh path
       this._llama = null;
