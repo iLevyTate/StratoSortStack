@@ -1208,7 +1208,7 @@ class LlamaService extends EventEmitter {
     // masking the engine error itself.
     const runtime = await detectVcRuntime().catch(/** @returns {null} */ () => null);
     if (runtime?.applicable && !runtime.present) {
-      const message = vcRuntimeMissingMessage();
+      const message = vcRuntimeMissingMessage(runtime.archLabel === 'ARM64' ? 'arm64' : 'x64');
       failure = /** @type {Error & { code?: string }} */ (new Error(message, { cause: error }));
       failure.code = 'AI_VC_RUNTIME_MISSING';
       logger.warn(
