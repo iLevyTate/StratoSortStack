@@ -32,6 +32,7 @@ import {
 import { mapErrorToNotification } from '../../utils/errorMapping';
 import { normalizeNamingConventionState } from '../../../shared/namingConventions';
 import { toCanonicalPath } from '../../utils/canonicalPath';
+import { isBatchAlreadyRunning, runBatchPathWhenFree } from './batchBusy';
 
 const logger = createLogger('DiscoverPhase:Analysis');
 const BATCH_ANALYSIS_MIN_FILES = 40;
@@ -1475,7 +1476,11 @@ export function useAnalysis(options = {}) {
             // fallback then starts the per-file worker pool — without this
             // cancel, both would run the same files concurrently, doubling
             // inference load on exactly the slow machines that time out).
-            requestMainBatchCancel('batch-path-failed');
+            // A request the preload refused because this window's earlier
+            // batch is still running never started anything in main.
+            if (!isBatchAlreadyRunning(batchPathError)) {
+              requestMainBatchCancel('batch-path-failed');
+            }
             throw batchPathError;
           } finally {
             window.removeEventListener(BATCH_ANALYSIS_PROGRESS_EVENT, onBatchProgress);
@@ -1619,7 +1624,18 @@ export function useAnalysis(options = {}) {
               systemRecommended,
               lowVramBatch: systemRecommended === 1
             });
-            await runBatchPath();
+            await runBatchPathWhenFree({
+              runBatchPath,
+              isActiveRun,
+              abortSignal,
+              onWaiting: () =>
+                addNotification(
+                  'Analysis from before is still finishing. Continuing when it is done.',
+                  'info',
+                  4000,
+                  'analysis-batch-busy'
+                )
+            });
           } catch (batchError) {
             const isLegacyBatchTimeout =
               String(batchError?.message || '').includes('30000ms') &&

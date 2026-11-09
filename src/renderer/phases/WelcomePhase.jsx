@@ -4,7 +4,7 @@ import {
   FolderOpen,
   Settings,
   Search,
-  Sparkles,
+  Cpu,
   FolderCheck,
   CheckCircle2,
   ListChecks,
@@ -441,7 +441,7 @@ function WelcomePhase() {
             <div className="flex flex-col sm:flex-row sm:items-center gap-cozy sm:gap-default">
               <div className="flex justify-center sm:justify-start flex-shrink-0">
                 <div className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-stratosort-blue/10">
-                  <Sparkles className="w-5 h-5 text-stratosort-blue" aria-hidden />
+                  <Cpu className="w-5 h-5 text-stratosort-blue" aria-hidden />
                 </div>
               </div>
               <Stack gap="cozy" className="flex-1 min-w-0 text-center sm:text-left">
@@ -511,7 +511,7 @@ function WelcomePhase() {
                   className="w-full justify-center h-full py-4"
                   aria-describedby="ai-setup-help"
                 >
-                  <Sparkles className="w-4 h-4 text-stratosort-accent" />
+                  <Cpu className="w-4 h-4 text-stratosort-accent" />
                   AI &amp; model settings
                 </Button>
                 <Text variant="tiny" className="text-center" id="ai-setup-help">

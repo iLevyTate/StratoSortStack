@@ -1,6 +1,6 @@
 import React, { memo, useState, useRef, useEffect } from 'react';
 import PropTypes from 'prop-types';
-import { FileText, Info, Sparkles, Lightbulb, Tag, AlignLeft, Film } from 'lucide-react';
+import { FileText, Info, Lightbulb, Tag, AlignLeft, Film, ScrollText } from 'lucide-react';
 import { Text, Code, Caption } from './ui/Typography';
 import { Stack } from './layout';
 import StatusBadge from './ui/StatusBadge';
@@ -379,7 +379,7 @@ const AnalysisDetails = memo(function AnalysisDetails({
 
       {analysis.summary && (
         <Collapsible
-          title={<SectionHeader title="Summary" icon={Sparkles} />}
+          title={<SectionHeader title="Summary" icon={ScrollText} />}
           defaultOpen
           className="rounded-xl border border-border-soft/70 bg-gradient-to-br from-system-gray-50/80 to-system-gray-100"
           collapsedPreview={buildCollapsedPreview(analysis.summary, { maxLength: 220 })}

@@ -8,7 +8,9 @@ import '@testing-library/jest-dom';
 import { Provider } from 'react-redux';
 import { configureStore } from '@reduxjs/toolkit';
 
-import ProcessingLimitsSection from '../../src/renderer/components/settings/ProcessingLimitsSection';
+import ProcessingLimitsSection, {
+  cloudAnalysisProviderOf
+} from '../../src/renderer/components/settings/ProcessingLimitsSection';
 import aiProviderReducer from '../../src/renderer/store/slices/aiProviderSlice';
 
 const LEGACY_CONSENT = { acknowledgedCloudAt: '2026-01-01T00:00:00.000Z' };
@@ -98,5 +100,75 @@ describe('ProcessingLimitsSection — video keyframes and cloud consent', () => 
     expect(
       screen.getByText(/no frames are extracted or sent anywhere/i, { exact: false })
     ).toBeInTheDocument();
+  });
+});
+
+describe('cloudAnalysisProviderOf — which cloud provider could receive frames', () => {
+  const folders = [
+    { id: 'live-1', name: '3D print' },
+    { id: 1769548408348, name: 'Finance' }
+  ];
+
+  test('an override of a deleted smart folder does not count', () => {
+    expect(
+      cloudAnalysisProviderOf(
+        {
+          routing: {
+            default: 'local',
+            perOperation: {},
+            perFolder: { 'gone-9': 'openaiCompatible' }
+          }
+        },
+        folders
+      )
+    ).toBeNull();
+  });
+
+  test('an override of a folder that still exists does count, numeric ids included', () => {
+    expect(
+      cloudAnalysisProviderOf(
+        { routing: { default: 'local', perFolder: { 'live-1': 'anthropic' } } },
+        folders
+      )
+    ).toBe('anthropic');
+    expect(
+      cloudAnalysisProviderOf(
+        { routing: { default: 'local', perFolder: { 1769548408348: 'openaiCompatible' } } },
+        folders
+      )
+    ).toBe('openaiCompatible');
+  });
+
+  test('a local override and a missing folder list leave every analysis local', () => {
+    expect(
+      cloudAnalysisProviderOf(
+        { routing: { default: 'local', perFolder: { 'live-1': 'local' } } },
+        folders
+      )
+    ).toBeNull();
+    expect(
+      cloudAnalysisProviderOf({
+        routing: { default: 'local', perFolder: { 'live-1': 'anthropic' } }
+      })
+    ).toBeNull();
+  });
+
+  test('a cloud Analysis provider counts whatever the folders are', () => {
+    expect(
+      cloudAnalysisProviderOf(
+        { routing: { default: 'local', perOperation: { analyze: 'anthropic' } } },
+        []
+      )
+    ).toBe('anthropic');
+  });
+
+  test('with only an orphaned cloud override, turning keyframes on applies at once', () => {
+    const latest = renderSection({
+      routing: { default: 'local', perOperation: {}, perFolder: { 'gone-9': 'openaiCompatible' } },
+      consent: LEGACY_CONSENT
+    });
+    fireEvent.click(keyframeSwitch());
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(latest.settings.captionVideoKeyframes).toBe(true);
   });
 });

@@ -4,11 +4,11 @@ import {
   Languages,
   Eye,
   Layers,
-  Sparkles,
   CheckCircle2,
   Download,
   HardDrive,
-  Loader2
+  Loader2,
+  BadgeCheck
 } from 'lucide-react';
 import Button from '../ui/Button';
 import Input from '../ui/Input';
@@ -112,7 +112,7 @@ function ModelCatalogRow({ model, installed, busy, onDownload, Icon, downloadPro
           </Text>
           {model.recommended && (
             <span className="inline-flex items-center gap-1 rounded-full bg-stratosort-blue/10 px-2 py-0.5 text-micro font-medium text-stratosort-blue">
-              <Sparkles className="h-3 w-3" aria-hidden="true" /> Recommended
+              <BadgeCheck className="h-3 w-3" aria-hidden="true" /> Recommended
             </span>
           )}
           {Number.isFinite(model.size) && (

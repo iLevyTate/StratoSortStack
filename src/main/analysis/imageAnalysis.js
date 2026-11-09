@@ -1770,6 +1770,9 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
       const fallbackAnalysis = await tryTextFallback();
       if (fallbackAnalysis) {
         fallbackAnalysis.analysisWarning = analysis.error;
+        // Usable, but only what OCR text could tell: never serve it from the
+        // cache, so the next analysis of this image tries the vision model again.
+        fallbackAnalysis._skipCache = true;
         analysis = fallbackAnalysis;
       } else {
         analysis = createVisionUnavailableFallback(
@@ -2143,7 +2146,7 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
       if (extractedTextForStorage) {
         result.extractedText = extractedTextForStorage;
       }
-      if (!bypassCache && !result?._isFallback && !result?.isFallback) {
+      if (!bypassCache && !result?._isFallback && !result?.isFallback && !result?._skipCache) {
         try {
           setImageCache(signature, result);
         } catch (cacheError) {
@@ -2223,7 +2226,12 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
         extractionMethod: 'vision'
       });
 
-      if (!bypassCache && !normalized?._isFallback && !normalized?.isFallback) {
+      if (
+        !bypassCache &&
+        !normalized?._isFallback &&
+        !normalized?.isFallback &&
+        !normalized?._skipCache
+      ) {
         try {
           setImageCache(signature, normalized);
         } catch (cacheError) {
@@ -2258,7 +2266,7 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
     if (extractedTextForStorage) {
       result.extractedText = extractedTextForStorage;
     }
-    if (!bypassCache && !result?._isFallback && !result?.isFallback) {
+    if (!bypassCache && !result?._isFallback && !result?.isFallback && !result?._skipCache) {
       try {
         setImageCache(signature, result);
       } catch (cacheError) {

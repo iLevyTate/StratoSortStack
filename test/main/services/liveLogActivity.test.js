@@ -159,7 +159,7 @@ const CASES = [
     },
     expected: {
       kind: 'folder-suggestion',
-      icon: 'sparkles',
+      icon: 'lightbulb',
       tone: 'info',
       text: 'Suggested a new folder "Pets" for IMG_2041.HEIC',
       file: 'IMG_2041.HEIC'
@@ -175,7 +175,7 @@ const CASES = [
     },
     expected: {
       kind: 'folder-suggestion',
-      icon: 'sparkles',
+      icon: 'lightbulb',
       tone: 'info',
       text: 'Suggested a new folder "Housing" for lease.docx',
       file: 'lease.docx'
@@ -191,7 +191,7 @@ const CASES = [
     },
     expected: {
       kind: 'folder-suggestion',
-      icon: 'sparkles',
+      icon: 'lightbulb',
       tone: 'info',
       text: 'Suggested a new folder "Recipes"'
     }

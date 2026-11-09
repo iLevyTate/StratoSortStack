@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef, useId } from 'react';
 import PropTypes from 'prop-types';
 import { useSelector } from 'react-redux';
-import { Sparkles, FolderOpen } from 'lucide-react';
+import { FolderOpen, PenLine, Info } from 'lucide-react';
 import { Button, Input, Textarea } from '../ui';
 import { Text } from '../ui/Typography';
 import Modal from '../ui/Modal';
@@ -462,7 +462,7 @@ function AddSmartFolderModal({
                   isLoading={isGeneratingDescription}
                   variant="subtle"
                   size="sm"
-                  leftIcon={!isGeneratingDescription ? <Sparkles className="w-4 h-4" /> : null}
+                  leftIcon={!isGeneratingDescription ? <PenLine className="w-4 h-4" /> : null}
                   className="text-stratosort-blue bg-stratosort-blue/10 border-stratosort-blue/20 hover:bg-stratosort-blue/20"
                 >
                   {!isGeneratingDescription
@@ -497,7 +497,7 @@ function AddSmartFolderModal({
                     : 'border-stratosort-blue/20 bg-stratosort-blue/5 text-stratosort-blue'
                 ].join(' ')}
               >
-                <Sparkles className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
+                <PenLine className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
                 <span className="leading-relaxed">
                   {genPhase === 'loading'
                     ? 'Loading the language model into memory…'
@@ -512,7 +512,7 @@ function AddSmartFolderModal({
                 role="status"
                 className="border-amber-200 bg-amber-50 text-amber-800 mt-2 flex items-start gap-compact rounded-md border px-3 py-2 text-xs"
               >
-                <Sparkles className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
+                <Info className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
                 <span className="leading-relaxed">{genFallbackHint}</span>
               </div>
             )}

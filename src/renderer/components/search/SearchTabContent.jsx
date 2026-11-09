@@ -16,7 +16,7 @@ import {
   MessageSquare,
   Network,
   RefreshCw,
-  Sparkles
+  SpellCheck
 } from 'lucide-react';
 import { Button } from '../ui';
 import { Heading, Text } from '../ui/Typography';
@@ -217,7 +217,7 @@ export default function SearchTabContent({
       {/* Query correction feedback - "Did you mean?" */}
       {queryMeta?.corrections?.length > 0 && searchResults.length > 0 && (
         <div className="flex items-center gap-compact px-3 py-2 bg-stratosort-accent/10 border border-stratosort-accent/30 rounded-lg text-sm">
-          <Sparkles className="w-4 h-4 text-stratosort-accent shrink-0" />
+          <SpellCheck className="w-4 h-4 text-stratosort-accent shrink-0" />
           <span className="text-stratosort-accent">
             Showing results for{' '}
             <span className="font-medium">

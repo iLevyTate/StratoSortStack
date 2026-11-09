@@ -60,6 +60,11 @@ const {
   resolveRealPaths
 } = require('../../shared/pathSanitization');
 const { isImagePath, isMediaPath } = require('../../shared/fileIdUtils');
+const { isUserAnalysisInFlight } = require('../analysis/userAnalysisInFlight');
+
+// How long a file Discover is analyzing right now waits before the watcher
+// checks it again.
+const USER_ANALYSIS_DEFER_MS = 15000;
 const { isUNCPath } = require('../../shared/crossPlatformUtils');
 const { normalizeKeywords } = require('../../shared/normalization');
 const {
@@ -2600,6 +2605,20 @@ class SmartFolderWatcher {
       return;
     }
 
+    // The user is analyzing this same file from Discover right now. Running
+    // our own analysis beside it doubled the GPU work and the "analyzed"
+    // notification. Check again after it finishes; by then the history
+    // normally has the file and the re-check below skips it.
+    if (!isReanalyze && isUserAnalysisInFlight(filePath)) {
+      logger.debug('[SMART-FOLDER-WATCHER] Deferring a file Discover is analyzing', { filePath });
+      this._enqueueAnalysisItem({
+        ...item,
+        recheck: true,
+        notBefore: Date.now() + USER_ANALYSIS_DEFER_MS
+      });
+      return;
+    }
+
     this.processingFiles.add(processingKey);
 
     try {
@@ -2625,7 +2644,7 @@ class SmartFolderWatcher {
       // spending a full LLM pass. Done lazily here, not at restore time, so a
       // 50k-item backlog doesn't stat and hash every file up front. Explicit
       // reanalyze requests intentionally bypass the gate.
-      if (item.restored && !isReanalyze) {
+      if ((item.restored || item.recheck) && !isReanalyze) {
         const stillNeedsAnalysis = await this._needsAnalysis(filePath, item.mtime, fileStats);
         if (!stillNeedsAnalysis) {
           logger.debug(

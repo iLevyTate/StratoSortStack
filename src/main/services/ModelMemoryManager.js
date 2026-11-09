@@ -324,7 +324,13 @@ class ModelMemoryManager {
       typeof besideType === 'string' && /** @type {any} */ (options)?.gpuLayersOverride === 0
         ? this._loadedModels.get(besideType)
         : null;
-    const besidePinned = Boolean(besideEntry && (this._activeRefs.get(besideType) || 0) > 0);
+    // keepBeside: the caller chose this CPU load so an idle resident (the
+    // text model between files) stays; without it only a pinned one does.
+    const besidePinned = Boolean(
+      besideEntry &&
+      ((this._activeRefs.get(besideType) || 0) > 0 ||
+        /** @type {any} */ (options)?.keepBeside === true)
+    );
     const fits = () =>
       besidePinned
         ? this._currentMemoryUsage - (besideEntry?.sizeBytes || 0) + estimatedSize <

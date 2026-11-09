@@ -6,11 +6,12 @@ import {
   FilePlus,
   FolderPlus,
   FolderTree,
-  Sparkles,
   ArrowRight,
   FolderInput,
   CheckCircle2,
-  AlertTriangle
+  AlertTriangle,
+  ScanSearch,
+  ListChecks
 } from 'lucide-react';
 import { useAppSelector } from '../../store/hooks';
 import {
@@ -339,7 +340,7 @@ function PipelineCard({
           </div>
           <div className="relative z-10 flex items-start justify-between gap-compact">
             <PipelineStage
-              icon={Sparkles}
+              icon={ScanSearch}
               label="Awaiting analysis"
               value={stats.pending}
               tone="warning"
@@ -525,7 +526,7 @@ function ActivityCard({
           </Text>
           <Stack gap="compact" className="mt-3">
             {queue.map((file, idx) => {
-              const StatusIcon = file.status === 'ready' ? FolderInput : Sparkles;
+              const StatusIcon = file.status === 'ready' ? FolderInput : ScanSearch;
               const statusLabel = file.status === 'ready' ? 'Ready' : 'Awaiting';
               const statusClass =
                 file.status === 'ready' ? 'text-stratosort-blue' : 'text-stratosort-warning';
@@ -693,7 +694,7 @@ export default function DashboardView() {
       return { label: `${stats.failed} need attention`, variant: 'error', icon: AlertTriangle };
     }
     if (stats.pending > 0) {
-      return { label: `${stats.pending} awaiting analysis`, variant: 'info', icon: Sparkles };
+      return { label: `${stats.pending} awaiting analysis`, variant: 'info', icon: ScanSearch };
     }
     if (stats.ready > 0) {
       return { label: `${stats.ready} ready to organize`, variant: 'info', icon: ArrowRight };
@@ -830,7 +831,7 @@ export default function DashboardView() {
                   tone="blue"
                 />
                 <QuickActionTile
-                  icon={Sparkles}
+                  icon={ListChecks}
                   title="Review & organize"
                   description="Confirm suggestions and move files"
                   onClick={goOrganize}

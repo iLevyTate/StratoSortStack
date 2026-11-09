@@ -33,16 +33,27 @@ function mbToBytes(mb) {
 
 /**
  * The cloud provider that video analysis could send frames to: the Analysis
- * provider when it is a cloud one, else the first smart-folder override that
- * is. Null when every analysis stays local.
+ * provider when it is a cloud one, else the first override of a smart folder
+ * that still exists and uses one. Null when every analysis stays local.
+ *
+ * Deleting a smart folder leaves its override in settings; such an override
+ * can never route a file, so it must not make the keyframe switch ask for
+ * cloud consent.
  * @param {any} aiSettings
+ * @param {any[] | null | undefined} smartFolders
  * @returns {string | null}
  */
-function cloudAnalysisProviderOf(aiSettings) {
+export function cloudAnalysisProviderOf(aiSettings, smartFolders) {
   const analyze = resolveOperationProviderId(aiSettings, 'analyze');
   if (isCloudProviderId(analyze)) return analyze;
-  const perFolder = Object.values(aiSettings?.routing?.perFolder || {});
-  return perFolder.find((id) => isCloudProviderId(id)) || null;
+  const liveIds = new Set(
+    (Array.isArray(smartFolders) ? smartFolders : [])
+      .map((folder) => (folder?.id == null ? null : String(folder.id)))
+      .filter(Boolean)
+  );
+  const overrides = Object.entries(aiSettings?.routing?.perFolder || {});
+  const live = overrides.find(([folderId, id]) => liveIds.has(folderId) && isCloudProviderId(id));
+  return live ? live[1] : null;
 }
 
 /**
@@ -54,7 +65,7 @@ function cloudAnalysisProviderOf(aiSettings) {
 function ProcessingLimitsSection({ settings, setSettings }) {
   const [recommendedConcurrency, setRecommendedConcurrency] = useState(null);
   const cloudAnalysisProvider = useAppSelector((s) =>
-    cloudAnalysisProviderOf(s.aiProvider?.settings)
+    cloudAnalysisProviderOf(s.aiProvider?.settings, s.files?.smartFolders)
   );
   const consentCurrent = useAppSelector((s) => hasAcknowledgedCloudAI(s));
   // Cloud provider awaiting the user's answer before frames may be sent.
