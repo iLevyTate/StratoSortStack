@@ -139,10 +139,12 @@ These are tracked gaps that the project slash commands help address:
    installed copy), macOS arm64 (unsigned, Metal) and Linux x64 (xvfb, CPU). Each reached
    coordinated startup, loaded the native AI engine (Windows x64 on a Hyper-V GPU falls back from
    Vulkan to CPU, which the check reports but allows) and ran the packaged OCR worker on a synthetic
-   image. Still not verified: Defender real-time-protection timing (Sandbox disables Defender), the
-   interactive UAC/decline path, the zip's **Install now** click-through, the vision model (timed
-   out in the memory-limited sandbox), the Atlas, log-export, settings-import and large-library
-   restore workers, and a signed and notarized macOS build. The checklist lives in
+   image. Run 42702179765 added a seeded 5 MB LZ4 search index: all four restored it through
+   `oramaRestoreWorker` (`parsedIn: 'worker'`, 800/800 documents). Still not verified: Defender
+   real-time-protection timing (Sandbox disables Defender), the interactive UAC/decline path, the
+   zip's **Install now** click-through, the vision model (timed out in the memory-limited sandbox),
+   the Atlas, log-export and settings-import workers, and a signed and notarized macOS build. The
+   checklist lives in
    [`docs/RELEASING.md` § Packaged-integrity checks](docs/RELEASING.md#packaged-integrity-checks) —
    keep that the single source and do not re-fork it here.
 

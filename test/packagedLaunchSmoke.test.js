@@ -5,7 +5,15 @@
  * binary: the engine must be allowed to fall back to the CPU, while the CPU
  * floor failing (the clean-PC break of 5.1.2) must still fail the check.
  */
-const { evaluateLogs } = require('../scripts/packaged-launch-smoke');
+const path = require('path');
+const fs = require('fs');
+const {
+  evaluateLogs,
+  buildSeedCollection,
+  seedVectorIndex,
+  RESTORE_WORKER_MIN_BYTES
+} = require('../scripts/packaged-launch-smoke');
+const { loadPersistedCollection } = require('../src/main/workers/oramaRestoreLoader');
 
 const line = (entry) => JSON.stringify({ level: 'info', context: 'LlamaService', ...entry });
 
@@ -41,7 +49,8 @@ describe('packaged launch smoke verdict', () => {
       missing: [],
       failures: [],
       aiBackend: 'cpu',
-      gpuFallbacks: [{ backend: 'vulkan', loaded: 'cpu' }]
+      gpuFallbacks: [{ backend: 'vulkan', loaded: 'cpu' }],
+      restore: null
     });
   });
 
@@ -83,5 +92,78 @@ describe('packaged launch smoke verdict', () => {
     expect(result.failures).toEqual([
       expect.objectContaining({ signature: '/Cannot find module/' })
     ]);
+  });
+});
+
+describe('seeded search index for the restore worker', () => {
+  const restored = (fields) =>
+    line({ msg: '[OramaVectorService] Restored fileChunks database', ...fields });
+  const seed = { collection: 'fileChunks', docCount: 900 };
+  const base = [VULKAN_FAILED, CPU_SELECTED, INITIALIZED];
+
+  test('the seed is the app compact form, deterministic, with 384-dim vectors', () => {
+    const text = buildSeedCollection({ docCount: 3 });
+    expect(buildSeedCollection({ docCount: 3 })).toBe(text);
+    const parsed = JSON.parse(text);
+    expect(parsed.docs.count).toBe(3);
+    const docs = Object.values(parsed.docs.docs);
+    expect(docs.map((d) => d.id)).toEqual(['smoke-chunk-0', 'smoke-chunk-1', 'smoke-chunk-2']);
+    expect(docs.every((d) => d.embedding.length === 384)).toBe(true);
+  });
+
+  test('the written file is past the worker threshold and the app loader reads every doc', async () => {
+    // The suite's fs is the in-memory mock; the seed and the app loader both use it.
+    fs.mkdirSync(require('os').tmpdir(), { recursive: true });
+    const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'strato-seed-'));
+    try {
+      const written = seedVectorIndex(dir);
+      expect(written.file).toBe(path.join(dir, 'vector-db', 'fileChunks.json.lz4'));
+      expect(fs.statSync(written.file).size).toBe(written.bytes);
+      expect(written.bytes).toBeGreaterThanOrEqual(RESTORE_WORKER_MIN_BYTES);
+      const load = await loadPersistedCollection(written.file, {
+        decompress: true,
+        keepText: false
+      });
+      expect(load.status).toBe('ok');
+      expect(load.docList).toHaveLength(written.docCount);
+      expect(load.docList[0].embedding).toHaveLength(384);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('refuses to seed when the LZ4 binding does not load', () => {
+    expect(() => seedVectorIndex('unused', { lz4: { isLz4BindingAvailable: false } })).toThrow(
+      /lz4-napi does not load/
+    );
+  });
+
+  test('a restore in the worker with every document passes', () => {
+    const result = evaluateLogs(
+      logsOf(...base, restored({ parsedIn: 'worker', total: 900, inserted: 900, failed: 0 })),
+      { seed }
+    );
+    expect(result.missing).toEqual([]);
+    expect(result.restore).toEqual({ parsedIn: 'worker', total: 900, inserted: 900, failed: 0 });
+  });
+
+  test('a restore that fell back to the main thread fails', () => {
+    const result = evaluateLogs(
+      logsOf(...base, restored({ parsedIn: 'main', total: 900, inserted: 900, failed: 0 })),
+      { seed }
+    );
+    expect(result.missing).toEqual(['restore-worker (parsed in main, not the worker)']);
+  });
+
+  test('a missing or partial restore fails', () => {
+    expect(evaluateLogs(logsOf(...base), { seed }).missing).toEqual([
+      'restore-worker (no "[OramaVectorService] Restored fileChunks database" line)'
+    ]);
+    expect(
+      evaluateLogs(
+        logsOf(...base, restored({ parsedIn: 'worker', total: 900, inserted: 899, failed: 1 })),
+        { seed }
+      ).missing
+    ).toEqual(['restore-worker (not every seeded document was restored)']);
   });
 });
