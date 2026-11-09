@@ -14,8 +14,8 @@ updates:
           - minor
           - patch
     ignore:
-      # Canvas 1.0.12/1.0.13 SIGSEGV under Electron 41 on Linux; see #29.
-      # Keep 1.0.11 until a newer release passes the native verification gate.
+      # Canvas 1.0.12/1.0.13 SIGSEGV'd under Electron 41 on Linux (#29, closed). main is on 1.1.0
+      # with Electron 45; this ignore only keeps those two builds from ever coming back.
       - dependency-name: '@napi-rs/canvas'
         versions: ['1.0.12', '1.0.13']
 

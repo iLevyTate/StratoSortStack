@@ -118,24 +118,31 @@ These are tracked gaps that the project slash commands help address:
    dark/light themes with `critical+serious` hard-fail. The graph-canvas keyboard path closed
    2026-07-03 (U-T14: React Flow node focus + selection toolbars, pinned by oracles). Remaining for
    a formal AA claim: a manual screen-reader pass (NVDA) only.
-2. **SW-40 packaged verification: Windows x64 done, rest outstanding** — `asarUnpack` unpacks only
-   the eight worker entry bundles (`dist/{…,oramaRestoreWorker}.js`) plus the packages they require
-   at runtime (the pino, sharp and tesseract.js dependency closures), so main/preload/renderer stay
-   inside the integrity-validated asar. `verify:electron-fuses-config` fails if a pattern unpacks
-   `dist/main.js` again; `verify-packaged-artifacts` fails if a worker's externals do not resolve
-   inside `app.asar.unpacked`. On 2026-11-08/09 a Windows x64 build of main (installer + zip) passed
-   in Windows Sandbox (clean Windows 11, networking off): fuses match config, the renderer loads
-   from `app.asar`, a tampered asar header stops the app ("Integrity check failed for asar archive
-   entry"), silent install and first/second launch work, the zip launches and its updater skips with
-   the zip reason, the bundled VC++ runtime installs, local AI initializes, the OCR,
-   image-preprocess and embedding worker pools run, and four synthetic files analyze. The same test
-   on the published v5.1.2 (latest release, 2026-11-01) found local AI broken on clean PCs (missing
-   VC++ runtime, `NoBinaryFoundError`) and those workers crashing (`pino-std-serializers`); both are
-   fixed on main but **not yet released**. Not yet verified: Defender real-time-protection timing
-   (Sandbox disables Defender), the interactive UAC/decline path, the zip's **Install now**
-   click-through, whether an Azure-signed build keeps Microsoft's signature on `vc_redist`, the
-   vision model (timed out in the memory-limited sandbox), and macOS, Linux and Windows-arm64
-   packaged builds. The checklist lives in
+2. **SW-40 packaged verification: all four platforms smoke-tested; a few manual checks remain** —
+   `asarUnpack` unpacks only the eight worker entry bundles (`dist/{…,oramaRestoreWorker}.js`) plus
+   the packages they require at runtime (the pino, sharp and tesseract.js dependency closures), so
+   main/preload/renderer stay inside the integrity-validated asar. `verify:electron-fuses-config`
+   fails if a pattern unpacks `dist/main.js` again; `verify-packaged-artifacts` fails if a worker's
+   externals do not resolve inside `app.asar.unpacked`. On 2026-11-08/09 a Windows x64 build of main
+   (installer + zip) passed in Windows Sandbox (clean Windows 11, networking off): fuses match
+   config, the renderer loads from `app.asar`, a tampered asar header stops the app ("Integrity
+   check failed for asar archive entry"), silent install and first/second launch work, the zip
+   launches and its updater skips with the zip reason, the bundled VC++ runtime installs, local AI
+   initializes, the OCR, image-preprocess and embedding worker pools run, and four synthetic files
+   analyze. The same test on the published v5.1.2 (latest release, 2026-11-01) found local AI broken
+   on clean PCs (missing VC++ runtime, `NoBinaryFoundError`) and those workers crashing
+   (`pino-std-serializers`); both are fixed on main but **not yet released**. On 2026-11-09 the
+   dispatch-only `.github/workflows/packaged-smoke.yml` (run 42649893628) built, installed and
+   launched all four packages with a throwaway profile and `scripts/packaged-launch-smoke.js`:
+   Windows x64 and arm64 Azure-signed (silent NSIS install; our files carry the Kennedy Applied
+   Sciences signature and `vc_redist.<arch>.exe` keeps Microsoft's, in the installer and the
+   installed copy), macOS arm64 (unsigned, Metal) and Linux x64 (xvfb, CPU). Each reached
+   coordinated startup, loaded the native AI engine (Windows x64 on a Hyper-V GPU falls back from
+   Vulkan to CPU, which the check reports but allows) and ran the packaged OCR worker on a synthetic
+   image. Still not verified: Defender real-time-protection timing (Sandbox disables Defender), the
+   interactive UAC/decline path, the zip's **Install now** click-through, the vision model (timed
+   out in the memory-limited sandbox), the Atlas, log-export, settings-import and large-library
+   restore workers, and a signed and notarized macOS build. The checklist lives in
    [`docs/RELEASING.md` § Packaged-integrity checks](docs/RELEASING.md#packaged-integrity-checks) —
    keep that the single source and do not re-fork it here.
 
