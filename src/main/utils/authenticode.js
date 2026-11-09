@@ -14,6 +14,14 @@
  * environment variable and is read with -LiteralPath, so quotes, `$` or other
  * metacharacters in a path cannot change what runs.
  *
+ * The script must also run under PowerShell ConstrainedLanguage mode (managed
+ * PCs with WDAC/AppLocker policies): no [pscustomobject] or other non-core
+ * type conversions and no .NET method calls, only cmdlets, property reads and
+ * a plain hashtable for ConvertTo-Json. A PowerShell that cannot run or
+ * answer at all (missing, blocked, timed out, unparseable output) yields the
+ * verdict `unreadable`, which callers keep apart from a signature that was
+ * read and is wrong.
+ *
  * @module utils/authenticode
  */
 
@@ -33,7 +41,9 @@ const SIGNATURE_SCRIPT = [
   '$ver = (Get-Item -LiteralPath $target).VersionInfo',
   '$subject = $null',
   'if ($sig.SignerCertificate) { $subject = $sig.SignerCertificate.Subject }',
-  '[pscustomobject]@{',
+  // A plain hashtable: [pscustomobject] fails in ConstrainedLanguage mode
+  // (ConversionSupportedOnlyToCoreTypes).
+  '@{',
   '  Status = [string]$sig.Status',
   '  StatusMessage = [string]$sig.StatusMessage',
   '  Subject = $subject',
@@ -135,6 +145,9 @@ function subjectHasOrganization(subject, organization = MICROSOFT_ORGANIZATION) 
  * @typedef {Object} SignatureVerdict
  * @property {boolean} ok
  * @property {'valid' | 'unreadable' | 'not-valid' | 'not-microsoft'} reason
+ *   'unreadable': PowerShell could not report a signature at all (missing,
+ *   blocked, timed out, unparseable output); the others describe a signature
+ *   that was read.
  * @property {AuthenticodeInfo | null} info
  */
 
@@ -235,6 +248,7 @@ function verifyMicrosoftSignatureSync(filePath, options) {
 module.exports = {
   MICROSOFT_ORGANIZATION,
   TARGET_ENV_VAR,
+  SIGNATURE_SCRIPT,
   powershellPath,
   encodedCommandArgs,
   parseAuthenticodeOutput,

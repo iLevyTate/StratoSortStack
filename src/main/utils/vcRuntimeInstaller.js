@@ -10,14 +10,24 @@
  * ai.vc-runtime-missing banner.
  *
  * Guarantees:
+ *   - It runs only while the runtime is missing (detectVcRuntime). When it is
+ *     present the call answers `already-installed` without touching the file,
+ *     so a renderer cannot use it to raise UAC prompts at will.
  *   - The executable path is derived from process.resourcesPath and the app's
  *     own arch only. Nothing from the renderer reaches the path or arguments.
- *   - The file must pass Authenticode verification (Valid, O=Microsoft
- *     Corporation) immediately before it is run; otherwise it never runs.
+ *   - The bundled file is copied into a fresh per-call directory under the OS
+ *     temp dir (fs.mkdtemp). That copy is Authenticode-verified (Valid,
+ *     O=Microsoft Corporation) and the same copy is what runs, so replacing
+ *     the bundled file after the check does not change what runs elevated.
+ *     The directory is removed afterwards.
  *   - It runs elevated through PowerShell `Start-Process -Verb RunAs` (Windows
  *     shows one UAC prompt: the runtime installs per-machine while StratoSort
  *     stays per-user). The path reaches PowerShell via an environment
- *     variable; the script itself is a fixed -EncodedCommand string.
+ *     variable; the script itself is a fixed -EncodedCommand string that also
+ *     runs in ConstrainedLanguage mode (managed PCs).
+ *   - A signature PowerShell could not check at all (missing, blocked, timed
+ *     out) reports `signature-unreadable`, kept apart from a signature that
+ *     was read and is wrong (`signature-invalid`).
  *   - Off Windows, or when the file is absent (dev builds), it reports
  *     `not-bundled` so the renderer falls back to Microsoft's download page.
  *
@@ -28,6 +38,7 @@
 
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { asyncSpawn } = require('./asyncSpawnUtils');
 const { powershellPath, encodedCommandArgs, verifyMicrosoftSignature } = require('./authenticode');
 const { detectVcRuntime } = require('./vcRuntimeDetection');
@@ -45,25 +56,43 @@ const INSTALLER_ENV_VAR = 'SS_VC_REDIST_INSTALLER';
 const LAUNCH_FAILED_MARKER = 'SS_VC_REDIST_LAUNCH_FAILED';
 
 /**
- * Generous ceiling for UAC + install. The preload budget for this channel is
- * the same (TIMEOUTS.USER_DIALOG); the installer keeps running if it is hit.
+ * Generous ceiling for UAC + install. The preload budget for this channel
+ * (VC_RUNTIME_INSTALL_INVOKE_TIMEOUT_MS in src/shared/ipcInvokeTimeout.js) is
+ * a minute longer, so main always answers `timed-out` before the renderer
+ * would see a raw IPC timeout. The installer keeps running if this is hit; a
+ * second attempt meanwhile exits 1618 (`install-in-progress`).
  */
 const INSTALL_TIMEOUT_MS = 10 * 60 * 1000;
 
+/** Prefix of the per-call temp directory that holds the verified copy. */
+const STAGING_DIR_PREFIX = 'stratosort-vcredist-';
+
+/**
+ * The elevated run. It must work in ConstrainedLanguage mode too: cmdlets,
+ * property reads, string methods, Write-Output and `exit` only (no
+ * [Console]::..., no non-core type literals).
+ *
+ * Start-Process reports a failed launch as an InvalidOperationException whose
+ * message embeds the Win32 error text; there is no inner Win32Exception to
+ * read a code from. A declined UAC prompt is ERROR_CANCELLED (1223), and
+ * `net.exe helpmsg 1223` prints that same system text in the PC's language,
+ * so a message containing it exits 1223. Anything else prints the
+ * launch-failed marker and exits 1.
+ */
 const ELEVATED_INSTALL_SCRIPT = [
   "$ErrorActionPreference = 'Stop'",
   'try {',
   `  $p = Start-Process -FilePath $env:${INSTALLER_ENV_VAR} -ArgumentList ${VC_REDIST_INSTALL_ARGS.map((a) => `'${a}'`).join(',')} -Verb RunAs -Wait -PassThru`,
   '  exit [int]$p.ExitCode',
   '} catch {',
-  '  $code = 0',
-  '  $e = $_.Exception',
-  '  while ($e) {',
-  '    if ($e -is [System.ComponentModel.Win32Exception]) { $code = $e.NativeErrorCode; break }',
-  '    $e = $e.InnerException',
-  '  }',
-  '  if ($code -eq 1223) { exit 1223 }',
-  `  [Console]::Out.WriteLine('${LAUNCH_FAILED_MARKER}: ' + $_.Exception.Message)`,
+  '  $message = [string]$_.Exception.Message',
+  "  $cancelText = ''",
+  '  try {',
+  "    $cancelText = ((& (Join-Path $env:SystemRoot 'System32\\net.exe') helpmsg 1223) | Where-Object { $_ }) -join ' '",
+  '  } catch { }',
+  '  $cancelText = ([string]$cancelText).Trim()',
+  '  if ($cancelText -and $message.Contains($cancelText)) { exit 1223 }',
+  `  Write-Output ('${LAUNCH_FAILED_MARKER}: ' + $message)`,
   '  exit 1',
   '}'
 ].join('\n');
@@ -102,6 +131,8 @@ function bundledVcRedistPath({ resourcesPath = process.resourcesPath, arch = pro
  *   3010  installed, reboot required (1641: reboot initiated)
  *   1602  user cancelled the installer
  *   1223  ERROR_CANCELLED: the UAC prompt was declined
+ *   1618  ERROR_INSTALL_ALREADY_RUNNING: another installation is in progress
+ *         (for example an earlier vc_redist run that outlived our timeout)
  *   other failure
  * @param {number | null | undefined} exitCode
  * @returns {ExitCodeOutcome}
@@ -123,6 +154,13 @@ function mapVcRedistExitCode(exitCode) {
     case 1602:
     case 1223:
       return { success: false, cancelled: true, needsRestart: false, meaning: 'cancelled' };
+    case 1618:
+      return {
+        success: false,
+        cancelled: false,
+        needsRestart: false,
+        meaning: 'install-in-progress'
+      };
     default:
       return { success: false, cancelled: false, needsRestart: false, meaning: 'failed' };
   }
@@ -136,6 +174,42 @@ async function defaultFileExists(filePath) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Remove a staging directory. Best effort: the installer may still hold the
+ * file (after a timeout), so a failure is reported, not thrown.
+ * @param {string} dir
+ * @returns {Promise<boolean>}
+ */
+async function removeStagingDir(dir) {
+  try {
+    await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Copy the bundled installer into a fresh directory of its own (fs.mkdtemp
+ * under the OS temp dir), so the file that is verified and run is one nothing
+ * else knew the path of when it was checked.
+ *
+ * @param {string} sourcePath
+ * @param {{ tmpDir?: string }} [options]
+ * @returns {Promise<{ path: string, cleanup: () => Promise<boolean> }>}
+ */
+async function stageInstallerCopy(sourcePath, { tmpDir = os.tmpdir() } = {}) {
+  const dir = await fs.promises.mkdtemp(path.join(tmpDir, STAGING_DIR_PREFIX));
+  const copyPath = path.join(dir, path.basename(sourcePath));
+  try {
+    await fs.promises.copyFile(sourcePath, copyPath, fs.constants.COPYFILE_EXCL);
+  } catch (error) {
+    await removeStagingDir(dir);
+    throw error;
+  }
+  return { path: copyPath, cleanup: () => removeStagingDir(dir) };
 }
 
 /**
@@ -171,9 +245,12 @@ async function runInstallerElevated(
  * @property {boolean} cancelled
  * @property {boolean} needsRestart     Windows needs a reboot before the DLLs are usable
  * @property {number | null} exitCode
- * @property {string} [reason]          'not-bundled' | 'signature-invalid' | 'launch-failed' |
- *                                      'timed-out' | 'installer-failed' | 'runtime-still-missing'
- * @property {boolean} [runtimePresent] detectVcRuntime() after the installer exited
+ * @property {string} [reason]          'already-installed' | 'not-bundled' |
+ *                                      'signature-unreadable' | 'signature-invalid' |
+ *                                      'launch-failed' | 'timed-out' | 'install-in-progress' |
+ *                                      'installer-failed' | 'runtime-still-missing'
+ * @property {boolean} [runtimePresent] detectVcRuntime() before (already-installed) or after
+ *                                      the installer exited
  * @property {string} [error]
  */
 
@@ -186,6 +263,7 @@ async function runInstallerElevated(
  *   resourcesPath?: string,
  *   env?: NodeJS.ProcessEnv,
  *   fileExists?: (filePath: string) => Promise<boolean>,
+ *   stageCopy?: (sourcePath: string) => Promise<{ path: string, cleanup: () => Promise<boolean> }>,
  *   verifySignature?: typeof verifyMicrosoftSignature,
  *   runElevated?: typeof runInstallerElevated,
  *   detect?: () => Promise<{ applicable: boolean, present: boolean }>,
@@ -199,6 +277,7 @@ async function installBundledVcRuntime({
   resourcesPath = process.resourcesPath,
   env = process.env,
   fileExists = defaultFileExists,
+  stageCopy = stageInstallerCopy,
   verifySignature = verifyMicrosoftSignature,
   runElevated = runInstallerElevated,
   detect = () => detectVcRuntime({ platform, arch, env }),
@@ -212,37 +291,80 @@ async function installBundledVcRuntime({
     exitCode: null,
     ...fields
   });
+  const probe = () =>
+    Promise.resolve()
+      .then(detect)
+      .catch(/** @returns {null} */ () => null);
 
+  /** @type {(() => Promise<boolean>) | null} */
+  let cleanup = null;
   try {
     if (platform !== 'win32') return result({ reason: 'not-bundled' });
+
+    // Only a missing runtime warrants an elevated installer. A probe that
+    // fails says nothing either way, so it does not block the install.
+    const before = await probe();
+    if (before?.applicable && before.present) {
+      logger?.info('[VC-RUNTIME] Not running the redistributable: the runtime is already present');
+      return result({ reason: 'already-installed', runtimePresent: true });
+    }
+
     const installerPath = bundledVcRedistPath({ resourcesPath, arch });
     if (!installerPath || !(await fileExists(installerPath))) {
       return result({ reason: 'not-bundled' });
     }
 
-    const verdict = await verifySignature(installerPath, { env });
+    /** @type {string} */
+    let stagedPath;
+    try {
+      const staged = await stageCopy(installerPath);
+      stagedPath = staged.path;
+      cleanup = staged.cleanup;
+    } catch (error) {
+      logger?.warn('[VC-RUNTIME] Could not copy the bundled redistributable to a temp folder', {
+        error: /** @type {Error} */ (error)?.message
+      });
+      return result({
+        reason: 'launch-failed',
+        error: `Could not prepare the installer: ${/** @type {Error} */ (error)?.message || 'copy failed'}`
+      });
+    }
+
+    const verdict = await verifySignature(stagedPath, { env });
     if (!verdict?.ok) {
+      const unreadable = !verdict || verdict.reason === 'unreadable';
       logger?.warn(
-        '[VC-RUNTIME] Refusing to run the bundled redistributable: signature check failed',
+        unreadable
+          ? '[VC-RUNTIME] Not running the bundled redistributable: its signature could not be checked on this PC'
+          : '[VC-RUNTIME] Refusing to run the bundled redistributable: signature check failed',
         {
           reason: verdict?.reason,
           status: verdict?.info?.status,
           signer: verdict?.info?.subject
         }
       );
-      return result({
-        reason: 'signature-invalid',
-        error: 'The bundled installer is not Microsoft-signed'
-      });
+      return unreadable
+        ? result({
+            reason: 'signature-unreadable',
+            error: "Couldn't check the installer's signature on this PC"
+          })
+        : result({
+            reason: 'signature-invalid',
+            error: 'The bundled installer is not Microsoft-signed'
+          });
     }
 
     logger?.info('[VC-RUNTIME] Running the bundled Visual C++ Redistributable', {
       file: path.basename(installerPath),
       version: verdict.info?.productVersion
     });
-    const run = await runElevated(installerPath, { env });
+    const run = await runElevated(stagedPath, { env });
     if (run.timedOut) {
-      return result({ reason: 'timed-out', error: 'The installer did not finish in time' });
+      return result({
+        reason: 'timed-out',
+        error:
+          'The installer did not finish in time. It may still be running; wait for it to close before trying again'
+      });
     }
     if (run.launchFailed) {
       return result({
@@ -252,9 +374,7 @@ async function installBundledVcRuntime({
     }
 
     const outcome = mapVcRedistExitCode(run.exitCode);
-    const runtime = await Promise.resolve()
-      .then(detect)
-      .catch(/** @returns {null} */ () => null);
+    const runtime = await probe();
     const runtimePresent = Boolean(runtime && (!runtime.applicable || runtime.present));
     logger?.info('[VC-RUNTIME] Redistributable installer finished', {
       exitCode: run.exitCode,
@@ -264,6 +384,14 @@ async function installBundledVcRuntime({
 
     if (outcome.cancelled) {
       return result({ cancelled: true, exitCode: run.exitCode, runtimePresent });
+    }
+    if (outcome.meaning === 'install-in-progress') {
+      return result({
+        reason: 'install-in-progress',
+        exitCode: run.exitCode,
+        runtimePresent,
+        error: 'Another installation is already running on this PC'
+      });
     }
     if (!outcome.success) {
       return result({
@@ -294,6 +422,13 @@ async function installBundledVcRuntime({
       error: /** @type {Error} */ (error)?.message
     });
     return result({ reason: 'installer-failed', error: /** @type {Error} */ (error)?.message });
+  } finally {
+    if (cleanup) {
+      const removed = await cleanup().catch(() => false);
+      if (!removed) {
+        logger?.warn('[VC-RUNTIME] Could not remove the temporary installer copy');
+      }
+    }
   }
 }
 
@@ -302,10 +437,13 @@ module.exports = {
   VC_REDIST_INSTALL_ARGS,
   INSTALLER_ENV_VAR,
   LAUNCH_FAILED_MARKER,
+  INSTALL_TIMEOUT_MS,
+  STAGING_DIR_PREFIX,
   ELEVATED_INSTALL_SCRIPT,
   vcRedistFileName,
   bundledVcRedistPath,
   mapVcRedistExitCode,
+  stageInstallerCopy,
   runInstallerElevated,
   installBundledVcRuntime
 };

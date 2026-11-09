@@ -912,7 +912,9 @@ function registerSystemIpc(servicesOrParams) {
   // Windows: install the Microsoft Visual C++ Redistributable bundled under
   // resources/assets/runtime/vcredist (ai.vc-runtime-missing "Install now").
   // The payload is void: the installer path comes from process.resourcesPath
-  // and the app arch only, and is Authenticode-verified before it runs
+  // and the app arch only. It runs only while the runtime is missing
+  // (otherwise `already-installed`, no UAC prompt), and what runs is a copy
+  // in a fresh temp dir that is Authenticode-verified first
   // (utils/vcRuntimeInstaller.js). A second click while one install runs
   // joins it rather than starting another elevated installer.
   /** @type {Promise<any> | null} */

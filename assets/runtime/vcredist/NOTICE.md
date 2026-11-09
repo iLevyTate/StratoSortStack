@@ -12,9 +12,12 @@ Windows builds of StratoSort Stack include Microsoft's **Visual C++ Redistributa
   / `https://aka.ms/vc14/vc_redist.arm64.exe`. StratoSort does not re-sign it; its Authenticode
   signature is Microsoft's own and is checked before it is bundled and again before the app runs
   it.
-- **License:** Microsoft "Distributable Code" under the Microsoft Visual Studio license terms. The
-  installer shows Microsoft's license terms when it runs interactively. Copyright © Microsoft
-  Corporation. All rights reserved.
+- **License:** Microsoft "Distributable Code" under the Microsoft Visual Studio license terms; the
+  installed runtime is subject to Microsoft's license terms
+  (<https://visualstudio.microsoft.com/license-terms/>). StratoSort always runs the redistributable
+  with `/passive` or `/quiet`, so Microsoft's installer does not show its license page; the
+  StratoSort Windows installer's license screen states that it may install this component and
+  that it is subject to Microsoft's terms. Copyright © Microsoft Corporation. All rights reserved.
 - **Version and checksum:** recorded in `vc_redist.<arch>.json` next to this file, written by
   `scripts/setup-vc-redist.js` at package time.
 

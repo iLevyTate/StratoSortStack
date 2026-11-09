@@ -5,8 +5,13 @@
  * Corporation. The file path only ever travels in the child environment.
  */
 
+const path = require('path');
+const { spawnSync } = require('child_process');
 const {
+  SIGNATURE_SCRIPT,
   TARGET_ENV_VAR,
+  encodedCommandArgs,
+  powershellPath,
   evaluateMicrosoftSignature,
   parseAuthenticodeOutput,
   readAuthenticode,
@@ -101,5 +106,44 @@ describe('PowerShell invocation', () => {
         spawnSyncImpl: jest.fn(() => ({ status: 0, stdout: '' }))
       })
     ).toBeNull();
+  });
+});
+
+describe('signature script and ConstrainedLanguage mode', () => {
+  test('uses nothing ConstrainedLanguage rejects', () => {
+    // [pscustomobject] fails there with ConversionSupportedOnlyToCoreTypes, and
+    // .NET static calls with MethodInvocationNotSupportedInConstrainedLanguage.
+    expect(SIGNATURE_SCRIPT).not.toMatch(/\[pscustomobject\]/i);
+    expect(SIGNATURE_SCRIPT).not.toMatch(/\[Console\]::/);
+    expect(SIGNATURE_SCRIPT.split('\n')).toContain('@{');
+    expect(SIGNATURE_SCRIPT).toContain('} | ConvertTo-Json -Compress');
+  });
+
+  const describeWindows = process.platform === 'win32' ? describe : describe.skip;
+  describeWindows('real Windows PowerShell 5.1', () => {
+    const CLM_PREFIX =
+      "$ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage'\n" +
+      "if ($ExecutionContext.SessionState.LanguageMode -ne 'ConstrainedLanguage') { exit 99 }\n";
+    const notepad = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'notepad.exe');
+
+    test.each([
+      ['FullLanguage', ''],
+      ['ConstrainedLanguage', CLM_PREFIX]
+    ])(
+      '%s: reads a Microsoft-signed system file as Valid / O=Microsoft Corporation',
+      (_mode, prefix) => {
+        const result = spawnSync(powershellPath(), encodedCommandArgs(prefix + SIGNATURE_SCRIPT), {
+          env: { ...process.env, [TARGET_ENV_VAR]: notepad },
+          encoding: 'utf8',
+          windowsHide: true,
+          timeout: 60000
+        });
+        expect(result.status).toBe(0);
+        const info = parseAuthenticodeOutput(result.stdout);
+        expect(info).toMatchObject({ status: 'Valid' });
+        expect(evaluateMicrosoftSignature(info)).toMatchObject({ ok: true, reason: 'valid' });
+      },
+      60000
+    );
   });
 });

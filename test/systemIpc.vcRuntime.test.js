@@ -5,7 +5,10 @@
  * the process spawn, the runtime probe and the filesystem faked:
  *
  *   - off Windows, or without the bundled exe: `not-bundled`, nothing spawned
- *   - a bad signature: refused, the installer never spawned
+ *   - runtime already present: `already-installed`, nothing spawned (no UAC)
+ *   - a bad signature: refused, the installer never spawned; a signature
+ *     PowerShell could not read at all: `signature-unreadable`
+ *   - what is verified and run is a copy in a fresh temp dir, removed after
  *   - exit codes 0 / 3010 / 1638 / 1602 / 1223 map to success / restart / cancel
  *   - whatever the renderer sends never reaches the spawned command
  */
@@ -86,7 +89,10 @@ describe('SYSTEM.INSTALL_VC_RUNTIME / RELAUNCH_APP', () => {
   beforeEach(() => {
     mockAsyncSpawn.mockReset();
     mockDetectVcRuntime.mockReset();
-    mockDetectVcRuntime.mockResolvedValue({ applicable: true, present: true });
+    // Missing before the install, present after it.
+    mockDetectVcRuntime
+      .mockResolvedValueOnce({ applicable: true, present: false })
+      .mockResolvedValue({ applicable: true, present: true });
     mockRequestRelaunch.mockClear();
 
     resourcesPath = fs.mkdtempSync(path.join(os.tmpdir(), 'vc-ipc-resources-'));
@@ -139,6 +145,41 @@ describe('SYSTEM.INSTALL_VC_RUNTIME / RELAUNCH_APP', () => {
     expect(mockAsyncSpawn).not.toHaveBeenCalled();
   });
 
+  test('runtime already present: already-installed, nothing spawned', async () => {
+    stageBundledExe();
+    fakePowerShell();
+    mockDetectVcRuntime.mockReset();
+    mockDetectVcRuntime.mockResolvedValue({ applicable: true, present: true });
+    await expect(install()).resolves.toMatchObject({
+      success: false,
+      reason: 'already-installed',
+      runtimePresent: true
+    });
+    expect(mockAsyncSpawn).not.toHaveBeenCalled();
+  });
+
+  test('PowerShell cannot read the signature: signature-unreadable, never spawned', async () => {
+    stageBundledExe();
+    mockAsyncSpawn.mockResolvedValue({ status: 1, stdout: '', stderr: 'blocked' });
+    await expect(install()).resolves.toMatchObject({
+      success: false,
+      reason: 'signature-unreadable'
+    });
+    expect(installCalls()).toHaveLength(0);
+  });
+
+  test('exit 1618: install-in-progress', async () => {
+    stageBundledExe();
+    fakePowerShell({ installExit: 1618 });
+    mockDetectVcRuntime.mockResolvedValue({ applicable: true, present: false });
+    await expect(install()).resolves.toMatchObject({
+      success: false,
+      cancelled: false,
+      reason: 'install-in-progress',
+      exitCode: 1618
+    });
+  });
+
   test.each([
     ['unsigned', JSON.stringify({ Status: 'NotSigned', Subject: null })],
     [
@@ -179,10 +220,17 @@ describe('SYSTEM.INSTALL_VC_RUNTIME / RELAUNCH_APP', () => {
     fakePowerShell();
     await install({ ...RENDERER_PAYLOAD, path: 'C:\\evil\\payload.exe' });
 
-    // Verified, then run: the same file, which is the bundled one.
+    // Verified, then run: the same file, a copy of the bundled one in a fresh
+    // temp directory that is gone once the install returns.
     const [sigCall, runCall] = mockAsyncSpawn.mock.calls;
-    expect(sigCall[2].env.SS_AUTHENTICODE_TARGET).toBe(exePath);
-    expect(runCall[2].env.SS_VC_REDIST_INSTALLER).toBe(exePath);
+    const staged = sigCall[2].env.SS_AUTHENTICODE_TARGET;
+    expect(runCall[2].env.SS_VC_REDIST_INSTALLER).toBe(staged);
+    expect(staged).not.toBe(exePath);
+    expect(path.basename(staged)).toBe(path.basename(exePath));
+    expect(path.resolve(path.dirname(path.dirname(staged)))).toBe(path.resolve(os.tmpdir()));
+    expect(path.basename(path.dirname(staged)).startsWith('stratosort-vcredist-')).toBe(true);
+    expect(fs.existsSync(path.dirname(staged))).toBe(false);
+    expect(fs.existsSync(exePath)).toBe(true);
     for (const [command, args, options] of mockAsyncSpawn.mock.calls) {
       expect(command).toMatch(/System32[\\/]WindowsPowerShell[\\/]v1\.0[\\/]powershell\.exe$/);
       const decoded = Buffer.from(args[args.length - 1], 'base64').toString('utf16le');
