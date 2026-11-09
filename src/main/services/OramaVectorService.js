@@ -505,6 +505,15 @@ function buildSchemas(dimension) {
 }
 
 /**
+ * What one save round did. `success` says the round itself did not fail;
+ * collections listed in `tooLargeToSave` (past the size one file can hold)
+ * or `saveBlocked` (their file on disk was not read this session) were
+ * skipped and are NOT on disk, so a caller that cares about one of them
+ * checks these lists too (see _reportSave).
+ * @typedef {{success: boolean, error?: any, tooLargeToSave?: string[], saveBlocked?: string[]}} SaveResult
+ */
+
+/**
  * OramaVectorService - In-process vector database
  *
  * Features:
@@ -544,14 +553,19 @@ class OramaVectorService extends EventEmitter {
      */
     this._tooLargeToSave = new Map();
     /**
-     * Collections whose file was too large to read at startup, with the
-     * empty collection that stood in for them. While that stand-in is still
-     * the live collection, neither its blob nor its sidecar is saved: either
-     * would overwrite the unread data on disk. A reset or rebuild replaces
-     * it, and saving resumes.
-     * @type {Map<string, object>}
+     * Collections whose saved file could not be read this session, and why:
+     * 'too-large-to-read' (it decompresses past the longest string V8 can
+     * build) or 'lz4-unavailable' (the LZ4 binding did not load, so its
+     * .json.lz4 could not be decoded). Neither their blob nor their sidecar
+     * is saved, and no .bak is rotated over them, while they are listed:
+     * whatever this session holds for them would overwrite the unread data
+     * on disk. This is a flag, not the identity of the collection object, so
+     * an automatic repair that rebuilds the collection keeps it. Only a
+     * deliberate reset lifts 'too-large-to-read' (_liftSaveBlock);
+     * 'lz4-unavailable' lasts until a restart that loads the binding.
+     * @type {Map<string, 'too-large-to-read' | 'lz4-unavailable'>}
      */
-    this._tooLargeToRead = new Map();
+    this._saveBlocked = new Map();
     /** @type {Set<string>} collections already warned about nearing the limit */
     this._nearSizeLimitWarned = new Set();
     this._lastFullPersistAt = 0;
@@ -1110,7 +1124,9 @@ class OramaVectorService extends EventEmitter {
     this._embeddingStore.files = rebuiltEmbeddings;
     this._collectionDimensions.files = this._dimension;
     this._clearQueryCache();
-    const saved = this._reportSave('Files vector index rebuilt', await this.persistAll());
+    const saved = this._reportSave('Files vector index rebuilt', await this.persistAll(), [
+      'files'
+    ]);
     this._emitSearchDataMutated('files', 'repair', {
       repairedDocs,
       placeholders,
@@ -1180,7 +1196,9 @@ class OramaVectorService extends EventEmitter {
     this._collectionDimensions.folders = this._dimension;
     this._invalidateCacheForFolder();
     this._clearQueryCache();
-    const saved = this._reportSave('Folders vector index rebuilt', await this.persistAll());
+    const saved = this._reportSave('Folders vector index rebuilt', await this.persistAll(), [
+      'folders'
+    ]);
 
     return {
       repaired: true,
@@ -1225,14 +1243,25 @@ class OramaVectorService extends EventEmitter {
         return this._getVectorHealthSnapshot();
       }
 
-      const probeEntry = Array.from(embStore.entries()).find(([_, vector]) => {
+      // The probe query below only matches live rows with a vector
+      // (isOrphaned false, hasVector true). Probing with an orphaned row's
+      // vector could never find it, so the check failed and rebuilt (and
+      // fully saved) the index after every batch upsert.
+      const filesDb = this._databases.files;
+      /** @type {[string, number[]] | null} */
+      let probeEntry = null;
+      for (const [id, vector] of embStore) {
         const normalized = this._normalizeEmbeddingVector(vector, this._dimension);
-        return (
+        const usable =
           Array.isArray(normalized) &&
           normalized.length === this._dimension &&
-          !(normalized[0] === 0 && normalized.every((v) => v === 0))
-        );
-      });
+          !(normalized[0] === 0 && normalized.every((/** @type {number} */ v) => v === 0));
+        if (!usable) continue;
+        const doc = /** @type {any} */ (await getByID(filesDb, id));
+        if (!doc || doc.isOrphaned === true || doc.hasVector === false) continue;
+        probeEntry = [id, vector];
+        break;
+      }
 
       if (!probeEntry) {
         this._setVectorHealth({
@@ -1258,9 +1287,13 @@ class OramaVectorService extends EventEmitter {
       try {
         let healthy = await runProbe();
         const healthyWithoutRepair = healthy;
+        // A collection whose file on disk was not read is never rebuilt
+        // automatically: the rebuild is pointless work on a partial index,
+        // and the save that follows it must not run for that collection.
         if (
           !healthy &&
           autoRepair &&
+          !this._isSaveBlocked('files') &&
           this._vectorHealth.repairAttempts < VECTOR_PRIMARY_MAX_REPAIR_ATTEMPTS
         ) {
           this._setVectorHealth({
@@ -1411,6 +1444,7 @@ class OramaVectorService extends EventEmitter {
         if (
           !healthy &&
           autoRepair &&
+          !this._isSaveBlocked('folders') &&
           this._folderVectorHealth.repairAttempts < VECTOR_PRIMARY_MAX_REPAIR_ATTEMPTS
         ) {
           this._setFolderVectorHealth({
@@ -1662,7 +1696,7 @@ class OramaVectorService extends EventEmitter {
           }
         );
         this._tooLargeToSave.clear();
-        this._tooLargeToRead.clear();
+        this._saveBlocked.clear();
 
         await this._refreshEmbeddingDimension({ reason: 'initialize' });
 
@@ -1926,9 +1960,12 @@ class OramaVectorService extends EventEmitter {
 
   /**
    * The LZ4 native binding did not load, so a collection's `.json.lz4` cannot
-   * be read this session. It is left untouched and the session runs on the
-   * plain `.json` path; the flag tells the user why the index looks empty
-   * instead of telling them it is corrupt.
+   * be read this session. It is left untouched, and so is its sidecar: the
+   * collection is save-blocked (see _saveBlocked) for the session, so a
+   * plain `.json` that restore would ignore next to the `.lz4` is never
+   * written. Collections without a `.json.lz4` still save as plain `.json`.
+   * The flag tells the user why the index looks empty instead of telling
+   * them it is corrupt.
    * @private
    * @param {string} name
    * @param {string} compressedPath
@@ -1946,7 +1983,7 @@ class OramaVectorService extends EventEmitter {
       severity: 'error',
       source: name,
       message:
-        'The compression library failed to load, so the saved search index could not be opened. It was left untouched; search results will be incomplete until StratoSort is restarted or reinstalled.',
+        'The compression library failed to load, so the saved search index could not be opened. It was left untouched, and changes to it are not saved this session; search results will be incomplete until StratoSort is restarted or reinstalled.',
       detail: { error: /** @type {any} */ (lz4BindingError)?.message || null }
     });
   }
@@ -2109,6 +2146,11 @@ class OramaVectorService extends EventEmitter {
           // Undecodable here, not corrupt: decoding would hand the raw LZ4
           // bytes to the parser and quarantine a healthy file. Leave it.
           await fs.access(compressedPath);
+          // Whatever this session loads instead (nothing, or an older legacy
+          // .json) must not be saved: the plain .json it would write is
+          // ignored once the binding loads again (restore reads the .lz4
+          // first), and its sidecar would replace the one the .lz4 needs.
+          this._saveBlocked.set(name, 'lz4-unavailable');
           this._raiseCompressionUnavailable(name, compressedPath);
           throw Object.assign(new Error('LZ4 library unavailable'), {
             code: 'LZ4_BINDING_UNAVAILABLE'
@@ -2189,13 +2231,9 @@ class OramaVectorService extends EventEmitter {
         if (tooLargeToRead) {
           // Start empty for this session, but never save it: an empty
           // collection written over the unread file would lose it for good.
-          const standIn = await create({
-            schema,
-            components: { tokenizer: ORAMA_TOKENIZER_CONFIG }
-          });
-          this._tooLargeToRead.set(name, standIn);
+          this._saveBlocked.set(name, 'too-large-to-read');
           this._raiseCollectionTooLarge(name, 'read');
-          return standIn;
+          return await create({ schema, components: { tokenizer: ORAMA_TOKENIZER_CONFIG } });
         }
         return await create({ schema, components: { tokenizer: ORAMA_TOKENIZER_CONFIG } });
       }
@@ -2803,19 +2841,30 @@ class OramaVectorService extends EventEmitter {
   }
 
   /**
-   * Whether a collection is still the empty stand-in for a file too large to
-   * read. Once a reset or rebuild replaces it, the block lifts.
+   * Whether a collection's file on disk was not read this session, so
+   * nothing may be saved over it (see _saveBlocked).
    * @private
    * @param {string} name
    * @returns {boolean}
    */
-  _isUnreadStandIn(name) {
-    const standIn = this._tooLargeToRead.get(name);
-    if (!standIn) return false;
-    if (standIn === this._databases[name]) return true;
-    this._tooLargeToRead.delete(name);
+  _isSaveBlocked(name) {
+    return this._saveBlocked.has(name);
+  }
+
+  /**
+   * A deliberate reset of a collection whose file was too large to read: the
+   * user chose to replace it, so saving resumes. Only the reset* methods
+   * call this, never a repair. A collection blocked because the LZ4 binding
+   * did not load stays blocked: a plain .json written now would be ignored
+   * next to the .lz4 once the binding loads, so the reset could not reach
+   * disk anyway.
+   * @private
+   * @param {string} name
+   */
+  _liftSaveBlock(name) {
+    if (this._saveBlocked.get(name) !== 'too-large-to-read') return;
+    this._saveBlocked.delete(name);
     this._clearCollectionTooLarge(name);
-    return false;
   }
 
   /**
@@ -2911,7 +2960,7 @@ class OramaVectorService extends EventEmitter {
    * Persist all databases to disk. Failures are logged and retried here, not
    * thrown; the result tells an awaiting caller whether this round landed.
    * @private
-   * @returns {Promise<{success: boolean, error?: any, tooLargeToSave?: string[]}>}
+   * @returns {Promise<SaveResult>}
    */
   async _doPersist() {
     if (this._isShuttingDown) {
@@ -2937,8 +2986,9 @@ class OramaVectorService extends EventEmitter {
       this._forceFullPersist ||
       !this._lastFullPersistAt ||
       saveStartedAt - this._lastFullPersistAt >= FULL_PERSIST_INTERVAL_MS;
+    const blocked = Object.keys(this._databases).filter((name) => this._isSaveBlocked(name));
     const toSave = Object.keys(this._databases).filter(
-      (name) => !this._isUnreadStandIn(name) && (fullSave || this._collectionNeedsSave(name))
+      (name) => !this._isSaveBlocked(name) && (fullSave || this._collectionNeedsSave(name))
     );
     // Unmark before serializing: a write that lands while this save runs marks
     // its collection again, so the next save picks it up.
@@ -3088,12 +3138,36 @@ class OramaVectorService extends EventEmitter {
           }
         }
         if (PERSIST_COMPRESSION_ENABLED) {
+          // A plain .json newer than the .lz4 being replaced was not what
+          // restore read (it reads the .lz4 first): it was written by a
+          // session that could not use LZ4 (before such sessions stopped
+          // saving collections whose .lz4 they could not read) or that ran
+          // with compression off. Keep it aside instead of deleting it.
+          const [jsonStat, lz4Stat] = await Promise.all([
+            fs.stat(persistPath).catch(() => /** @type {null} */ (null)),
+            fs.stat(compressedPath).catch(() => /** @type {null} */ (null))
+          ]);
           const compressed = /** @type {any} */ (await compress(/** @type {any} */ (data.buffer)));
           await writeFileAtomic(compressedPath, compressed);
-          try {
-            await fs.unlink(persistPath);
-          } catch {
-            // Ignore if legacy JSON doesn't exist
+          if (jsonStat && lz4Stat && jsonStat.mtimeMs > lz4Stat.mtimeMs) {
+            const keptPath = `${persistPath}.newer-than-lz4.${Date.now()}.bak`;
+            try {
+              await fs.rename(persistPath, keptPath);
+              logger.warn(
+                `[OramaVectorService] ${name}.json was newer than ${name}.json.lz4 and was not loaded; kept aside`,
+                { path: keptPath }
+              );
+            } catch (keepError) {
+              logger.warn(`[OramaVectorService] Could not keep the newer ${name}.json aside`, {
+                error: /** @type {any} */ (keepError)?.message
+              });
+            }
+          } else {
+            try {
+              await fs.unlink(persistPath);
+            } catch {
+              // Ignore if legacy JSON doesn't exist
+            }
           }
         } else {
           await writeFileAtomic(persistPath, data.buffer);
@@ -3134,13 +3208,16 @@ class OramaVectorService extends EventEmitter {
           collections: written,
           full: fullSave,
           durationMs: this._lastPersistDurationMs,
-          ...(oversized.size > 0 ? { tooLargeToSave: [...oversized] } : {})
+          ...(oversized.size > 0 ? { tooLargeToSave: [...oversized] } : {}),
+          ...(blocked.length > 0 ? { saveBlocked: blocked } : {})
         }
       );
       this._clearStorageFull();
-      return oversized.size > 0
-        ? { success: true, tooLargeToSave: [...oversized] }
-        : { success: true };
+      return {
+        success: true,
+        ...(oversized.size > 0 ? { tooLargeToSave: [...oversized] } : {}),
+        ...(blocked.length > 0 ? { saveBlocked: blocked } : {})
+      };
     } catch (error) {
       // Nothing from this round reached disk for certain: mark it all again.
       // (When only sidecars failed, the blobs did land; those collections
@@ -3209,26 +3286,11 @@ class OramaVectorService extends EventEmitter {
    * resets/rebuilds must not abort half way); the result says whether this
    * save reached disk.
    *
-   * @returns {Promise<{success: boolean, error?: any, tooLargeToSave?: string[]}>}
+   * @returns {Promise<SaveResult>}
    */
   async persistAll() {
-    const maxWaitMs = 30_000;
-    const pollMs = 50;
-    const deadline = Date.now() + maxWaitMs;
-    while (this._currentPersistPromise || this._isPersisting) {
-      if (Date.now() > deadline) {
-        throw new Error('persistAll: timed out waiting for in-flight persist to complete');
-      }
-      if (this._currentPersistPromise) {
-        const inflight = this._currentPersistPromise;
-        await inflight;
-        if (this._currentPersistPromise === inflight) {
-          this._currentPersistPromise = null;
-        }
-      }
-      if (this._isPersisting) {
-        await new Promise((r) => setTimeout(r, pollMs));
-      }
+    if (!(await this._waitForSaveIdle(30_000))) {
+      throw new Error('persistAll: timed out waiting for in-flight persist to complete');
     }
     this._persistPending = true;
     // "All" means every collection, not only the ones marked changed.
@@ -3244,16 +3306,70 @@ class OramaVectorService extends EventEmitter {
   }
 
   /**
+   * Wait until no save is running: the tracked promise has settled and
+   * _doPersist is not mid-run. Returning true means the caller's next
+   * synchronous _doPersist() call starts a save rather than hitting
+   * "A save is already running".
+   * @private
+   * @param {number} maxWaitMs
+   * @returns {Promise<boolean>} false: a save was still running at the deadline
+   */
+  async _waitForSaveIdle(maxWaitMs) {
+    const pollMs = 50;
+    const deadline = Date.now() + maxWaitMs;
+    while (this._currentPersistPromise || this._isPersisting) {
+      if (Date.now() > deadline) return false;
+      if (this._currentPersistPromise) {
+        const inflight = this._currentPersistPromise;
+        // A save that rejected is its own caller's to report; here it only
+        // has to be over.
+        await Promise.resolve(inflight).catch(() => {});
+        if (this._currentPersistPromise === inflight) {
+          this._currentPersistPromise = null;
+        }
+      }
+      if (this._isPersisting) {
+        await new Promise((r) => setTimeout(r, pollMs));
+      }
+    }
+    return true;
+  }
+
+  /**
    * Log how a reset or repair's save went and turn it into the
    * `{persisted, error?}` shape those methods return, so a caller can tell a
    * change that lives only in memory (a retry may still land it) from one on
    * disk.
    * @private
+   * A round that succeeded but skipped one of `collections` (too large to
+   * save, or its unread file blocks saving) did not put that change on disk
+   * either, so it is reported not persisted.
    * @param {string} what - e.g. 'Files collection reset'
-   * @param {{success: boolean, error?: any}} saved - persistAll()'s result
+   * @param {SaveResult} saved - persistAll()'s result
+   * @param {string[]} [collections] - the collections this change touched
    * @returns {{persisted: boolean, error?: any}}
    */
-  _reportSave(what, saved) {
+  _reportSave(what, saved, collections = []) {
+    const skipped = collections.filter(
+      (name) => saved?.tooLargeToSave?.includes(name) || saved?.saveBlocked?.includes(name)
+    );
+    if (saved?.success && skipped.length > 0) {
+      const error = new Error(
+        `${skipped.join(', ')} could not be saved: ` +
+          skipped
+            .map((name) =>
+              saved?.tooLargeToSave?.includes(name)
+                ? `${name} is too large to save`
+                : `${name} on disk was not read this session and is not saved over`
+            )
+            .join('; ')
+      );
+      logger.warn(`[OramaVectorService] ${what} in memory only; it was not saved to disk`, {
+        collections: skipped,
+        error: error.message
+      });
+      return { persisted: false, error };
+    }
     if (saved?.success) {
       logger.info(`[OramaVectorService] ${what}`);
       return { persisted: true };
@@ -3528,7 +3644,7 @@ class OramaVectorService extends EventEmitter {
     /** @type {any} */ topK,
     /** @type {any} */ reason
   ) {
-    if (!this._hasRepairableFolderEmbeddings()) {
+    if (!this._hasRepairableFolderEmbeddings() || this._isSaveBlocked('folders')) {
       return null;
     }
 
@@ -4365,6 +4481,7 @@ class OramaVectorService extends EventEmitter {
    */
   async resetFiles() {
     await this.initialize();
+    this._liftSaveBlock('files');
     this._databases.files = await create({
       schema: this._schemas.files,
       components: { tokenizer: ORAMA_TOKENIZER_CONFIG }
@@ -4374,7 +4491,7 @@ class OramaVectorService extends EventEmitter {
     this._clearQueryCache();
     const saved = await this.persistAll();
     this._emitSearchDataMutated('files', 'reset');
-    return this._reportSave('Files collection reset', saved);
+    return this._reportSave('Files collection reset', saved, ['files']);
   }
 
   /**
@@ -5182,6 +5299,7 @@ class OramaVectorService extends EventEmitter {
    */
   async resetFolders() {
     await this.initialize();
+    this._liftSaveBlock('folders');
     this._databases.folders = await create({
       schema: this._schemas.folders,
       components: { tokenizer: ORAMA_TOKENIZER_CONFIG }
@@ -5189,7 +5307,7 @@ class OramaVectorService extends EventEmitter {
     this._collectionDimensions.folders = null;
     this._embeddingStore.folders = new Map();
     this._invalidateCacheForFolder();
-    return this._reportSave('Folders collection reset', await this.persistAll());
+    return this._reportSave('Folders collection reset', await this.persistAll(), ['folders']);
   }
 
   // ==================== CHUNK OPERATIONS ====================
@@ -5598,6 +5716,7 @@ class OramaVectorService extends EventEmitter {
    */
   async resetFileChunks() {
     await this.initialize();
+    this._liftSaveBlock('fileChunks');
     this._databases.fileChunks = await create({
       schema: this._schemas.fileChunks,
       components: { tokenizer: ORAMA_TOKENIZER_CONFIG }
@@ -5606,7 +5725,7 @@ class OramaVectorService extends EventEmitter {
     this._collectionDimensions.fileChunks = null;
     const saved = await this.persistAll();
     this._emitSearchDataMutated('fileChunks', 'reset');
-    return this._reportSave('File chunks collection reset', saved);
+    return this._reportSave('File chunks collection reset', saved, ['fileChunks']);
   }
 
   // ==================== FEEDBACK MEMORY OPERATIONS ====================
@@ -5735,12 +5854,13 @@ class OramaVectorService extends EventEmitter {
    */
   async resetFeedbackMemory() {
     await this.initialize();
+    this._liftSaveBlock('feedback');
     this._databases.feedback = await create({
       schema: this._schemas.feedback,
       components: { tokenizer: ORAMA_TOKENIZER_CONFIG }
     });
     this._collectionDimensions.feedback = null;
-    return this._reportSave('Feedback memory reset', await this.persistAll());
+    return this._reportSave('Feedback memory reset', await this.persistAll(), ['feedback']);
   }
 
   // ==================== LEARNING PATTERNS OPERATIONS ====================
@@ -5838,12 +5958,15 @@ class OramaVectorService extends EventEmitter {
    */
   async resetLearningPatterns() {
     await this.initialize();
+    this._liftSaveBlock('learningPatterns');
     this._databases.learningPatterns = await create({
       schema: this._schemas.learningPatterns,
       components: { tokenizer: ORAMA_TOKENIZER_CONFIG }
     });
     this._collectionDimensions.learningPatterns = null;
-    return this._reportSave('Learning patterns reset', await this.persistAll());
+    return this._reportSave('Learning patterns reset', await this.persistAll(), [
+      'learningPatterns'
+    ]);
   }
 
   /**
@@ -5934,12 +6057,27 @@ class OramaVectorService extends EventEmitter {
         lastValidationReason: 'reset-all',
         lastValidationError: null
       });
-      if (lastSave.persisted) {
+      // The resets lifted every block a reset may lift; one still in place
+      // (the LZ4 binding did not load) means that collection's old file is
+      // still what restore reads, so the reset did not reach disk.
+      const stillBlocked = [...this._saveBlocked.keys()];
+      const result =
+        lastSave.persisted && stillBlocked.length > 0
+          ? {
+              persisted: false,
+              error: new Error(
+                `${stillBlocked.join(', ')} could not be saved: the file on disk was not read this session`
+              )
+            }
+          : lastSave;
+      if (result.persisted) {
         logger.info('[OramaVectorService] All collections reset');
       } else {
-        logger.warn('[OramaVectorService] All collections reset in memory only; the save failed');
+        logger.warn('[OramaVectorService] All collections reset in memory only; the save failed', {
+          error: result.error?.message
+        });
       }
-      return lastSave;
+      return result;
     } finally {
       this._isResetting = false;
     }
@@ -6462,14 +6600,12 @@ class OramaVectorService extends EventEmitter {
       this._storageFullRetryTimer = null;
     }
 
+    // A save still running at quit (a slow disk) is waited for this long
+    // before each final round and before the in-memory state is cleared.
+    const FINAL_SAVE_WAIT_MS = 120_000;
     // Final persistence BEFORE setting _isShuttingDown (the guard in _doPersist blocks writes when shutting down)
     if (this._initialized) {
       try {
-        // Wait for any in-flight background persist before starting final persist
-        if (this._currentPersistPromise) {
-          await this._currentPersistPromise;
-        }
-
         // Race guard: writes arriving DURING the await inside _doPersist()
         // call _schedulePersist(), which sets _persistPending=true and
         // schedules a debounced timer. Without a loop here, those late
@@ -6487,8 +6623,21 @@ class OramaVectorService extends EventEmitter {
         // rounds skip it.
         for (const failed of this._tooLargeToSave.values()) failed.failedAt = 0;
         for (let round = 0; round < MAX_FINAL_PERSIST_ROUNDS; round += 1) {
+          // Wait for any save already running (a background one, or one a
+          // persistAll() waiting alongside this cleanup started first).
+          // Without this each round hit "A save is already running" at once
+          // and the state below was cleared while that save still wrote it.
+          if (!(await this._waitForSaveIdle(FINAL_SAVE_WAIT_MS))) {
+            logger.error(
+              '[OramaVectorService] A save is still running at quit; not starting another'
+            );
+            break;
+          }
           this._persistPending = true; // Ensure _doPersist doesn't short-circuit
-          await this._doPersist();
+          const roundSave = this._doPersist();
+          this._currentPersistPromise = roundSave;
+          await roundSave;
+          if (this._currentPersistPromise === roundSave) this._currentPersistPromise = null;
           if (!this._persistPending) break;
           logger.warn(
             '[OramaVectorService] Late write detected during final persist; running another round',
@@ -6516,10 +6665,22 @@ class OramaVectorService extends EventEmitter {
     this.isOnline = false;
     this._broadcastStatus('offline');
 
+    // A save started before _isShuttingDown (by a persistAll() racing this
+    // cleanup) still reads this._databases: never clear it under that save.
+    // If it outlasts the wait, the collections are left in memory instead.
+    const saveIdle = await this._waitForSaveIdle(FINAL_SAVE_WAIT_MS);
+    if (!saveIdle) {
+      logger.error(
+        '[OramaVectorService] A save is still running after cleanup; leaving its collections in memory'
+      );
+    }
+
     // Clear state
     this._queryCache.clear();
-    /** @type {Record<string, any>} */
-    this._databases = {};
+    if (saveIdle) {
+      /** @type {Record<string, any>} */
+      this._databases = {};
+    }
     this._initialized = false;
     this._initPromise = null;
     this._vectorHealth = {

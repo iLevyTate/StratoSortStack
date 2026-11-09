@@ -154,4 +154,89 @@ describe('OramaVectorService without a loadable LZ4 binding', () => {
     await service.initialize();
     expect(await service.getFile('file:a')).toEqual(expect.objectContaining({ id: 'file:a' }));
   });
+  test('a session without the binding never saves a collection whose .json.lz4 it could not read', async () => {
+    // Session 1: binding available; files.json.lz4 + its sidecar hold file:a.
+    stubBakFsync();
+    ({ service } = loadService());
+    await service.initialize();
+    await service.upsertFile({ id: 'file:a', vector: vector(), meta: { path: '/nowhere/a.txt' } });
+    await service.persistAll();
+    const dataPath = service._dataPath;
+    const lz4Path = path.join(dataPath, 'files.json.lz4');
+    const jsonPath = path.join(dataPath, 'files.json');
+    const sidecarPath = path.join(dataPath, 'files.sidecar.json');
+    const lz4Before = await fsp.readFile(lz4Path);
+    const sidecarBefore = await fsp.readFile(sidecarPath);
+    await service.shutdown();
+    jest.restoreAllMocks();
+
+    // Session 2: the binding fails to load. It starts without file:a and must
+    // not write its own, smaller files collection anywhere restore would read.
+    jest.resetModules();
+    jest.doMock('lz4-napi', () => {
+      throw new Error('Cannot find native binding');
+    });
+    stubBakFsync();
+    ({ service } = loadService());
+    await service.initialize();
+    await service.batchUpsertFiles([
+      { id: 'file:b', vector: vector(0.4), meta: { path: '/nowhere/b.txt' } }
+    ]);
+    await service.persistAll();
+    await service.shutdown();
+    jest.restoreAllMocks();
+
+    expect((await fsp.readFile(lz4Path)).equals(lz4Before)).toBe(true);
+    expect((await fsp.readFile(sidecarPath)).equals(sidecarBefore)).toBe(true);
+    await expect(fsp.access(jsonPath)).rejects.toMatchObject({ code: 'ENOENT' });
+
+    // Session 3: binding back; file:a comes back with its saved vector.
+    jest.dontMock('lz4-napi');
+    jest.resetModules();
+    stubBakFsync();
+    ({ service } = loadService());
+    await service.initialize();
+    expect(await service.getFile('file:a')).toEqual(expect.objectContaining({ id: 'file:a' }));
+    expect(service._embeddingStore.files.has('file:a')).toBe(true);
+  });
+  test('a plain .json newer than the .json.lz4 is kept aside, not deleted, by the next save', async () => {
+    stubBakFsync();
+    ({ service } = loadService());
+    await service.initialize();
+    await service.upsertFile({ id: 'file:a', vector: vector(), meta: { path: '/nowhere/a.txt' } });
+    await service.persistAll();
+    const dataPath = service._dataPath;
+    const jsonPath = path.join(dataPath, 'files.json');
+    // Written by an older binding-less session, after the .lz4.
+    await fsp.writeFile(jsonPath, '{"newer":true}');
+    const later = new Date(Date.now() + 60_000);
+    await fsp.utimes(jsonPath, later, later);
+
+    await service.persistAll();
+
+    const names = await fsp.readdir(dataPath);
+    const kept = names.filter((n) => /^files\.json\.newer-than-lz4\.\d+\.bak$/.test(n));
+    expect(names).not.toContain('files.json');
+    expect(kept).toHaveLength(1);
+    expect(await fsp.readFile(path.join(dataPath, kept[0]), 'utf8')).toBe('{"newer":true}');
+  });
+
+  test('an older plain .json beside the .json.lz4 is still removed by a save', async () => {
+    stubBakFsync();
+    ({ service } = loadService());
+    await service.initialize();
+    await service.upsertFile({ id: 'file:a', vector: vector(), meta: { path: '/nowhere/a.txt' } });
+    await service.persistAll();
+    const dataPath = service._dataPath;
+    const jsonPath = path.join(dataPath, 'files.json');
+    await fsp.writeFile(jsonPath, '{"older":true}');
+    const earlier = new Date(Date.now() - 60 * 60_000);
+    await fsp.utimes(jsonPath, earlier, earlier);
+
+    await service.persistAll();
+
+    const names = await fsp.readdir(dataPath);
+    expect(names).not.toContain('files.json');
+    expect(names.some((n) => n.includes('newer-than-lz4'))).toBe(false);
+  });
 });

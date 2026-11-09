@@ -120,11 +120,12 @@ const ALLOWED_BARE_RENAMES = {
     reason: 'temp->final atomic-write swap for the relationship index'
   },
   'src/main/services/OramaVectorService.js': {
-    count: 8,
+    count: 9,
     reason:
       'DB persistence internals: .bak rotation, quarantine/archive moves to unique or ' +
-      'intentionally-replaced backup names, and the rolling .bak set aside under a unique ' +
-      'stamp on a dimension change'
+      'intentionally-replaced backup names, the rolling .bak set aside under a unique ' +
+      'stamp on a dimension change, and a .json newer than its .json.lz4 kept under a ' +
+      'unique .newer-than-lz4.<ts>.bak name instead of being deleted'
   },
   'src/main/ipc/files/batchRollback.js': {
     count: 1,

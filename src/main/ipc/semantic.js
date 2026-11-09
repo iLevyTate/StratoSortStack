@@ -2981,11 +2981,21 @@ async function handleFullRebuild(
     if (!resetPersisted) {
       try {
         const finalSave = await getOramaService().persistAll();
-        persisted = finalSave?.success !== false;
+        // A save that succeeded but skipped a rebuilt collection (too large
+        // to save, or its unread file blocks saving) left that collection's
+        // old file on disk: the rebuild did not reach disk either.
+        const skipped = ['files', 'folders', 'fileChunks'].filter(
+          (name) =>
+            finalSave?.tooLargeToSave?.includes(name) || finalSave?.saveBlocked?.includes(name)
+        );
+        persisted = finalSave?.success !== false && skipped.length === 0;
         if (!persisted) {
           results.errors.push({
             type: 'persist',
-            error: finalSave?.error?.message || 'Saving the rebuilt index to disk failed'
+            error:
+              skipped.length > 0
+                ? `Not saved to disk: ${skipped.join(', ')}`
+                : finalSave?.error?.message || 'Saving the rebuilt index to disk failed'
           });
         }
       } catch (saveError) {
