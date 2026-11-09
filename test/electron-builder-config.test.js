@@ -292,3 +292,121 @@ describe('electron-builder.json node_modules exclusions', () => {
     ).toBe(true);
   });
 });
+
+// extraResources: the base config copies assets/runtime/** for every
+// platform, and win.extraResources adds the Microsoft Visual C++
+// Redistributable (staged by scripts/setup-vc-redist.js) for Windows only.
+// electron-builder concatenates the top-level and platform-specific lists
+// (getFileMatchers), so the base list must exclude runtime/vcredist itself.
+const { getFileMatchers } = require('app-builder-lib/out/fileMatcher');
+const nodePath = require('path');
+
+const PROJECT_DIR = nodePath.resolve('/project');
+const RESOURCES_DIR = nodePath.resolve('/out/resources');
+
+/** Where electron-builder would copy `relativePath` (posix, under resources/), or null. */
+function extraResourceDestination(configFile, platformKey, arch, relativePath) {
+  const config = loadNormalizedConfig(configFile);
+  const matchers =
+    getFileMatchers(config, 'extraResources', RESOURCES_DIR, {
+      macroExpander: macroExpanderFor(platformKey, arch),
+      customBuildOptions: config[platformKey] || {},
+      globalOutDir: nodePath.join(PROJECT_DIR, config.directories.output),
+      defaultSrc: PROJECT_DIR
+    }) || [];
+  const absolute = nodePath.join(PROJECT_DIR, ...relativePath.split('/'));
+  for (const matcher of matchers) {
+    if (matcher.from !== absolute && !absolute.startsWith(matcher.from + nodePath.sep)) continue;
+    const filter = matcher.createFilter();
+    const segments = nodePath.relative(matcher.from, absolute).split(nodePath.sep);
+    const accepted =
+      matcher.from === absolute ||
+      segments.every((_, index) =>
+        filter(nodePath.join(matcher.from, ...segments.slice(0, index + 1)), {
+          isDirectory: () => index < segments.length - 1
+        })
+      );
+    if (accepted) {
+      return nodePath
+        .relative(RESOURCES_DIR, nodePath.join(matcher.to, ...segments))
+        .split(nodePath.sep)
+        .join('/');
+    }
+  }
+  return null;
+}
+
+describe('electron-builder Visual C++ Redistributable bundling', () => {
+  const VC = 'assets/runtime/vcredist';
+
+  test.each([
+    ['electron-builder.json', 'x64'],
+    ['electron-builder.win-arm64.json', 'arm64']
+  ])('%s (win %s) ships its own vc_redist + manifest at resources/%s', (configFile, arch) => {
+    const other = arch === 'x64' ? 'arm64' : 'x64';
+    expect(extraResourceDestination(configFile, 'win', arch, `${VC}/vc_redist.${arch}.exe`)).toBe(
+      `${VC}/vc_redist.${arch}.exe`
+    );
+    expect(extraResourceDestination(configFile, 'win', arch, `${VC}/vc_redist.${arch}.json`)).toBe(
+      `${VC}/vc_redist.${arch}.json`
+    );
+    expect(extraResourceDestination(configFile, 'win', arch, `${VC}/NOTICE.md`)).toBe(
+      `${VC}/NOTICE.md`
+    );
+    // Never the other arch's installer.
+    expect(extraResourceDestination(configFile, 'win', arch, `${VC}/vc_redist.${other}.exe`)).toBe(
+      null
+    );
+  });
+
+  test.each([
+    ['mac', 'x64'],
+    ['mac', 'arm64'],
+    ['linux', 'x64'],
+    ['linux', 'arm64']
+  ])('%s %s ships no part of the redistributable', (platformKey, arch) => {
+    ['vc_redist.x64.exe', 'vc_redist.arm64.exe', 'vc_redist.x64.json', 'NOTICE.md'].forEach(
+      (name) =>
+        expect([
+          name,
+          extraResourceDestination('electron-builder.json', platformKey, arch, `${VC}/${name}`)
+        ]).toEqual([name, null])
+    );
+  });
+
+  test.each(RELEASE_LEGS)(
+    '%s (%s %s) still ships the other runtime assets',
+    (configFile, platformKey, arch) => {
+      [
+        'assets/runtime/llama-server.exe',
+        'assets/runtime/ffmpeg/NOTICE.md',
+        'assets/runtime/tessdata/eng.traineddata.gz'
+      ].forEach((relativePath) =>
+        expect(extraResourceDestination(configFile, platformKey, arch, relativePath)).toBe(
+          relativePath
+        )
+      );
+    }
+  );
+
+  // electron-builder signs every .exe it copies through extraResources
+  // (WinPackager.createTransformerForExtraFiles -> shouldSignFile) unless
+  // signExts excludes it. Re-signing would replace Microsoft's Authenticode
+  // signature, which the installer and the app both require.
+  test('signing skips the redistributables but still signs every other executable', () => {
+    // Through the package index: winPackager alone hits a circular import.
+    const { WinPackager } = require('app-builder-lib');
+    const config = loadNormalizedConfig('electron-builder.win-arm64.json');
+    const shouldSign = (file) =>
+      WinPackager.prototype.shouldSignFile.call({ platformSpecificBuildOptions: config.win }, file);
+    const resources = nodePath.join(RESOURCES_DIR, 'assets', 'runtime');
+    expect(shouldSign(nodePath.join(resources, 'vcredist', 'vc_redist.x64.exe'))).toBe(false);
+    expect(shouldSign(nodePath.join(resources, 'vcredist', 'vc_redist.arm64.exe'))).toBe(false);
+    expect(shouldSign(nodePath.join(resources, 'ffmpeg', 'ffmpeg.exe'))).toBe(true);
+    expect(shouldSign(nodePath.join(resources, 'llama-server.exe'))).toBe(true);
+    expect(shouldSign(nodePath.join('C:', 'release', 'win-unpacked', 'StratoSort Stack.exe'))).toBe(
+      true
+    );
+    expect(builderConfig.win.signExts).toEqual(['!vc_redist.x64.exe', '!vc_redist.arm64.exe']);
+  });
+});

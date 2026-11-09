@@ -17,6 +17,7 @@ const {
   listExternalPackages,
   readAsarHeader,
   verifyBetterSqlitePrebuilds,
+  verifyLinuxArtifacts,
   verifyMacArtifacts,
   verifyWindowsArtifacts
 } = require('../scripts/verify-packaged-artifacts');
@@ -121,6 +122,26 @@ function windowsUnpackedModules(buildRoot, arch = 'x64') {
   return path.join(buildRoot, appDir, 'resources', 'app.asar.unpacked', 'node_modules');
 }
 
+// The staged Microsoft redistributable + its manifest (scripts/setup-vc-redist.js).
+function seedVcRedist(resources, arch, manifestOverrides = {}) {
+  const dir = path.join(resources, 'assets', 'runtime', 'vcredist');
+  const bytes = Buffer.from(`MZ fake vc_redist.${arch}.exe`);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `vc_redist.${arch}.exe`), bytes);
+  fs.writeFileSync(
+    path.join(dir, `vc_redist.${arch}.json`),
+    JSON.stringify({
+      file: `vc_redist.${arch}.exe`,
+      arch,
+      productVersion: '14.51.36247.0',
+      sha256: require('crypto').createHash('sha256').update(bytes).digest('hex'),
+      verified: true,
+      ...manifestOverrides
+    })
+  );
+  return dir;
+}
+
 function createWindowsBuildRoot({ arch = 'x64', skipWhisperVariants = false } = {}) {
   const buildRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'stratosort-packaged-artifacts-'));
   const appRoot = path.join(buildRoot, arch === 'arm64' ? 'win-arm64-unpacked' : 'win-unpacked');
@@ -138,6 +159,7 @@ function createWindowsBuildRoot({ arch = 'x64', skipWhisperVariants = false } = 
     writeExecutable(path.join(resources, 'assets', 'runtime', 'ffmpeg', 'ffmpeg.exe'));
     writeFile(path.join(buildRoot, getWindowsZipArtifactName(VERSION)));
   }
+  seedVcRedist(resources, arch);
 
   seedNativeModules(unpackedModules);
   seedLz4Binding(unpackedModules, 'win32', arch);
@@ -931,4 +953,148 @@ describe('verify-packaged-artifacts worker externals resolve inside app.asar.unp
       'imagePreprocessWorker.js: sharp -> @img/sharp-win32-x64'
     );
   });
+});
+
+function createLinuxBuildRoot({ arch = 'x64' } = {}) {
+  const buildRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'stratosort-packaged-artifacts-'));
+  const appRoot = path.join(
+    buildRoot,
+    arch === 'arm64' ? 'linux-arm64-unpacked' : 'linux-unpacked'
+  );
+  const resources = path.join(appRoot, 'resources');
+  const unpackedModules = path.join(resources, 'app.asar.unpacked', 'node_modules');
+  REQUIRED_ELECTRON_RUNTIME_FILES.forEach((fileName) => writeFile(path.join(appRoot, fileName)));
+  writeAsar(path.join(resources, 'app.asar'));
+  seedUnpackedWorkers(resources);
+  writeFile(path.join(resources, 'assets', 'runtime', 'llama-server'));
+  writeExecutable(path.join(resources, 'assets', 'runtime', 'ffmpeg', 'ffmpeg'));
+  seedNativeModules(unpackedModules);
+  seedLz4Binding(unpackedModules, 'linux', arch);
+  seedSqlitePrebuilds(unpackedModules, 'linux', arch);
+  seedWhisperVariants(unpackedModules, 'linux', arch);
+  return buildRoot;
+}
+
+describe('verify-packaged-artifacts Visual C++ Redistributable', () => {
+  const tempDirs = [];
+  const track = (dir) => {
+    tempDirs.push(dir);
+    return dir;
+  };
+
+  afterEach(() => {
+    while (tempDirs.length > 0) {
+      fs.rmSync(tempDirs.pop(), { recursive: true, force: true });
+    }
+  });
+
+  const winVcDir = (buildRoot, arch = 'x64') =>
+    path.join(
+      buildRoot,
+      arch === 'arm64' ? 'win-arm64-unpacked' : 'win-unpacked',
+      'resources',
+      'assets',
+      'runtime',
+      'vcredist'
+    );
+
+  test.each(['x64', 'arm64'])('Windows %s: accepts its own redistributable + manifest', (arch) => {
+    const buildRoot = track(createWindowsBuildRoot({ arch }));
+    expect(() => verifyWindowsArtifacts(buildRoot, arch, VERSION)).not.toThrow();
+  });
+
+  test.each(['x64', 'arm64'])('Windows %s: rejects a package without it', (arch) => {
+    const buildRoot = track(createWindowsBuildRoot({ arch }));
+    fs.rmSync(path.join(winVcDir(buildRoot, arch), `vc_redist.${arch}.exe`));
+    expect(() => verifyWindowsArtifacts(buildRoot, arch, VERSION)).toThrow(
+      /Windows bundled Visual C\+\+ Redistributable missing: .*vc_redist\.(x64|arm64)\.exe/
+    );
+  });
+
+  test('Windows: rejects a missing manifest', () => {
+    const buildRoot = track(createWindowsBuildRoot());
+    fs.rmSync(path.join(winVcDir(buildRoot), 'vc_redist.x64.json'));
+    expect(() => verifyWindowsArtifacts(buildRoot, 'x64', VERSION)).toThrow(
+      /Redistributable manifest missing/
+    );
+  });
+
+  test('Windows: rejects a manifest without a version', () => {
+    const buildRoot = track(createWindowsBuildRoot());
+    seedVcRedist(path.join(buildRoot, 'win-unpacked', 'resources'), 'x64', {
+      productVersion: null
+    });
+    expect(() => verifyWindowsArtifacts(buildRoot, 'x64', VERSION)).toThrow(/no productVersion/);
+  });
+
+  test('Windows: rejects an installer whose bytes changed after staging (e.g. re-signed)', () => {
+    const buildRoot = track(createWindowsBuildRoot());
+    fs.appendFileSync(path.join(winVcDir(buildRoot), 'vc_redist.x64.exe'), 'signature');
+    expect(() => verifyWindowsArtifacts(buildRoot, 'x64', VERSION)).toThrow(
+      /no longer matches the sha256/
+    );
+  });
+
+  test('Windows x64: rejects shipping the arm64 installer too', () => {
+    const buildRoot = track(createWindowsBuildRoot());
+    seedVcRedist(path.join(buildRoot, 'win-unpacked', 'resources'), 'arm64');
+    expect(() => verifyWindowsArtifacts(buildRoot, 'x64', VERSION)).toThrow(
+      /also ships vc_redist\.arm64\.exe/
+    );
+  });
+
+  test('Windows: a passed signature check runs on the packaged file and must succeed', () => {
+    const buildRoot = track(createWindowsBuildRoot());
+    const exe = path.join(winVcDir(buildRoot), 'vc_redist.x64.exe');
+    const good = jest.fn(() => ({ ok: true, reason: 'valid' }));
+    expect(() =>
+      verifyWindowsArtifacts(buildRoot, 'x64', VERSION, { verifyVcRedistSignature: good })
+    ).not.toThrow();
+    expect(good).toHaveBeenCalledWith(exe);
+
+    const bad = jest.fn(() => ({
+      ok: false,
+      reason: 'not-microsoft',
+      info: { status: 'Valid' }
+    }));
+    expect(() =>
+      verifyWindowsArtifacts(buildRoot, 'x64', VERSION, { verifyVcRedistSignature: bad })
+    ).toThrow(/vc_redist\.x64\.exe is not Microsoft-signed \(not-microsoft/);
+  });
+
+  test.each(['x64', 'arm64'])(
+    'macOS %s: accepts a package without it, rejects one with it',
+    (arch) => {
+      const buildRoot = track(createMacBuildRoot({ arch }));
+      expect(() => verifyMacArtifacts(buildRoot, arch)).not.toThrow();
+      const resources = path.join(
+        buildRoot,
+        arch === 'arm64' ? 'mac-arm64' : 'mac',
+        'StratoSort Stack.app',
+        'Contents',
+        'Resources'
+      );
+      seedVcRedist(resources, 'x64');
+      expect(() => verifyMacArtifacts(buildRoot, arch)).toThrow(
+        /macOS package ships the Windows-only Visual C\+\+ Redistributable/
+      );
+    }
+  );
+
+  test.each(['x64', 'arm64'])(
+    'Linux %s: accepts a package without it, rejects one with it',
+    (arch) => {
+      const buildRoot = track(createLinuxBuildRoot({ arch }));
+      expect(() => verifyLinuxArtifacts(buildRoot, arch)).not.toThrow();
+      const resources = path.join(
+        buildRoot,
+        arch === 'arm64' ? 'linux-arm64-unpacked' : 'linux-unpacked',
+        'resources'
+      );
+      seedVcRedist(resources, arch === 'arm64' ? 'arm64' : 'x64');
+      expect(() => verifyLinuxArtifacts(buildRoot, arch)).toThrow(
+        /Linux package ships the Windows-only Visual C\+\+ Redistributable/
+      );
+    }
+  );
 });

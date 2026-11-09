@@ -15,14 +15,14 @@ grab its AI models on first launch, and you are ready to go.
 
 ## What You Need
 
-| Requirement    | Details                                                                                                                                                                             |
-| :------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Windows**    | Windows 10 (22H2) or 11, x64 or arm64, with the Microsoft Visual C++ Redistributable installed (see [below](#windows-local-ai-needs-the-microsoft-visual-c-redistributable))        |
-| **macOS**      | macOS 13 (Ventura) or later, Apple Silicon (arm64) or Intel (x64)                                                                                                                   |
-| **Linux**      | x64 or arm64; AppImage or .deb (when attached to a release)                                                                                                                         |
-| **RAM**        | 8 GB minimum; 16 GB and a GPU with 8 GB for the Better Quality profile                                                                                                              |
-| **Disk space** | About 671 MB to download for the v5.0.0 installer (the Windows zip is larger) and about 1.8 GB on disk for the app, plus about 7 to 10 GB for AI models (downloaded inside the app) |
-| **Internet**   | Needed once to download AI models; after that the app works offline (it still checks for app updates if online)                                                                     |
+| Requirement    | Details                                                                                                                                                                                             |
+| :------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Windows**    | Windows 10 (22H2) or 11, x64 or arm64. The installer adds the Microsoft Visual C++ Redistributable when it is missing (see [below](#windows-local-ai-needs-the-microsoft-visual-c-redistributable)) |
+| **macOS**      | macOS 13 (Ventura) or later, Apple Silicon (arm64) or Intel (x64)                                                                                                                                   |
+| **Linux**      | x64 or arm64; AppImage or .deb (when attached to a release)                                                                                                                                         |
+| **RAM**        | 8 GB minimum; 16 GB and a GPU with 8 GB for the Better Quality profile                                                                                                                              |
+| **Disk space** | About 671 MB to download for the v5.0.0 installer (the Windows zip is larger) and about 1.8 GB on disk for the app, plus about 7 to 10 GB for AI models (downloaded inside the app)                 |
+| **Internet**   | Needed once to download AI models; after that the app works offline (it still checks for app updates if online)                                                                                     |
 
 ---
 
@@ -96,10 +96,13 @@ optional and may not be attached to every release. The AppImage updates itself i
 3. The installer opens. Accept the license agreement, then click **Install**.
    - The app installs to your user profile (no admin required).
    - A **Start Menu** shortcut and a **Desktop** shortcut are created automatically.
-4. If the installer says local AI needs the **Microsoft Visual C++ Redistributable**, click **Yes**
-   to open Microsoft's download page in your browser, download and run the redistributable for your
-   PC (**x64** for most PCs, **ARM64** on Arm-based PCs), then come back to the installer. Most PCs
-   already have it; a freshly installed Windows does not.
+4. If your PC does not have the **Microsoft Visual C++ Redistributable** (a freshly installed
+   Windows does not; most PCs do), the installer installs Microsoft's copy that ships with
+   StratoSort. Windows asks **once** for administrator permission (a **User Account Control** prompt
+   for Microsoft's installer), because the runtime is installed for the whole PC; StratoSort itself
+   still installs only for you. Click **Yes**. If you click **No**, or the runtime cannot be
+   installed, the installer offers Microsoft's download page instead, and you can also install it
+   later from the app (see [below](#windows-local-ai-needs-the-microsoft-visual-c-redistributable)).
 5. When the installer finishes, leave **"Run StratoSort Stack"** checked and click **Finish**.
 6. The first launch after installing can take 1 to 2 minutes while Windows Security scans the new
    files; later launches are faster.
@@ -324,14 +327,23 @@ unsigned apps -- install on a personal device or contact your IT admin.
 If a red banner says _"Local AI needs the Microsoft Visual C++ Redistributable (x64), which isn't
 installed on this PC"_, analysis, search and chat cannot run until it is installed. StratoSort's AI
 engine uses Microsoft's C++ runtime DLLs (`msvcp140.dll`, `vcruntime140.dll`), which a fresh Windows
-install does not include and StratoSort does not bundle.
+install does not include. The Windows installer normally installs them from the copy of Microsoft's
+unmodified redistributable that ships with StratoSort; you see the banner if that install was
+declined or failed, or if you use the Windows zip, which has no installer.
 
-1. Click **Open download page** on the banner (or go to
-   [Microsoft's Visual C++ Redistributable downloads](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)).
-   The page opens in your browser only when you click; nothing downloads in the background.
-2. Download and run the latest supported **Visual C++ Redistributable** for your PC: **x64** for
-   most PCs, **ARM64** on Arm-based PCs. Installing it needs administrator rights.
-3. Quit and restart StratoSort. The banner goes away once the AI engine loads.
+1. Click **Install now** on the banner. Windows asks once for administrator permission (a User
+   Account Control prompt for Microsoft's installer); click **Yes** and let it finish. StratoSort
+   checks that the bundled installer is signed by Microsoft before it runs it, and nothing is
+   downloaded.
+2. Click **Restart StratoSort** when the banner offers it. The banner goes away once the AI engine
+   loads. If the banner says Windows needs a PC restart to finish, restart your PC.
+
+If you cannot give administrator permission, or **Install now** opens Microsoft's page instead (a
+build without the bundled installer), use **Open download page** (or go to
+[Microsoft's Visual C++ Redistributable downloads](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)),
+install the latest supported **Visual C++ Redistributable** for your PC (**x64** for most PCs,
+**ARM64** on Arm-based PCs), then restart StratoSort. The page opens in your browser only when you
+click.
 
 On a managed PC, ask your IT admin to deploy the Visual C++ 2015-2022 Redistributable.
 

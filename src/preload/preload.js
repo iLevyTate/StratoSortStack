@@ -195,6 +195,8 @@ const IPC_CHANNELS = {
     ABORT_INVOKE: 'system:abort-invoke',
     GET_LEGAL_NOTICES: 'system:get-legal-notices',
     OPEN_LEGAL_DOCUMENT: 'system:open-legal-document',
+    INSTALL_VC_RUNTIME: 'system:install-vc-runtime',
+    RELAUNCH_APP: 'system:relaunch-app',
     LIVE_LOG_SUBSCRIBE: 'system:live-log:subscribe',
     LIVE_LOG_UNSUBSCRIBE: 'system:live-log:unsubscribe',
     LIVE_LOG_BATCH: 'system:live-log:batch'
@@ -2240,6 +2242,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getLegalNotices: () => secureIPC.safeInvoke(IPC_CHANNELS.SYSTEM.GET_LEGAL_NOTICES),
     openLegalDocument: (/** @type {any} */ kind) =>
       secureIPC.safeInvoke(IPC_CHANNELS.SYSTEM.OPEN_LEGAL_DOCUMENT, { kind }),
+    // Windows: install the bundled Microsoft Visual C++ Redistributable. Takes
+    // no arguments: main locates and verifies the installer itself.
+    installVcRuntime: () => secureIPC.safeInvoke(IPC_CHANNELS.SYSTEM.INSTALL_VC_RUNTIME),
+    relaunchApp: () => secureIPC.safeInvoke(IPC_CHANNELS.SYSTEM.RELAUNCH_APP),
     onOpenSemanticSearch: (/** @type {any} */ callback) =>
       secureIPC.safeOn(IPC_EVENTS.OPEN_SEMANTIC_SEARCH, callback)
   },

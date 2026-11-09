@@ -115,6 +115,7 @@ scans) and are serialized via `CONCURRENCY_LIMITED_CHANNELS`, defined in
 | `llama:test-connection`          | Triggers cold model load if needed; coalesced in `LlamaService` |
 | `ai-provider:test-provider`      | Round-trips a real LLM call                                     |
 | `system:dismiss-degraded-flag`   | Mutates the shared `degradedState` map                          |
+| `system:install-vc-runtime`      | One elevated VC++ Redistributable install at a time             |
 
 Downloads-triage channels (`start`, `deep-scan`, `act`) share a single lock key
 (`DOWNLOADS_TRIAGE_MUTATION_LOCK_KEY`) so any one of the three in-flight blocks the others.

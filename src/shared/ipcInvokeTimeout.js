@@ -88,7 +88,9 @@ function getIpcInvokeTimeout(channel) {
     channel === IPC_CHANNELS.ANALYSIS_HISTORY.EXPORT_TRANSCRIPT ||
     channel === IPC_CHANNELS.SETTINGS.EXPORT ||
     channel === IPC_CHANNELS.SETTINGS.IMPORT ||
-    channel === IPC_CHANNELS.SYSTEM.EXPORT_LOGS
+    channel === IPC_CHANNELS.SYSTEM.EXPORT_LOGS ||
+    // UAC prompt + the Visual C++ Redistributable installer's own window.
+    channel === IPC_CHANNELS.SYSTEM.INSTALL_VC_RUNTIME
   ) {
     timeout = TIMEOUTS.USER_DIALOG || 600000;
   }

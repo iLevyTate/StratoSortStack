@@ -1188,9 +1188,10 @@ class LlamaService extends EventEmitter {
    *
    * On Windows the usual cause on a clean machine is a missing Microsoft
    * Visual C++ Redistributable (the prebuilt addon imports MSVCP140.dll and
-   * VCRUNTIME140.dll). Then a degraded-state flag with an "open download
-   * page" action is raised and the thrown error carries the user-facing
-   * message. Otherwise the original error is logged and rethrown as before.
+   * VCRUNTIME140.dll). Then a degraded-state flag is raised with an "Install
+   * now" action (the bundled Microsoft installer) and an "Open download page"
+   * fallback, and the thrown error carries the user-facing message. Otherwise
+   * the original error is logged and rethrown as before.
    *
    * @private
    * @param {Error} error
@@ -1233,7 +1234,14 @@ class LlamaService extends EventEmitter {
             arch: runtime.archLabel,
             registryInstalled: runtime.registryInstalled,
             engineError: error?.message,
+            // "Install now" runs the Microsoft-signed redistributable that
+            // Windows packages bundle (SYSTEM.INSTALL_VC_RUNTIME); the banner
+            // falls back to the download page when it is not bundled.
             action: {
+              code: 'ai.install-vc-runtime',
+              label: 'Install now'
+            },
+            secondaryAction: {
               code: 'ai.open-vc-redist-download',
               label: 'Open download page'
             }

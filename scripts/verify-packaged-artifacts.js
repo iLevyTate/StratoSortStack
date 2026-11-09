@@ -7,8 +7,12 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { builtinModules } = require('module');
 const { INTEGRITY_PROTECTED_PATHS } = require('./verify-electron-fuses-config');
+
+// resources/<segments>/vc_redist.<arch>.exe (electron-builder win.extraResources).
+const VC_REDIST_RESOURCE_SEGMENTS = ['assets', 'runtime', 'vcredist'];
 
 const REQUIRED_NATIVE_MODULE_PATHS = [
   ['sharp'],
@@ -803,7 +807,77 @@ function verifyWhisperVariantFolders(unpackedNodeModulesRoot, platform, arch) {
   });
 }
 
-function verifyWindowsArtifacts(buildRoot, arch, version = readPackageVersion()) {
+/**
+ * Microsoft Visual C++ Redistributable bundled into Windows packages
+ * (electron-builder win.extraResources; staged by scripts/setup-vc-redist.js).
+ * The NSIS installer and the in-app "Install now" action run it from
+ * resources/assets/runtime/vcredist/vc_redist.<arch>.exe, so it must be there,
+ * be the arch's own file, still match the sha256 its manifest recorded (a
+ * signing pass that re-signed it would change the bytes) and, when the caller
+ * passes a signature check (the CLI does on Windows hosts), still carry
+ * Microsoft's Authenticode signature.
+ *
+ * @param {string} resources
+ * @param {'x64' | 'arm64'} arch
+ * @param {{ verifySignature?: ((filePath: string) => { ok: boolean, reason?: string, info?: any }) | null }} [options]
+ */
+function verifyBundledVcRedist(resources, arch, { verifySignature = null } = {}) {
+  const dir = path.join(resources, ...VC_REDIST_RESOURCE_SEGMENTS);
+  const fileName = `vc_redist.${arch}.exe`;
+  const exePath = path.join(dir, fileName);
+  const manifestPath = path.join(dir, `vc_redist.${arch}.json`);
+  ensureExists(exePath, 'Windows bundled Visual C++ Redistributable');
+  ensureExists(manifestPath, 'Windows bundled Visual C++ Redistributable manifest');
+  let manifest;
+  try {
+    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  } catch (error) {
+    throw new Error(`Visual C++ Redistributable manifest is unreadable: ${manifestPath}`, {
+      cause: error
+    });
+  }
+  if (manifest?.file !== fileName || manifest?.arch !== arch) {
+    throw new Error(
+      `Visual C++ Redistributable manifest is for ${manifest?.file} (${manifest?.arch}), expected ${fileName}: ${manifestPath}`
+    );
+  }
+  if (typeof manifest.productVersion !== 'string' || !manifest.productVersion) {
+    throw new Error(`Visual C++ Redistributable manifest has no productVersion: ${manifestPath}`);
+  }
+  const sha256 = crypto.createHash('sha256').update(fs.readFileSync(exePath)).digest('hex');
+  if (manifest.sha256 !== sha256) {
+    throw new Error(
+      `Bundled ${fileName} no longer matches the sha256 recorded when it was staged (re-signed or replaced?): ${exePath}`
+    );
+  }
+  const otherArch = arch === 'arm64' ? 'x64' : 'arm64';
+  if (fs.existsSync(path.join(dir, `vc_redist.${otherArch}.exe`))) {
+    throw new Error(`Windows ${arch} package also ships vc_redist.${otherArch}.exe: ${dir}`);
+  }
+  if (verifySignature) {
+    const verdict = verifySignature(exePath);
+    if (!verdict?.ok) {
+      throw new Error(
+        `Bundled ${fileName} is not Microsoft-signed (${verdict?.reason || 'unknown'}; status ${verdict?.info?.status ?? 'unknown'}): ${exePath}`
+      );
+    }
+  }
+}
+
+/**
+ * macOS and Linux packages must not carry any part of the Windows-only
+ * redistributable (the shared assets/runtime/** extraResources excludes it).
+ * @param {string} resources
+ * @param {string} label
+ */
+function verifyNoVcRedist(resources, label) {
+  const dir = path.join(resources, ...VC_REDIST_RESOURCE_SEGMENTS);
+  if (containsAnyFile(dir)) {
+    throw new Error(`${label} package ships the Windows-only Visual C++ Redistributable: ${dir}`);
+  }
+}
+
+function verifyWindowsArtifacts(buildRoot, arch, version = readPackageVersion(), options = {}) {
   // electron-builder emits 'win-unpacked' for the default (x64) arch and
   // 'win-arm64-unpacked' for arm64.
   const isArm64 = arch === 'arm64';
@@ -833,6 +907,9 @@ function verifyWindowsArtifacts(buildRoot, arch, version = readPackageVersion())
       'Windows bundled FFmpeg binary'
     );
   }
+  verifyBundledVcRedist(resources, isArm64 ? 'arm64' : 'x64', {
+    verifySignature: options.verifyVcRedistSignature || null
+  });
   verifyNativeModuleFolders(unpackedModules);
   verifyLz4Binding(unpackedModules, 'win32', isArm64 ? 'arm64' : 'x64');
   verifyNodeLlamaCppPayload(unpackedModules);
@@ -870,6 +947,7 @@ function verifyMacArtifacts(buildRoot, arch) {
       path.join(resources, 'assets', 'runtime', 'ffmpeg', 'ffmpeg'),
       'macOS bundled FFmpeg binary'
     );
+    verifyNoVcRedist(resources, 'macOS');
     verifyNativeModuleFolders(unpackedModules);
     verifyLz4Binding(unpackedModules, 'darwin', arch);
     verifyNodeLlamaCppPayload(unpackedModules);
@@ -897,6 +975,7 @@ function verifyLinuxArtifacts(buildRoot, arch) {
     path.join(resources, 'assets', 'runtime', 'ffmpeg', 'ffmpeg'),
     'Linux bundled FFmpeg binary'
   );
+  verifyNoVcRedist(resources, 'Linux');
   verifyNativeModuleFolders(unpackedModules);
   verifyLz4Binding(unpackedModules, 'linux', isArm64 ? 'arm64' : 'x64');
   verifyNodeLlamaCppPayload(unpackedModules);
@@ -919,7 +998,13 @@ function run() {
   ensureExists(buildRoot, 'Build output root');
 
   if (platform === 'win') {
-    verifyWindowsArtifacts(buildRoot, arch);
+    // Authenticode can only be read on Windows; elsewhere the manifest sha256
+    // check still proves the bytes are the ones staged (and verified) earlier.
+    const verifyVcRedistSignature =
+      process.platform === 'win32'
+        ? require('../src/main/utils/authenticode').verifyMicrosoftSignatureSync
+        : null;
+    verifyWindowsArtifacts(buildRoot, arch, readPackageVersion(), { verifyVcRedistSignature });
   } else if (platform === 'mac') {
     verifyMacArtifacts(buildRoot, arch);
   } else {
@@ -969,6 +1054,8 @@ module.exports = {
   verifyNativeModuleFolders,
   readAsarHeader,
   verifyAsarContents,
+  verifyBundledVcRedist,
+  verifyNoVcRedist,
   verifyRequiredFiles,
   verifyUnpackedWorkerBundles,
   verifyWorkerExternalsResolve,

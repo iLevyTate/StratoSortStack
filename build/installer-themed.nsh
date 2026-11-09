@@ -45,44 +45,120 @@
 !define MUI_UNABORTWARNING_TEXT "Are you sure you want to cancel StratoSort Stack uninstallation?"
 
 ; ============================================================================
-; MICROSOFT VISUAL C++ REDISTRIBUTABLE HINT
+; MICROSOFT VISUAL C++ REDISTRIBUTABLE
 ; ============================================================================
 ; The local AI engine (node-llama-cpp's prebuilt llama-addon.node and its ggml/llama DLLs) imports
 ; MSVCP140.dll and VCRUNTIME140.dll. A fresh Windows install does not include the VC++ 2015-2022
-; runtime, and StratoSort does not redistribute it. When the DLLs are missing, an interactive
-; install offers to open Microsoft's download page in the browser (only on Yes; nothing downloads
-; here). Silent installs (auto-update, /S) are never interrupted. The app raises the same hint as
-; an in-app banner (ai.vc-runtime-missing) if the runtime is still missing at launch.
+; (v14) runtime. Windows packages bundle Microsoft's unmodified, Microsoft-signed
+; vc_redist.<arch>.exe at $INSTDIR\resources\assets\runtime\vcredist\ (electron-builder
+; win.extraResources; staged and Authenticode-verified by scripts/setup-vc-redist.js; excluded from
+; our own signing by win.signExts).
+;
+; When the DLLs are missing from the native System32 and this is not an auto-update (the isUpdated flag,
+; the --updated flag electron-updater passes), the bundled redistributable runs:
+;   interactive: /install /passive /norestart   (progress window only)
+;   silent (/S): /install /quiet /norestart
+; The runtime installs per-machine, so Windows shows a UAC prompt; this installer itself stays
+; per-user and never elevates. Exit codes: 0 and 1638 (same or newer already installed) succeed,
+; 3010 succeeds but needs a reboot, 1602 / 1223 mean the user cancelled, anything else failed.
+; On cancel or failure an interactive install offers Microsoft's download page (only on Yes); a
+; silent install just continues. Either way the app raises the ai.vc-runtime-missing banner at
+; launch, whose "Install now" runs the same bundled file.
 ; Include guards make these safe next to electron-builder's own includes of the same headers.
 !include "LogicLib.nsh"
 !include "x64.nsh"
 
 !define STRATOSORT_VC_REDIST_URL "https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist"
+!define STRATOSORT_VC_REDIST_DIR "$INSTDIR\resources\assets\runtime\vcredist"
 
-!macro StratoSortVcRuntimeHint
+; Interactive only: explain, then offer Microsoft's download page (Yes opens it; nothing downloads
+; here). REASON must not contain double quotes.
+!macro StratoSortVcRuntimeDownloadPrompt REASON
   ${IfNot} ${Silent}
-    Push $R9
-    StrCpy $R9 "present"
+    ${If} ${Cmd} `MessageBox MB_YESNO|MB_ICONINFORMATION "${REASON}$\r$\n$\r$\nOpen Microsoft's download page now? Choose the x64 version (ARM64 on Arm-based PCs), install it, then start StratoSort.$\r$\n$\r$\nYou can also install it later from StratoSort: it shows an Install now button while the runtime is missing." /SD IDNO IDYES`
+      ExecShell "open" "${STRATOSORT_VC_REDIST_URL}"
+    ${EndIf}
+  ${EndIf}
+!macroend
+
+!macro StratoSortVcRuntimeInstall
+  ${IfNot} ${isUpdated}
+    Push $R6
+    Push $R7
+    Push $R8
+    ${IfNot} ${Silent}
+      ; installSection.nsh hides details for interactive installs; show our status line.
+      SetDetailsPrint textonly
+    ${EndIf}
+
+    StrCpy $R7 "present"
     ; NSIS runs as a 32-bit process: on 64-bit Windows $SYSDIR is redirected to SysWOW64 unless
     ; file system redirection is off, and the app needs the native (x64/ARM64) runtime in System32.
     ${If} ${RunningX64}
       ${DisableX64FSRedirection}
     ${EndIf}
     ${IfNot} ${FileExists} "$SYSDIR\msvcp140.dll"
-      StrCpy $R9 "missing"
+      StrCpy $R7 "missing"
     ${EndIf}
     ${IfNot} ${FileExists} "$SYSDIR\vcruntime140.dll"
-      StrCpy $R9 "missing"
+      StrCpy $R7 "missing"
     ${EndIf}
     ${If} ${RunningX64}
       ${EnableX64FSRedirection}
     ${EndIf}
-    ${If} $R9 == "missing"
-      ${If} ${Cmd} `MessageBox MB_YESNO|MB_ICONINFORMATION "StratoSort's local AI needs the Microsoft Visual C++ Redistributable, which isn't installed on this PC.$\r$\n$\r$\nOpen Microsoft's download page now? Choose the x64 version (ARM64 on Arm-based PCs), install it, then start StratoSort.$\r$\n$\r$\nYou can also install it later; StratoSort will show the same link." /SD IDNO IDYES`
-        ExecShell "open" "${STRATOSORT_VC_REDIST_URL}"
+
+    ${If} $R7 == "missing"
+      ; Each package carries only its own arch's file. An arm64 build on Arm runs the arm64
+      ; redistributable; an x64 build (also when emulated on Arm) runs the x64 one.
+      StrCpy $R8 ""
+      ${If} ${IsNativeARM64}
+      ${AndIf} ${FileExists} "${STRATOSORT_VC_REDIST_DIR}\vc_redist.arm64.exe"
+        StrCpy $R8 "${STRATOSORT_VC_REDIST_DIR}\vc_redist.arm64.exe"
+      ${ElseIf} ${FileExists} "${STRATOSORT_VC_REDIST_DIR}\vc_redist.x64.exe"
+        StrCpy $R8 "${STRATOSORT_VC_REDIST_DIR}\vc_redist.x64.exe"
+      ${EndIf}
+
+      ${If} $R8 == ""
+        DetailPrint "Microsoft Visual C++ Redistributable is missing and this package does not include its installer."
+        !insertmacro StratoSortVcRuntimeDownloadPrompt "StratoSort's local AI needs the Microsoft Visual C++ Redistributable, which isn't installed on this PC."
+      ${Else}
+        ClearErrors
+        ${If} ${Silent}
+          DetailPrint "Installing the Microsoft Visual C++ Redistributable (quiet): $R8"
+          ExecWait '"$R8" /install /quiet /norestart' $R6
+        ${Else}
+          DetailPrint "Installing the Microsoft Visual C++ Redistributable; Windows will ask for permission..."
+          ExecWait '"$R8" /install /passive /norestart' $R6
+        ${EndIf}
+
+        ${If} ${Errors}
+          DetailPrint "Microsoft Visual C++ Redistributable installer could not be started."
+          !insertmacro StratoSortVcRuntimeDownloadPrompt "The Microsoft Visual C++ Redistributable installer could not be started. StratoSort's local AI needs it."
+        ${ElseIf} $R6 == "0"
+        ${OrIf} $R6 == "1638"
+          DetailPrint "Microsoft Visual C++ Redistributable is installed (exit code $R6)."
+        ${ElseIf} $R6 == "3010"
+          DetailPrint "Microsoft Visual C++ Redistributable installed; Windows needs a restart to finish (exit code 3010)."
+          ${IfNot} ${Silent}
+            MessageBox MB_OK|MB_ICONINFORMATION "The Microsoft Visual C++ Redistributable was installed, but Windows needs a restart to finish. If StratoSort says local AI is unavailable, restart your PC." /SD IDOK
+          ${EndIf}
+        ${ElseIf} $R6 == "1602"
+        ${OrIf} $R6 == "1223"
+          DetailPrint "Microsoft Visual C++ Redistributable installation was cancelled (exit code $R6)."
+          !insertmacro StratoSortVcRuntimeDownloadPrompt "The Microsoft Visual C++ Redistributable was not installed because the installation was cancelled. StratoSort's local AI needs it."
+        ${Else}
+          DetailPrint "Microsoft Visual C++ Redistributable installation failed (exit code $R6)."
+          !insertmacro StratoSortVcRuntimeDownloadPrompt "The Microsoft Visual C++ Redistributable could not be installed (exit code $R6). StratoSort's local AI needs it."
+        ${EndIf}
       ${EndIf}
     ${EndIf}
-    Pop $R9
+
+    ${IfNot} ${Silent}
+      SetDetailsPrint none
+    ${EndIf}
+    Pop $R8
+    Pop $R7
+    Pop $R6
   ${EndIf}
 !macroend
 
@@ -99,7 +175,7 @@
   Delete "$APPDATA\StratoSort\first-run.marker"
   Delete "$LOCALAPPDATA\StratoSort\dependency-setup-complete.marker"
 
-  !insertmacro StratoSortVcRuntimeHint
+  !insertmacro StratoSortVcRuntimeInstall
 !macroend
 
 !macro customUnInstall

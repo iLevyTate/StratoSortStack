@@ -156,7 +156,8 @@ describe('LlamaService native engine init failure', () => {
       detail: expect.objectContaining({
         missingDlls: ['msvcp140.dll', 'vcruntime140.dll'],
         arch: 'x64',
-        action: { code: 'ai.open-vc-redist-download', label: 'Open download page' }
+        action: { code: 'ai.install-vc-runtime', label: 'Install now' },
+        secondaryAction: { code: 'ai.open-vc-redist-download', label: 'Open download page' }
       })
     });
     expect(warnLines()).toHaveLength(1);

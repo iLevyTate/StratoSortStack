@@ -109,6 +109,7 @@ or on demand.
 | `npm run setup:ffmpeg-runtime` / `:check`   | Download/verify bundled FFmpeg                                       |
 | `npm run setup:whisper-model` / `:check`    | Download/verify Whisper model                                        |
 | `npm run setup:tessdata-runtime` / `:check` | Download/verify bundled Tesseract language data                      |
+| `npm run setup:vc-redist` / `:check`        | Download/verify Microsoft's signed VC++ Redistributable (`--arch=`)  |
 | `npm run setup:mac-signing`                 | PowerShell helper for the [`MAC_SIGNING.md`](MAC_SIGNING.md) runbook |
 | `npm run models:check` / `models:download`  | Aliases for `setup:models` variants                                  |
 

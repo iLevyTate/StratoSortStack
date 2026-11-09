@@ -137,5 +137,41 @@ export const systemIpc = {
       throw new Error(result.error || 'Failed to open legal document');
     }
     return result;
+  },
+  /**
+   * Windows: run the Microsoft Visual C++ Redistributable bundled with the
+   * app. Resolves to the main-process outcome
+   * `{ success, cancelled, needsRestart, exitCode, reason?, error? }`;
+   * `reason: 'not-bundled'` (dev build, non-Windows, older preload) means the
+   * caller should fall back to Microsoft's download page.
+   * @returns {Promise<{ success: boolean, cancelled?: boolean, needsRestart?: boolean, exitCode?: number | null, reason?: string, error?: string }>}
+   */
+  async installVcRuntime() {
+    const api = requireElectronAPI().system;
+    if (typeof api.installVcRuntime !== 'function') {
+      return { success: false, reason: 'not-bundled' };
+    }
+    const result = await api.installVcRuntime();
+    if (!result || typeof result !== 'object') {
+      return {
+        success: false,
+        reason: 'installer-failed',
+        error: 'No response from the installer'
+      };
+    }
+    return result;
+  },
+  /** Quit gracefully and start the app again. */
+  async relaunchApp() {
+    const api = requireElectronAPI().system;
+    if (typeof api.relaunchApp !== 'function') {
+      throw new Error('Restarting from the app is unavailable in this build');
+    }
+    const result = await api.relaunchApp();
+    if (result && typeof result === 'object' && result.success === false) {
+      const message = typeof result.error === 'string' ? result.error : result.error?.message;
+      throw new Error(message || 'Failed to restart StratoSort');
+    }
+    return result;
   }
 };

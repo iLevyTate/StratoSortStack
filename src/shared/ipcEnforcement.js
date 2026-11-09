@@ -99,7 +99,9 @@ const CONCURRENCY_LIMITED_CHANNEL_REFS = [
   'EMBEDDINGS.RENAME_CLUSTER',
   'EMBEDDINGS.DIAGNOSE_SEARCH',
   'AI_PROVIDER.TEST_PROVIDER',
-  'SYSTEM.DISMISS_DEGRADED_FLAG'
+  'SYSTEM.DISMISS_DEGRADED_FLAG',
+  // One elevated Visual C++ Redistributable install at a time.
+  'SYSTEM.INSTALL_VC_RUNTIME'
   // NOTE: triage start / deep-scan / act use a *shared* lock key via
   // DOWNLOADS_TRIAGE_MUTATION_CHANNELS + resolveConcurrencyLockKey below.
 ];
