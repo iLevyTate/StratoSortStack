@@ -14,6 +14,7 @@ const {
   getRequiredWhisperVariantPackages,
   getWindowsZipArtifactName,
   getWorkerBundleNames,
+  listExternalPackages,
   readAsarHeader,
   verifyBetterSqlitePrebuilds,
   verifyMacArtifacts,
@@ -801,6 +802,133 @@ describe('verify-packaged-artifacts lz4-napi binding (orama-4)', () => {
 
     expect(() => verifyMacArtifacts(buildRoot, 'arm64')).toThrow(
       /lz4-napi native binding for darwin-arm64 missing/
+    );
+  });
+});
+
+// Regression (clean-machine packaged run, 2026-11): worker bundles run from
+// app.asar.unpacked/dist, so their externals and every dependency of those
+// externals resolve from app.asar.unpacked/node_modules only. asarUnpack held
+// pino but not pino-std-serializers & co, and the embedding worker (and the
+// OCR, image-preprocess and log-export workers) crashed on load in packaged
+// builds only.
+describe('verify-packaged-artifacts worker externals resolve inside app.asar.unpacked', () => {
+  const tempDirs = [];
+  const winResources = (buildRoot) => path.join(buildRoot, 'win-unpacked', 'resources');
+
+  afterEach(() => {
+    while (tempDirs.length > 0) {
+      fs.rmSync(tempDirs.pop(), { recursive: true, force: true });
+    }
+  });
+
+  function writePackage(dir, manifest) {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify(manifest));
+  }
+
+  function writeWorkerBundle(resources, name, source) {
+    fs.writeFileSync(path.join(resources, 'app.asar.unpacked', 'dist', `${name}.js`), source);
+  }
+
+  // app.asar header listing node_modules packages (kept in the asar).
+  function writeAsarWithPackages(resources, packageNames) {
+    const files = {};
+    packageNames.forEach((name) => {
+      const segments = name.split('/');
+      let node = files;
+      segments.forEach((segment, index) => {
+        node[segment] = node[segment] || { files: {} };
+        if (index === segments.length - 1) {
+          node[segment].files['package.json'] = { size: 1, offset: '0' };
+        }
+        node = node[segment].files;
+      });
+    });
+    writeAsar(path.join(resources, 'app.asar'), {
+      ...APP_ASAR_ENTRIES,
+      node_modules: { files }
+    });
+  }
+
+  test('lists the runtime requires a bundle leaves to Node', () => {
+    const source = [
+      '/* require("commented-out") */',
+      '// const x = require("line-comment");',
+      'const a = require("pino"); const b = require("@img/colour/index.js");',
+      'const c = require("fs"), d = require("node:path"), e = require("electron");',
+      'const f = require("./local"), g = __webpack_require__(42);',
+      'import("node-llama-cpp"); import(/* webpackIgnore: true */ specifier);'
+    ].join('\n');
+
+    expect(listExternalPackages(source)).toEqual(['@img/colour', 'node-llama-cpp', 'pino']);
+  });
+
+  test('rejects a build whose unpacked worker needs a dependency left in app.asar', () => {
+    const buildRoot = createWindowsBuildRoot();
+    tempDirs.push(buildRoot);
+    const resources = winResources(buildRoot);
+    const unpackedModules = windowsUnpackedModules(buildRoot);
+    writeWorkerBundle(resources, 'embeddingWorker', 'module.exports = require("pino");');
+    writePackage(path.join(unpackedModules, 'pino'), {
+      name: 'pino',
+      dependencies: { 'pino-std-serializers': '^7.0.0', 'sonic-boom': '^4.0.1' }
+    });
+    writePackage(path.join(unpackedModules, 'sonic-boom'), { name: 'sonic-boom' });
+    writeAsarWithPackages(resources, ['pino', 'pino-std-serializers', 'sonic-boom']);
+
+    expect(() => verifyWindowsArtifacts(buildRoot, 'x64', VERSION)).toThrow(
+      'Windows worker bundles require packages missing from app.asar.unpacked'
+    );
+    expect(() => verifyWindowsArtifacts(buildRoot, 'x64', VERSION)).toThrow(
+      'embeddingWorker.js: pino -> pino-std-serializers'
+    );
+  });
+
+  test('rejects a worker external that is not unpacked at all', () => {
+    const buildRoot = createWindowsBuildRoot();
+    tempDirs.push(buildRoot);
+    writeWorkerBundle(winResources(buildRoot), 'ocrWorker', 'require("tesseract.js");');
+
+    expect(() => verifyWindowsArtifacts(buildRoot, 'x64', VERSION)).toThrow(
+      'ocrWorker.js: tesseract.js'
+    );
+  });
+
+  test('accepts a full closure, nested node_modules and platform-absent optional deps', () => {
+    const buildRoot = createWindowsBuildRoot();
+    tempDirs.push(buildRoot);
+    const resources = winResources(buildRoot);
+    const unpackedModules = windowsUnpackedModules(buildRoot);
+    writeWorkerBundle(resources, 'imagePreprocessWorker', 'require("sharp");');
+    writePackage(path.join(unpackedModules, 'sharp'), {
+      name: 'sharp',
+      dependencies: { semver: '^7.7.0', 'detect-libc': '^2.0.0' },
+      optionalDependencies: { '@img/sharp-linux-x64': '0.34.0' }
+    });
+    writePackage(path.join(unpackedModules, 'sharp', 'node_modules', 'semver'), {
+      name: 'semver'
+    });
+    writePackage(path.join(unpackedModules, 'detect-libc'), { name: 'detect-libc' });
+    writeAsarWithPackages(resources, ['sharp', 'detect-libc']);
+
+    expect(() => verifyWindowsArtifacts(buildRoot, 'x64', VERSION)).not.toThrow();
+  });
+
+  test('rejects an optional dependency the build ships only inside app.asar', () => {
+    const buildRoot = createWindowsBuildRoot();
+    tempDirs.push(buildRoot);
+    const resources = winResources(buildRoot);
+    const unpackedModules = windowsUnpackedModules(buildRoot);
+    writeWorkerBundle(resources, 'imagePreprocessWorker', 'require("sharp");');
+    writePackage(path.join(unpackedModules, 'sharp'), {
+      name: 'sharp',
+      optionalDependencies: { '@img/sharp-win32-x64': '0.34.0' }
+    });
+    writeAsarWithPackages(resources, ['sharp', '@img/sharp-win32-x64']);
+
+    expect(() => verifyWindowsArtifacts(buildRoot, 'x64', VERSION)).toThrow(
+      'imagePreprocessWorker.js: sharp -> @img/sharp-win32-x64'
     );
   });
 });

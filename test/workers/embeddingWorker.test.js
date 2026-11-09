@@ -78,4 +78,59 @@ describe('main/workers/embeddingWorker', () => {
       await expect(runEmbeddingTask({ type: 'cleanup' })).resolves.toEqual({ cleaned: true });
     });
   });
+
+  // Regression (clean-machine packaged run, 2026-11): the worker bundle runs
+  // from resources/app.asar.unpacked/dist, where node_modules holds
+  // node-llama-cpp but not its dependencies, so the bare import cannot load
+  // in a packaged build. It must import the app.asar copy main.js uses.
+  // (Jest's moduleNameMapper rewrites node-llama-cpp resolution, so the
+  // resolver is injected; the real resolution runs in Electron.)
+  describe('node-llama-cpp import specifier', () => {
+    const path = require('path');
+    const { pathToFileURL } = require('url');
+    const { resolveNodeLlamaCppSpecifier } = runEmbeddingTask.__test;
+    const resources = path.resolve('/ss-packaged/resources');
+
+    test('outside a packaged build the bare specifier is used', () => {
+      const resolveFrom = jest.fn();
+      expect(resolveNodeLlamaCppSpecifier(path.resolve('/repo/dist'), resolveFrom)).toBe(
+        'node-llama-cpp'
+      );
+      expect(resolveFrom).not.toHaveBeenCalled();
+    });
+
+    test('a bundle under app.asar.unpacked resolves node-llama-cpp from app.asar', () => {
+      const entry = path.join(
+        resources,
+        'app.asar',
+        'node_modules',
+        'node-llama-cpp',
+        'dist',
+        'index.js'
+      );
+      const resolveFrom = jest.fn(() => entry);
+
+      const specifier = resolveNodeLlamaCppSpecifier(
+        path.join(resources, 'app.asar.unpacked', 'dist'),
+        resolveFrom
+      );
+
+      expect(resolveFrom).toHaveBeenCalledWith(
+        path.join(resources, 'app.asar', 'dist', 'embeddingWorker.js'),
+        'node-llama-cpp'
+      );
+      expect(specifier).toBe(pathToFileURL(entry).href);
+    });
+
+    test('falls back to the bare specifier when app.asar cannot resolve it', () => {
+      const resolveFrom = jest.fn(() => {
+        throw Object.assign(new Error("Cannot find module 'node-llama-cpp'"), {
+          code: 'MODULE_NOT_FOUND'
+        });
+      });
+      expect(
+        resolveNodeLlamaCppSpecifier(path.join(resources, 'app.asar.unpacked', 'dist'), resolveFrom)
+      ).toBe('node-llama-cpp');
+    });
+  });
 });

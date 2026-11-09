@@ -1018,4 +1018,71 @@ describe('Custom Folders', () => {
       expect(deduped.some((f) => f.name === 'Nature_17803333378895')).toBe(false);
     });
   });
+
+  // Regressions from a clean-machine packaged run (2026-11).
+  describe('clean-machine regressions', () => {
+    const BOM = String.fromCharCode(0xfeff);
+    const savedFolders = [
+      { id: 'work', name: 'Work', path: '/test/work', isDefault: false },
+      { id: 'uncategorized', name: 'Uncategorized', path: '/test/uncategorized', isDefault: true }
+    ];
+
+    test('loads a custom-folders.json saved with a UTF-8 BOM intact', async () => {
+      // Notepad and PowerShell 5.1 `Set-Content -Encoding UTF8` write a BOM.
+      // It used to fail to parse, so the user's smart folders vanished and
+      // were replaced by the Uncategorized-only first-launch set.
+      mockFs.readFile.mockResolvedValueOnce(BOM + JSON.stringify(savedFolders, null, 2));
+
+      const folders = await customFolders.loadCustomFolders();
+
+      expect(folders.map((f) => f.name).sort()).toEqual(['Uncategorized', 'Work']);
+      expect(mockSafeWriteFile).not.toHaveBeenCalled();
+    });
+
+    test('restores a BOM-prefixed backup', async () => {
+      mockFs.readFile.mockResolvedValueOnce(BOM + JSON.stringify(savedFolders));
+
+      const result = await customFolders.restoreFromBackup();
+
+      expect(result.success).toBe(true);
+      expect(result.folders.map((f) => f.name)).toEqual(['Work', 'Uncategorized']);
+    });
+
+    test('a missing backup on a fresh profile is logged at debug, not error', async () => {
+      const { logger } = require('../src/shared/logger');
+      // beforeEach makes every read ENOENT: no custom-folders.json, no backup.
+
+      const folders = await customFolders.loadCustomFolders();
+
+      expect(folders).toHaveLength(1);
+      expect(folders[0].name).toBe('Uncategorized');
+      expect(logger.error).not.toHaveBeenCalled();
+      expect(logger.debug).toHaveBeenCalledWith('[STORAGE] No custom folders backup to restore');
+    });
+
+    test('restoreFromBackup reports a missing backup without an error log', async () => {
+      const { logger } = require('../src/shared/logger');
+
+      await expect(customFolders.restoreFromBackup()).resolves.toEqual({
+        success: false,
+        error: 'No backup file found'
+      });
+      expect(logger.error).not.toHaveBeenCalled();
+    });
+
+    test('a backup that exists but cannot be read is still an error', async () => {
+      const { logger } = require('../src/shared/logger');
+      mockFs.readFile.mockRejectedValueOnce(
+        Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })
+      );
+
+      const result = await customFolders.restoreFromBackup();
+
+      expect(result).toEqual({ success: false, error: 'EACCES: permission denied' });
+      expect(logger.error).toHaveBeenCalledWith(
+        '[STORAGE] Failed to restore from backup:',
+        expect.objectContaining({ code: 'EACCES' })
+      );
+    });
+  });
 });

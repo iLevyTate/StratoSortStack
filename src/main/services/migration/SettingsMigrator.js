@@ -16,6 +16,7 @@ const {
 } = require('../../../shared/constants');
 const { upgradeLegacySimpleModeValues } = require('../../../shared/experienceMode');
 const { isNotFoundError } = require('../../../shared/errorClassifier');
+const { stripBom } = require('../../../shared/safeJsonOps');
 
 const logger = createLogger('SettingsMigrator');
 
@@ -114,7 +115,8 @@ class SettingsMigrator {
     }
     try {
       const raw = await fs.readFile(settingsPath, 'utf-8');
-      return JSON.parse(raw);
+      // User-editable: tolerate the BOM Notepad / PowerShell 5.1 write.
+      return JSON.parse(stripBom(raw));
     } catch (error) {
       if (isNotFoundError(error)) {
         return null;

@@ -1004,7 +1004,18 @@ async function restoreFromBackup() {
   const backupPath = `${filePath}.backup`;
 
   try {
-    const backupData = await fs.readFile(backupPath, 'utf-8');
+    let backupData;
+    try {
+      backupData = await fs.readFile(backupPath, 'utf-8');
+    } catch (readError) {
+      // Expected on a fresh profile: the first save writes the backup, so
+      // there is none until then. Only real I/O failures are errors.
+      if (/** @type {any} */ (readError)?.code === 'ENOENT') {
+        logger.debug('[STORAGE] No custom folders backup to restore');
+        return { success: false, error: 'No backup file found' };
+      }
+      throw readError;
+    }
     const parseResult = safeJsonTryParse(backupData);
     if (!parseResult.success) {
       logger.warn('[STORAGE] Backup file contains invalid JSON', {

@@ -71,7 +71,17 @@ const UpdateIndicator = React.memo(function UpdateIndicator() {
           } else if (payload.status === 'downloading') {
             setStatus('downloading');
             setVisible(false);
-          } else if (payload.status === 'none' || payload.status === 'not-available') {
+          } else if (
+            payload.status === 'none' ||
+            payload.status === 'not-available' ||
+            payload.status === 'unsupported'
+          ) {
+            // 'unsupported': this build cannot update itself (zip copy, Store,
+            // non-AppImage Linux). Nothing to install, so stay hidden; the
+            // reason is reported by manual checks in Settings.
+            if (payload.status === 'unsupported') {
+              logger.info('Auto-update unsupported for this build', { reason: payload.reason });
+            }
             setStatus('idle');
             setVisible(false);
           } else if (payload.status === 'error') {

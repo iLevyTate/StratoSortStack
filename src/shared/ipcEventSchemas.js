@@ -234,7 +234,10 @@ const schemas = z
 
       /**
        * App Update Event
-       * Emitted during auto-update process
+       * Emitted during auto-update process (src/main/core/autoUpdater.js).
+       * 'unsupported' is sent once at startup when this build cannot update
+       * itself (zip copy, Microsoft Store, non-AppImage Linux), with the
+       * human-readable `reason` from getUpdateTargetCapability().
        */
       const appUpdateSchema = z.object({
         status: z.enum([
@@ -243,11 +246,13 @@ const schemas = z
           'not-available',
           'downloading',
           'downloaded',
-          'error'
+          'error',
+          'unsupported'
         ]),
         version: z.string().optional(),
         progress: z.number().optional(),
-        error: z.string().optional()
+        error: z.string().optional(),
+        reason: z.string().optional()
       });
 
       /**

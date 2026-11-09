@@ -74,6 +74,22 @@ describe('services/settingsImportParser', () => {
     });
   });
 
+  // An export re-saved in Notepad / PowerShell 5.1 starts with a UTF-8 BOM,
+  // which JSON.parse rejects; it must import like the original file.
+  test('parses an export that starts with a UTF-8 BOM, in the worker and in-process', async () => {
+    const payload = String.fromCharCode(0xfeff) + '{"settings":{"notifications":true}}';
+    await expect(parseSettingsImportJson(payload)).resolves.toEqual({
+      ok: true,
+      value: { settings: { notifications: true } }
+    });
+
+    resolveWorkerPath.mockReturnValue(null);
+    await expect(parseSettingsImportJson(payload)).resolves.toEqual({
+      ok: true,
+      value: { settings: { notifications: true } }
+    });
+  });
+
   test('returns a structured error for malformed JSON (never throws)', async () => {
     const res = await parseSettingsImportJson('{ not valid json at all');
     expect(res.ok).toBe(false);

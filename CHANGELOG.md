@@ -189,6 +189,18 @@ Changes you will notice:
 
 ### Fixed
 
+- **On a new PC without the Microsoft Visual C++ Redistributable, local AI now says why it is off.**
+  A fresh Windows install does not include that runtime, and the AI engine needs it, so every AI
+  feature failed with only a log error. The app now shows a banner with a link to Microsoft's
+  download page (opened only when you click it), and the installer offers the same link.
+- **OCR, image preprocessing, log export and embeddings work in installed builds.** Their background
+  workers could not load their own dependencies once packaged, so they failed on every installed
+  copy while working in development.
+- A settings file or smart-folder list saved with a byte-order mark (Notepad can add one) is read
+  normally instead of being treated as corrupt and replaced.
+- The update status is delivered to the window when a copy cannot update itself (the zip build),
+  instead of being dropped as invalid.
+
 - **A search index too large to save is reported instead of silently not saving.** A collection is
   saved as one block of text, and V8 cannot build one longer than about 537 million characters. Past
   that, every save failed, was retried as if the disk had hiccuped, and new passages were lost at

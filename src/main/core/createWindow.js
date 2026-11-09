@@ -1224,6 +1224,9 @@ function createMainWindow() {
       'docs.github.com',
       'microsoft.com',
       'docs.microsoft.com',
+      // Visual C++ Redistributable download page, opened only from the
+      // "Open download page" action on the ai.vc-runtime-missing banner.
+      'learn.microsoft.com',
       'huggingface.co'
     ];
     try {

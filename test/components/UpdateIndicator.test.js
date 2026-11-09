@@ -141,6 +141,20 @@ describe('UpdateIndicator (auto-updater renderer wiring)', () => {
     expect(mockAddNotification).not.toHaveBeenCalled();
   });
 
+  // A zip copy / Store install sends this once at startup (autoUpdater.js);
+  // nothing can be installed, so the indicator stays hidden and quiet.
+  test("'unsupported' payload keeps the indicator hidden without notifying", async () => {
+    render(<UpdateIndicator />);
+
+    await act(async () => {
+      updateHandler({ status: 'unsupported', reason: 'extracted from the zip' });
+    });
+
+    expect(window.electronAPI.system.downloadUpdate).not.toHaveBeenCalled();
+    expect(mockAddNotification).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
   test('unmount unsubscribes the update listener', () => {
     const { unmount } = render(<UpdateIndicator />);
     unmount();

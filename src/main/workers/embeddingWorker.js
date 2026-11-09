@@ -1,5 +1,7 @@
 // @ts-check
 const path = require('path');
+const { createRequire } = require('module');
+const { pathToFileURL } = require('url');
 const { workerData } = require('worker_threads');
 const { createLogger } = require('../../shared/logger');
 const { ERROR_CODES } = require('../../shared/errorCodes');
@@ -39,13 +41,54 @@ function resolveGpuLayers(gpuLayers) {
 }
 
 /**
+ * Specifier for the node-llama-cpp dynamic import.
+ *
+ * A packaged build runs this bundle from resources/app.asar.unpacked/dist, so
+ * a bare `import('node-llama-cpp')` resolves against app.asar.unpacked's
+ * node_modules. That tree holds node-llama-cpp itself (asarUnpack) but none of
+ * its ~100 dependencies (chalk, ora, lifecycle-utils, ...), which stay in
+ * app.asar, and the import fails. Import the app.asar copy instead, the same
+ * one dist/main.js loads: Electron serves app.asar reads (and redirects its
+ * unpacked native binaries) inside worker threads, and the dependencies then
+ * resolve from app.asar/node_modules exactly as they do in the main process.
+ * Outside a packaged build the bare specifier is returned unchanged.
+ *
+ * @param {string} [bundleDir] Directory of this bundle (__dirname at runtime)
+ * @param {(fromFile: string, request: string) => string} [resolveFrom] CommonJS
+ *   resolution of `request` as seen from `fromFile` (injectable for tests)
+ * @returns {string}
+ */
+function resolveNodeLlamaCppSpecifier(
+  bundleDir = __dirname,
+  resolveFrom = (fromFile, request) => createRequire(fromFile).resolve(request)
+) {
+  const segments = path.resolve(bundleDir).split(path.sep);
+  const unpackedIndex = segments.lastIndexOf('app.asar.unpacked');
+  if (unpackedIndex === -1) return 'node-llama-cpp';
+  const asarDistDir = [
+    ...segments.slice(0, unpackedIndex),
+    'app.asar',
+    ...segments.slice(unpackedIndex + 1)
+  ].join(path.sep);
+  try {
+    const entry = resolveFrom(path.join(asarDistDir, 'embeddingWorker.js'), 'node-llama-cpp');
+    return pathToFileURL(entry).href;
+  } catch (error) {
+    logger.warn('[EmbeddingWorker] Could not resolve node-llama-cpp from app.asar', {
+      error: /** @type {any} */ (error)?.message
+    });
+    return 'node-llama-cpp';
+  }
+}
+
+/**
  * Initialize the Llama runtime with GPU auto-detection.
  * Cached across calls so GPU probe only happens once per worker lifetime.
  */
 async function getLlamaInstance() {
   if (llamaInstance) return llamaInstance;
 
-  const nodeLlama = await import(/* webpackIgnore: true */ 'node-llama-cpp');
+  const nodeLlama = await import(/* webpackIgnore: true */ resolveNodeLlamaCppSpecifier());
   const { getLlama, getLlamaGpuTypes } = nodeLlama;
   const { GPUMonitor } = require('../services/GPUMonitor');
   const { initLlamaWithBackend } = require('../utils/llamaBackendSelector');
@@ -271,3 +314,5 @@ module.exports = async function runEmbeddingTask(payload = {}) {
     throw error;
   }
 };
+
+module.exports.__test = { resolveNodeLlamaCppSpecifier };
