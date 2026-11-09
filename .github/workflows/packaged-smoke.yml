@@ -1,0 +1,306 @@
+# Build real packages on every platform and prove they work, without
+# publishing anything. Windows legs use the same Azure Trusted Signing steps as
+# release.yml and check that our files carry our signature while the bundled
+# Microsoft VC++ redistributable keeps Microsoft's. Every leg installs or
+# unpacks the build, launches it with a throwaway profile, and runs
+# scripts/packaged-launch-smoke.js (startup, native AI engine load, packaged
+# OCR worker on a synthetic image, no module or worker errors).
+name: Packaged Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      windows_x64:
+        description: Windows x64 (signed when Azure credentials are configured)
+        type: boolean
+        default: true
+      windows_arm64:
+        description: Windows arm64 (signed when Azure credentials are configured)
+        type: boolean
+        default: true
+      macos_arm64:
+        description: macOS arm64 (unsigned build)
+        type: boolean
+        default: true
+      linux_x64:
+        description: Linux x64 (AppImage + deb)
+        type: boolean
+        default: true
+      require_signing:
+        description: Fail the Windows legs when Azure signing credentials are missing
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: packaged-smoke-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CI: true
+
+jobs:
+  windows:
+    name: windows-${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+            dist_script: dist:win
+            unpacked: win-unpacked
+            enabled: windows_x64
+          - arch: arm64
+            runner: windows-11-arm
+            dist_script: dist:win:arm64
+            unpacked: win-arm64-unpacked
+            enabled: windows_arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
+    steps:
+      - name: Skip when this leg is not selected
+        id: gate
+        shell: pwsh
+        run: |
+          $enabled = if ('${{ matrix.enabled }}' -eq 'windows_x64') { '${{ inputs.windows_x64 }}' } else { '${{ inputs.windows_arm64 }}' }
+          "run=$enabled" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding UTF8
+
+      - name: Checkout
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Use Node.js
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+
+      - name: Verify Windows build assets
+        if: steps.gate.outputs.run == 'true'
+        run: node scripts/verify-build-assets.js --platform=win
+
+      - name: Install dependencies
+        if: steps.gate.outputs.run == 'true'
+        run: npm ci --include=optional
+
+      - name: Generate installer assets
+        if: steps.gate.outputs.run == 'true'
+        run: npm run generate:branding-if-source
+
+      - name: Rebuild native modules for Electron runtime (${{ matrix.arch }})
+        if: steps.gate.outputs.run == 'true'
+        run: npx --no electron-builder install-app-deps --arch=${{ matrix.arch }}
+
+      - name: Verify native module loading
+        if: steps.gate.outputs.run == 'true'
+        run: npm run verify:native-modules
+
+      - name: Detect signing mode
+        if: steps.gate.outputs.run == 'true'
+        id: signing
+        shell: pwsh
+        env:
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          $required = @('AZURE_TENANT_ID', 'AZURE_CLIENT_ID', 'AZURE_CLIENT_SECRET')
+          $missing = @($required | Where-Object { [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_)) })
+          if ($missing.Count -eq 0) {
+            ("AZURE_TENANT_ID=" + $env:AZURE_TENANT_ID.Trim()) | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding UTF8
+            ("AZURE_CLIENT_ID=" + $env:AZURE_CLIENT_ID.Trim()) | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding UTF8
+            "signed=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding UTF8
+            Write-Host "::notice::Signed build (Azure Trusted Signing)."
+          } elseif ('${{ inputs.require_signing }}' -eq 'true') {
+            throw "Azure Trusted Signing credentials missing ($($missing -join ', ')); re-run with require_signing=false for an unsigned build."
+          } else {
+            "signed=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding UTF8
+            Write-Host "::warning::Unsigned build: credentials missing ($($missing -join ', '))."
+          }
+
+      - name: Enable Azure Trusted Signing in build config
+        if: steps.gate.outputs.run == 'true' && steps.signing.outputs.signed == 'true'
+        run: node scripts/configure-win-signing.js electron-builder.json
+
+      - name: Build Windows packages
+        if: steps.gate.outputs.run == 'true'
+        env:
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run ${{ matrix.dist_script }}
+
+      - name: Verify packaged Windows artifacts
+        if: steps.gate.outputs.run == 'true'
+        run: node scripts/verify-packaged-artifacts.js --platform=win --arch=${{ matrix.arch }}
+
+      - name: Check signatures (ours on our files, Microsoft's on the VC++ runtime)
+        if: steps.gate.outputs.run == 'true'
+        shell: pwsh
+        run: |
+          $out = 'smoke-out'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $signed = '${{ steps.signing.outputs.signed }}' -eq 'true'
+          $unpacked = Join-Path 'release/build' '${{ matrix.unpacked }}'
+          $redist = Get-ChildItem (Join-Path $unpacked 'resources/assets/runtime/vcredist') -Filter 'vc_redist.*.exe' -ErrorAction Stop
+          $ours = @()
+          $ours += Get-ChildItem release/build -File -Filter 'StratoSortStack-Setup-*.exe'
+          $ours += Get-Item -LiteralPath (Join-Path $unpacked 'StratoSort Stack.exe')
+          # Bundled runtime tools (ffmpeg, llama-server, ...): reported, not
+          # required, so this check stays about the VC++ redistributable.
+          $bundled = @(Get-ChildItem (Join-Path $unpacked 'resources/assets') -Recurse -File -Filter '*.exe' -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -notlike 'vc_redist.*.exe' })
+          $rows = @()
+          $problems = @()
+          foreach ($f in $ours) {
+            $s = Get-AuthenticodeSignature $f.FullName
+            $rows += [pscustomobject]@{ File = $f.Name; Expected = 'ours'; Status = "$($s.Status)"; Signer = "$($s.SignerCertificate.Subject)" }
+            if ($signed -and ($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -notmatch 'Kennedy Applied Sciences')) {
+              $problems += "$($f.Name): expected our valid signature, got $($s.Status) / $($s.SignerCertificate.Subject)"
+            }
+          }
+          foreach ($f in $bundled) {
+            $s = Get-AuthenticodeSignature $f.FullName
+            $rows += [pscustomobject]@{ File = $f.Name; Expected = 'bundled tool (info)'; Status = "$($s.Status)"; Signer = "$($s.SignerCertificate.Subject)" }
+            if ($s.Status -ne 'Valid') { Write-Host "::warning::Bundled tool $($f.Name) is $($s.Status)" }
+          }
+          foreach ($f in $redist) {
+            $s = Get-AuthenticodeSignature $f.FullName
+            $rows += [pscustomobject]@{ File = $f.Name; Expected = 'Microsoft'; Status = "$($s.Status)"; Signer = "$($s.SignerCertificate.Subject)" }
+            if ($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation' -or $s.SignerCertificate.Subject -match 'Kennedy') {
+              $problems += "$($f.Name): expected Microsoft's valid signature, got $($s.Status) / $($s.SignerCertificate.Subject)"
+            }
+          }
+          $rows | Format-Table -AutoSize | Out-String -Width 400 | Tee-Object -FilePath (Join-Path $out 'signatures.txt')
+          if ($problems.Count -gt 0) { $problems | ForEach-Object { Write-Host "::error::$_" }; throw 'Signature check failed.' }
+
+      - name: Install silently
+        if: steps.gate.outputs.run == 'true'
+        id: install
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem release/build -File -Filter 'StratoSortStack-Setup-*.exe' | Select-Object -First 1
+          $p = Start-Process -FilePath $installer.FullName -ArgumentList '/S' -PassThru -Wait
+          if ($p.ExitCode -ne 0) { throw "Installer exited with $($p.ExitCode)" }
+          $exe = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter 'StratoSort Stack.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) { throw 'Installed app not found under %LOCALAPPDATA%\Programs' }
+          $installedRedist = Get-ChildItem (Join-Path $exe.DirectoryName 'resources/assets/runtime/vcredist') -Filter 'vc_redist.*.exe' -ErrorAction Stop
+          $s = Get-AuthenticodeSignature $installedRedist.FullName
+          Write-Host "Installed copy of $($installedRedist.Name): $($s.Status) / $($s.SignerCertificate.Subject)"
+          if ($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') { throw 'Installed VC++ redistributable lost Microsoft signature' }
+          "exe=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding UTF8
+
+      - name: Launch the installed app (smoke)
+        if: steps.gate.outputs.run == 'true'
+        run: node scripts/packaged-launch-smoke.js --exe "${{ steps.install.outputs.exe }}" --out smoke-out
+
+      - name: Upload smoke evidence
+        if: always() && steps.gate.outputs.run == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: packaged-smoke-windows-${{ matrix.arch }}-${{ github.run_number }}
+          path: smoke-out/
+          retention-days: 14
+          if-no-files-found: warn
+
+  macos:
+    if: ${{ inputs.macos_arm64 }}
+    runs-on: macos-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Use Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+
+      - name: Verify macOS build assets
+        run: node scripts/verify-build-assets.js --platform=mac
+
+      - name: Install dependencies
+        run: npm ci --include=optional
+
+      - name: Generate installer assets
+        run: npm run generate:branding-if-source
+
+      - name: Rebuild native modules for Electron runtime (arm64)
+        run: npx --no electron-builder install-app-deps --arch=arm64
+
+      - name: Verify native module loading
+        run: npm run verify:native-modules
+
+      - name: Build macOS packages (arm64, unsigned)
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run dist:mac:arm64
+
+      - name: Verify packaged macOS artifacts
+        run: node scripts/verify-packaged-artifacts.js --platform=mac --arch=arm64
+
+      - name: Launch the app (smoke)
+        run: node scripts/packaged-launch-smoke.js --exe "release/build/mac-arm64/StratoSort Stack.app/Contents/MacOS/StratoSort Stack" --out smoke-out
+
+      - name: Upload smoke evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: packaged-smoke-macos-arm64-${{ github.run_number }}
+          path: smoke-out/
+          retention-days: 14
+          if-no-files-found: warn
+
+  linux:
+    if: ${{ inputs.linux_x64 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Use Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+
+      - name: Install virtual display
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+
+      - name: Install dependencies
+        run: npm ci --include=optional
+
+      - name: Rebuild native modules for Electron runtime (x64)
+        run: npx --no electron-builder install-app-deps --arch=x64
+
+      - name: Verify native module loading
+        run: npm run verify:native-modules
+
+      - name: Build Linux packages (x64)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run dist:linux:x64
+
+      - name: Verify packaged Linux artifacts
+        run: node scripts/verify-packaged-artifacts.js --platform=linux --arch=x64
+
+      - name: Launch the app (smoke)
+        run: |
+          exe=$(find release/build/linux-unpacked -maxdepth 1 -type f -perm -u+x -name 'stratosort*' | head -1)
+          echo "App binary: $exe"
+          xvfb-run --auto-servernum node scripts/packaged-launch-smoke.js --exe "$exe" --arg --no-sandbox --out smoke-out
+
+      - name: Upload smoke evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: packaged-smoke-linux-x64-${{ github.run_number }}
+          path: smoke-out/
+          retention-days: 14
+          if-no-files-found: warn
