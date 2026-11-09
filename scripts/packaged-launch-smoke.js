@@ -2,7 +2,8 @@
 /**
  * Launch a packaged StratoSort build with a throwaway profile and check that it
  * really works: startup completes, the local AI engine's native binaries load,
- * and a packaged worker (OCR) runs on a dropped image. Used by
+ * a packaged worker (OCR) runs on a dropped image, and a seeded search index is
+ * restored through the packaged restore worker. Used by
  * .github/workflows/packaged-smoke.yml on Windows, macOS and Linux runners.
  *
  *   node scripts/packaged-launch-smoke.js --exe <path to app binary>
@@ -58,6 +59,103 @@ const FORBIDDEN = [
   /Coordinated startup failed/
 ];
 
+// The search index is read back at startup by the oramaRestoreWorker bundle,
+// which decodes LZ4 with a native binding that must sit in app.asar.unpacked.
+// It only runs for saved files of at least 4 MB (RESTORE_WORKER_MIN_BYTES in
+// OramaVectorService), and when it cannot load, restore quietly falls back to
+// the main thread. So the profile gets a real, compressed collection above
+// that size, and the run passes only if the app restores it in the worker.
+const RESTORE_WORKER_MIN_BYTES = 4 * 1024 * 1024;
+const SEED_COLLECTION = 'fileChunks';
+// A fresh profile's embedding dimension (all-MiniLM-L6-v2, the default model).
+const SEED_DIMENSION = 384;
+
+/**
+ * The text of a saved collection, in the app's own compact form
+ * (`{"docs":{"docs":{...},"count":N}}`, see serializeCollectionForDisk).
+ * Embeddings are pseudo-random but deterministic, so the file barely
+ * compresses and every run writes the same bytes.
+ * @param {{ docCount: number, dimension?: number }} options
+ * @returns {string}
+ */
+function buildSeedCollection({ docCount, dimension = SEED_DIMENSION }) {
+  let state = 0x2545f491;
+  const next = () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state / 0x100000000 - 0.5;
+  };
+  const docs = {};
+  for (let i = 0; i < docCount; i += 1) {
+    const content = `Synthetic smoke-test passage ${i}. No real data.`;
+    docs[String(i + 1)] = {
+      id: `smoke-chunk-${i}`,
+      embedding: Array.from({ length: dimension }, next),
+      fileId: `smoke-file-${i % 50}`,
+      chunkIndex: i,
+      content,
+      startOffset: 0,
+      endOffset: content.length
+    };
+  }
+  return JSON.stringify({ docs: { docs, count: docCount } });
+}
+
+/**
+ * Write a compressed collection of at least RESTORE_WORKER_MIN_BYTES (with
+ * margin) into the profile's vector-db folder, using the app's own LZ4 codec.
+ * @param {string} userData
+ * @param {{ lz4?: any }} [deps]
+ * @returns {{ collection: string, docCount: number, bytes: number, file: string }}
+ */
+function seedVectorIndex(userData, deps = {}) {
+  const lz4 = deps.lz4 || require('../src/shared/lz4Codec');
+  if (!lz4.isLz4BindingAvailable) {
+    throw new Error('lz4-napi does not load in this runner, so the search index cannot be seeded');
+  }
+  const dir = path.join(userData, 'vector-db');
+  fs.mkdirSync(dir, { recursive: true });
+  const target = Math.ceil(RESTORE_WORKER_MIN_BYTES * 1.25);
+  let docCount = 800;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const compressed = lz4.compressSync(Buffer.from(buildSeedCollection({ docCount }), 'utf8'));
+    if (compressed.length >= target) {
+      const file = path.join(dir, `${SEED_COLLECTION}.json.lz4`);
+      fs.writeFileSync(file, compressed);
+      return { collection: SEED_COLLECTION, docCount, bytes: compressed.length, file };
+    }
+    docCount = Math.ceil(docCount * (target / Math.max(compressed.length, 1)) * 1.1);
+  }
+  throw new Error('Could not build a seeded collection large enough for the restore worker');
+}
+
+/**
+ * Whether the seeded collection came back through the restore worker, read
+ * from the app's structured "Restored <name> database" line.
+ * @param {string} logs
+ * @param {{ collection: string, docCount: number }} seed
+ * @returns {{ ok: boolean, reason: string | null, line: any }}
+ */
+function restoreWorkerCheck(logs, seed) {
+  const want = `[OramaVectorService] Restored ${seed.collection} database`;
+  const entry = parseJsonLines(logs)
+    .map((p) => p.entry)
+    .find((e) => e.msg === want);
+  if (!entry) return { ok: false, reason: `no "${want}" line`, line: null };
+  const line = {
+    parsedIn: entry.parsedIn,
+    total: entry.total,
+    inserted: entry.inserted,
+    failed: entry.failed
+  };
+  if (entry.parsedIn !== 'worker') {
+    return { ok: false, reason: `parsed in ${entry.parsedIn}, not the worker`, line };
+  }
+  if (entry.total !== seed.docCount || entry.inserted !== seed.docCount || entry.failed !== 0) {
+    return { ok: false, reason: 'not every seeded document was restored', line };
+  }
+  return { ok: true, reason: null, line };
+}
+
 const GPU_BACKENDS = new Set(['vulkan', 'cuda', 'metal']);
 
 function parseJsonLines(logs) {
@@ -101,9 +199,15 @@ function gpuFallbackOrFailure(logs) {
   return { fallbacks, failures, selectedBackend: selected ? selected.entry.actual : null };
 }
 
-/** The verdict on one run's logs. Pure, so it is unit-tested on recorded lines. */
-function evaluateLogs(logs) {
+/**
+ * The verdict on one run's logs. Pure, so it is unit-tested on recorded lines.
+ * @param {string} logs
+ * @param {{ seed?: { collection: string, docCount: number } | null }} [options]
+ */
+function evaluateLogs(logs, { seed = null } = {}) {
   const missing = REQUIRED.filter((r) => !r.pattern.test(logs)).map((r) => r.id);
+  const restore = seed ? restoreWorkerCheck(logs, seed) : null;
+  if (restore && !restore.ok) missing.push(`restore-worker (${restore.reason})`);
   const gpu = gpuFallbackOrFailure(logs);
   const failures = [
     ...gpu.failures,
@@ -112,7 +216,13 @@ function evaluateLogs(logs) {
       return { signature: String(p), line: line.slice(0, 400) };
     })
   ];
-  return { missing, failures, aiBackend: gpu.selectedBackend, gpuFallbacks: gpu.fallbacks };
+  return {
+    missing,
+    failures,
+    aiBackend: gpu.selectedBackend,
+    gpuFallbacks: gpu.fallbacks,
+    restore: restore ? restore.line : null
+  };
 }
 
 function readLogs(userData) {
@@ -218,6 +328,10 @@ async function main() {
   const inbox = path.join(root, 'inbox');
   const uncategorized = path.join(root, 'Uncategorized');
   seedProfile(userData, inbox, uncategorized);
+  const seed = seedVectorIndex(userData);
+  console.log(
+    `[smoke] seeded ${seed.collection} with ${seed.docCount} documents (${seed.bytes} bytes compressed)`
+  );
 
   const started = Date.now();
   const child = spawn(opts.exe, opts.args, {
@@ -235,26 +349,24 @@ async function main() {
   });
 
   let dropped = [];
-  let logs = '';
   while (Date.now() - started < opts.timeoutMs && !exitInfo) {
-    logs = readLogs(userData);
-    if (!dropped.length && /Coordinated startup completed successfully/.test(logs)) {
+    const current = readLogs(userData);
+    if (!dropped.length && /Coordinated startup completed successfully/.test(current)) {
       dropped = writeSamples(inbox);
       console.log(
         `[smoke] startup complete after ${Date.now() - started} ms; dropped ${dropped.join(', ')}`
       );
     }
-    const missing = REQUIRED.filter((r) => !r.pattern.test(logs));
-    if (dropped.length && missing.length === 0) {
+    if (dropped.length && evaluateLogs(current, { seed }).missing.length === 0) {
       await sleep(5000); // let in-flight work log any late failure
       break;
     }
     await sleep(1000);
   }
-  logs = readLogs(userData);
+  const logs = readLogs(userData);
   killTree(child);
 
-  const { missing, failures, aiBackend, gpuFallbacks } = evaluateLogs(logs);
+  const { missing, failures, aiBackend, gpuFallbacks, restore } = evaluateLogs(logs, { seed });
   const summary = {
     platform: process.platform,
     arch: process.arch,
@@ -264,6 +376,8 @@ async function main() {
     droppedSamples: dropped,
     aiBackend,
     gpuFallbacks,
+    seededIndex: { collection: seed.collection, docCount: seed.docCount, bytes: seed.bytes },
+    restore,
     missing,
     failures,
     ok: missing.length === 0 && failures.length === 0 && !exitInfo
@@ -290,4 +404,11 @@ if (require.main === module) {
   });
 }
 
-module.exports = { evaluateLogs, gpuFallbackOrFailure };
+module.exports = {
+  evaluateLogs,
+  gpuFallbackOrFailure,
+  buildSeedCollection,
+  seedVectorIndex,
+  restoreWorkerCheck,
+  RESTORE_WORKER_MIN_BYTES
+};
