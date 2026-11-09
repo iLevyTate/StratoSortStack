@@ -1941,6 +1941,20 @@ async function crossDeviceMove(source, dest, options = {}) {
 }
 
 /**
+ * Whether `dest` exists and is a different file than `source` (dev + ino
+ * differ). Stat failures propagate: ENOENT on `dest` means the name is free,
+ * and ENOENT on `source` leaves the rename itself to fail with ENOENT.
+ * @param {string} source
+ * @param {string} dest
+ * @returns {Promise<boolean>}
+ */
+async function isDifferentFile(source, dest) {
+  const destStat = await fs.stat(dest, { bigint: true });
+  const sourceStat = await fs.stat(source, { bigint: true });
+  return destStat.dev !== sourceStat.dev || destStat.ino !== sourceStat.ino;
+}
+
+/**
  * Rename that refuses to replace an existing destination.
  *
  * Node's fs.rename silently REPLACES an occupied destination on every
@@ -1955,9 +1969,14 @@ async function crossDeviceMove(source, dest, options = {}) {
  * Another process creating the name inside the window remains the accepted
  * TOCTOU trade-off.
  *
- * Case-only renames are exempt: on case-insensitive filesystems
- * (win32, default darwin) access(dest) finds the source itself, and
- * renaming a file onto its own name with different casing is valid.
+ * Case-only renames are exempt only when the other-cased name IS the
+ * source: on case-insensitive filesystems (win32, default darwin)
+ * access(dest) finds the source itself, and renaming a file onto its own
+ * name with different casing is valid. darwin volumes can be formatted
+ * case-sensitive (and NTFS directories can opt in), where `A.pdf` may be a
+ * different file than `a.pdf`; so the exemption is confirmed by stat —
+ * destination missing, or same dev + ino as the source — and a different
+ * file there is EEXIST like any other occupant.
  *
  * @param {string} source - Source file path
  * @param {string} dest - Destination file path
@@ -1968,16 +1987,22 @@ async function renameNoReplace(source, dest) {
   const normalizedSource = resolveFsPath(source);
   const normalizedDest = resolveFsPath(dest);
 
-  const isSameFileTarget = isCaseInsensitiveFileSystem()
-    ? normalizedSource.toLowerCase() === normalizedDest.toLowerCase()
-    : normalizedSource === normalizedDest;
+  const identicalPath = normalizedSource === normalizedDest;
+  const caseOnlyRename =
+    !identicalPath &&
+    isCaseInsensitiveFileSystem() &&
+    normalizedSource.toLowerCase() === normalizedDest.toLowerCase();
 
   await withPathLock(normalizedDest, async () => {
-    if (!isSameFileTarget) {
+    if (!identicalPath) {
       let destOccupied = false;
       try {
-        await fs.access(normalizedDest);
-        destOccupied = true;
+        if (caseOnlyRename) {
+          destOccupied = await isDifferentFile(normalizedSource, normalizedDest);
+        } else {
+          await fs.access(normalizedDest);
+          destOccupied = true;
+        }
       } catch (accessError) {
         // Only a confirmed ENOENT means the destination is free. Any other
         // probe failure (EACCES, EPERM, ...) is indistinguishable from an

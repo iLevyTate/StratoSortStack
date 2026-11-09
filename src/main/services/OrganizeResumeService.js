@@ -88,13 +88,18 @@ const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  * Find the moved file under one of the names the live batch handler can
  * pick for `plannedDestination`: the numbered collision walk
  * (`<base>_<N><ext>`, formatNumberedCollisionCandidate) or the UUID
- * fallback (`<base>_<8 hex><ext>`). Returns the first sibling matching the
- * recorded size+mtime, or null.
+ * fallback (`<base>_<8 hex><ext>`). Returns EVERY sibling matching the
+ * recorded size+mtime (minus those in `exclude`), in directory order. The
+ * caller adopts only a unique match: an identical pre-existing copy of the
+ * user's (`report_1.pdf` when the batch used `report_2.pdf`) matches too,
+ * and adopting it would point undo at the user's own file.
  * @param {string} plannedDestination
  * @param {{ size: number, mtimeMs: number }} recorded
- * @returns {Promise<string|null>}
+ * @param {Set<string>} [exclude] - comparison keys (pathKey) of paths other
+ *   ops of the batch already own
+ * @returns {Promise<string[]>}
  */
-async function findMovedSibling(plannedDestination, recorded) {
+async function findMovedSiblings(plannedDestination, recorded, exclude = new Set()) {
   const dir = path.dirname(plannedDestination);
   const ext = path.extname(plannedDestination);
   const base = path.basename(plannedDestination, ext);
@@ -106,14 +111,27 @@ async function findMovedSibling(plannedDestination, recorded) {
   try {
     names = await fs.readdir(dir);
   } catch {
-    return null;
+    return [];
   }
+  /** @type {string[]} */
+  const matches = [];
   for (const name of names) {
     if (!pattern.test(String(name))) continue;
     const candidate = path.join(dir, String(name));
-    if (await matchesRecordedFile(candidate, recorded)) return candidate;
+    if (exclude.has(pathKey(candidate))) continue;
+    if (await matchesRecordedFile(candidate, recorded)) matches.push(candidate);
   }
-  return null;
+  return matches;
+}
+
+/**
+ * Comparison key for a path: resolved, and case-folded on Windows.
+ * @param {string} filePath
+ * @returns {string}
+ */
+function pathKey(filePath) {
+  const resolved = path.resolve(filePath);
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
 }
 
 async function pathExists(
@@ -357,10 +375,32 @@ async function resumeBatch(
         // name after that, and the done mark carrying it is not awaited. A
         // crash in that window leaves the moved file under a sibling name,
         // so look for it there before declaring the op failed.
-        const siblingMatch =
+        const siblingMatches =
           recorded && !(destinationExists && (await matchesRecordedFile(op.destination, recorded)))
-            ? await findMovedSibling(op.destination, recorded)
-            : null;
+            ? await findMovedSiblings(
+                op.destination,
+                recorded,
+                new Set(
+                  batch.operations
+                    .filter(
+                      (/** @type {any} */ other, /** @type {number} */ j) =>
+                        j !== i && other?.status === 'done' && typeof other.destination === 'string'
+                    )
+                    .map((/** @type {any} */ other) => pathKey(other.destination))
+                )
+              )
+            : [];
+        if (siblingMatches.length > 1) {
+          // Size+mtime cannot tell the moved file from an identical copy the
+          // user already had; leave the op failed rather than guess.
+          logger?.warn?.('[RESUME] Ambiguous collision-suffixed match; not adopting any', {
+            batchId: batch.id,
+            index: i,
+            matches: siblingMatches.length,
+            candidates: siblingMatches.map((p) => path.basename(p))
+          });
+        }
+        const siblingMatch = siblingMatches.length === 1 ? siblingMatches[0] : null;
         if (siblingMatch) {
           logger?.info?.('[RESUME] Moved file found under a collision-suffixed name', {
             batchId: batch.id,

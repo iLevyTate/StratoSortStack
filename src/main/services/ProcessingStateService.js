@@ -273,12 +273,22 @@ class ProcessingStateService {
    * would turn a passing hold into permanent loss. Move the bytes aside
    * (rename, else copy); when neither works leave the file exactly as it is
    * and refuse writes until it can be moved (see _releaseShieldedState).
+   *
+   * A journal that reads but does not parse (truncated, wrong shape) gets the
+   * same treatment under `.corrupt.<ts>`: it cannot be resumed from, but its
+   * bytes are the only record of the interrupted batches, so they are kept
+   * before the empty state replaces them. A kept copy is enough there; only
+   * when neither move nor copy works is the live file shielded.
    * @private
    * @param {any} readError
+   * @param {'unreadable' | 'corrupt'} [reason]
    */
-  async _preserveUnreadableState(readError) {
-    const quarantinePath = `${this.statePath}.unreadable.${Date.now()}`;
-    const code = readError?.code || 'read-error';
+  async _preserveUnreadableState(readError, reason = 'unreadable') {
+    const quarantinePath = `${this.statePath}.${reason}.${Date.now()}`;
+    const corrupt = reason === 'corrupt';
+    const code =
+      readError?.code ||
+      (corrupt ? (readError instanceof SyntaxError ? 'INVALID_JSON' : 'invalid') : 'read-error');
     /** @type {'moved' | 'copied' | null} */
     let preserved = null;
     try {
@@ -297,13 +307,15 @@ class ProcessingStateService {
       }
     }
     this.state = this.createEmptyState();
-    if (preserved !== 'moved') {
+    if (preserved === null || (preserved === 'copied' && !corrupt)) {
       // The original is still at the live path: shield it from writes.
       this._shieldedStatePath = quarantinePath;
       this._shieldedCopyMade = preserved === 'copied';
     }
     logger.error(
-      '[ProcessingStateService] Processing state unreadable; starting with an empty state',
+      corrupt
+        ? '[ProcessingStateService] Processing state corrupt; starting with an empty state'
+        : '[ProcessingStateService] Processing state unreadable; starting with an empty state',
       {
         path: this.statePath,
         code,
@@ -312,8 +324,11 @@ class ProcessingStateService {
       }
     );
     const kept = path.basename(quarantinePath);
-    const message =
-      preserved === 'moved'
+    const message = corrupt
+      ? preserved
+        ? `The organize and analysis journal was damaged (${code}) and was reset. The old file was kept as ${kept}. Interrupted organize batches will not resume.`
+        : `The organize and analysis journal was damaged (${code}). The file was left untouched and this session's progress stays in memory until it can be set aside.`
+      : preserved === 'moved'
         ? `The organize and analysis journal could not be read (${code}) and was set aside as ${kept}. Interrupted organize batches will not resume.`
         : preserved === 'copied'
           ? `The organize and analysis journal could not be read (${code}). A copy was kept as ${kept}; the original is left in place and this session's progress stays in memory until it can be set aside.`
@@ -329,6 +344,7 @@ class ProcessingStateService {
           detail: {
             path: this.statePath,
             code,
+            reason,
             preserved,
             quarantinePath: preserved ? quarantinePath : null,
             error: readError?.message || null
@@ -464,13 +480,10 @@ class ProcessingStateService {
       if (isNotFoundError(error)) {
         this.state = this.createEmptyState();
       } else if (error instanceof SyntaxError || error?.code === 'INVALID_PROCESSING_STATE_SHAPE') {
-        logger.warn(
-          '[ProcessingStateService] Corrupted processing state detected, resetting file',
-          {
-            error: error?.message
-          }
-        );
-        this.state = this.createEmptyState();
+        // Keep the damaged bytes (rename, else copy) before the empty
+        // state is written over the live path; if neither works the file
+        // is shielded and the save below is a no-op.
+        await this._preserveUnreadableState(error, 'corrupt');
         try {
           await this._saveStateInternal();
         } catch (persistError) {

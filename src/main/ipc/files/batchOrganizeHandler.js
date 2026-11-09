@@ -1489,8 +1489,9 @@ function isCriticalFileError(error) {
  * becomes `success: false, rolledBack: true`; an op whose restore failed
  * keeps `success: true` (the file really is at its destination) and gains
  * `rollbackFailed: true`. A completed op that never pushed its row (it
- * finished while the failing op was already rolling back) gets one. Mutates
- * the rows array in place.
+ * finished while the failing op was already rolling back) gets one. Every
+ * success row for a source is rewritten, so a duplicate op's skip row cannot
+ * outlive the restore. Mutates the rows array in place.
  * @param {any} rollbackOutcome - executeRollback's return value
  * @param {Array<{ index: number, source: string, destination: string, rollbackAction?: string }>} completedOperations
  * @param {string|null} rollbackReason
@@ -1513,38 +1514,38 @@ function reconcileRolledBackResults(rollbackOutcome, completedOperations, rollba
   for (const completed of completedOperations) {
     const outcome = outcomeBySource.get(completed.source);
     if (!outcome) continue;
-    const rowIndex = rows.findIndex(
-      (r) => r && r.success === true && r.source === completed.source
-    );
+    // Every success row for this source, not just the first: a duplicate op
+    // in the same batch (same source -> dest) hits the idempotency skip and
+    // pushes its own success row, and leaving either row at success: true
+    // would count a restored file as organized.
+    /** @type {number[]} */
+    const rowIndexes = [];
+    rows.forEach((r, idx) => {
+      if (r && r.success === true && r.source === completed.source) rowIndexes.push(idx);
+    });
+    if (!outcome.success) unrestored.push(completed);
+    /** @param {Record<string, any>} row */
+    const rewrite = (row) =>
+      outcome.success
+        ? { ...row, success: false, rolledBack: true, error: rollbackReason || 'Batch rolled back' }
+        : { ...row, success: true, rollbackFailed: true, rollbackError: outcome.error };
+    if (rowIndexes.length > 0) {
+      for (const idx of rowIndexes) rows[idx] = rewrite(rows[idx]);
+      continue;
+    }
     // An op that completed while the failing op was already rolling the
     // batch back never pushed its row; every op that changed the disk
     // still gets one.
-    const row =
-      rowIndex !== -1
-        ? rows[rowIndex]
-        : {
-            source: completed.source,
-            destination: completed.destination,
-            operation: 'move',
-            ...(completed.rollbackAction === 'restore_duplicate_source'
-              ? { skipped: true, reason: 'duplicate' }
-              : {})
-          };
-    /** @type {Record<string, any>} */
-    let rewritten;
-    if (outcome.success) {
-      rewritten = {
-        ...row,
-        success: false,
-        rolledBack: true,
-        error: rollbackReason || 'Batch rolled back'
-      };
-    } else {
-      unrestored.push(completed);
-      rewritten = { ...row, success: true, rollbackFailed: true, rollbackError: outcome.error };
-    }
-    if (rowIndex !== -1) rows[rowIndex] = rewritten;
-    else rows.push(rewritten);
+    rows.push(
+      rewrite({
+        source: completed.source,
+        destination: completed.destination,
+        operation: 'move',
+        ...(completed.rollbackAction === 'restore_duplicate_source'
+          ? { skipped: true, reason: 'duplicate' }
+          : {})
+      })
+    );
   }
   return unrestored;
 }

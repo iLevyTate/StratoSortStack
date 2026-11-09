@@ -4,7 +4,7 @@
  * Stricter than runtime logging sanitization: extra sensitive keys and inline secret patterns.
  */
 
-const { sanitizeLogData } = require('./logger');
+const { sanitizeLogData, redactInlineSecrets } = require('./logger');
 
 /**
  * Keys to strip entirely on export. Substring (not anchored) match so
@@ -19,23 +19,9 @@ const { sanitizeLogData } = require('./logger');
 const EXPORT_SENSITIVE_KEY_PATTERN =
   /(token|password|passwd|secret|apikey|api[_-]?key|authorization|auth[_-]?header|credential|priv(ate)?[_-]?key|access[_-]?token|refresh[_-]?token|session[_-]?key|sessionid|session_id|cookie|set-cookie|csrf|xsrf|otp|pin|ssn|client[_-]?secret|id[_-]?token|jwt|bearer)/i;
 
-/**
- * Remove common token shapes from free-form text (JWT, Bearer, API-style prefixes).
- * @param {string} str
- * @returns {string}
- */
-function redactInlineSecrets(str) {
-  if (typeof str !== 'string' || str.length === 0) {
-    return str;
-  }
-  let s = str;
-  s = s.replace(/\beyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\b/g, '[REDACTED_JWT]');
-  s = s.replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b/gi, 'Bearer [REDACTED]');
-  s = s.replace(/\bAKIA[0-9A-Z]{16}\b/g, '[REDACTED]');
-  s = s.replace(/\bsk-(?:live|proj|test)-[A-Za-z0-9]{10,}\b/gi, '[REDACTED]');
-  s = s.replace(/\bsk-[A-Za-z0-9]{10,}\b/g, '[REDACTED]');
-  return s;
-}
+// Inline token shapes (JWT, Bearer, AWS, sk- / sk-ant- keys, secret-named
+// key=value pairs) come from the logger's redactInlineSecrets, which
+// sanitizeLogData also applies, so runtime logs and exports share one set.
 
 // A key that could carry a path (a separator) or a forged line (a control
 // character); the same test the logger applies to keys it writes.
