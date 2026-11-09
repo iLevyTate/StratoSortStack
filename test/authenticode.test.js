@@ -16,7 +16,8 @@ const {
   parseAuthenticodeOutput,
   readAuthenticode,
   readAuthenticodeSync,
-  subjectHasOrganization
+  subjectHasOrganization,
+  windowsPowerShellEnv
 } = require('../src/main/utils/authenticode');
 
 const MS_SUBJECT =
@@ -133,12 +134,17 @@ describe('signature script and ConstrainedLanguage mode', () => {
       '%s: reads a Microsoft-signed system file as Valid / O=Microsoft Corporation',
       (_mode, prefix) => {
         const result = spawnSync(powershellPath(), encodedCommandArgs(prefix + SIGNATURE_SCRIPT), {
-          env: { ...process.env, [TARGET_ENV_VAR]: notepad },
+          // Same scrubbed environment the product uses: a runner step launched
+          // from PowerShell 7 exports a PSModulePath that breaks 5.1's signature cmdlets.
+          env: windowsPowerShellEnv(process.env, { [TARGET_ENV_VAR]: notepad }),
           encoding: 'utf8',
           windowsHide: true,
           timeout: 60000
         });
-        expect(result.status).toBe(0);
+        expect({ status: result.status, stderr: (result.stderr || '').slice(0, 600) }).toEqual({
+          status: 0,
+          stderr: expect.any(String)
+        });
         const info = parseAuthenticodeOutput(result.stdout);
         expect(info).toMatchObject({ status: 'Valid' });
         expect(evaluateMicrosoftSignature(info)).toMatchObject({ ok: true, reason: 'valid' });

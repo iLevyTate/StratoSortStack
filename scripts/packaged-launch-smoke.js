@@ -46,15 +46,74 @@ const REQUIRED = [
   }
 ];
 
-// Signatures of the failures this check exists to catch.
+// Signatures of the failures this check exists to catch. NoBinaryFoundError is
+// judged separately by gpuFallbackOrFailure: a GPU backend the machine cannot
+// run (Vulkan on a Hyper-V virtual GPU) is expected when the engine then loads
+// on the CPU, but the CPU floor failing is exactly the clean-PC break of 5.1.2.
 const FORBIDDEN = [
-  /NoBinaryFoundError/,
   /Cannot find module/,
   /worker thread error/i,
   /ERR_DLOPEN_FAILED/,
   /Integrity check failed/,
   /Coordinated startup failed/
 ];
+
+const GPU_BACKENDS = new Set(['vulkan', 'cuda', 'metal']);
+
+function parseJsonLines(logs) {
+  const out = [];
+  for (const line of logs.split('\n')) {
+    if (!line.startsWith('{')) continue;
+    try {
+      out.push({ line, entry: JSON.parse(line) });
+    } catch {
+      /* not a structured line */
+    }
+  }
+  return out;
+}
+
+/**
+ * Split NoBinaryFoundError lines into tolerated GPU fallbacks and failures.
+ * A line is a fallback only when it names a GPU backend and the engine's
+ * "Llama backend selected" line reports a backend that did load.
+ */
+function gpuFallbackOrFailure(logs) {
+  const parsed = parseJsonLines(logs);
+  const selected = parsed.find(
+    ({ entry }) => /\[LlamaService\] Llama backend selected/.test(entry.msg || '') && entry.actual
+  );
+  const fallbacks = [];
+  const failures = [];
+  const structured = new Map(parsed.map((p) => [p.line, p.entry]));
+  for (const line of logs.split('\n')) {
+    if (!/NoBinaryFoundError/.test(line)) continue;
+    const entry = structured.get(line);
+    // The selection summary lists every attempt, failed ones included.
+    if (selected && entry === selected.entry) continue;
+    const backend = entry && typeof entry.backend === 'string' ? entry.backend : null;
+    if (selected && backend && GPU_BACKENDS.has(backend)) {
+      fallbacks.push({ backend, loaded: selected.entry.actual });
+    } else {
+      failures.push({ signature: String(/NoBinaryFoundError/), line: line.slice(0, 400) });
+    }
+  }
+  return { fallbacks, failures, selectedBackend: selected ? selected.entry.actual : null };
+}
+
+/** The verdict on one run's logs. Pure, so it is unit-tested on recorded lines. */
+function evaluateLogs(logs) {
+  const missing = REQUIRED.filter((r) => !r.pattern.test(logs)).map((r) => r.id);
+  const gpu = gpuFallbackOrFailure(logs);
+  const failures = [
+    ...gpu.failures,
+    ...FORBIDDEN.filter((p) => p.test(logs)).map((p) => {
+      const line = logs.split('\n').find((l) => p.test(l)) || '';
+      return { signature: String(p), line: line.slice(0, 400) };
+    })
+  ];
+  return { missing, failures, aiBackend: gpu.selectedBackend, gpuFallbacks: gpu.fallbacks };
+}
 
 function readLogs(userData) {
   const dir = path.join(userData, 'logs');
@@ -195,11 +254,7 @@ async function main() {
   logs = readLogs(userData);
   killTree(child);
 
-  const missing = REQUIRED.filter((r) => !r.pattern.test(logs)).map((r) => r.id);
-  const failures = FORBIDDEN.filter((p) => p.test(logs)).map((p) => {
-    const line = logs.split('\n').find((l) => p.test(l)) || '';
-    return { signature: String(p), line: line.slice(0, 400) };
-  });
+  const { missing, failures, aiBackend, gpuFallbacks } = evaluateLogs(logs);
   const summary = {
     platform: process.platform,
     arch: process.arch,
@@ -207,6 +262,8 @@ async function main() {
     elapsedMs: Date.now() - started,
     exitedEarly: exitInfo,
     droppedSamples: dropped,
+    aiBackend,
+    gpuFallbacks,
     missing,
     failures,
     ok: missing.length === 0 && failures.length === 0 && !exitInfo
@@ -226,7 +283,11 @@ async function main() {
   process.exit(summary.ok ? 0 : 1);
 }
 
-main().catch((error) => {
-  console.error(`[smoke] ${error.stack || error.message}`);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(`[smoke] ${error.stack || error.message}`);
+    process.exit(1);
+  });
+}
+
+module.exports = { evaluateLogs, gpuFallbackOrFailure };
