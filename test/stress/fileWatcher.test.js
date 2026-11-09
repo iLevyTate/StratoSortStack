@@ -14,6 +14,8 @@ const { measureMemory, forceGC, createTimer, delay } = require('../utils/testUti
 
 // Mock fs
 const mockFs = {
+  lstat: jest.fn(),
+  realpath: jest.fn(),
   stat: jest.fn(),
   access: jest.fn(),
   mkdir: jest.fn(),
@@ -114,6 +116,9 @@ describe('File Watcher Stress Tests', () => {
     jest.clearAllMocks();
 
     // Reset fs mocks
+    // Synthetic Downloads files are regular files with no directory links.
+    mockFs.lstat.mockResolvedValue({ isSymbolicLink: () => false });
+    mockFs.realpath.mockImplementation(async (filePath) => filePath);
     mockFs.stat.mockResolvedValue({ isDirectory: () => true, size: 1024 });
     mockFs.access.mockResolvedValue(undefined);
     mockFs.mkdir.mockResolvedValue(undefined);
