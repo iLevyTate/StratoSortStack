@@ -88,6 +88,26 @@ function sendOperationProgress(getMainWindow, payload, { stillWanted } = {}) {
 }
 
 /**
+ * Send an operation's closing report now, outside the throttle. The operation
+ * ends before the window closes, so a held report of it would be dropped by
+ * its own stillWanted; listeners that refresh on the closing report would
+ * never hear that it finished. Takes the place of a held report of the same
+ * batch.
+ * @param {GetMainWindowFn} getMainWindow
+ * @param {*} payload
+ */
+function flushOperationProgress(getMainWindow, payload) {
+  const held = _pendingProgressPayload;
+  if (held && (held === payload || (held.batchId && held.batchId === payload?.batchId))) {
+    _pendingGetMainWindow = null;
+    _pendingProgressPayload = null;
+    _pendingStillWanted = null;
+  }
+  _lastProgressSendMs = Date.now();
+  _doSend(getMainWindow, payload);
+}
+
+/**
  * Deliver batch results to the renderer in fixed-size chunks.
  * @param {GetMainWindowFn} getMainWindow
  * @param {string} batchId
@@ -179,6 +199,7 @@ function sendFileOperationBatchComplete(getMainWindow, { operation, files, desti
 
 module.exports = {
   sendOperationProgress,
+  flushOperationProgress,
   sendChunkedResults,
   sendFileComplete,
   sendFileOperationBatchComplete

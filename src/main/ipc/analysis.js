@@ -23,7 +23,11 @@ const {
 } = require('./analysisUtils');
 const BatchAnalysisService = require('../services/BatchAnalysisService');
 const { claimUserAnalysis, withUserAnalysis } = require('../analysis/userAnalysisInFlight');
-const { sendOperationProgress, sendFileComplete } = require('./files/batchProgressReporter');
+const {
+  sendOperationProgress,
+  flushOperationProgress,
+  sendFileComplete
+} = require('./files/batchProgressReporter');
 const { createMediaAnalyzerAdapter } = require('../services/mediaAnalyzerAdapter');
 const { getInstance: getWhisperService } = require('../services/WhisperService');
 
@@ -1325,6 +1329,13 @@ function registerAnalysisIpc(servicesOrParams) {
           /** @type {() => undefined} */ (() => undefined)
         );
         const batchResult = await batchPromise;
+
+        // The last report is usually still held by the throttle, and is dropped
+        // once this run is unregistered below. The search and embedding counts
+        // refresh on it, so a run that reached its end sends it itself.
+        if (lastProgressPayload && !runState.cancelled && typeof getMainWindow === 'function') {
+          flushOperationProgress(getMainWindow, lastProgressPayload);
+        }
 
         // Whole-batch wall-clock is used for the completion log only.
         // Per-file processing samples are recorded in onFileComplete so the

@@ -18,6 +18,7 @@ const WINDOW_MS = BATCH.PROGRESS_UPDATE_INTERVAL;
 describe('a progress report held back by the throttle', () => {
   let safeSend;
   let sendOperationProgress;
+  let flushOperationProgress;
   const getMainWindow = () => ({ isDestroyed: () => false, webContents: {} });
   const sentPayloads = () => safeSend.mock.calls.map((call) => call[2]);
 
@@ -25,7 +26,10 @@ describe('a progress report held back by the throttle', () => {
     jest.useFakeTimers();
     jest.resetModules();
     ({ safeSend } = require('../src/main/ipc/ipcWrappers'));
-    ({ sendOperationProgress } = require('../src/main/ipc/files/batchProgressReporter'));
+    ({
+      sendOperationProgress,
+      flushOperationProgress
+    } = require('../src/main/ipc/files/batchProgressReporter'));
     // The first report of a window is sent at once; the next one is held.
     sendOperationProgress(getMainWindow, { completed: 1 });
     jest.advanceTimersByTime(10);
@@ -54,6 +58,22 @@ describe('a progress report held back by the throttle', () => {
 
     expect(stillWanted).toHaveBeenCalledTimes(1);
     expect(sentPayloads()).toEqual([{ completed: 1 }, { completed: 2 }]);
+  });
+
+  test('the closing report of an operation is sent at once, and once', () => {
+    // The operation ends inside the window, so its check answers false and
+    // the held report is dropped. Listeners that refresh on the closing
+    // report (search and embedding counts) never heard that it finished.
+    let running = true;
+    const closing = { batchId: 'b1', completed: 2, total: 2 };
+    sendOperationProgress(getMainWindow, closing, { stillWanted: () => running });
+
+    flushOperationProgress(getMainWindow, closing);
+    running = false;
+
+    expect(sentPayloads()).toEqual([{ completed: 1 }, closing]);
+    jest.advanceTimersByTime(WINDOW_MS);
+    expect(sentPayloads()).toEqual([{ completed: 1 }, closing]);
   });
 
   test('is dropped when its operation was stopped inside the window', () => {

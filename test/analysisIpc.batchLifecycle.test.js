@@ -56,7 +56,8 @@ jest.mock('../src/main/services/BatchAnalysisService', () =>
 );
 jest.mock('../src/main/ipc/files/batchProgressReporter', () => ({
   sendFileComplete: jest.fn(),
-  sendOperationProgress: jest.fn()
+  sendOperationProgress: jest.fn(),
+  flushOperationProgress: jest.fn()
 }));
 
 const mockMediaAnalyzer = jest.fn();
@@ -70,7 +71,10 @@ const { EventEmitter } = require('events');
 const fsPromises = require('fs').promises;
 const registerAnalysisIpc = require('../src/main/ipc/analysis');
 const { validateFileOperationPath } = require('../src/shared/pathSanitization');
-const { sendOperationProgress } = require('../src/main/ipc/files/batchProgressReporter');
+const {
+  sendOperationProgress,
+  flushOperationProgress
+} = require('../src/main/ipc/files/batchProgressReporter');
 
 const IPC_CHANNELS = {
   ANALYSIS: {
@@ -310,6 +314,31 @@ describe('progress of a batch that is on its way when the batch ends', () => {
     await batch.end();
 
     expect(stillWanted(0)).toBe(false);
+  });
+
+  test('a batch that ran to its end sends its last report itself', async () => {
+    const batch = await startOpenBatch();
+    batch.options.onProgress({ completed: 2, total: 2 });
+
+    await batch.end();
+
+    expect(flushOperationProgress).toHaveBeenCalledTimes(1);
+    expect(flushOperationProgress.mock.calls[0][1]).toMatchObject({
+      type: 'batch_analyze',
+      batchId: batch.batchId,
+      completed: 2,
+      total: 2
+    });
+  });
+
+  test('a cancelled batch does not', async () => {
+    const batch = await startOpenBatch();
+    batch.options.onProgress({ completed: 1, total: 2 });
+
+    await cancelBatch(batch.batchId);
+    await batch.end();
+
+    expect(flushOperationProgress).not.toHaveBeenCalled();
   });
 });
 
