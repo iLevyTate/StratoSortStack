@@ -567,6 +567,122 @@ describe('VisionService', () => {
         expect(service.hasInFlightRequests()).toBe(false);
       });
 
+      describe('two images at once on the one-request runtime', () => {
+        /**
+         * Requests stay open until the test ends them, as on a runtime that
+         * is still working. `sent` lists them in the order they went out.
+         */
+        function heldRequests() {
+          const http = require('http');
+          const sent = [];
+          const spy = jest.spyOn(http, 'request').mockImplementation((options, callback) => {
+            const req = new EventEmitter();
+            const entry = { open: false };
+            req.setTimeout = jest.fn();
+            req.write = jest.fn();
+            req.destroy = jest.fn((error) => {
+              entry.open = false;
+              if (error) req.emit('error', error);
+            });
+            req.end = jest.fn(() => {
+              entry.open = true;
+            });
+            entry.timeOut = () => {
+              entry.open = false;
+              req.emit('error', new Error('Vision request timed out'));
+            };
+            entry.answer = (content) => {
+              entry.open = false;
+              const res = new EventEmitter();
+              res.statusCode = 200;
+              callback(res);
+              res.emit('data', JSON.stringify({ choices: [{ message: { content } }] }));
+              res.emit('end');
+            };
+            sent.push(entry);
+            return req;
+          });
+          return { sent, spy };
+        }
+
+        const turn = () => new Promise((resolve) => setImmediate(resolve));
+
+        test('a request that times out does not restart the runtime under the other image', async () => {
+          await startReadyServer();
+          const { sent, spy } = heldRequests();
+          /** Requests on the wire each time the runtime was killed. */
+          const openAtKill = [];
+          const runningProcess = () => {
+            const proc = exitingProcess();
+            proc.kill = jest.fn(() => {
+              openAtKill.push(sent.filter((entry) => entry.open).length);
+            });
+            return proc;
+          };
+          service._process = runningProcess();
+          // The restart: the next image finds no runtime and starts one.
+          service._ensureServer = jest.fn(async () => {
+            if (!service._process) {
+              service._process = runningProcess();
+              service._port = 4321;
+            }
+          });
+
+          try {
+            const first = service.analyzeImage(image).catch((error) => error);
+            const second = service.analyzeImage(image).catch((error) => error);
+            await turn();
+            expect(service.hasInFlightRequests()).toBe(true);
+
+            sent[0].timeOut();
+            expect((await first).message).toBe('Vision request timed out');
+
+            for (let i = 0; i < 5 && sent.length < 2; i += 1) await turn();
+            sent[sent.length - 1].answer('a cat');
+
+            expect(openAtKill).toEqual([0]);
+            expect(await second).toEqual({ response: 'a cat' });
+            expect(service.hasInFlightRequests()).toBe(false);
+          } finally {
+            spy.mockRestore();
+          }
+        });
+
+        test('an image cancelled while it waits its turn leaves the runtime and the other image alone', async () => {
+          await startReadyServer();
+          service._ensureServer = jest.fn().mockResolvedValue(undefined);
+          service.shutdown = jest.fn().mockResolvedValue(undefined);
+          const { sent, spy } = heldRequests();
+          const controller = new AbortController();
+
+          try {
+            const first = service.analyzeImage(image);
+            const second = service
+              .analyzeImage({ ...image, signal: controller.signal })
+              .catch((error) => error);
+            await turn();
+
+            controller.abort();
+            const cancelled = await second;
+            expect(cancelled.name).toBe('AbortError');
+            expect(sent).toHaveLength(1);
+            expect(service.shutdown).not.toHaveBeenCalled();
+
+            sent[0].answer('a dog');
+            await expect(first).resolves.toEqual({ response: 'a dog' });
+
+            // The cancelled image gave its turn back: the next one runs.
+            const third = service.analyzeImage(image);
+            for (let i = 0; i < 5 && sent.length < 2; i += 1) await turn();
+            sent[1].answer('a bird');
+            await expect(third).resolves.toEqual({ response: 'a bird' });
+            expect(service.hasInFlightRequests()).toBe(false);
+          } finally {
+            spy.mockRestore();
+          }
+        });
+      });
+
       test('a request that began before the runtime registered is held once and released once', async () => {
         const end = service._beginRequest();
         expect(manager.acquireRef).not.toHaveBeenCalled();
