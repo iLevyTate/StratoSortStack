@@ -27,11 +27,11 @@ import {
   Play,
   Save,
   Search,
-  Sparkles,
   Trash2,
   Undo2,
   Wrench,
-  X
+  X,
+  Lightbulb
 } from 'lucide-react';
 import { useNotification } from '../../contexts/NotificationContext';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
@@ -78,7 +78,7 @@ const NO_CONTEXTS = Object.freeze([]);
 const ACTIVITY_ICONS = Object.freeze({
   analyze: FileSearch,
   check: CheckCircle2,
-  sparkles: Sparkles,
+  lightbulb: Lightbulb,
   folder: FolderInput,
   eye: Eye,
   cpu: Cpu,

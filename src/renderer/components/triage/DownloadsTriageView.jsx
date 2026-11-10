@@ -5,10 +5,10 @@ import {
   FolderOpen,
   EyeOff,
   Play,
-  Sparkles,
   AlertTriangle,
   Filter,
-  Download
+  Download,
+  ScanSearch
 } from 'lucide-react';
 import Modal, { ConfirmModal } from '../ui/Modal';
 import Button from '../ui/Button';
@@ -765,7 +765,7 @@ export default function DownloadsTriageView({ isOpen, onClose }) {
                   onClick={handleDeepScan}
                   disabled={isDeepScanning}
                   isLoading={isDeepScanning}
-                  leftIcon={<Sparkles className="w-4 h-4" />}
+                  leftIcon={<ScanSearch className="w-4 h-4" />}
                 >
                   {`Deep scan ${buckets.ambiguous.length}`}
                 </Button>

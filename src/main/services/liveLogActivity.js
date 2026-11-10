@@ -433,7 +433,7 @@ const folderSuggestion = (input) => {
   const file = baseName(input.data?.fileName);
   return activity(
     'folder-suggestion',
-    'sparkles',
+    'lightbulb',
     'info',
     file ? `Suggested a new folder "${folder}" for ${file}` : `Suggested a new folder "${folder}"`,
     file

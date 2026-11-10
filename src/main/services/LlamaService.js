@@ -1754,7 +1754,8 @@ class LlamaService extends EventEmitter {
         }
       }
 
-      const loadOptions = this._loadOptionsBesideVisionBatch(modelType);
+      const loadOptions =
+        this._loadOptionsBesideVisionBatch(modelType) || this._loadOptionsBesideText(modelType);
       // A text request that reaches here during a vision batch is either the
       // batch's own work or one that already waited out the batch once. Let
       // the memory manager evict the runtime between images if the text model
@@ -1766,7 +1767,9 @@ class LlamaService extends EventEmitter {
         // Set after the load, too: a batch that ended while this load was in
         // flight could not unload a model that was not registered yet, so the
         // next embedding load must still move it back to the GPU.
-        if (loadOptions?.cpuByDesign) this._embeddingCpuForBatch = true;
+        if (loadOptions?.cpuByDesign && loadOptions.besideResident === VISION_RUNTIME_MEMORY_TYPE) {
+          this._embeddingCpuForBatch = true;
+        }
         return context;
       } finally {
         restorePin?.();
@@ -4232,6 +4235,29 @@ class LlamaService extends EventEmitter {
     } catch {
       return true;
     }
+  }
+
+  /**
+   * Load options for the embedding model while the text model holds a GPU
+   * too small for both (a 7B text model on a 6 GB card). Without them every
+   * file evicted the text model to load the ~200 MB embedding model and then
+   * reloaded the text model, about 4-5 s per file. The embedding model runs
+   * on the CPU beside it instead, without the "running on CPU" warning; it
+   * moves to the GPU again the next time it loads with room to spare.
+   * @private
+   * @param {string} modelType
+   * @returns {Record<string, any> | undefined}
+   */
+  _loadOptionsBesideText(modelType) {
+    if (modelType !== 'embedding') return undefined;
+    if (!this._gpuBackend || this._gpuBackend === 'cpu') return undefined;
+    const memory = this._modelMemoryManager;
+    if (!memory?.getLoadedContext?.('text') || memory.getLoadedContext?.('embedding')) {
+      return undefined;
+    }
+    // Both fit on the GPU: load the embedding model there as usual.
+    if (memory.canLoadModel?.('embedding') !== false) return undefined;
+    return { gpuLayersOverride: 0, besideResident: 'text', keepBeside: true, cpuByDesign: true };
   }
 
   /**

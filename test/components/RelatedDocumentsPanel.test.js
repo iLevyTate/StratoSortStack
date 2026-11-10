@@ -10,7 +10,7 @@ import RelatedDocumentsPanel from '../../src/renderer/components/search/RelatedD
 jest.mock('lucide-react', () => {
   const React = require('react');
   const I = (n) => (p) => React.createElement('span', { 'data-icon': n, ...p });
-  return { Link: I('link'), Sparkles: I('sparkles'), Layers: I('layers'), X: I('x') };
+  return { Link: I('link'), Tags: I('tags'), Layers: I('layers'), X: I('x') };
 });
 
 jest.mock('../../src/renderer/components/ui/FileIcon', () => {

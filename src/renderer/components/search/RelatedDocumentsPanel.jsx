@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import PropTypes from 'prop-types';
 import { useSelector } from 'react-redux';
-import { Link, Sparkles, Layers, X } from 'lucide-react';
+import { Link, Layers, X, Tags } from 'lucide-react';
 import Button from '../ui/Button';
 import { Heading, Text } from '../ui/Typography';
 import FileIcon from '../ui/FileIcon';
@@ -20,7 +20,7 @@ const logger = createLogger('RelatedDocumentsPanel');
 const REASON_META = {
   shared_concepts: {
     label: 'Shared concepts',
-    Icon: Sparkles,
+    Icon: Tags,
     iconClass: 'text-stratosort-indigo'
   },
   content_similarity: {

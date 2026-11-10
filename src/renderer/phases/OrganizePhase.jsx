@@ -18,9 +18,9 @@ import {
   BarChart3,
   CheckCircle2,
   Inbox,
-  Sparkles,
   AlertTriangle,
-  FileText
+  FileText,
+  FolderInput
 } from 'lucide-react';
 import { ActionBar, Inline, Stack } from '../components/layout';
 import {
@@ -847,7 +847,7 @@ function OrganizePhase() {
                       'Organizing...'
                     ) : (
                       <>
-                        <Sparkles className="w-5 h-5 mr-2" />
+                        <FolderInput className="w-5 h-5 mr-2" />
                         <span>
                           {selectedFiles.size > 0
                             ? `Move ${selectedFiles.size} selected file${selectedFiles.size !== 1 ? 's' : ''}`

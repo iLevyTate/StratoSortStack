@@ -21,6 +21,7 @@ const {
   getFolderCategories
 } = require('./analysisUtils');
 const BatchAnalysisService = require('../services/BatchAnalysisService');
+const { claimUserAnalysis, withUserAnalysis } = require('../analysis/userAnalysisInFlight');
 const { sendOperationProgress, sendFileComplete } = require('./files/batchProgressReporter');
 const { createMediaAnalyzerAdapter } = require('../services/mediaAnalyzerAdapter');
 const { getInstance: getWhisperService } = require('../services/WhisperService');
@@ -554,7 +555,9 @@ function registerAnalysisIpc(servicesOrParams) {
     schema: analyzeFilePayloadSchema,
     handler: (event, payload) => {
       const { filePath, namingOverride } = normalizeAnalyzeFilePayload(payload);
-      return performDocumentAnalysis(filePath, event?.abortSignal, namingOverride);
+      return withUserAnalysis(filePath, () =>
+        performDocumentAnalysis(filePath, event?.abortSignal, namingOverride)
+      );
     }
   });
 
@@ -674,7 +677,9 @@ function registerAnalysisIpc(servicesOrParams) {
     schema: analyzeFilePayloadSchema,
     handler: (event, payload) => {
       const { filePath, namingOverride } = normalizeAnalyzeFilePayload(payload);
-      return performImageAnalysis(filePath, event?.abortSignal, namingOverride);
+      return withUserAnalysis(filePath, () =>
+        performImageAnalysis(filePath, event?.abortSignal, namingOverride)
+      );
     }
   });
 
@@ -800,7 +805,9 @@ function registerAnalysisIpc(servicesOrParams) {
     schema: analyzeFilePayloadSchema,
     handler: (event, payload) => {
       const { filePath, namingOverride } = normalizeAnalyzeFilePayload(payload);
-      return performMediaAnalysis(filePath, event?.abortSignal, namingOverride);
+      return withUserAnalysis(filePath, () =>
+        performMediaAnalysis(filePath, event?.abortSignal, namingOverride)
+      );
     }
   });
 
@@ -982,6 +989,9 @@ function registerAnalysisIpc(servicesOrParams) {
         }
       }
 
+      // The smart-folder watcher defers these files until the batch is done,
+      // so a file it also sees is not analyzed twice at once.
+      const releaseUserAnalysis = claimUserAnalysis(validatedPaths);
       try {
         // BatchAnalysisService.analyzeFiles' JSDoc enumerates only a subset of
         // the options it consumes and elides successful/cancelled from its
@@ -1220,6 +1230,7 @@ function registerAnalysisIpc(servicesOrParams) {
           batchId
         };
       } finally {
+        releaseUserAnalysis();
         removeAbortListener?.();
         activeBatchRuns.delete(batchId);
       }

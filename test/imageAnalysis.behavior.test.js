@@ -612,6 +612,9 @@ describe('Image Analysis Behavior', () => {
     expect(result.category).toBe('Financial');
     expect(result.analysisWarning).toMatch(/parse json|empty response/i);
     expect(result.reason).not.toBe('AI engine failed');
+    // Only what OCR text could tell: a later analysis must try vision again
+    // instead of getting this back from the cache.
+    expect(mockCacheInstance.set).not.toHaveBeenCalled();
   });
 
   test('the OCR/text fallback carries the caller abort signal to the text request', async () => {

@@ -13,6 +13,13 @@ import { selectRedactPaths } from '../../store/selectors';
 const ITEM_HEIGHT = UI_VIRTUALIZATION.TARGET_FOLDER_ITEM_HEIGHT;
 const VIRTUALIZATION_THRESHOLD = 20;
 
+// Descriptions are shown inside curly quotes; drop any quotes the user typed
+// around the text so it never reads ""like this"".
+export const unquoteDescription = (text) =>
+  String(text || '')
+    .trim()
+    .replace(/^[s"'“”‘’]+|[s"'“”‘’]+$/g, '');
+
 const getListHeight = (folderCount, viewportHeight) => {
   const maxFraction = folderCount <= 10 ? 0.35 : 0.45;
   const contentHeight = folderCount * ITEM_HEIGHT;
@@ -25,26 +32,32 @@ const FolderItem = memo(function FolderItem({ folder, defaultLocation, style }) 
   // PERF: Use memoized selector instead of inline Boolean coercion
   const redactPaths = useSelector(selectRedactPaths);
   const displayPath = formatDisplayPath(fullPath, { redact: redactPaths, segments: 2 });
+  const description = unquoteDescription(folder.description);
 
   return (
-    <div style={style} className="p-2">
+    <div style={style} className="p-2 min-w-0">
       <Card variant="default" className="h-full p-4 flex flex-col gap-compact">
         <Text variant="body" className="font-semibold text-system-gray-900 break-words">
           {folder.name}
         </Text>
-        <div className="flex items-center gap-compact text-system-gray-700">
-          <Folder className="w-4 h-4 text-stratosort-blue flex-shrink-0" />
-          <Text variant="small" className="break-words">
+        <div className="flex items-start gap-compact text-system-gray-700 min-w-0">
+          <Folder className="w-4 h-4 mt-0.5 text-stratosort-blue flex-shrink-0" />
+          {/* min-w-0 lets the flex item shrink; break-all wraps paths, which have no spaces */}
+          <Text
+            variant="small"
+            className="min-w-0 break-all"
+            title={redactPaths ? undefined : fullPath}
+          >
             {displayPath}
           </Text>
         </div>
-        {folder.description && (
+        {description && (
           <Text
             as="div"
             variant="tiny"
             className="text-system-gray-600 bg-stratosort-blue/5 p-2 rounded-lg italic leading-relaxed break-words mt-auto"
           >
-            &ldquo;{folder.description}&rdquo;
+            &ldquo;{description}&rdquo;
           </Text>
         )}
       </Card>

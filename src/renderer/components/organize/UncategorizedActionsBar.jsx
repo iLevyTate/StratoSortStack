@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import PropTypes from 'prop-types';
-import { FolderPlus, RefreshCw, Sparkles } from 'lucide-react';
+import { FolderPlus, RefreshCw, Lightbulb } from 'lucide-react';
 import { Button } from '../ui';
 import { Text } from '../ui/Typography';
 import Card from '../ui/Card';
@@ -245,7 +245,7 @@ function UncategorizedActionsBar({
             </Text>
             {suggestion ? (
               <Text variant="tiny" className="text-system-gray-600 mt-1 flex items-center gap-1">
-                <Sparkles className="w-3.5 h-3.5 text-stratosort-blue inline-shrink-0" />
+                <Lightbulb className="w-3.5 h-3.5 text-stratosort-blue inline-shrink-0" />
                 <span>
                   {suggestion.files.length} are from{' '}
                   <strong className="text-system-gray-800">{suggestion.displayName}</strong> — want
@@ -267,7 +267,7 @@ function UncategorizedActionsBar({
                 size="sm"
                 onClick={() => openCreateModal(suggestion.displayName)}
               >
-                <Sparkles className="w-4 h-4 mr-1.5" />
+                <FolderPlus className="w-4 h-4 mr-1.5" />
                 Create folder for {suggestion.displayName}
               </Button>
             )}

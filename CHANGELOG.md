@@ -132,6 +132,8 @@ Changes you will notice:
 
 ### Changed
 
+- The star/sparkle icon is gone from every screen; each place now uses an icon for what it does
+  (analysis, suggestion, description, embeddings, recommended model and so on).
 - **StratoSort no longer registers itself as a viewer for PDF, Word, Excel, PowerPoint, text and
   Markdown files.** Opening a file that way did nothing, so the entry in "Open with" is gone.
   Existing installs drop it on the next install or update.
@@ -200,6 +202,25 @@ Changes you will notice:
   minor updates to renderer libraries and build tooling.
 
 ### Fixed
+
+- **Files are no longer analyzed two or three times at once.** Leaving Discover and coming back
+  while a batch ran started a new run that the window's still-running batch refused; the new run
+  then analyzed the same files again file by file, in parallel, and restarted itself when it ended.
+  That doubled GPU work, showed each "analyzed" notification more than once, kept the progress count
+  low, and could leave no room for the vision model, so an image fell back to OCR. A new run now
+  waits for the earlier batch and reuses its cached results.
+- **An image whose vision step failed is no longer cached with its OCR-only result.** The next
+  analysis of that image (within the 30-minute cache window) tries the vision model again.
+- **The smart-folder watcher waits for files you are analyzing in Discover** instead of analyzing
+  them at the same time, then skips them once the analysis history has them.
+- **On a GPU too small for both models, the text model stays loaded between files.** Loading the
+  ~200 MB embedding model used to evict a 7B text model on a 6 GB card and reload it for the next
+  file, about 4-5 s per file. The embedding model now runs on the CPU beside it.
+- **Turning on "Describe video keyframes" no longer asks for cloud consent because of a deleted
+  smart folder.** A deleted folder's AI provider override stayed in settings and counted as a cloud
+  route; only overrides of folders that still exist count now.
+- **Target Smart Folders** wraps long folder paths inside each card instead of running past it, and
+  a description the user typed in quotes is no longer shown in doubled quotes.
 
 - **An index file too large to load can no longer be overwritten by an automatic repair.** It stays
   protected until you reset or rebuild that index. A session without the compression library no

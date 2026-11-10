@@ -1,6 +1,6 @@
 import React from 'react';
 import PropTypes from 'prop-types';
-import { Sparkles } from 'lucide-react';
+import { Database } from 'lucide-react';
 import { Button, StateMessage } from '../ui';
 
 function EmptyEmbeddingsBanner({
@@ -76,7 +76,7 @@ function EmptyEmbeddingsBanner({
 
   return (
     <StateMessage
-      icon={Sparkles}
+      icon={Database}
       tone="warning"
       size="md"
       align="left"

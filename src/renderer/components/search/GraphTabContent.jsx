@@ -40,9 +40,11 @@ import {
   Network,
   RefreshCw,
   Search as SearchIcon,
-  Sparkles,
   X,
-  Zap
+  Zap,
+  Lightbulb,
+  Info,
+  MousePointerClick
 } from 'lucide-react';
 import { Button, IconButton, StateMessage, Textarea, Input, Select } from '../ui';
 import { Heading, Text } from '../ui/Typography';
@@ -352,7 +354,7 @@ export default function GraphTabContent({
                           is > 0, so a fresh graph shows a compact set and
                           grows as insights accumulate. */}
                   <SidebarSection
-                    icon={Sparkles}
+                    icon={Lightbulb}
                     title="What's interesting"
                     isOpen={sidebarSections.insights}
                     onToggle={() => toggleSidebarSection('insights')}
@@ -1704,7 +1706,7 @@ export default function GraphTabContent({
                 <div className="px-4 py-3 border-b border-system-gray-100 bg-system-gray-50/50">
                   <div className="flex items-center justify-between gap-compact">
                     <Text as="div" variant="tiny" className={GRAPH_SIDEBAR_SECTION_TITLE}>
-                      <Sparkles className="h-3.5 w-3.5 text-stratosort-blue" aria-hidden="true" />
+                      <Info className="h-3.5 w-3.5 text-stratosort-blue" aria-hidden="true" />
                       <span>{selectedNode ? 'Node details' : 'Legend'}</span>
                     </Text>
                     {selectedNode ? (
@@ -2613,7 +2615,7 @@ export default function GraphTabContent({
                       ) : (
                         <div className="flex flex-col items-center justify-center h-full text-center py-12 text-system-gray-400">
                           <div className="w-12 h-12 rounded-full bg-system-gray-100 flex items-center justify-center mb-3">
-                            <Sparkles className="w-6 h-6 text-system-gray-300" />
+                            <MousePointerClick className="w-6 h-6 text-system-gray-300" />
                           </div>
                           <Text variant="small" className="font-medium text-system-gray-600">
                             No Selection

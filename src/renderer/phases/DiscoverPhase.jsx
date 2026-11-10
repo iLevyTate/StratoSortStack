@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { AlertTriangle, X, Sparkles, RefreshCw, Network, FolderOpen, Settings } from 'lucide-react';
+import { AlertTriangle, X, RefreshCw, Network, FolderOpen, Settings, Database } from 'lucide-react';
 import { PHASES } from '../../shared/constants';
 import { TIMEOUTS } from '../../shared/performanceConstants';
 import { createLogger } from '../../shared/logger';
@@ -804,7 +804,7 @@ function DiscoverPhase() {
         >
           <div className="flex items-start gap-default">
             <div className="p-2 bg-stratosort-blue/10 rounded-lg shrink-0">
-              <Sparkles className="w-5 h-5 text-stratosort-blue" />
+              <Database className="w-5 h-5 text-stratosort-blue" />
             </div>
             <div className="flex-1">
               <Heading as="h2" variant="h6" className="text-stratosort-blue mb-2">
@@ -829,7 +829,7 @@ function DiscoverPhase() {
                     </>
                   ) : (
                     <>
-                      <Sparkles className="w-4 h-4" />
+                      <Database className="w-4 h-4" />
                       Build embeddings
                     </>
                   )}

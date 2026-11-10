@@ -8,7 +8,8 @@ import {
   ChevronDown,
   ChevronUp,
   FolderPlus,
-  Sparkles
+  PenLine,
+  ScrollText
 } from 'lucide-react';
 import Button from '../ui/Button';
 import IconButton from '../ui/IconButton';
@@ -232,7 +233,7 @@ const SmartFolderItem = memo(function SmartFolderItem({
               isGeneratingDescription ? (
                 <span className="inline-block w-4 h-4 border-2 border-system-gray-400 border-t-transparent rounded-full animate-spin" />
               ) : (
-                <Sparkles className="w-4 h-4" />
+                <PenLine className="w-4 h-4" />
               )
             }
             size="sm"
@@ -321,7 +322,7 @@ const SmartFolderItem = memo(function SmartFolderItem({
       {folder.description && (
         <div className="text-system-gray-600 bg-stratosort-blue/5 rounded-xl border border-stratosort-blue/10 p-3">
           <div className="flex items-center gap-compact mb-1">
-            <Sparkles className="w-3.5 h-3.5 text-stratosort-blue" />
+            <ScrollText className="w-3.5 h-3.5 text-stratosort-blue" />
             <Caption className="text-stratosort-blue">AI Context</Caption>
           </div>
           <Text variant="small">{folder.description}</Text>
