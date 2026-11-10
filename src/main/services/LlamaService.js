@@ -4221,13 +4221,14 @@ class LlamaService extends EventEmitter {
 
   /**
    * True during a vision batch when the runtime is gone and the text model
-   * sits in memory instead: a text load from inside the batch evicted the
-   * runtime. The next image must free that memory before respawning it.
+   * sits in memory instead, or is still being loaded: a text load from
+   * inside the batch evicted the runtime. The next image must wait for that
+   * load and free its memory before respawning the runtime.
    * @returns {boolean}
    * @private
    */
   _textResidentWhileVisionDown() {
-    if (!this._visionBatchMode || !this._modelMemoryManager?.getLoadedContext?.('text')) {
+    if (!this._visionBatchMode || !this._modelMemoryManager?.isLoadedOrLoading?.('text')) {
       return false;
     }
     try {
@@ -4238,8 +4239,9 @@ class LlamaService extends EventEmitter {
   }
 
   /**
-   * Load options for the embedding model while the text model holds a GPU
-   * too small for both (a 7B text model on a 6 GB card). Without them every
+   * Load options for the embedding model while the text model holds, or is
+   * being loaded onto, a GPU too small for both (a 7B text model on a 6 GB
+   * card). Without them every
    * file evicted the text model to load the ~200 MB embedding model and then
    * reloaded the text model, about 4-5 s per file. The embedding model runs
    * on the CPU beside it instead, without the "running on CPU" warning; it
@@ -4252,7 +4254,7 @@ class LlamaService extends EventEmitter {
     if (modelType !== 'embedding') return undefined;
     if (!this._gpuBackend || this._gpuBackend === 'cpu') return undefined;
     const memory = this._modelMemoryManager;
-    if (!memory?.getLoadedContext?.('text') || memory.getLoadedContext?.('embedding')) {
+    if (!memory?.isLoadedOrLoading?.('text') || memory.getLoadedContext?.('embedding')) {
       return undefined;
     }
     // Both fit on the GPU: load the embedding model there as usual.

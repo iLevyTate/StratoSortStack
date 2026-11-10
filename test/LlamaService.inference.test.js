@@ -377,7 +377,7 @@ describe('LlamaService – inference methods', () => {
     describe('in vision batch mode', () => {
       // A text load inside the batch can evict the runtime and leave the text
       // model resident. Respawning vision on top of it raced into held VRAM.
-      function batchImageService({ textResident, visionAlive }) {
+      function batchImageService({ textResident, textLoading = false, visionAlive }) {
         const service = createTestService();
         service._coordinator = { withModel: jest.fn((_, fn) => fn()) };
         service._visionProjectorStatus = { required: false, available: true, projectorPath: null };
@@ -386,6 +386,9 @@ describe('LlamaService – inference methods', () => {
         service._visionBatchMode = true;
         mockModelMemoryManager.getLoadedContext = jest.fn((type) =>
           type === 'text' && textResident ? mockContext : null
+        );
+        mockModelMemoryManager.isLoadedOrLoading = jest.fn(
+          (type) => type === 'text' && Boolean(textResident || textLoading)
         );
         mockVisionService.isAlive = jest.fn(() => visionAlive);
         return service;
@@ -399,6 +402,7 @@ describe('LlamaService – inference methods', () => {
 
       afterEach(() => {
         delete mockModelMemoryManager.getLoadedContext;
+        delete mockModelMemoryManager.isLoadedOrLoading;
         delete mockVisionService.isAlive;
       });
 
@@ -416,6 +420,29 @@ describe('LlamaService – inference methods', () => {
 
       test('leaves memory alone when no text model is resident', async () => {
         const service = batchImageService({ textResident: false, visionAlive: false });
+        await service.analyzeImage({ imagePath: '/test.jpg', prompt: 'describe' });
+        expect(service._releaseMemoryForVisionRuntime).not.toHaveBeenCalled();
+      });
+
+      // The text model takes seconds to load. An image that arrived in that
+      // window saw no text model in memory and respawned the runtime on top
+      // of the load.
+      test('waits out a text load still in progress before respawning vision', async () => {
+        const service = batchImageService({
+          textResident: false,
+          textLoading: true,
+          visionAlive: false
+        });
+        await service.analyzeImage({ imagePath: '/test.jpg', prompt: 'describe' });
+        expect(service._releaseMemoryForVisionRuntime).toHaveBeenCalledWith('batch');
+      });
+
+      test('a text load in progress does not disturb a runtime that is up', async () => {
+        const service = batchImageService({
+          textResident: false,
+          textLoading: true,
+          visionAlive: true
+        });
         await service.analyzeImage({ imagePath: '/test.jpg', prompt: 'describe' });
         expect(service._releaseMemoryForVisionRuntime).not.toHaveBeenCalled();
       });

@@ -211,6 +211,19 @@ class ModelMemoryManager {
   }
 
   /**
+   * Whether a model holds memory or is about to: it is in memory, or a load
+   * of it is in progress. A caller that asked only getLoadedContext saw
+   * nothing for the seconds a load takes, while the budget already counted
+   * it. Asking does not count as using the model.
+   * @param {string} modelType
+   * @returns {boolean}
+   */
+  isLoadedOrLoading(modelType) {
+    const entry = this._loadedModels.get(modelType);
+    return Boolean(entry && !entry.disposing) || this._pendingLoads.has(modelType);
+  }
+
+  /**
    * Check if we can load a model of given type
    */
   canLoadModel(/** @type {any} */ modelType) {
