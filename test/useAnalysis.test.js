@@ -891,6 +891,101 @@ describe('useAnalysis', () => {
       expect(analyzedPaths).toContain(files[1].path);
     });
 
+    describe('a run that stops making progress', () => {
+      // Two checks watched the same clock: one after 5 minutes that reset the
+      // run and said nothing, one after 10 that would have said why. The
+      // first always won, so the progress bar went away with no word.
+      const stalledFiles = Array.from({ length: 40 }, (_, index) => ({
+        path: '/stalled/file-' + index + '.txt',
+        name: 'file-' + index + '.txt'
+      }));
+      const timeoutNotices = () =>
+        mockAddNotification.mock.calls.filter((call) => call[3] === 'analysis-timeout');
+      const startRun = async () => {
+        mockElectronAPI.analysis.cancelBatch = jest.fn().mockResolvedValue({ cancelled: true });
+        // Main never answers and never reports.
+        mockElectronAPI.analysis.batch.mockImplementation(() => new Promise(() => {}));
+        const hook = renderHook(() =>
+          useAnalysis(createMockOptions({ selectedFiles: stalledFiles }))
+        );
+        await act(async () => {
+          hook.result.current.analyzeFiles(stalledFiles);
+          await jest.advanceTimersByTimeAsync(50);
+        });
+        return hook;
+      };
+      const passMinutes = async (minutes, eachMinute = () => {}) => {
+        for (let minute = 0; minute < minutes; minute += 1) {
+          await act(async () => {
+            eachMinute();
+            await jest.advanceTimersByTimeAsync(60 * 1000);
+          });
+        }
+      };
+
+      afterEach(() => {
+        delete mockElectronAPI.analysis.cancelBatch;
+        mockElectronAPI.analysis.batch.mockReset();
+      });
+
+      test('ends with a notice that says why', async () => {
+        await startRun();
+        expect(mockElectronAPI.analysis.batch).toHaveBeenCalledTimes(1);
+
+        await passMinutes(6);
+
+        expect(mockSetIsAnalyzing).toHaveBeenLastCalledWith(false);
+        expect(timeoutNotices()).toHaveLength(1);
+        const [message, severity] = timeoutNotices()[0];
+        expect(message).toMatch(/stopped after no progress for 5 min/);
+        expect(severity).toBe('warning');
+      });
+
+      test('main is told to stop the batch', async () => {
+        await startRun();
+        const { batchId } = mockElectronAPI.analysis.batch.mock.calls[0][0];
+
+        await passMinutes(6);
+
+        expect(mockElectronAPI.analysis.cancelBatch).toHaveBeenCalledWith(
+          expect.objectContaining({ batchId })
+        );
+      });
+
+      test('the notice is shown once, however long the app stays open', async () => {
+        await startRun();
+
+        await passMinutes(25);
+
+        expect(timeoutNotices()).toHaveLength(1);
+      });
+
+      test('a run that main keeps reporting on is not stopped', async () => {
+        await startRun();
+        const { batchId } = mockElectronAPI.analysis.batch.mock.calls[0][0];
+        mockSetIsAnalyzing.mockClear();
+
+        // A long file: main re-sends its report while it works on it.
+        await passMinutes(25, () => {
+          window.dispatchEvent(
+            new CustomEvent('operation-progress', {
+              detail: {
+                type: 'batch_analyze',
+                batchId,
+                completed: 0,
+                total: stalledFiles.length,
+                currentFile: stalledFiles[0].path
+              }
+            })
+          );
+        });
+
+        expect(timeoutNotices()).toHaveLength(0);
+        expect(mockSetIsAnalyzing).not.toHaveBeenCalledWith(false);
+        expect(mockElectronAPI.analysis.cancelBatch).not.toHaveBeenCalled();
+      });
+    });
+
     // O-3: an analysis run is a multi-invoke user action — it must run inside
     // a preload trace session so all its main-process logs share one id.
     describe('correlation trace session (O-3)', () => {

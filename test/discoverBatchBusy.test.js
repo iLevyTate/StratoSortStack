@@ -100,18 +100,41 @@ describe('runBatchPathWhenFree', () => {
   });
 
   test('the real wait resolves early when aborted', async () => {
-    const controller = new AbortController();
-    const runBatchPath = jest.fn(async () => {
-      throw busy();
-    });
-    const pending = runBatchPathWhenFree({
-      runBatchPath,
-      isActiveRun: () => true,
-      abortSignal: controller.signal,
-      retryMs: 60_000
-    });
-    controller.abort();
-    await expect(pending).resolves.toBe('superseded');
+    jest.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const runBatchPath = jest.fn(async () => {
+        throw busy();
+      });
+      const onWaiting = jest.fn();
+      let outcome = 'still waiting';
+      runBatchPathWhenFree({
+        runBatchPath,
+        isActiveRun: () => true,
+        abortSignal: controller.signal,
+        onWaiting,
+        retryMs: 60_000
+      }).then((value) => {
+        outcome = value;
+      });
+
+      // Let the refusal arrive first. An abort before it is caught by the
+      // check ahead of the wait, and the wait itself is never entered.
+      await jest.advanceTimersByTimeAsync(1000);
+      expect(onWaiting).toHaveBeenCalledTimes(1);
+      expect(jest.getTimerCount()).toBe(1);
+      expect(outcome).toBe('still waiting');
+
+      controller.abort();
+      // Well short of the minute the wait was given.
+      await jest.advanceTimersByTimeAsync(1000);
+
+      expect(outcome).toBe('superseded');
+      expect(jest.getTimerCount()).toBe(0);
+      expect(runBatchPath).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
 
