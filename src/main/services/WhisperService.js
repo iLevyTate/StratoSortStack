@@ -737,6 +737,8 @@ class WhisperService extends EventEmitter {
     this._activeTranscriptions = new Set();
     this._cache = new Map(); // key -> { result, expiresAt }
     this._memoryRegistration = null; // { manager, type } once registered
+    /** Whisper runs on the CPU because the text model fills the GPU. */
+    this._cpuBesideText = false;
     // Cache-miss dedup: when two callers race the same file before either
     // populates the cache, both would otherwise transcode + transcribe
     // independently. The whisper context is a single shared resource so
@@ -953,7 +955,15 @@ class WhisperService extends EventEmitter {
           return { type: 'cpu', name: 'CPU' };
         })
       );
-      const useGpu = shouldUseGpu(this._gpuInfo);
+      // On a dedicated GPU already holding the text model, a GPU Whisper did
+      // not fit beside it: loading one evicted the other, and every audio or
+      // video file swapped both models. Run Whisper on the CPU there instead
+      // (whisper.cpp takes useGpu: false with any build variant).
+      const besideText = shouldUseGpu(this._gpuInfo)
+        ? await this._shouldRunOnCpuBesideText(modelPath)
+        : false;
+      this._cpuBesideText = besideText;
+      const useGpu = shouldUseGpu(this._gpuInfo) && !besideText;
       const variantChain = whisperVariantFor(this._gpuInfo);
 
       if (variantChain.includes('cuda')) {
@@ -985,7 +995,8 @@ class WhisperService extends EventEmitter {
         useGpu,
         backend: this._gpuInfo?.type || 'cpu',
         variantChain,
-        resolvedVariant
+        resolvedVariant,
+        cpuBesideText: besideText
       });
       this._resolvedVariant = resolvedVariant;
 
@@ -2130,6 +2141,29 @@ class WhisperService extends EventEmitter {
   }
 
   /**
+   * Whether to run Whisper on the CPU because the text model holds a
+   * dedicated GPU that cannot also fit it. Never on unified memory, where CPU
+   * and GPU share the same budget and moving Whisper would gain nothing.
+   * @param {string} modelPath
+   * @returns {Promise<boolean>}
+   * @private
+   */
+  async _shouldRunOnCpuBesideText(modelPath) {
+    const manager = this._getMemoryManager();
+    if (!manager?.getLoadedContext?.('text')) return false;
+    if (typeof manager.canFitExternalLoad !== 'function') return false;
+    const gpu = /** @type {any} */ (this._gpuInfo);
+    if (gpu?.type === 'metal' || gpu?.isAppleSilicon || gpu?.unifiedMemory) return false;
+    let sizeBytes;
+    try {
+      sizeBytes = await this._computeMemoryEstimate(modelPath);
+    } catch {
+      sizeBytes = 200 * 1024 * 1024;
+    }
+    return manager.canFitExternalLoad(sizeBytes) === false;
+  }
+
+  /**
    * Register this service's VRAM usage with the shared memory manager
    * so it participates in eviction decisions. Best-effort; failures are
    * logged at debug level since coordination is an optimization, not a
@@ -2154,6 +2188,9 @@ class WhisperService extends EventEmitter {
       });
       sizeBytes = 200 * 1024 * 1024;
     }
+    // On the CPU beside the text model it uses system RAM, not the GPU budget
+    // the manager tracks; counting it there made the next text load evict it.
+    if (this._cpuBesideText) sizeBytes = 0;
 
     try {
       const dispose = async () => {

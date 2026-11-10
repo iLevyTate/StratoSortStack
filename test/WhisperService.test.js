@@ -1834,3 +1834,58 @@ describe('WhisperService — _collectCudaDllSearchDirs', () => {
     expect(unique.size).toBe(lower.length);
   });
 });
+
+describe('WhisperService — CPU beside a GPU-filling text model', () => {
+  // A 6 GB GPU with the 7B text model resident: a GPU Whisper did not fit
+  // beside it, so each audio or video file evicted one model for the other.
+  beforeEach(() => {
+    mockFsStat.mockReset();
+    mockFsStat.mockResolvedValue({ isFile: () => true, size: 150 * 1024 * 1024 });
+  });
+
+  function memoryWith({ textResident, fits }) {
+    const memory = fakeMemoryManager();
+    memory.getLoadedContext = jest.fn((type) => (type === 'text' && textResident ? {} : null));
+    memory.canFitExternalLoad = jest.fn(() => fits);
+    return memory;
+  }
+
+  async function load(memory, gpu = { type: 'cuda', vramMB: 6141 }) {
+    const { binding } = makeFakeBinding();
+    const svc = new WhisperService({
+      bindingOverride: binding,
+      gpuMonitor: fakeGpuMonitor(gpu),
+      fsPromisesOverride: fakeFsPromises,
+      memoryManagerOverride: memory
+    });
+    await svc._ensureLoaded();
+    return { svc, init: binding.initWhisper };
+  }
+
+  test('runs on the CPU and stays out of the GPU budget when it would not fit', async () => {
+    const memory = memoryWith({ textResident: true, fits: false });
+    const { init } = await load(memory);
+    expect(init.mock.calls[0][0].useGpu).toBe(false);
+    expect(memory.registerExternalConsumer.mock.calls[0][0].sizeBytes).toBe(0);
+  });
+
+  test('uses the GPU when it fits beside the text model', async () => {
+    const memory = memoryWith({ textResident: true, fits: true });
+    const { init } = await load(memory);
+    expect(init.mock.calls[0][0].useGpu).toBe(true);
+    expect(memory.registerExternalConsumer.mock.calls[0][0].sizeBytes).toBeGreaterThan(0);
+  });
+
+  test('uses the GPU when no text model is resident', async () => {
+    const { init } = await load(memoryWith({ textResident: false, fits: false }));
+    expect(init.mock.calls[0][0].useGpu).toBe(true);
+  });
+
+  test('never moves to the CPU on unified memory (Metal)', async () => {
+    const { init } = await load(memoryWith({ textResident: true, fits: false }), {
+      type: 'metal',
+      vramMB: 16384
+    });
+    expect(init.mock.calls[0][0].useGpu).toBe(true);
+  });
+});

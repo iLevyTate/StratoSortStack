@@ -65,6 +65,22 @@ const { isUserAnalysisInFlight } = require('../analysis/userAnalysisInFlight');
 // How long a file Discover is analyzing right now waits before the watcher
 // checks it again.
 const USER_ANALYSIS_DEFER_MS = 15000;
+
+// The queue keeps taking files of the kind it just ran (documents, images,
+// or audio/video) while any are waiting, so each model loads once per run of
+// them instead of swapping with every file. After this many picks in a row it
+// goes back to plain queue order so no kind waits indefinitely.
+const MAX_LANE_STREAK = 25;
+
+/**
+ * @param {string} filePath
+ * @returns {'image' | 'media' | 'document'}
+ */
+function analysisLaneOf(filePath) {
+  if (isImagePath(filePath)) return 'image';
+  if (isMediaPath(filePath)) return 'media';
+  return 'document';
+}
 const { isUNCPath } = require('../../shared/crossPlatformUtils');
 const { normalizeKeywords } = require('../../shared/normalization');
 const {
@@ -296,6 +312,9 @@ class SmartFolderWatcher {
     // they'd be absent from the durable record for that whole window.
     /** @type {Map<string, any>} */
     this._inFlightItems = new Map();
+    /** @type {'image' | 'media' | 'document' | null} */
+    this._lastLane = null;
+    this._laneStreak = 0;
     // Abort controllers of the analyses running now, so stop() can cancel
     // them instead of waiting them out.
     /** @type {Set<AbortController>} */
@@ -2254,15 +2273,32 @@ class SmartFolderWatcher {
       // case-variant duplicates are caught.
       const procKey = (/** @type {any} */ item) => item.dedupKey || item.filePath;
       const isRunnable = this._makeRunnableCheck();
-      const firstAvailableIndex = this.analysisQueue.findIndex(isRunnable);
+      let firstAvailableIndex = this.analysisQueue.findIndex(isRunnable);
 
       // If all queued items are processing or waiting, wait for the queue timer
       if (firstAvailableIndex === -1) {
         return;
       }
 
+      // Stay with the kind of file just analyzed while one is waiting (see
+      // MAX_LANE_STREAK), so documents, images and audio/video each run
+      // together instead of swapping models file by file.
+      if (this._lastLane && this._laneStreak < MAX_LANE_STREAK) {
+        const sameLane = this.analysisQueue.findIndex(
+          (item) => isRunnable(item) && analysisLaneOf(item.filePath) === this._lastLane
+        );
+        if (sameLane !== -1) firstAvailableIndex = sameLane;
+      }
+
       const firstItem = this.analysisQueue[firstAvailableIndex];
-      const firstIsImage = isImagePath(firstItem.filePath);
+      const lane = analysisLaneOf(firstItem.filePath);
+      if (lane === this._lastLane) {
+        this._laneStreak++;
+      } else {
+        this._lastLane = lane;
+        this._laneStreak = 1;
+      }
+      const firstIsImage = lane === 'image';
 
       if (firstIsImage) {
         // Image batch: take consecutive images (up to 20) that are not currently processing
@@ -2359,14 +2395,15 @@ class SmartFolderWatcher {
           }
         }
       } else {
-        // Document batch: take up to maxConcurrentAnalysis that are not currently processing
+        // Document or audio/video batch, one kind at a time: up to
+        // maxConcurrentAnalysis runnable items of this lane
         const batchSize = Math.max(1, this.maxConcurrentAnalysis || 1);
         const batch = [];
         let i = firstAvailableIndex;
 
         while (i < this.analysisQueue.length && batch.length < batchSize) {
           const item = this.analysisQueue[i];
-          if (isRunnable(item) && !isImagePath(item.filePath)) {
+          if (isRunnable(item) && analysisLaneOf(item.filePath) === lane) {
             batch.push(item);
             this.analysisQueue.splice(i, 1);
             // Keep the item in the durable record while it is off both queues.

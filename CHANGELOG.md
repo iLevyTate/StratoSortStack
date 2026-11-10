@@ -213,6 +213,12 @@ Changes you will notice:
   analysis of that image (within the 30-minute cache window) tries the vision model again.
 - **The smart-folder watcher waits for files you are analyzing in Discover** instead of analyzing
   them at the same time, then skips them once the analysis history has them.
+- **Audio and video no longer swap Whisper and the text model for every file** on a GPU too small
+  for both. When the text model already holds a dedicated GPU, Whisper runs on the CPU beside it;
+  Macs with unified memory are unchanged.
+- **The smart-folder watcher runs files of the same kind together.** It keeps taking documents,
+  images, or audio/video, whichever it just ran, while more are waiting (up to 25 in a row), so a
+  model loads once per group instead of once per file.
 - **On a GPU too small for both models, the text model stays loaded between files.** Loading the
   ~200 MB embedding model used to evict a 7B text model on a 6 GB card and reload it for the next
   file, about 4-5 s per file. The embedding model now runs on the CPU beside it.
