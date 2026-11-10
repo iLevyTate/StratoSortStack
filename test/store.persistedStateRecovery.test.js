@@ -101,6 +101,64 @@ describe('persisted Redux state recovery across reloads', () => {
     expect(window.__STRATOSORT_STATE_EXPIRED__).toBeUndefined();
   });
 
+  test('a TTL-expired blob keeps the graph hint, dock and tour preferences', () => {
+    const staleBlob = JSON.stringify({
+      _version: 4,
+      timestamp: Date.now() - 48 * 60 * 60 * 1000,
+      ui: {
+        currentPhase: 'organize',
+        graphTourDismissed: true,
+        graphLegendHintDismissed: true,
+        graphInsightsDockCollapsed: true
+      },
+      files: { selectedFiles: [], smartFolders: [], fileStates: {} },
+      analysis: { results: [] }
+    });
+    const storage = { [REDUX_STATE_KEY]: staleBlob };
+
+    const first = bootStore(storage).getState();
+    expect(window.__STRATOSORT_STATE_EXPIRED__).toBe(true);
+    expect(first.ui.currentPhase).toBe('welcome');
+    expect(first.ui.graphLegendHintDismissed).toBe(true);
+    expect(first.ui.graphInsightsDockCollapsed).toBe(true);
+    expect(first.ui.graphTourDismissed).toBe(true);
+
+    // The replacement snapshot carries them, so a reload before the first
+    // debounced save keeps them too.
+    const live = JSON.parse(storage[REDUX_STATE_KEY]);
+    expect(live.ui).toEqual(
+      expect.objectContaining({
+        graphTourDismissed: true,
+        graphLegendHintDismissed: true,
+        graphInsightsDockCollapsed: true
+      })
+    );
+    const second = bootStore(storage).getState();
+    expect(window.__STRATOSORT_STATE_EXPIRED__).toBeUndefined();
+    expect(second.ui.graphLegendHintDismissed).toBe(true);
+    expect(second.ui.graphInsightsDockCollapsed).toBe(true);
+    expect(second.ui.graphTourDismissed).toBe(true);
+  });
+
+  test('a TTL-expired blob reads the tour dismissal from its own storage key and invents no preference', () => {
+    const staleBlob = JSON.stringify({
+      _version: 4,
+      timestamp: Date.now() - 48 * 60 * 60 * 1000,
+      ui: { currentPhase: 'organize', graphLegendHintDismissed: 'yes' },
+      files: { selectedFiles: [], smartFolders: [], fileStates: {} },
+      analysis: { results: [] }
+    });
+    const storage = { [REDUX_STATE_KEY]: staleBlob, graphTourDismissed: 'true' };
+
+    const state = bootStore(storage).getState();
+    expect(window.__STRATOSORT_STATE_EXPIRED__).toBe(true);
+    expect(state.ui.graphTourDismissed).toBe(true);
+    expect(state.ui.graphLegendHintDismissed).toBe(false);
+    expect(state.ui.graphInsightsDockCollapsed).toBe(false);
+    // The synchronous mirror key is the durable fallback; loading never removes it.
+    expect(storage.graphTourDismissed).toBe('true');
+  });
+
   test('a future-version blob does not overwrite the last known-good backup', () => {
     const goodBackup = JSON.stringify({
       _version: 4,

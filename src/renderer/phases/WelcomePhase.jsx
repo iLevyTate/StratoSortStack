@@ -328,19 +328,6 @@ function WelcomePhase() {
     }
   }, [modelCheckState, showLoadingEscape, addNotification]);
 
-  useEffect(() => {
-    if (window.__STRATOSORT_STATE_EXPIRED__) {
-      const ageHours = window.__STRATOSORT_STATE_EXPIRED_AGE_HOURS__ || 24;
-      addNotification(
-        `Previous session (${ageHours}h old) was cleared to ensure fresh data. Your files are safe.`,
-        'info'
-      );
-      // Clear flag so notification doesn't repeat
-      delete window.__STRATOSORT_STATE_EXPIRED__;
-      delete window.__STRATOSORT_STATE_EXPIRED_AGE_HOURS__;
-    }
-  }, [addNotification]);
-
   const actions = {
     advancePhase: (phase) => dispatch(setPhase(phase))
   };

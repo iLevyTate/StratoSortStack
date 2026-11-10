@@ -21,6 +21,11 @@ jest.mock('../../src/renderer/store/slices/uiSlice', () => ({
   updateSettings: jest.fn((payload) => ({ type: 'ui/updateSettings', payload }))
 }));
 
+const mockAddNotification = jest.fn();
+jest.mock('../../src/renderer/contexts/NotificationContext', () => ({
+  useNotification: () => ({ addNotification: mockAddNotification })
+}));
+
 jest.mock('../../src/shared/constants', () => ({
   PHASES: {
     WELCOME: 'welcome',
@@ -188,6 +193,65 @@ describe('App view-mode routing', () => {
 
     expect(await screen.findByTestId('phase-renderer')).toBeInTheDocument();
     expect(screen.queryByTestId('dashboard-view')).not.toBeInTheDocument();
+  });
+});
+
+describe('App expired-session notice', () => {
+  // store/index.js keeps viewMode across a TTL expiry, so a dashboard user
+  // never mounts WelcomePhase at startup. The notice has to come from the
+  // shell, which is mounted on both surfaces.
+  beforeEach(() => {
+    mockDispatch.mockClear();
+    mockAddNotification.mockClear();
+    delete window.__STRATOSORT_STATE_EXPIRED__;
+    delete window.__STRATOSORT_STATE_EXPIRED_AGE_HOURS__;
+  });
+
+  afterEach(() => {
+    delete window.__STRATOSORT_STATE_EXPIRED__;
+    delete window.__STRATOSORT_STATE_EXPIRED_AGE_HOURS__;
+  });
+
+  const expiredNotices = () =>
+    mockAddNotification.mock.calls.filter(([message]) =>
+      String(message).includes('Previous session')
+    );
+
+  test('is shown once at startup on the dashboard surface and clears the flag', async () => {
+    window.__STRATOSORT_STATE_EXPIRED__ = true;
+    window.__STRATOSORT_STATE_EXPIRED_AGE_HOURS__ = 48;
+    setupState({ viewMode: 'dashboard', currentPhase: 'welcome', smartFolders: [{ id: 'sf-1' }] });
+    const { rerender } = render(<App />);
+
+    expect(await screen.findByTestId('dashboard-view')).toBeInTheDocument();
+    expect(screen.queryByTestId('phase-renderer')).not.toBeInTheDocument();
+    expect(expiredNotices()).toHaveLength(1);
+    expect(expiredNotices()[0][0]).toContain('48h old');
+    expect(expiredNotices()[0][1]).toBe('info');
+    expect(window.__STRATOSORT_STATE_EXPIRED__).toBeUndefined();
+    expect(window.__STRATOSORT_STATE_EXPIRED_AGE_HOURS__).toBeUndefined();
+
+    rerender(<App />);
+    expect(expiredNotices()).toHaveLength(1);
+  });
+
+  test('is shown once on the phased surface', async () => {
+    window.__STRATOSORT_STATE_EXPIRED__ = true;
+    window.__STRATOSORT_STATE_EXPIRED_AGE_HOURS__ = 30;
+    setupState({ viewMode: 'phased', currentPhase: 'welcome' });
+    render(<App />);
+
+    expect(await screen.findByTestId('phase-renderer')).toBeInTheDocument();
+    expect(expiredNotices()).toHaveLength(1);
+    expect(window.__STRATOSORT_STATE_EXPIRED__).toBeUndefined();
+  });
+
+  test('is not shown when no session expired', async () => {
+    setupState({ viewMode: 'dashboard', smartFolders: [{ id: 'sf-1' }] });
+    render(<App />);
+
+    expect(await screen.findByTestId('dashboard-view')).toBeInTheDocument();
+    expect(expiredNotices()).toHaveLength(0);
   });
 });
 

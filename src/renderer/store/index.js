@@ -352,10 +352,12 @@ const loadState = () => {
           navigationError: null,
           lastOperationError: null,
           resetCounter: 0,
-          graphTourDismissed: false,
+          // "Don't show again" and the dock's collapsed state are durable
+          // preferences, not session state — keep them across TTL expiry.
+          graphTourDismissed: resolveDurableGraphTourDismissed(parsed?.ui?.graphTourDismissed),
           graphInsightsSection: 'insights',
-          graphLegendHintDismissed: false,
-          graphInsightsDockCollapsed: false,
+          graphLegendHintDismissed: parsed?.ui?.graphLegendHintDismissed === true,
+          graphInsightsDockCollapsed: parsed?.ui?.graphInsightsDockCollapsed === true,
           // Session-only flag: a fresh boot is never mid dashboard excursion.
           cameFromDashboard: false,
           // viewMode is a durable preference, not session state — preserve it
@@ -426,7 +428,10 @@ const loadState = () => {
             _version: CURRENT_STATE_VERSION,
             ui: {
               viewMode: expiredState.ui.viewMode,
-              selectedTheme: expiredState.ui.selectedTheme
+              selectedTheme: expiredState.ui.selectedTheme,
+              graphTourDismissed: expiredState.ui.graphTourDismissed,
+              graphLegendHintDismissed: expiredState.ui.graphLegendHintDismissed,
+              graphInsightsDockCollapsed: expiredState.ui.graphInsightsDockCollapsed
             },
             files: {
               selectedFiles: [],
@@ -469,28 +474,7 @@ const loadState = () => {
         navigationError: null,
         lastOperationError: null,
         resetCounter: 0,
-        // "Don't show again" lives in two places by design: persisted Redux
-        // state (saved by the debounced persistence middleware) and a
-        // localStorage key that GraphTour writes *synchronously* on dismiss.
-        // The synchronous key is the durable fallback for the case where the
-        // debounced Redux save hasn't flushed before the app quits — so we
-        // read it but MUST NOT delete it here, or an immediate close right
-        // after dismissing would resurface the tour on next launch. `resetUi`
-        // already preserves this preference intentionally, so there is no
-        // "ghost after reset" to clean up; clearing is handled by the explicit
-        // re-show flow (unchecking the box) which removes both stores.
-        graphTourDismissed: (() => {
-          const fromState = parsed.ui?.graphTourDismissed === true;
-          let fromLegacy = false;
-          if (typeof localStorage !== 'undefined') {
-            try {
-              fromLegacy = localStorage.getItem('graphTourDismissed') === 'true';
-            } catch {
-              /* private mode or quota — accept whatever we read */
-            }
-          }
-          return fromState || fromLegacy;
-        })(),
+        graphTourDismissed: resolveDurableGraphTourDismissed(parsed.ui?.graphTourDismissed),
         graphInsightsSection: (() => {
           const v = parsed.ui?.graphInsightsSection;
           if (v == null) return 'insights';
@@ -559,6 +543,31 @@ function resolveDurableSelectedTheme(/** @type {any} */ parsedTheme) {
     /* private mode / storage disabled — fall back to the persisted blob */
   }
   return DURABLE_THEME_VALUES.includes(parsedTheme) ? parsedTheme : 'primary';
+}
+
+/**
+ * Resolve the graph tour's "Don't show again" flag to rehydrate. It lives in
+ * two places by design: persisted Redux state (saved by the debounced
+ * persistence middleware) and a localStorage key that GraphTour writes
+ * *synchronously* on dismiss. The synchronous key is the durable fallback for
+ * the case where the debounced Redux save hasn't flushed before the app quits —
+ * so we read it but MUST NOT delete it here, or an immediate close right after
+ * dismissing would resurface the tour on next launch. `resetUi` already
+ * preserves this preference intentionally, so there is no "ghost after reset"
+ * to clean up; clearing is handled by the explicit re-show flow (unchecking the
+ * box) which removes both stores.
+ */
+function resolveDurableGraphTourDismissed(/** @type {any} */ parsedFlag) {
+  const fromState = parsedFlag === true;
+  let fromLegacy = false;
+  if (typeof localStorage !== 'undefined') {
+    try {
+      fromLegacy = localStorage.getItem('graphTourDismissed') === 'true';
+    } catch {
+      /* private mode or quota — accept whatever we read */
+    }
+  }
+  return fromState || fromLegacy;
 }
 
 function createStratoSortStore() {
@@ -664,10 +673,11 @@ if (isWebpackHmr && windowAny[__REDUX_DEV_HMR_KEY__]) {
 
 markStoreReady();
 
-// NOTE: State-expiration notification is handled by WelcomePhase.jsx (which
-// shows a visible toast). The TTL-expired loadState path always resets to the
-// WELCOME phase, so WelcomePhase is guaranteed to mount and display the notice.
-// A previous duplicate handler here dispatched a silent Redux entry, causing
-// two notification records for the same event.
+// NOTE: State-expiration notification is handled by App.js (AppContent), which
+// shows a visible toast. The TTL-expired loadState path keeps viewMode, so a
+// dashboard user never mounts WelcomePhase at startup; the shell is mounted on
+// both surfaces. Keep it the only consumer of the flag: a previous duplicate
+// handler here dispatched a silent Redux entry, causing two notification
+// records for the same event.
 
 export default store;
