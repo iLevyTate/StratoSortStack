@@ -655,6 +655,86 @@ describe('OrganizationSuggestionService', () => {
       const adjusted = await service.applyFeedbackMemoryAdjustments(file, suggestions);
       expect(adjusted[0].folder).toBe('CAD');
     });
+
+    test('an unrelated memory leaves confidence and score as they were', async () => {
+      const file = createTestFile();
+      await service.addFeedbackMemory('Keep folder names short', { source: 'manual' });
+
+      // weightedScore is the ranking key: score x the semantic source weight (1.1).
+      const suggestions = [
+        { folder: 'Invoices', source: 'semantic', score: 0.69, confidence: 0.69 },
+        { folder: 'Projects', source: 'llm', score: 0.55, confidence: 0.55 }
+      ].map((s) => ({ ...s, weightedScore: s.score * (s.source === 'llm' ? 1.5 : 1.1) }));
+
+      const adjusted = await service.applyFeedbackMemoryAdjustments(file, suggestions);
+
+      const invoices = adjusted.find((s) => s.folder === 'Invoices');
+      const projects = adjusted.find((s) => s.folder === 'Projects');
+      expect(invoices.confidence).toBe(0.69);
+      expect(invoices.score).toBe(0.69);
+      expect(invoices.memoryAdjustment).toBeUndefined();
+      expect(projects.confidence).toBe(0.55);
+      expect(projects.score).toBe(0.55);
+      // Ranking still follows the weighted score: llm 0.825 beats semantic 0.759.
+      expect(adjusted[0].folder).toBe('Projects');
+    });
+
+    test('a matching memory raises confidence from the confidence, not from the ranking score', async () => {
+      const file = createTestFile();
+      const memory = await service.addFeedbackMemory('Invoices go to Finance', {
+        source: 'manual'
+      });
+      mockVectorDbService.queryFeedbackMemory.mockResolvedValue([
+        { id: memory.id, score: 1, metadata: {}, document: memory.text }
+      ]);
+
+      const suggestions = [
+        { folder: 'Finance', source: 'llm', score: 0.5, confidence: 0.5, weightedScore: 0.75 },
+        { folder: 'Projects', source: 'llm', score: 0.8, confidence: 0.8, weightedScore: 1.2 }
+      ];
+
+      const adjusted = await service.applyFeedbackMemoryAdjustments(file, suggestions);
+
+      const finance = adjusted.find((s) => s.folder === 'Finance');
+      expect(finance.memoryAdjustment).toEqual({ boost: 0.15, penalty: 0 });
+      expect(finance.confidence).toBeCloseTo(0.65, 10);
+      expect(finance.score).toBeCloseTo(0.65, 10);
+      expect(finance.weightedScore).toBeCloseTo(0.9, 10);
+      // A weighted score above 1 keeps its lead; clamping it would tie the two.
+      expect(adjusted[0].folder).toBe('Projects');
+    });
+
+    test('getSuggestionsForFile returns the same confidence with and without an unrelated memory', async () => {
+      const file = createTestFile();
+      const smartFolders = createTestSmartFolders(3);
+      mockVectorDbService.queryFolders.mockResolvedValue([
+        {
+          id: 'folder-1',
+          score: 0.69,
+          metadata: { path: '/docs/Invoices', folderName: 'Invoices' }
+        }
+      ]);
+      // mockLlama is shared by the whole file and clearAllMocks keeps
+      // implementations, so put back what the tests after this one rely on.
+      const previousGenerateText = mockLlama.generateText.getMockImplementation();
+      mockLlama.generateText.mockResolvedValue({
+        response: JSON.stringify({ suggestions: [] })
+      });
+
+      const before = await service.getSuggestionsForFile(file, smartFolders);
+      expect(before.success).toBe(true);
+      expect(before.primary.folder).toBe('Invoices');
+      expect(before.confidence).toBe(0.69);
+
+      await service.addFeedbackMemory('Keep folder names short', { source: 'manual' });
+
+      const after = await service.getSuggestionsForFile(file, smartFolders);
+      expect(after.primary.folder).toBe('Invoices');
+      expect(after.confidence).toBe(before.confidence);
+      // Below the 0.75 auto-organize default: the file stays held for review.
+      expect(after.confidence).toBeLessThan(0.75);
+      mockLlama.generateText.mockImplementation(previousGenerateText);
+    });
   });
 
   describe('Error Handling and Edge Cases', () => {

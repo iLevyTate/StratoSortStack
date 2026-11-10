@@ -1884,13 +1884,6 @@ class OrganizationSuggestionServiceCore {
 
     const adjusted = rankedSuggestions.map((suggestion) => {
       const suggestionFolder = suggestion.folder || suggestion.path;
-      const baseScore = Number.isFinite(suggestion.weightedScore)
-        ? suggestion.weightedScore
-        : Number.isFinite(suggestion.score)
-          ? suggestion.score
-          : Number.isFinite(suggestion.confidence)
-            ? suggestion.confidence
-            : 0;
 
       let boost = 0;
       let penalty = 0;
@@ -1924,27 +1917,42 @@ class OrganizationSuggestionServiceCore {
         }
       }
 
-      const adjustedScore = Math.max(0, Math.min(1, baseScore + boost - penalty));
-      const updated = {
-        ...suggestion,
-        score: adjustedScore,
-        confidence: adjustedScore,
-        weightedScore: adjustedScore
-      };
-
-      if (boost > 0 || penalty > 0) {
-        updated.memoryAdjustment = {
-          boost,
-          penalty
-        };
+      if (boost === 0 && penalty === 0) {
+        return suggestion;
       }
 
-      return updated;
+      // `weightedScore` is the ranking key (score x source weight, up to 1.5) and
+      // `confidence` is what auto-organize compares with its threshold. Adjust
+      // each on its own scale: writing the ranking key into confidence moved a
+      // 0.69 match past 0.75. The ranking key is not capped at 1, or every
+      // strong suggestion would tie.
+      const delta = boost - penalty;
+      const score = Number.isFinite(suggestion.score)
+        ? suggestion.score
+        : Number.isFinite(suggestion.confidence)
+          ? suggestion.confidence
+          : 0;
+      const confidence = Number.isFinite(suggestion.confidence) ? suggestion.confidence : score;
+      const rankingScore = Number.isFinite(suggestion.weightedScore)
+        ? suggestion.weightedScore
+        : score;
+
+      return {
+        ...suggestion,
+        score: Math.max(0, Math.min(1, score + delta)),
+        confidence: Math.max(0, Math.min(1, confidence + delta)),
+        weightedScore: Math.max(0, rankingScore + delta),
+        memoryAdjustment: {
+          boost,
+          penalty
+        }
+      };
     });
 
-    return adjusted.sort(
-      (a, b) => (b.weightedScore || b.score || 0) - (a.weightedScore || a.score || 0)
-    );
+    /** @param {any} s */
+    const rankingKey = (s) =>
+      Number.isFinite(s.weightedScore) ? s.weightedScore : Number.isFinite(s.score) ? s.score : 0;
+    return adjusted.sort((a, b) => rankingKey(b) - rankingKey(a));
   }
 
   async rebuildFeedbackMemoryEmbeddings() {
