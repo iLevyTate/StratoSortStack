@@ -139,8 +139,9 @@ test.describe('Knowledge Graph — Relate Tab UI', () => {
       await relateTab.click();
       await window.waitForTimeout(800);
 
+      // No Escape here: once the tour is gone, Escape closes Knowledge OS
+      // itself and the buttons below are never found.
       await dismissGraphTour(window);
-      await window.keyboard.press('Escape').catch(() => {});
       await window.waitForTimeout(300);
 
       await expect
