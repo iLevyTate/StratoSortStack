@@ -1772,7 +1772,10 @@ class LlamaService extends EventEmitter {
         // Set after the load, too: a batch that ended while this load was in
         // flight could not unload a model that was not registered yet, so the
         // next embedding load must still move it back to the GPU.
-        if (loadOptions?.cpuByDesign && loadOptions.besideResident === VISION_RUNTIME_MEMORY_TYPE) {
+        if (
+          loadOptions?.cpuByDesign &&
+          (loadOptions.forVisionBatch || loadOptions.besideResident === VISION_RUNTIME_MEMORY_TYPE)
+        ) {
           this._embeddingCpuForBatch = true;
         }
         return context;
@@ -4304,14 +4307,33 @@ class LlamaService extends EventEmitter {
   /**
    * Load options for a model while a vision batch holds the runtime: the
    * embedding model runs on the CPU beside it instead of evicting it.
+   *
+   * The pin outlasts the runtime: a text load inside the batch evicts it and
+   * the text model holds the memory until the next image. The load is then
+   * beside the text model. Declared beside a runtime that is not there, it
+   * evicted the text model (or waited minutes for it) to make room for a
+   * model that takes no VRAM.
    * @private
    * @param {string} modelType
    * @returns {Record<string, any> | undefined}
    */
   _loadOptionsBesideVisionBatch(modelType) {
     if (modelType !== 'embedding' || !this._visionRuntimePinned) return undefined;
-    if (this._modelMemoryManager?.getLoadedContext?.('embedding')) return undefined;
+    const memory = this._modelMemoryManager;
+    if (memory?.getLoadedContext?.('embedding')) return undefined;
     this._embeddingCpuForBatch = true;
+    if (
+      memory?.isLoadedOrLoading?.('text') &&
+      !memory.isLoadedOrLoading(VISION_RUNTIME_MEMORY_TYPE)
+    ) {
+      return {
+        gpuLayersOverride: 0,
+        besideResident: 'text',
+        keepBeside: true,
+        cpuByDesign: true,
+        forVisionBatch: true
+      };
+    }
     return { gpuLayersOverride: 0, besideResident: VISION_RUNTIME_MEMORY_TYPE, cpuByDesign: true };
   }
 
