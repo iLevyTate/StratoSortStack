@@ -63,9 +63,11 @@ function createSyntheticFiles(app, names) {
  * Build the persisted-state blob for a set of analyzed files.
  *
  * @param {Array<{ path: string, analysis?: object }>} files
- * @param {{ phase?: string }} [options]
+ * @param {{ phase?: string, organized?: string[] }} [options] `organized` lists
+ *   files a previous session already moved (their current paths), in the shape
+ *   useOrganization records for a successful move
  */
-function buildAnalyzedState(files, { phase = PHASES.WELCOME } = {}) {
+function buildAnalyzedState(files, { phase = PHASES.WELCOME, organized = [] } = {}) {
   const now = new Date();
   const analyzedAt = now.toISOString();
   const selectedFiles = [];
@@ -97,13 +99,25 @@ function buildAnalyzedState(files, { phase = PHASES.WELCOME } = {}) {
     };
   }
 
+  const organizedFiles = organized.map((organizedPath) => {
+    const name = path.basename(organizedPath);
+    return {
+      originalPath: path.join(path.dirname(path.dirname(organizedPath)), name),
+      path: organizedPath,
+      originalName: name,
+      newName: name,
+      smartFolder: path.basename(path.dirname(organizedPath)),
+      organizedAt: analyzedAt
+    };
+  });
+
   return {
     _version: readPersistedStateVersion(),
     ui: { currentPhase: phase, previousPhase: null, sidebarOpen: true, viewMode: 'phased' },
     files: {
       selectedFiles,
       smartFolders: [],
-      organizedFiles: [],
+      organizedFiles,
       organizedPathIndex: [],
       fileStates
     },
@@ -124,7 +138,8 @@ function buildAnalyzedState(files, { phase = PHASES.WELCOME } = {}) {
  *
  * @param {import('@playwright/test').Page} window
  * @param {Array<string | { path: string, analysis?: object }>} files existing file paths
- * @param {{ phase?: string }} [options] phase the app reopens on (default Welcome)
+ * @param {{ phase?: string, organized?: string[] }} [options] phase the app reopens
+ *   on (default Welcome), and files to record as already organized
  */
 async function seedAnalyzedFiles(window, files, options = {}) {
   const entries = files.map((file) => (typeof file === 'string' ? { path: file } : file));

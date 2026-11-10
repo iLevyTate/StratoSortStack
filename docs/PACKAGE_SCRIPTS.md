@@ -31,21 +31,21 @@ with Ctrl+F to figure out what to run, that's the signal to update this file ins
 
 ## Tests
 
-| Script                                       | What it does                                                                                     | When to use                             |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------- |
-| `npm test`                                   | Jest unit + integration (jsdom, with open-handles detection)                                     | Every PR                                |
-| `npm run test:coverage`                      | Same with coverage report and threshold enforcement                                              | Before pushing                          |
-| `npm run test:watch`                         | Jest in watch mode                                                                               | TDD loop                                |
-| `npm run test:integration`                   | `test/integration/` only, `--runInBand`                                                          | When your change crosses processes      |
-| `npm run test:stress`                        | Stress-suite Jest config                                                                         | Release; rarely otherwise               |
-| `npm run test:all`                           | `test` + `test:stress`                                                                           | "Did I break something somewhere else?" |
-| `npm run test:e2e`                           | Playwright (full UI flow)                                                                        | Manual smoke + release                  |
-| `npm run test:e2e:headed` / `:debug` / `:ui` | Same, with browser visible / debugger / inspector                                                | Diagnosing flaky e2e                    |
-| `npm run test:e2e:report`                    | Open the last Playwright report                                                                  | After an e2e run                        |
-| `npm run test:e2e:live-llm`                  | Only the `@live-llm` Playwright specs (real models)                                              | Manual, with models installed           |
-| `npm run test:soak`                          | 12-minute Playwright soak test                                                                   | Release pre-flight                      |
-| `npm run test:critical-path`                 | Just the smoke-suite Jest specs                                                                  | When testing the gate's critical path   |
-| `npm run test:critical-path:twice`           | Smoke suite on the previous release tag and on `HEAD` (temp git worktrees), then threshold check | Inside `preflight:release`              |
+| Script                                       | What it does                                                                                     | When to use                                                        |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| `npm test`                                   | Jest unit + integration (jsdom, with open-handles detection)                                     | Every PR                                                           |
+| `npm run test:coverage`                      | Same with coverage report and threshold enforcement                                              | Before pushing                                                     |
+| `npm run test:watch`                         | Jest in watch mode                                                                               | TDD loop                                                           |
+| `npm run test:integration`                   | `test/integration/` only, `--runInBand`                                                          | When your change crosses processes                                 |
+| `npm run test:stress`                        | Stress-suite Jest config                                                                         | Release; rarely otherwise                                          |
+| `npm run test:all`                           | `test` + `test:stress`                                                                           | "Did I break something somewhere else?"                            |
+| `npm run test:e2e`                           | Playwright (full UI flow)                                                                        | Manual smoke + release                                             |
+| `npm run test:e2e:headed` / `:debug` / `:ui` | Same, with browser visible / debugger / inspector (headed also runs the maximize test)           | Diagnosing flaky e2e                                               |
+| `npm run test:e2e:report`                    | Open the last Playwright report                                                                  | After an e2e run                                                   |
+| `npm run test:e2e:live-llm`                  | Only the `@live-llm` Playwright specs (real models)                                              | Manual, with `STRATOSORT_E2E_MODELS_DIR` set to a folder of models |
+| `npm run test:soak`                          | 12-minute Playwright soak test                                                                   | Release pre-flight                                                 |
+| `npm run test:critical-path`                 | Just the smoke-suite Jest specs                                                                  | When testing the gate's critical path                              |
+| `npm run test:critical-path:twice`           | Smoke suite on the previous release tag and on `HEAD` (temp git worktrees), then threshold check | Inside `preflight:release`                                         |
 
 ## Lint, format, typecheck
 

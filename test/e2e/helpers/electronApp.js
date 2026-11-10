@@ -88,6 +88,41 @@ function createIsolatedE2eUserDataDir({ allowModelAutoDownload = false } = {}) {
   return dir;
 }
 
+/**
+ * Give an isolated profile the models in STRATOSORT_E2E_MODELS_DIR, for the
+ * @live-llm specs. An isolated profile has no models and must never download
+ * any, so without this those specs can only skip. Each .gguf is hard-linked
+ * (no multi-GB copy; removing the profile removes the link, never the model)
+ * and copied only when a link cannot be made, e.g. across drives.
+ *
+ * @param {string} userDataDir
+ * @returns {number} how many model files the profile received (0 when the
+ *   variable is unset or names no readable folder)
+ */
+function linkLocalModels(userDataDir) {
+  const source = process.env.STRATOSORT_E2E_MODELS_DIR;
+  if (!source) return 0;
+  let names;
+  try {
+    names = fs
+      .readdirSync(source, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.gguf'))
+      .map((entry) => entry.name);
+  } catch {
+    return 0;
+  }
+  const target = path.join(userDataDir, 'models');
+  fs.mkdirSync(target, { recursive: true });
+  for (const name of names) {
+    try {
+      fs.linkSync(path.join(source, name), path.join(target, name));
+    } catch {
+      fs.copyFileSync(path.join(source, name), path.join(target, name));
+    }
+  }
+  return names.length;
+}
+
 function cleanupE2eUserDataDir(userDataPath) {
   if (!userDataPath || typeof userDataPath !== 'string') return;
   try {
@@ -192,6 +227,34 @@ function killOrphanStratoSortElectronProcesses() {
   }
 }
 
+// `npx playwright test --headed` does not reach this helper as an option, and
+// the flag is not in a worker process's argv: it arrives as the project's
+// `headless: false`. Outside a test (the product tour script) there is no
+// test info, so the CLI argv is the fallback.
+function isHeadedLaunch(options = {}) {
+  if (options.headed) return true;
+  try {
+    return require('@playwright/test').test.info().project.use.headless === false;
+  } catch {
+    return Array.isArray(process.argv) && process.argv.includes('--headed');
+  }
+}
+
+/**
+ * Whether launchApp() starts Electron with --headless. On Linux CI with xvfb
+ * it does not, so Electron creates a real window (xvfb provides a virtual
+ * display; --headless can prevent window creation). A headless launch has no
+ * window manager: the window stays hidden on a fake 800x600 display and
+ * maximize/unmaximize/minimize never change its state.
+ *
+ * @param {{ headed?: boolean }} [options] - the options launchApp() receives
+ * @returns {boolean}
+ */
+function launchesHeadless(options = {}) {
+  if (isHeadedLaunch(options)) return false;
+  return process.platform !== 'linux' || !process.env.CI;
+}
+
 /**
  * Launch the StratoSort Electron application
  *
@@ -200,6 +263,9 @@ function killOrphanStratoSortElectronProcesses() {
  * @param {number} options.timeout - Launch timeout in milliseconds
  * @param {boolean} options.headed - Run with visible window (default: false)
  * @param {string} [options.userDataDir] - Profile dir to reuse (used as-is; the caller owns it)
+ * @param {boolean} [options.localModels] - Put the models from
+ *   STRATOSORT_E2E_MODELS_DIR in the new profile (see linkLocalModels); a
+ *   no-op when the variable is unset. Only for @live-llm specs.
  * @param {boolean} [options.allowModelAutoDownload] - Skip the limited-AI seed so the
  *   first-run model wizard auto-opens and the background model download runs
  *   (network; see E2E_SEED_SETTINGS)
@@ -212,6 +278,10 @@ async function launchApp(options = {}, attempt = 1) {
   const e2eUserData =
     options.userDataDir ||
     createIsolatedE2eUserDataDir({ allowModelAutoDownload: options.allowModelAutoDownload });
+  if (options.localModels && !options.userDataDir) {
+    const linked = linkLocalModels(e2eUserData);
+    console.log(`[E2E] Local models in profile: ${linked}`);
+  }
   const mergedOptions = {
     ...DEFAULT_LAUNCH_OPTIONS,
     ...options,
@@ -226,22 +296,17 @@ async function launchApp(options = {}, attempt = 1) {
     }
   };
 
-  // Playwright's `npx playwright test --headed` does not pass { headed: true } into this helper;
-  // detect CLI --headed so Electron gets a real window when using test:e2e:headed.
   // Video recording does not require a visible window — Playwright captures the
   // page compositor. The product tour records headless so it does not steal the
   // user's only display; pass headed: true when you want to watch it live.
-  const headed =
-    Boolean(options.headed) || (Array.isArray(process.argv) && process.argv.includes('--headed'));
+  const headed = isHeadedLaunch(options);
 
   // Add args for CI / headless mode if not headed
   // Use relative path from APP_ROOT so app.getAppPath() returns correct root
-  // On Linux CI with xvfb, omit --headless so Electron creates a real window
-  // (xvfb provides a virtual display; --headless can prevent window creation)
   const args = [MAIN_ENTRY_RELATIVE];
   if (!headed) {
     args.push('--disable-gpu', '--no-sandbox');
-    if (process.platform !== 'linux' || !process.env.CI) {
+    if (launchesHeadless(options)) {
       args.push('--headless');
     }
   }
@@ -279,6 +344,8 @@ async function launchApp(options = {}, attempt = 1) {
     // Specs that pass options.userDataDir (e.g. persistence-across-restart
     // tests relaunching into the same profile) manage their dir's lifetime.
     app.__e2eUserDataOwned = !options.userDataDir;
+    // This launch wrote E2E_SEED_SETTINGS before the app started.
+    app.__e2eSeededLimitedAi = !options.userDataDir && !options.allowModelAutoDownload;
     const child = typeof app.process === 'function' ? app.process() : null;
     if (child) {
       captureStream(child.stdout, 'stdout');
@@ -743,12 +810,20 @@ async function waitForBackgroundDownloadDeclined(
  */
 async function openModelSetupWizardOffline(app, window, { timeout = 60000 } = {}) {
   const userDataPath = app && app.__e2eUserData;
-  let seeded = false;
-  try {
-    const settings = JSON.parse(fs.readFileSync(path.join(userDataPath, 'settings.json'), 'utf8'));
-    seeded = settings?.modelAutoDownloadSkipped === true;
-  } catch {
-    // No readable settings.json: not a seeded profile.
+  // launchApp() records the seed it wrote. Reading settings.json back is only
+  // for a spec-provided profile: the app rewrites that file while it starts,
+  // and a read that lands mid-write fails on Windows, which used to reject a
+  // correctly seeded profile now and then.
+  let seeded = app?.__e2eSeededLimitedAi === true;
+  if (!seeded) {
+    try {
+      const settings = JSON.parse(
+        fs.readFileSync(path.join(userDataPath, 'settings.json'), 'utf8')
+      );
+      seeded = settings?.modelAutoDownloadSkipped === true;
+    } catch {
+      // No readable settings.json: not a seeded profile.
+    }
   }
   if (!seeded) {
     throw new Error(
@@ -922,6 +997,7 @@ async function ensureKnowledgeOsClosed(window) {
 
 module.exports = {
   launchApp,
+  launchesHeadless,
   closeApp,
   createIsolatedE2eUserDataDir,
   cleanupE2eUserDataDir,
