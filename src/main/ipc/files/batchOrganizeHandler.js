@@ -93,6 +93,10 @@ const VERIFY_MAX_DELAY_MS = RETRY?.FILE_OPERATION?.maxDelay ?? 5000;
 // of a large file (copy plus a checksum of both sides) has no upper bound, so
 // the lease is kept fresh for as long as the move runs.
 const MOVE_LOCK_RENEW_INTERVAL_MS = 30 * 1000;
+// How long a move that is still in flight gets after the batch is stopped
+// before the batch ends without it.
+const STUCK_MOVE_ABORT_GRACE_MS = 15 * 1000;
+const MOVE_ABANDONED = Symbol('move-abandoned');
 
 const MAX_RESULTS_PER_CHUNK = 100; // Max results per IPC message chunk
 const YIELD_EVERY_N_OPS = 10; // Yield to event loop every N operations
@@ -772,15 +776,61 @@ async function handleBatchOrganize(params) {
             // The batch lock is renewed while it runs, and the abort signal
             // is what stops a cross-volume move before it publishes.
             const moveToCompletion = async () => {
-              const lockRenewal = setInterval(
-                () => renewBatchLock(batchId),
-                MOVE_LOCK_RENEW_INTERVAL_MS
-              );
+              const moveStartedAt = Date.now();
+              const lockRenewal = setInterval(() => {
+                renewBatchLock(batchId);
+                // File name only (see the skipped-file line below for why).
+                log.warn('[FILE-OPS] Move still running; the drive is slow or not answering', {
+                  batchId,
+                  index: i,
+                  source: path.basename(op.source),
+                  elapsedMs: Date.now() - moveStartedAt
+                });
+              }, MOVE_LOCK_RENEW_INTERVAL_MS);
               lockRenewal.unref?.();
+              // A move on a drive that stopped answering can neither finish
+              // nor be interrupted. Once the batch is stopped (Stop, shutdown,
+              // rollback) it is given a short grace and then left behind, so
+              // the batch can end; settleAbandonedMove deals with it if the
+              // drive answers later.
+              /** @type {ReturnType<typeof setTimeout> | undefined} */
+              let graceTimer;
+              /** @type {(value: typeof MOVE_ABANDONED) => void} */
+              let abandon = () => {};
+              const abandoned = new Promise((resolve) => {
+                abandon = resolve;
+              });
+              const startGrace = () => {
+                graceTimer = setTimeout(() => abandon(MOVE_ABANDONED), STUCK_MOVE_ABORT_GRACE_MS);
+                graceTimer.unref?.();
+              };
+              const { signal } = abortController;
+              if (signal.aborted) startGrace();
+              else signal.addEventListener('abort', startGrace, { once: true });
+              const movePromise = performFileMove(op, log, computeFileChecksum, signal);
               try {
-                return await performFileMove(op, log, computeFileChecksum, abortController.signal);
+                const outcome = await Promise.race([movePromise, abandoned]);
+                if (outcome !== MOVE_ABANDONED) return outcome;
+                log.warn(
+                  '[FILE-OPS] Move did not answer after the batch was stopped; left behind',
+                  {
+                    batchId,
+                    index: i,
+                    source: path.basename(op.source),
+                    elapsedMs: Date.now() - moveStartedAt
+                  }
+                );
+                void settleAbandonedMove(
+                  movePromise,
+                  op.source,
+                  () => isUserAbort() || shouldRollback,
+                  log
+                );
+                return { cancelled: true };
               } finally {
                 clearInterval(lockRenewal);
+                clearTimeout(graceTimer);
+                signal.removeEventListener('abort', startGrace);
               }
             };
             /** @type {any} */
@@ -1699,6 +1749,58 @@ async function performFileMove(op, log, checksumFn, abortSignal = null) {
   }
 
   return { destination: uniqueDestination };
+}
+
+/**
+ * Follow a move the batch stopped waiting for. The batch reported the file as
+ * not moved, so when the drive answers after all and the move went through,
+ * the file is put back where it was. That happens only when shouldReturn()
+ * says the batch was cancelled or rolled back; an interrupted batch resumes
+ * from its journal instead. It never rejects.
+ * @param {Promise<any>} movePromise
+ * @param {string} source
+ * @param {() => boolean} shouldReturn
+ * @param {LoggerLike} log
+ * @returns {Promise<void>}
+ */
+async function settleAbandonedMove(movePromise, source, shouldReturn, log) {
+  let movedTo;
+  try {
+    const outcome = await movePromise;
+    movedTo = outcome && !outcome.cancelled && !outcome.skipped ? outcome.destination : null;
+  } catch (lateError) {
+    log.warn('[FILE-OPS] Move left behind by a stopped batch failed; the file did not move', {
+      source: path.basename(source),
+      error: /** @type {any} */ (lateError)?.message
+    });
+    return;
+  }
+  if (!movedTo) return;
+  if (!shouldReturn()) {
+    log.warn('[FILE-OPS] Move left behind by an interrupted batch finished late', {
+      source: path.basename(source)
+    });
+    return;
+  }
+  try {
+    try {
+      await renameNoReplace(movedTo, source);
+    } catch (renameError) {
+      if (/** @type {any} */ (renameError)?.code !== 'EXDEV') throw renameError;
+      await crossDeviceMove(movedTo, source, { verify: true });
+    }
+    log.warn('[FILE-OPS] Move finished after the batch was stopped; file put back', {
+      source: path.basename(source)
+    });
+  } catch (returnError) {
+    // Full paths on purpose: this file is at a place the app has no record
+    // of, and the user needs to be able to find it.
+    log.error('[FILE-OPS] Move finished after the batch was stopped and could not be put back', {
+      source,
+      movedTo,
+      error: /** @type {any} */ (returnError)?.message
+    });
+  }
 }
 
 /**

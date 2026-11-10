@@ -1561,6 +1561,107 @@ describe('Batch Organize Handler', () => {
       ]);
       expect(svc.processingState.markOrganizeOpError).not.toHaveBeenCalled();
     });
+
+    describe('on a drive that stopped answering', () => {
+      /** A rename of doc1 that stays open until `answer()` settles it. */
+      function stubHungRename() {
+        /** @type {(error?: any) => void} */
+        let answer = () => {};
+        const hung = new Promise((resolve, reject) => {
+          answer = (error) => (error ? reject(error) : resolve(undefined));
+        });
+        fs.rename.mockImplementation(async (source) => {
+          if (source === '/src/doc1.pdf') await hung;
+        });
+        return { answer: (error) => answer(error) };
+      }
+
+      async function stopAStuckBatch(reason) {
+        jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick', 'queueMicrotask'] });
+        const controller = new AbortController();
+        const { answer } = stubHungRename();
+        const pending = handleBatchOrganize({
+          ...params,
+          abortSignal: controller.signal,
+          getServiceIntegration: jest.fn(() => makeStableSvc()),
+          operation: {
+            operations: [{ source: '/src/doc1.pdf', destination: '/dest/doc1.pdf', type: 'move' }]
+          }
+        });
+        for (let i = 0; i < 50 && fs.rename.mock.calls.length === 0; i++) await flush();
+        expect(fs.rename).toHaveBeenCalledTimes(1);
+        controller.abort(reason);
+        await jest.advanceTimersByTimeAsync(16 * 1000);
+        const result = await pending;
+        return { result, answer };
+      }
+
+      const putBackCalls = () => fs.rename.mock.calls.filter(([from]) => from === '/dest/doc1.pdf');
+
+      test('Stop ends the batch after a short wait, and a move that goes through later is put back', async () => {
+        const { result, answer } = await stopAStuckBatch('user-cancel-organize');
+
+        expect(result.cancelled).toBe(true);
+        expect(result.results).toEqual([
+          expect.objectContaining({ source: '/src/doc1.pdf', success: false, cancelled: true })
+        ]);
+        expect(batchLockManager.releaseBatchLock).toHaveBeenCalled();
+        expect(jest.getTimerCount()).toBe(0);
+
+        // The drive answers after all and the rename goes through.
+        answer();
+        for (let i = 0; i < 20; i++) await flush();
+        expect(putBackCalls()).toEqual([['/dest/doc1.pdf', '/src/doc1.pdf']]);
+      });
+
+      test('a move that fails later is left alone', async () => {
+        const { result, answer } = await stopAStuckBatch('user-cancel-organize');
+        expect(result.cancelled).toBe(true);
+
+        answer(Object.assign(new Error('ENETUNREACH'), { code: 'ENETUNREACH' }));
+        for (let i = 0; i < 20; i++) await flush();
+        expect(putBackCalls()).toEqual([]);
+      });
+
+      test('an interrupted batch does not put the file back; its journal resumes it', async () => {
+        const { result, answer } = await stopAStuckBatch('ipc-timeout');
+        expect(result.results).toEqual([
+          expect.objectContaining({ source: '/src/doc1.pdf', success: false, interrupted: true })
+        ]);
+
+        answer();
+        for (let i = 0; i < 20; i++) await flush();
+        expect(putBackCalls()).toEqual([]);
+      });
+
+      test('a move that answers within the wait is still reported as moved', async () => {
+        jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick', 'queueMicrotask'] });
+        const controller = new AbortController();
+        const { answer } = stubHungRename();
+        const pending = handleBatchOrganize({
+          ...params,
+          abortSignal: controller.signal,
+          getServiceIntegration: jest.fn(() => makeStableSvc()),
+          operation: {
+            operations: [{ source: '/src/doc1.pdf', destination: '/dest/doc1.pdf', type: 'move' }]
+          }
+        });
+        for (let i = 0; i < 50 && fs.rename.mock.calls.length === 0; i++) await flush();
+        controller.abort('user-cancel-organize');
+        await jest.advanceTimersByTimeAsync(5 * 1000);
+        answer();
+        const result = await pending;
+
+        expect(result.results).toEqual([
+          expect.objectContaining({
+            source: '/src/doc1.pdf',
+            destination: '/dest/doc1.pdf',
+            success: true
+          })
+        ]);
+        expect(putBackCalls()).toEqual([]);
+      });
+    });
   });
 
   // Overlap detection folds case wherever the default filesystem does. On

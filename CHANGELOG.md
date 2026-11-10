@@ -524,7 +524,8 @@ Changes you will notice:
 - **A slow move in Organize is no longer reported as failed while it still finishes.** A move to
   another drive that took longer than 30 seconds was marked failed, but the file moved anyway, with
   no undo entry and stale search paths. The move now runs to its end, and Stop cancels a cross-drive
-  move before the copy is published.
+  move before the copy is published. If the drive has stopped answering, Stop ends the batch after
+  15 seconds; should the move go through later, the file is put back.
 - **An undo that can never work no longer blocks the ones before it.** When the file was deleted or
   moved outside the app (or the backup of a deleted file is gone), the entry is removed from history
   and the message says so. A file on a drive that is unplugged or ejected keeps its entry. Undo and
