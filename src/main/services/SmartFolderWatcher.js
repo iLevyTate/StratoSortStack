@@ -2159,7 +2159,7 @@ class SmartFolderWatcher {
         stored.provisional === true &&
         (Number(stored.provisionalRetries) || 0) < PROVISIONAL_MAX_RETRIES &&
         isCapabilityFallback(stored) &&
-        (await this._capabilityNowAvailable(filePath))
+        (await this._capabilityNowAvailable(filePath, stored))
       ) {
         return true;
       }
@@ -2264,9 +2264,10 @@ class SmartFolderWatcher {
    * files costs one lookup, not one per file.
    * @private
    * @param {string} filePath
+   * @param {Record<string, any>} [stored] - the provisional history row
    * @returns {Promise<boolean>}
    */
-  async _capabilityNowAvailable(filePath) {
+  async _capabilityNowAvailable(filePath, stored) {
     const now = Date.now();
     const cache = this._capabilityProbeCache;
     let probe = cache && now - cache.at < 60000 ? cache : null;
@@ -2302,7 +2303,12 @@ class SmartFolderWatcher {
     // Audio/video fall back because Whisper is missing, not the text model.
     // Probing the text model retried every skipped video while Whisper was
     // still absent, spent the retry budget, and never retried once it arrived.
-    if (isMediaPath(filePath)) return probe.whisper;
+    // A transcript the text model gave no answer for is the exception:
+    // Whisper is plainly there, and re-transcribing while the text model is
+    // still absent would spend both retries for nothing.
+    if (isMediaPath(filePath)) {
+      return stored?.fallbackReason === 'ai_analysis_failed' ? probe.text : probe.whisper;
+    }
     return probe.text;
   }
 

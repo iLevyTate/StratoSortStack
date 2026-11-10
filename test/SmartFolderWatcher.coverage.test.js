@@ -1816,7 +1816,54 @@ describe('SmartFolderWatcher', () => {
       });
       watcher._capabilityNowAvailable = jest.fn().mockResolvedValue(true);
       await expect(watcher._needsAnalysis('/docs/a.pdf', 1000, stats)).resolves.toBe(true);
-      expect(watcher._capabilityNowAvailable).toHaveBeenCalledWith('/docs/a.pdf');
+      expect(watcher._capabilityNowAvailable).toHaveBeenCalledWith(
+        '/docs/a.pdf',
+        expect.objectContaining({ provisional: true })
+      );
+    });
+
+    // A transcript the text model failed on is stored with its real
+    // extraction method; only `provisional` and the reason mark it.
+    const transcribedOnly = (provisionalRetries) => ({
+      provisional: true,
+      provisionalRetries,
+      category: 'audio',
+      extractionMethod: 'whisper-transcription',
+      fallbackReason: 'ai_analysis_failed'
+    });
+
+    test('retries a transcript the text model gave no answer for', async () => {
+      armHistory(transcribedOnly(0));
+      watcher._capabilityNowAvailable = jest.fn().mockResolvedValue(true);
+      await expect(watcher._needsAnalysis('/media/talk.mp3', 1000, stats)).resolves.toBe(true);
+    });
+
+    test('stops retrying that transcript after the budget is spent', async () => {
+      armHistory(transcribedOnly(2));
+      watcher._capabilityNowAvailable = jest.fn().mockResolvedValue(true);
+      await expect(watcher._needsAnalysis('/media/talk.mp3', 1000, stats)).resolves.toBe(false);
+    });
+
+    test('_capabilityNowAvailable asks for the text model when a transcript is waiting on it', async () => {
+      const llama = {
+        getConfig: jest.fn().mockResolvedValue({ textModel: 'mistral-7b.gguf' }),
+        listModels: jest.fn().mockResolvedValue([])
+      };
+      watcher._getLlamaService = () => llama;
+      watcher._whisperAvailable = jest.fn().mockResolvedValue(true);
+      watcher._capabilityProbeCache = null;
+
+      // Whisper is there, which is how the transcript exists; the text model is not.
+      await expect(
+        watcher._capabilityNowAvailable('/media/talk.mp3', transcribedOnly(0))
+      ).resolves.toBe(false);
+      // A media file skipped for want of Whisper still asks for Whisper.
+      await expect(
+        watcher._capabilityNowAvailable('/media/talk.mp3', {
+          provisional: true,
+          extractionMethod: 'media-skipped-no-whisper'
+        })
+      ).resolves.toBe(true);
     });
 
     test('does not retry while the model is still missing', async () => {

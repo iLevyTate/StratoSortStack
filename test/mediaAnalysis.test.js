@@ -439,11 +439,33 @@ describe('analyzeMediaFile — the text model gives no answer for a transcript',
     }));
 
     expect(isFallbackAnalysis(result)).toBe(true);
-    // Retried by the watcher once the model answers again.
     expect(isCapabilityFallback(result)).toBe(true);
     expect(result.error).toMatch(/llama_decode failed/);
     expect(result.category).toBe('audio');
     expect(result.confidence).toBe(60);
+  });
+
+  // The watcher decides on the history row, and the row keeps neither
+  // `isFallback` flag: only `provisional` and the reason survive.
+  test('the row history stores is still one the watcher retries', async () => {
+    const { recordAnalysisResult } = require('../src/main/ipc/analysisUtils');
+    const result = await analyze(async () => ({ error: 'LLM unavailable', keywords: [] }));
+    const recordAnalysis = jest.fn().mockResolvedValue(undefined);
+
+    await recordAnalysisResult({
+      filePath: '/mock/podcast.mp3',
+      result,
+      processingTime: 1,
+      modelType: 'llm',
+      analysisHistory: { recordAnalysis },
+      logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
+      fileStats: /** @type {any} */ ({ size: 10, mtimeMs: 1000 })
+    });
+
+    const row = recordAnalysis.mock.calls[0][1];
+    expect(row).toMatchObject({ provisional: true, fallbackReason: 'ai_analysis_failed' });
+    expect(row.extractionMethod).toBe('whisper-transcription');
+    expect(isCapabilityFallback(row)).toBe(true);
   });
 
   test('the transcript is kept', async () => {

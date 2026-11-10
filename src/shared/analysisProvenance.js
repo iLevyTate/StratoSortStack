@@ -52,6 +52,8 @@ const CAPABILITY_REASON_PATTERN =
 const PROVISIONAL_MAX_RETRIES = 2;
 
 /**
+ * `provisional` is how a history row says it: the row keeps that stamp and
+ * the reason, not the `isFallback` flags the fresh result carried.
  * @param {Record<string, any> | null | undefined} analysis
  * @returns {boolean}
  */
@@ -60,6 +62,7 @@ function isFallbackAnalysis(analysis) {
   return (
     analysis._isFallback === true ||
     analysis.isFallback === true ||
+    analysis.provisional === true ||
     analysis.category === 'error' ||
     FALLBACK_METHODS.has(String(analysis.extractionMethod || ''))
   );

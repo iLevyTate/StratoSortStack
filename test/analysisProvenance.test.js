@@ -11,6 +11,17 @@ const {
 } = require('../src/shared/analysisProvenance');
 
 describe('analysisProvenance', () => {
+  // History keeps `provisional` and drops the `isFallback` flags.
+  test('a stored row marked provisional is a fallback, retried only for a capability reason', () => {
+    const row = { provisional: true, category: 'audio', extractionMethod: 'whisper-transcription' };
+    expect(isFallbackAnalysis(row)).toBe(true);
+    expect(isCapabilityFallback(row)).toBe(false);
+    expect(isCapabilityFallback({ ...row, fallbackReason: 'ai_analysis_failed' })).toBe(true);
+    expect(isCapabilityFallback({ provisional: true, extractionMethod: 'pdf_no_text' })).toBe(
+      false
+    );
+  });
+
   test.each([
     ['explicit _isFallback', { _isFallback: true }, true],
     ['explicit isFallback', { isFallback: true }, true],
