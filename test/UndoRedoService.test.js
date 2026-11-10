@@ -697,6 +697,136 @@ describe('UndoRedoService', () => {
 
       await expect(service.undo()).rejects.toThrow('Cannot undo truncated batch action data');
     });
+
+    // A single action whose file is gone can never be reversed. It used to
+    // stay under the cursor, so every Undo retried it and nothing older could
+    // be undone.
+    const recordMove = async (name, { landed }) => {
+      const originalPath = path.join(testDir, `${name}-from.txt`);
+      const newPath = path.join(testDir, 'sorted', `${name}.txt`);
+      await fs.mkdir(path.dirname(newPath), { recursive: true });
+      if (landed) await fs.writeFile(newPath, name);
+      await service.recordAction('FILE_MOVE', { originalPath, newPath });
+      return { originalPath, newPath };
+    };
+
+    test('a single move whose file is gone is dropped, reported, and no longer blocks older entries', async () => {
+      const older = await recordMove('older', { landed: true });
+      const gone = await recordMove('gone', { landed: false });
+      const goneId = service.actions[1].id;
+      const changes = [];
+      service.onStateChanged((change) => changes.push(change.reason));
+
+      const result = await service.undo();
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          success: false,
+          code: 'UNDO_SOURCE_MISSING',
+          removedFromHistory: true,
+          action: expect.objectContaining({ id: goneId, type: 'FILE_MOVE' }),
+          pathMutations: []
+        })
+      );
+      // The user is told which entry failed, why, and that it is gone.
+      expect(result.message).toContain('gone-from.txt');
+      expect(result.message).toMatch(/moved or deleted outside the app/);
+      expect(result.message).toMatch(/removed from history/);
+      expect(result.error).toContain(gone.newPath);
+      expect(service.actions).toHaveLength(1);
+      expect(service.currentIndex).toBe(0);
+      expect(service.canRedo()).toBe(false);
+      expect(changes).toContain('remove');
+      const persisted = JSON.parse(await fs.readFile(service.actionsPath, 'utf8'));
+      expect(persisted.actions.map((a) => a.id)).not.toContain(goneId);
+
+      // The older entry is reachable again.
+      const second = await service.undo();
+      expect(second.success).toBe(true);
+      await expect(fs.readFile(older.originalPath, 'utf8')).resolves.toBe('older');
+      expect(service.currentIndex).toBe(-1);
+    });
+
+    test('an occupied original location keeps the entry and the error carries its code', async () => {
+      const move = await recordMove('blocked', { landed: true });
+      await fs.writeFile(move.originalPath, 'someone else');
+
+      const error = await service.undo().then(
+        () => null,
+        (e) => e
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      expect(error.code).toBe('UNDO_DESTINATION_OCCUPIED');
+      expect(error.message).toMatch(/^Failed to undo action: /);
+      // Fixable by the user, so the entry stays for a retry.
+      expect(service.actions).toHaveLength(1);
+      expect(service.currentIndex).toBe(0);
+      await expect(fs.readFile(move.originalPath, 'utf8')).resolves.toBe('someone else');
+
+      await fs.unlink(move.originalPath);
+      await expect(service.undo()).resolves.toEqual(expect.objectContaining({ success: true }));
+    });
+
+    test('a missing file on a volume that does not answer keeps the entry for a retry', async () => {
+      const move = await recordMove('offline', { landed: false });
+      const root = path.parse(move.newPath).root;
+      const realAccess = fs.access;
+      const accessSpy = jest.spyOn(fs, 'access').mockImplementation(async (target, ...rest) => {
+        if (String(target) === root) {
+          throw Object.assign(new Error('volume offline'), { code: 'ENOENT' });
+        }
+        return realAccess.call(fs, target, ...rest);
+      });
+
+      try {
+        const error = await service.undo().then(
+          () => null,
+          (e) => e
+        );
+        expect(error).toBeInstanceOf(Error);
+        expect(error.code).toBe('UNDO_SOURCE_MISSING');
+        expect(service.actions).toHaveLength(1);
+        expect(service.currentIndex).toBe(0);
+      } finally {
+        accessSpy.mockRestore();
+      }
+    });
+
+    test.each([
+      '/Volumes/StratoSortNoSuchVolume/sorted/a.txt',
+      '/media/nobody/StratoSortNoSuchVolume/a.txt',
+      '/run/media/nobody/StratoSortNoSuchVolume/a.txt',
+      '/mnt/StratoSortNoSuchVolume/a.txt'
+    ])('a file on an ejected volume (%s) does not read as deleted', async (filePath) => {
+      // "/" always answers, so the mount point is what has to be probed.
+      await expect(service._isGoneForGood(filePath)).resolves.toBe(false);
+    });
+
+    test('a single delete whose backup is gone is dropped with its own code', async () => {
+      await recordMove('older', { landed: true });
+      const originalPath = path.join(testDir, 'deleted.txt');
+      await service.recordAction('FILE_DELETE', {
+        originalPath,
+        backupPath: path.join(testDir, 'backups', 'deleted.txt.bak'),
+        createBackup: true
+      });
+
+      const result = await service.undo();
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          success: false,
+          code: 'UNDO_BACKUP_MISSING',
+          removedFromHistory: true
+        })
+      );
+      expect(result.message).toMatch(/backup/);
+      expect(result.message).toMatch(/removed from history/);
+      expect(service.actions).toHaveLength(1);
+      expect(service.actions[0].type).toBe('FILE_MOVE');
+      expect(service.currentIndex).toBe(0);
+    });
   });
 
   describe('redo', () => {
@@ -721,6 +851,63 @@ describe('UndoRedoService', () => {
       service.currentIndex = -1;
 
       await expect(service.redo()).rejects.toThrow('Cannot redo truncated batch action data');
+    });
+
+    test('a single move whose file is gone is dropped from the redo side and reported', async () => {
+      const originalPath = path.join(testDir, 'redo-from.txt');
+      const newPath = path.join(testDir, 'sorted', 'redo.txt');
+      const laterFrom = path.join(testDir, 'later-from.txt');
+      const laterTo = path.join(testDir, 'sorted', 'later.txt');
+      await fs.mkdir(path.dirname(newPath), { recursive: true });
+      await fs.writeFile(newPath, 'redo');
+      await fs.writeFile(laterTo, 'later');
+      await service.recordAction('FILE_MOVE', { originalPath, newPath });
+      await service.recordAction('FILE_MOVE', { originalPath: laterFrom, newPath: laterTo });
+      await service.undo();
+      await service.undo();
+      expect(service.currentIndex).toBe(-1);
+      // The first file is deleted outside the app before the redo.
+      await fs.unlink(originalPath);
+
+      const result = await service.redo();
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          success: false,
+          code: 'UNDO_SOURCE_MISSING',
+          removedFromHistory: true,
+          pathMutations: []
+        })
+      );
+      expect(result.message).toMatch(/^Cannot redo /);
+      expect(result.message).toMatch(/removed from history/);
+      expect(service.actions).toHaveLength(1);
+      expect(service.currentIndex).toBe(-1);
+
+      // The entry behind it can be redone now.
+      await expect(service.redo()).resolves.toEqual(expect.objectContaining({ success: true }));
+      await expect(fs.readFile(laterTo, 'utf8')).resolves.toBe('later');
+    });
+
+    test('an occupied destination keeps the entry and the error carries its code', async () => {
+      const originalPath = path.join(testDir, 'redo-blocked-from.txt');
+      const newPath = path.join(testDir, 'sorted', 'redo-blocked.txt');
+      await fs.mkdir(path.dirname(newPath), { recursive: true });
+      await fs.writeFile(newPath, 'mine');
+      await service.recordAction('FILE_MOVE', { originalPath, newPath });
+      await service.undo();
+      await fs.writeFile(newPath, 'someone else');
+
+      const error = await service.redo().then(
+        () => null,
+        (e) => e
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      expect(error.code).toBe('UNDO_DESTINATION_OCCUPIED');
+      expect(service.actions).toHaveLength(1);
+      expect(service.currentIndex).toBe(-1);
+      expect(service.canRedo()).toBe(true);
     });
   });
 
