@@ -309,6 +309,11 @@ class SmartFolderWatcher {
 
     // Processing state
     this.processingFiles = new Set();
+    // mtime and size each file in processingFiles had when its analysis
+    // began, so a change event raised by our own read of it can be told from
+    // an edit (see _isOwnReadEcho).
+    /** @type {Map<string, { mtimeMs: number, size: number }>} */
+    this._analysisStartStats = new Map();
     this.pendingAnalysis = new Map(); // filePath -> { mtime, timeout }
     /** @type {any[]} */
     this.analysisQueue = [];
@@ -942,6 +947,7 @@ class SmartFolderWatcher {
     this.isStarting = false;
     this.watchedPaths.clear();
     this.processingFiles.clear();
+    this._analysisStartStats.clear();
     this.analysisQueue = [];
     // K-07: the overflow buffer must be cleared alongside the main queue.
     // _restoreQueue pushes onto it, so leaving it populated made every
@@ -1396,6 +1402,13 @@ class SmartFolderWatcher {
         }
       }
 
+      if (eventType === 'change' && (await this._isOwnReadEcho(lookupKey, filePath))) {
+        logger.debug('[SMART-FOLDER-WATCHER] Change event from our own read; not queued', {
+          filePath
+        });
+        return;
+      }
+
       // Check if analysis is needed
       const needsAnalysis = await this._needsAnalysis(filePath, mtime, stats);
 
@@ -1431,6 +1444,26 @@ class SmartFolderWatcher {
         this.stats.errors++;
       }
     }
+  }
+
+  /**
+   * Whether a change event for a file we are analyzing right now is only the
+   * trace of our own read. On NTFS the first read of a file in an hour
+   * rewrites its last-access time, Windows reports that as a change, and
+   * chokidar passes it on. The event lands a few seconds into the analysis,
+   * before the history has the file, so every file the watcher analyzed was
+   * queued a second time. An edit moves the mtime or the size; a read does
+   * not.
+   * @private
+   * @param {string} key - canonical key of the file (as in processingFiles)
+   * @param {string} filePath
+   * @returns {Promise<boolean>}
+   */
+  async _isOwnReadEcho(key, filePath) {
+    const atStart = this._analysisStartStats.get(key);
+    if (!atStart) return false;
+    const now = await fs.stat(filePath);
+    return now.mtimeMs === atStart.mtimeMs && now.size === atStart.size;
   }
 
   /**
@@ -2381,10 +2414,24 @@ class SmartFolderWatcher {
           llamaService = null;
         }
 
+        // ...but only when some image in it will reach the model. Entering
+        // unloads the text and embedding models and starts the vision
+        // runtime, and leaving loads the text model again: about ten seconds
+        // of model swapping, which a batch of items _analyzeFile then drops
+        // (analyzed since they were queued, excluded, deleted) spent for
+        // nothing.
+        let batchNeedsVision = false;
+        for (const item of batch) {
+          if (await this._imageItemNeedsVision(item)) {
+            batchNeedsVision = true;
+            break;
+          }
+        }
+
         // Exit only a batch mode this run entered. Exiting after a failed
         // enter dropped another owner's ref and ended its batch mid-run.
         let visionBatchEntered = false;
-        if (llamaService) {
+        if (llamaService && batchNeedsVision) {
           try {
             await llamaService.enterVisionBatchMode();
             visionBatchEntered = true;
@@ -2540,6 +2587,35 @@ class SmartFolderWatcher {
           this._processQueue();
         }, 0);
       }
+    }
+  }
+
+  /**
+   * Whether an image item taken into a batch will reach the vision model.
+   * Answers the cheap questions _analyzeFile asks before it analyzes, without
+   * its side effects; _analyzeFile still asks them itself. Anything that
+   * cannot be told counts as needing the model.
+   * @private
+   * @param {any} item
+   * @returns {Promise<boolean>}
+   */
+  async _imageItemNeedsVision(item) {
+    try {
+      // An embedding retry reuses the analysis it already has.
+      if (item.cachedAnalysis) return false;
+      if (!this._isExclusionExempt(item) && this._matchUserExclusion(item.filePath)) return false;
+      if (item.eventType === 'reanalyze') return true;
+      if (isUserAnalysisInFlight(item.filePath)) return false;
+      let stats;
+      try {
+        stats = await fs.stat(item.filePath);
+      } catch (error) {
+        if (isNotFoundError(error)) return false;
+        throw error;
+      }
+      return await this._needsAnalysis(item.filePath, item.mtime, stats);
+    } catch {
+      return true;
     }
   }
 
@@ -2752,6 +2828,10 @@ class SmartFolderWatcher {
 
       // Verify file still exists and capture stats for reuse below
       const fileStats = await fs.stat(filePath);
+      this._analysisStartStats.set(processingKey, {
+        mtimeMs: fileStats.mtimeMs,
+        size: fileStats.size
+      });
 
       // Ask the history again, now that the file's turn has come. The answer
       // from when it was queued can be minutes old: the queue is held while a
@@ -3193,6 +3273,7 @@ class SmartFolderWatcher {
       }
     } finally {
       this.processingFiles.delete(processingKey);
+      this._analysisStartStats.delete(processingKey);
     }
   }
 
