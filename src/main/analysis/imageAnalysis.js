@@ -1667,6 +1667,10 @@ async function runImageAnalysis(filePath, smartFolders, options) {
         extractedText = result._ocrText;
         delete result._ocrText;
       }
+      // Usable, but only what OCR text could tell, and every caller is here
+      // because the vision model did not answer: never serve it from the
+      // cache, so the next analysis of this image tries the vision model again.
+      if (result) result._skipCache = true;
       return result;
     };
 
@@ -1791,9 +1795,6 @@ async function runImageAnalysis(filePath, smartFolders, options) {
       const fallbackAnalysis = await tryTextFallback();
       if (fallbackAnalysis) {
         fallbackAnalysis.analysisWarning = analysis.error;
-        // Usable, but only what OCR text could tell: never serve it from the
-        // cache, so the next analysis of this image tries the vision model again.
-        fallbackAnalysis._skipCache = true;
         analysis = fallbackAnalysis;
       } else {
         analysis = createVisionUnavailableFallback(

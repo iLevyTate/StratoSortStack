@@ -24,7 +24,7 @@ const { createLogger } = require('../../shared/logger');
 const { createSingletonHelpers } = require('../../shared/singletonFactory');
 const { resolveRuntimePath } = require('../utils/runtimePaths');
 const { TIMEOUTS } = require('../../shared/performanceConstants');
-const { delay, createBackgroundWorkTracker } = require('../../shared/promiseUtils');
+const { delay, createBackgroundWorkTracker, isTimeoutAbort } = require('../../shared/promiseUtils');
 const { isVisionDecodePressureError } = require('./visionErrorClassification');
 const { getInstance: getGPUMonitor } = require('./GPUMonitor');
 const { resolveVisionRuntimeBackend } = require('../utils/llamaBackendSelector');
@@ -868,7 +868,7 @@ async function getAvailablePort() {
 }
 
 /**
- * The caller gave up before the request was sent; nothing reached the runtime.
+ * The caller gave up, before the request was sent or while the runtime worked on it.
  * Named AbortError so LlamaResilience does not count it against the breaker.
  */
 function createVisionAbortError() {
@@ -968,8 +968,14 @@ async function requestJson(
       // signal forever. Reused AbortControllers across many requests would
       // accumulate listeners unbounded. cleanupSignal() runs in both
       // settle paths so the listener is always released.
+      // A caller that gave up (Stop, a closed window) says nothing about the
+      // runtime, so it must not count against the vision breaker; an analysis
+      // that ran out of time does. Same message either way: the catch in
+      // _analyzeImageWithRuntime restarts the runtime on it.
       abortListener = () => {
-        req.destroy(new Error('Vision request aborted'));
+        req.destroy(
+          isTimeoutAbort(signal) ? new Error('Vision request aborted') : createVisionAbortError()
+        );
       };
       signal.addEventListener('abort', abortListener, { once: true });
     }

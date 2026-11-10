@@ -986,6 +986,83 @@ describe('Image Analysis Behavior', () => {
     expect(result.error).toBeUndefined();
   });
 
+  describe('an OCR result that stands in for the vision model is not cached', () => {
+    const visionAnswer = {
+      response: JSON.stringify({
+        category: 'Photos',
+        keywords: ['desk', 'paper'],
+        confidence: 88,
+        suggestedName: 'desk_photo'
+      })
+    };
+
+    const ocrReadsAnInvoice = () => {
+      const { recognizeIfAvailable } = require('../src/main/utils/tesseractUtils');
+      recognizeIfAvailable.mockResolvedValueOnce({
+        success: true,
+        text: 'Invoice #555 subtotal tax total due'
+      });
+      const { analyzeTextWithLlama } = require('../src/main/analysis/documentLlm');
+      analyzeTextWithLlama.mockResolvedValueOnce({
+        category: 'Financial',
+        keywords: ['invoice', 'total'],
+        confidence: 82,
+        suggestedName: 'invoice_555'
+      });
+    };
+
+    afterEach(() => {
+      mockCacheInstance.set.mockReset();
+    });
+
+    test('after an error OCR is the last resort for (the breaker of the vision runtime is open)', async () => {
+      mockLlamaService.analyzeImage.mockRejectedValue(
+        new Error('Circuit breaker is OPEN for llama-vision')
+      );
+      ocrReadsAnInvoice();
+
+      const result = await analyzeImageFile('/path/to/IMG_0412.png');
+
+      // The fresh request was made before OCR stood in.
+      expect(mockLlamaService.analyzeImage).toHaveBeenCalledTimes(2);
+      expect(result.category).toBe('Financial');
+      expect(result.analysisWarning).toMatch(/circuit breaker is open/i);
+      expect(mockCacheInstance.set).not.toHaveBeenCalled();
+    });
+
+    test('when the vision model cannot take images right now', async () => {
+      mockLlamaService.supportsVisionInput.mockResolvedValue(false);
+      ocrReadsAnInvoice();
+
+      const result = await analyzeImageFile('/path/to/IMG_0412.png');
+
+      expect(mockLlamaService.analyzeImage).not.toHaveBeenCalled();
+      expect(result.category).toBe('Financial');
+      expect(mockCacheInstance.set).not.toHaveBeenCalled();
+    });
+
+    test('so the next analysis of the image asks the vision model again', async () => {
+      const remembered = new Map();
+      mockCacheInstance.set.mockImplementation((key, value) => remembered.set(key, value));
+      mockCacheInstance.get.mockImplementation((key) => remembered.get(key) ?? null);
+      mockLlamaService.analyzeImage
+        .mockRejectedValueOnce(new Error('Circuit breaker is OPEN for llama-vision'))
+        .mockRejectedValueOnce(new Error('Circuit breaker is OPEN for llama-vision'))
+        .mockResolvedValue(visionAnswer);
+      ocrReadsAnInvoice();
+
+      const first = await analyzeImageFile('/path/to/IMG_0412.png');
+      const second = await analyzeImageFile('/path/to/IMG_0412.png');
+
+      expect(first.category).toBe('Financial');
+      expect(mockLlamaService.analyzeImage).toHaveBeenCalledTimes(3);
+      expect(second.category).toBe('Photos');
+      expect(second.analysisWarning).toBeUndefined();
+      // What the vision model said is what later analyses get back.
+      expect([...remembered.values()].map((entry) => entry.category)).toEqual(['Photos']);
+    });
+  });
+
   describe('hand-off to the watchers once the queue accepts the image vector', () => {
     const visionResponse = {
       response: JSON.stringify({ category: 'Docs', keywords: ['a', 'b'], confidence: 80 })

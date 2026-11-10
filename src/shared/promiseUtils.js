@@ -166,6 +166,33 @@ function withTimeout(fnOrPromise, timeoutMs, operationName = 'Operation') {
  * );
  */
 /**
+ * The reason a signal is aborted with when the time ran out, so the work can
+ * tell that apart from a caller that gave up. Same name and message as the
+ * default reason: work that rethrows it is classified as it was before.
+ * @returns {Error & { timedOut?: boolean }}
+ */
+function createTimeoutAbortReason() {
+  const reason = /** @type {Error & { timedOut?: boolean }} */ (
+    new Error('This operation was aborted')
+  );
+  reason.name = 'AbortError';
+  reason.timedOut = true;
+  return reason;
+}
+
+/**
+ * True when the signal was aborted because the time ran out (by
+ * withAbortableTimeout or AbortSignal.timeout), false when its caller gave up.
+ * @param {AbortSignal|null|undefined} signal
+ * @returns {boolean}
+ */
+function isTimeoutAbort(signal) {
+  if (!signal?.aborted) return false;
+  const reason = /** @type {any} */ (signal.reason);
+  return reason?.timedOut === true || reason?.name === 'TimeoutError';
+}
+
+/**
  * @param {(abortController: AbortController) => Promise<any>} fn
  * @param {number} timeoutMs
  * @param {string} [operationName]
@@ -195,7 +222,7 @@ async function withAbortableTimeout(fn, timeoutMs, operationName = 'Operation', 
 
   const timeoutPromise = new Promise((_, reject) => {
     timeoutId = setTimeout(() => {
-      abortController.abort();
+      abortController.abort(createTimeoutAbortReason());
       reject(new Error(`${operationName} timed out after ${timeoutMs}ms`));
     }, timeoutMs);
     // Allow process to exit if this timer is the only thing keeping it alive
@@ -913,6 +940,7 @@ module.exports = {
   throwIfAborted,
   withTimeout,
   withAbortableTimeout,
+  isTimeoutAbort,
   createTimeoutRace,
 
   // Retry

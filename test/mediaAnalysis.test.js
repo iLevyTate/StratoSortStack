@@ -38,6 +38,7 @@ const {
   VIDEO_EXTENSIONS
 } = require('../src/main/analysis/mediaAnalysis');
 const { ERROR_CODES } = require('../src/shared/errorCodes');
+const { isFallbackAnalysis, isCapabilityFallback } = require('../src/shared/analysisProvenance');
 
 describe('classifyMediaFile', () => {
   test.each([
@@ -411,6 +412,95 @@ describe('analyzeMediaFile — audio path', () => {
     await expect(
       analyzeMediaFile('/mock/podcast.mp3', { whisperService, analyzeTextWithLlama })
     ).rejects.toMatchObject({ code });
+  });
+});
+
+// The text model reports a failure it survived by returning `{ error }`, not
+// by throwing. Spread into the result, that object was stored as a finished
+// 'whisper-transcription' analysis with confidence 0: never retried, and
+// embedded with no keywords.
+describe('analyzeMediaFile — the text model gives no answer for a transcript', () => {
+  const podcast = () =>
+    fakeWhisper({
+      text: 'a podcast episode',
+      segments: [{ start: 0, end: 1, text: 'a podcast episode' }],
+      language: 'en',
+      durationSeconds: 1.0
+    });
+  const analyze = (analyzeTextWithLlama) =>
+    analyzeMediaFile('/mock/podcast.mp3', { whisperService: podcast(), analyzeTextWithLlama });
+
+  test('a failure it returns is recorded as provisional, not as a finished analysis', async () => {
+    const result = await analyze(async () => ({
+      error: 'AI engine error for document: llama_decode failed',
+      keywords: [],
+      confidence: 0,
+      failureMode: 'llm-engine-error'
+    }));
+
+    expect(isFallbackAnalysis(result)).toBe(true);
+    // Retried by the watcher once the model answers again.
+    expect(isCapabilityFallback(result)).toBe(true);
+    expect(result.error).toMatch(/llama_decode failed/);
+    expect(result.category).toBe('audio');
+    expect(result.confidence).toBe(60);
+  });
+
+  test('the transcript is kept', async () => {
+    const result = await analyze(async () => ({
+      error: 'AI engine error for document: llama_decode failed',
+      keywords: [],
+      confidence: 0
+    }));
+
+    expect(result.transcript).toBe('a podcast episode');
+    expect(result.extractedText).toContain('a podcast episode');
+    expect(result.extractionMethod).toBe('whisper-transcription');
+  });
+
+  test('a failure it throws is provisional too', async () => {
+    const result = await analyze(async () => {
+      throw new Error('LLM unavailable');
+    });
+
+    expect(isFallbackAnalysis(result)).toBe(true);
+    expect(result.error).toBe('LLM unavailable');
+  });
+
+  test('a memory budget refusal it returns is rethrown, as one it throws', async () => {
+    await expect(
+      analyze(async () => ({
+        error: 'AI engine error for document: Model memory budget exceeded',
+        keywords: [],
+        confidence: 0
+      }))
+    ).rejects.toMatchObject({ code: 'MODEL_MEMORY_BUDGET_EXCEEDED' });
+  });
+
+  test('an answer is not provisional', async () => {
+    const result = await analyze(async () => ({
+      category: 'Podcasts',
+      keywords: ['episode'],
+      confidence: 80
+    }));
+
+    expect(isFallbackAnalysis(result)).toBe(false);
+    expect(result.error).toBeUndefined();
+    expect(result.category).toBe('Podcasts');
+  });
+
+  test('a file with no speech is not sent to the model and is not a model failure', async () => {
+    const whisperService = fakeWhisper({ text: '', segments: [], language: null });
+    const analyzeTextWithLlama = jest.fn();
+
+    const result = await analyzeMediaFile('/mock/silence.wav', {
+      whisperService,
+      analyzeTextWithLlama
+    });
+
+    expect(analyzeTextWithLlama).not.toHaveBeenCalled();
+    expect(result.error).toBeUndefined();
+    expect(result.fallbackReason).toBeUndefined();
   });
 });
 
