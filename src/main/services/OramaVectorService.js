@@ -4508,6 +4508,10 @@ class OramaVectorService extends EventEmitter {
 
     await this.initialize();
 
+    // Ids this batch still has to move away. A row at one of them belongs to a
+    // live file (a chain or swap inside one batch), so it is never replaced.
+    const pendingSourceIds = new Set(pathUpdates.map((spec) => spec?.oldId).filter(Boolean));
+
     let updated = 0;
     for (const updateSpec of pathUpdates) {
       try {
@@ -4559,6 +4563,22 @@ class OramaVectorService extends EventEmitter {
 
         // If ID changed, insert new then delete old to prevent data loss on insert failure
         if (newId && newId !== oldId) {
+          // A row already at the destination id is a leftover: its file was
+          // deleted or replaced outside the app and the row waits for the
+          // orphan reaper. Orama's insert throws on an existing id, which left
+          // the moved file answered by that leftover's vector, so drop the row,
+          // its sidecar vector and its chunks first.
+          if (!pendingSourceIds.has(newId) && (await getByID(this._databases.files, newId))) {
+            await remove(this._databases.files, newId);
+            this._embeddingStore?.files?.delete(newId);
+            const staleChunks = await this._removeExactFileChunks(newId, 'update-file-paths');
+            if (staleChunks > 0) {
+              this._emitSearchDataMutated('fileChunks', 'delete', {
+                fileId: newId,
+                count: staleChunks
+              });
+            }
+          }
           await insert(this._databases.files, {
             ...existing,
             ...metaOverrides,
@@ -4566,9 +4586,13 @@ class OramaVectorService extends EventEmitter {
             embedding: safeEmbedding,
             hasVector,
             filePath: newPath || existing.filePath,
-            fileName: newName || existing.fileName
+            fileName: newName || existing.fileName,
+            // The file was just seen at its new path.
+            isOrphaned: false,
+            orphanedAt: ''
           });
           await remove(this._databases.files, oldId);
+          pendingSourceIds.delete(oldId);
 
           // Migrate the embedding in the sidecar store. Zero-vector placeholders are
           // intentionally left uncached so the sidecar-repair pass can detect and

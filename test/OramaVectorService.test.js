@@ -503,6 +503,118 @@ describe('OramaVectorService', () => {
       expect(file.hasVector).toBe(false);
       expect(service._embeddingStore.files.has('novec-id')).toBe(false);
     });
+
+    // Regression: a row left behind at the destination id (a file deleted outside
+    // the app keeps its row, orphan-marked, for up to 30 days) made Orama's insert
+    // throw DOCUMENT_ALREADY_EXISTS. The re-key was swallowed and the moved file
+    // ended up served by the deleted file's vector, hidden by its orphan flag.
+    describe('destination id already holds a row', () => {
+      const staleVector = new Array(768).fill(0.9);
+      const movedVector = new Array(768).fill(0).map((_, i) => (i % 2 === 0 ? 0.5 : -0.5));
+      const staleId = 'file:C:\\dest\\report.pdf';
+      const movedId = 'file:C:\\inbox\\report.pdf';
+
+      const seed = async () => {
+        await service.upsertFile({
+          id: staleId,
+          vector: staleVector,
+          meta: {
+            path: 'C:\\dest\\report.pdf',
+            fileName: 'report.pdf',
+            fileType: 'application/pdf',
+            suggestedName: 'deleted-file'
+          }
+        });
+        await service.upsertFile({
+          id: movedId,
+          vector: movedVector,
+          meta: {
+            path: 'C:\\inbox\\report.pdf',
+            fileName: 'report.pdf',
+            fileType: 'application/pdf',
+            suggestedName: 'moved-file'
+          }
+        });
+      };
+
+      const chunksFor = (fileId, n, vector) =>
+        Array.from({ length: n }, (_, i) => ({
+          id: `chunk:${fileId}:${i}`,
+          vector,
+          meta: { fileId, chunkIndex: i, content: `passage ${i} of ${fileId}` },
+          document: `passage ${i}`
+        }));
+
+      test('updateFilePaths replaces a stale orphaned row at the destination id', async () => {
+        await seed();
+        await service.markEmbeddingsOrphaned([staleId]);
+
+        const updated = await service.updateFilePaths([
+          { oldId: movedId, newId: staleId, newMeta: { path: 'C:\\dest\\report.pdf' } }
+        ]);
+
+        expect(updated).toBe(1);
+        expect(mockLogger.warn).not.toHaveBeenCalledWith(
+          '[OramaVectorService] Failed to update file path:',
+          expect.anything()
+        );
+        await expect(service.getFile(movedId)).resolves.toBeNull();
+
+        const file = await service.getFile(staleId);
+        expect(file.suggestedName).toBe('moved-file');
+        expect(file.isOrphaned).toBe(false);
+        expect(file.orphanedAt).toBe('');
+        expect(service._embeddingStore.files.get(staleId)).toEqual(movedVector);
+        expect(service._embeddingStore.files.has(movedId)).toBe(false);
+
+        const results = await service.querySimilarFiles(movedVector, 5);
+        expect(results.some((r) => r.id === staleId)).toBe(true);
+      });
+
+      test('updateFilePaths clears the orphan flag the moved row carried', async () => {
+        await seed();
+        await service.markEmbeddingsOrphaned([movedId]);
+
+        const updated = await service.updateFilePaths([
+          { oldId: movedId, newId: 'file:C:\\elsewhere\\report.pdf' }
+        ]);
+
+        expect(updated).toBe(1);
+        const file = await service.getFile('file:C:\\elsewhere\\report.pdf');
+        expect(file.isOrphaned).toBe(false);
+        expect(file.orphanedAt).toBe('');
+      });
+
+      test('updateFilePaths drops the stale chunks of the replaced destination row', async () => {
+        await seed();
+        await service.batchUpsertFileChunks(chunksFor(staleId, 3, staleVector));
+        await service.batchUpsertFileChunks(chunksFor(movedId, 1, movedVector));
+
+        await service.updateFilePaths([{ oldId: movedId, newId: staleId }]);
+        // FilePathCoordinator clones the moved file's chunks after the re-key.
+        await service.cloneFileChunks(movedId, staleId);
+
+        const chunks = await service.getChunksForFile(staleId);
+        expect(chunks.map((c) => c.text)).toEqual([`passage 0 of ${movedId}`]);
+      });
+
+      test('updateFilePaths keeps a destination row that the same batch still has to move', async () => {
+        await seed();
+        const onwardId = 'file:C:\\archive\\report.pdf';
+
+        const updated = await service.updateFilePaths([
+          { oldId: movedId, newId: staleId },
+          { oldId: staleId, newId: onwardId }
+        ]);
+
+        // The first spec fails as it always did; the row it would have replaced
+        // belongs to a live file and reaches its own new id intact.
+        expect(updated).toBe(1);
+        expect((await service.getFile(onwardId)).suggestedName).toBe('deleted-file');
+        expect(service._embeddingStore.files.get(onwardId)).toEqual(staleVector);
+        expect((await service.getFile(movedId)).suggestedName).toBe('moved-file');
+      });
+    });
   });
 
   describe('persistence scheduling', () => {
