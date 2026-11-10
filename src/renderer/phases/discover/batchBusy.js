@@ -12,8 +12,9 @@
  * worker pool, which analyzed the same files a second time in parallel with
  * the running batch: duplicate notifications, two runs fighting over the GPU,
  * and a restart loop when the second run requeued its files. Instead the run
- * waits for the earlier batch to finish and then runs its own; files the
- * earlier batch finished come back from the analysis cache.
+ * waits for the earlier batch to finish and then runs only the files it did
+ * not finish. Those are read from the durable ready queue, not the analysis
+ * cache, which keeps results for only 30 minutes and a few hundred files.
  */
 
 /** How often a waiting run tries the batch again. */
@@ -55,28 +56,36 @@ function wait(ms, signal) {
  * progress. Returns without running when this run is superseded or aborted
  * while it waits. Any other error is rethrown for the caller's fallback.
  *
+ * selectRemaining runs before each retry: it returns the files still to
+ * analyze (an empty list ends the run, nothing left), or null to keep the
+ * previous list. runBatchPath receives that list (undefined on the first try).
+ *
  * @param {{
- *   runBatchPath: () => Promise<any>,
+ *   runBatchPath: (files?: any[]) => Promise<any>,
  *   isActiveRun: () => boolean,
  *   abortSignal?: AbortSignal | null,
  *   onWaiting?: () => void,
+ *   selectRemaining?: () => Promise<any[] | null>,
  *   retryMs?: number,
  *   sleep?: (ms: number, signal?: AbortSignal | null) => Promise<void>
  * }} options
- * @returns {Promise<'ran' | 'superseded'>}
+ * @returns {Promise<'ran' | 'superseded' | 'finished-elsewhere'>}
  */
 export async function runBatchPathWhenFree({
   runBatchPath,
   isActiveRun,
   abortSignal = null,
   onWaiting,
+  selectRemaining,
   retryMs = BATCH_BUSY_RETRY_MS,
   sleep = wait
 }) {
   let announced = false;
+  /** @type {any[] | undefined} */
+  let files;
   for (;;) {
     try {
-      await runBatchPath();
+      await runBatchPath(files);
       return 'ran';
     } catch (error) {
       if (!isBatchAlreadyRunning(error)) throw error;
@@ -88,5 +97,38 @@ export async function runBatchPathWhenFree({
     }
     await sleep(retryMs, abortSignal);
     if (!isActiveRun() || abortSignal?.aborted) return 'superseded';
+    if (selectRemaining) {
+      const remaining = await selectRemaining();
+      if (!isActiveRun() || abortSignal?.aborted) return 'superseded';
+      if (Array.isArray(remaining)) {
+        if (remaining.length === 0) return 'finished-elsewhere';
+        files = remaining;
+      }
+    }
   }
+}
+
+/**
+ * The files of a run that the ready queue does not already hold a current
+ * result for. A ready entry counts only when the file has not changed since
+ * it was analyzed (same modified time, when both are known).
+ * @param {any[]} files - the run's files ({ path, modified? })
+ * @param {any[]} readyEntries - ready queue entries ({ path, modified?, analysis })
+ * @param {(p: string) => string} canonical - path key
+ * @returns {any[]}
+ */
+export function filesNotYetReady(files, readyEntries, canonical) {
+  /** @type {Map<string, any>} */
+  const ready = new Map();
+  for (const entry of Array.isArray(readyEntries) ? readyEntries : []) {
+    if (!entry?.path || !entry.analysis) continue;
+    ready.set(canonical(entry.path), entry);
+  }
+  return (Array.isArray(files) ? files : []).filter((file) => {
+    const entry = ready.get(canonical(file?.path));
+    if (!entry) return true;
+    const a = file?.modified ? Date.parse(file.modified) : NaN;
+    const b = entry.modified ? Date.parse(entry.modified) : NaN;
+    return Number.isFinite(a) && Number.isFinite(b) && a !== b;
+  });
 }

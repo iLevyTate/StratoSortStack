@@ -32,7 +32,7 @@ import {
 import { mapErrorToNotification } from '../../utils/errorMapping';
 import { normalizeNamingConventionState } from '../../../shared/namingConventions';
 import { toCanonicalPath } from '../../utils/canonicalPath';
-import { isBatchAlreadyRunning, runBatchPathWhenFree } from './batchBusy';
+import { filesNotYetReady, isBatchAlreadyRunning, runBatchPathWhenFree } from './batchBusy';
 
 const logger = createLogger('DiscoverPhase:Analysis');
 const BATCH_ANALYSIS_MIN_FILES = 40;
@@ -1266,13 +1266,17 @@ export function useAnalysis(options = {}) {
         completedCountRef.current = 0;
         const fileByPath = new Map(uniqueFiles.map((/** @type {any} */ file) => [file.path, file]));
 
-        const runBatchPath = async () => {
+        // batchFiles: the files this attempt sends; a run that waited out an
+        // earlier batch sends only what that batch did not finish (see
+        // batchBusy.js). Progress still counts against the whole run.
+        const runBatchPath = async (/** @type {any[]} */ batchFiles = uniqueFiles) => {
+          const alreadyDone = uniqueFiles.length - batchFiles.length;
           const batchApi = window?.electronAPI?.analysis?.batch;
           if (typeof batchApi !== 'function') {
             throw new Error('Batch analysis API not available');
           }
 
-          for (const file of uniqueFiles) {
+          for (const file of batchFiles) {
             const fileName = file.name || file.path.split(/[\\/]/).pop();
             updateFileState(file.path, 'analyzing', { fileName });
           }
@@ -1299,7 +1303,10 @@ export function useAnalysis(options = {}) {
             }
 
             const previousCompleted = Number(completedCountRef.current) || 0;
-            const current = Math.min(Number(payload.completed) || 0, uniqueFiles.length);
+            const current = Math.min(
+              alreadyDone + (Number(payload.completed) || 0),
+              uniqueFiles.length
+            );
             if (current > previousCompleted && typeof payload.currentFile === 'string') {
               batchCompletedPathsRef.current.add(payload.currentFile);
             }
@@ -1374,7 +1381,7 @@ export function useAnalysis(options = {}) {
             const batchResult = await withTimeout(
               batchApi({
                 batchId: clientBatchId,
-                filePaths: uniqueFiles.map((/** @type {any} */ file) => file.path),
+                filePaths: batchFiles.map((/** @type {any} */ file) => file.path),
                 options: {
                   concurrency,
                   autoConcurrency,
@@ -1384,7 +1391,7 @@ export function useAnalysis(options = {}) {
                 }
               }),
               TIMEOUTS.AI_ANALYSIS_BATCH,
-              `Batch analysis for ${uniqueFiles.length} files`
+              `Batch analysis for ${batchFiles.length} files`
             );
 
             if (!batchResult || !Array.isArray(batchResult.results)) {
@@ -1458,7 +1465,7 @@ export function useAnalysis(options = {}) {
                 applyAnalysisOutcome(fileInfo, resultPayload, explicitError);
               }
 
-              const newCompletedCount = Math.min(i + 1, uniqueFiles.length);
+              const newCompletedCount = Math.min(alreadyDone + i + 1, uniqueFiles.length);
               completedCountRef.current = newCompletedCount;
               lastProgressAtRef.current = Date.now();
               const progress = {
@@ -1624,10 +1631,27 @@ export function useAnalysis(options = {}) {
               systemRecommended,
               lowVramBatch: systemRecommended === 1
             });
-            await runBatchPathWhenFree({
+            const batchOutcome = await runBatchPathWhenFree({
               runBatchPath,
               isActiveRun,
               abortSignal,
+              // While waiting, show what the earlier batch finished and send
+              // only the rest once it is done. The ready queue is durable;
+              // the analysis cache keeps results only 30 minutes.
+              selectRemaining: async () => {
+                await hydrateReadyQueueResults();
+                const getReadyQueue = window?.electronAPI?.analysis?.getReadyQueue;
+                if (typeof getReadyQueue !== 'function') return null;
+                try {
+                  return filesNotYetReady(
+                    uniqueFiles,
+                    normalizeReadyQueuePayload(await getReadyQueue()),
+                    toCanonicalPath
+                  );
+                } catch {
+                  return null;
+                }
+              },
               onWaiting: () =>
                 addNotification(
                   'Analysis from before is still finishing. Continuing when it is done.',
@@ -1636,6 +1660,12 @@ export function useAnalysis(options = {}) {
                   'analysis-batch-busy'
                 )
             });
+            if (batchOutcome === 'finished-elsewhere') {
+              // The earlier batch finished every file of this run; its
+              // results were taken from the ready queue while waiting.
+              completedCountRef.current = uniqueFiles.length;
+              lastProgressAtRef.current = Date.now();
+            }
           } catch (batchError) {
             const isLegacyBatchTimeout =
               String(batchError?.message || '').includes('30000ms') &&
