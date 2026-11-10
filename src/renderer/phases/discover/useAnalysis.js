@@ -1688,7 +1688,10 @@ export function useAnalysis(options = {}) {
           await runWorkerPool();
         }
 
-        if (!isActiveRun()) return;
+        // An aborted run (Discover unmounted) is not finished: no completion
+        // notice. The finally below releases the lock and starts any files a
+        // remount queued meanwhile.
+        if (!isActiveRun() || abortSignal.aborted) return;
 
         const finalProgress = {
           current: Math.min(completedCountRef.current, uniqueFiles.length),

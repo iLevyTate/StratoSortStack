@@ -60,11 +60,16 @@ const {
   resolveRealPaths
 } = require('../../shared/pathSanitization');
 const { isImagePath, isMediaPath } = require('../../shared/fileIdUtils');
-const { isUserAnalysisInFlight } = require('../analysis/userAnalysisInFlight');
+const {
+  isUserAnalysisInFlight,
+  hasUserAnalysisInFlight
+} = require('../analysis/userAnalysisInFlight');
 
 // How long a file Discover is analyzing right now waits before the watcher
 // checks it again.
 const USER_ANALYSIS_DEFER_MS = 15000;
+// How often a queue held for a user-started analysis checks again.
+const USER_ANALYSIS_HOLD_RECHECK_MS = 5000;
 
 // The queue keeps taking files of the kind it just ran (documents, images,
 // or audio/video) while any are waiting, so each model loads once per run of
@@ -314,6 +319,8 @@ class SmartFolderWatcher {
     this._inFlightItems = new Map();
     /** @type {'image' | 'media' | 'document' | null} */
     this._lastLane = null;
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    this._userAnalysisHoldTimer = null;
     this._laneStreak = 0;
     // Abort controllers of the analyses running now, so stop() can cancel
     // them instead of waiting them out.
@@ -863,6 +870,10 @@ class SmartFolderWatcher {
       this.queueTimer = null;
     }
     // And the disk-full recheck, so a held queue is not processed after stop.
+    if (this._userAnalysisHoldTimer) {
+      clearTimeout(this._userAnalysisHoldTimer);
+      this._userAnalysisHoldTimer = null;
+    }
     if (this._storageFullHoldTimer) {
       clearTimeout(this._storageFullHoldTimer);
       this._storageFullHoldTimer = null;
@@ -2241,6 +2252,31 @@ class SmartFolderWatcher {
       this._fillFromPendingReanalyze();
     }
     if (this.analysisQueue.length === 0) {
+      return;
+    }
+
+    // A Discover analysis is running: leave the GPU and the models to it.
+    // Both used to take turns file by file, so a startup catch-up of the
+    // smart folders halved the speed of the run the user was waiting on.
+    // The queue is durable; it resumes on its own once the run ends.
+    if (hasUserAnalysisInFlight()) {
+      if (!this._userAnalysisHoldTimer) {
+        logger.info('[SMART-FOLDER-WATCHER] Holding the queue while a Discover analysis runs', {
+          queued: this.analysisQueue.length
+        });
+        const recheck = () => {
+          this._userAnalysisHoldTimer = null;
+          if (hasUserAnalysisInFlight()) {
+            this._userAnalysisHoldTimer = setTimeout(recheck, USER_ANALYSIS_HOLD_RECHECK_MS);
+            this._userAnalysisHoldTimer?.unref?.();
+            return;
+          }
+          logger.info('[SMART-FOLDER-WATCHER] Discover analysis finished; resuming the queue');
+          void this._processQueue();
+        };
+        this._userAnalysisHoldTimer = setTimeout(recheck, USER_ANALYSIS_HOLD_RECHECK_MS);
+        this._userAnalysisHoldTimer?.unref?.();
+      }
       return;
     }
 

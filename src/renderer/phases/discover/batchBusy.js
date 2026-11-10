@@ -84,6 +84,11 @@ export async function runBatchPathWhenFree({
   /** @type {any[] | undefined} */
   let files;
   for (;;) {
+    // A run aborted before its request went out (Discover unmounted during
+    // start-up, React StrictMode in development) must not send it: its
+    // listeners ignore every event of an aborted run, so the batch would run
+    // with nothing applying its results.
+    if (!isActiveRun() || abortSignal?.aborted) return 'superseded';
     try {
       await runBatchPath(files);
       return 'ran';

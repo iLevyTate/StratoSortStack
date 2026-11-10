@@ -135,3 +135,32 @@ describe('SmartFolderWatcher defers files Discover is analyzing', () => {
     expect(watcher.analyzeDocumentFile).toHaveBeenCalled();
   });
 });
+
+describe('SmartFolderWatcher holds its queue while a Discover analysis runs', () => {
+  // Live run: a startup catch-up of 879 smart-folder files took turns with
+  // the user's 11-file Discover batch, file by file, on one GPU.
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  test('nothing is analyzed during the run, and the queue resumes after it', async () => {
+    jest.useFakeTimers();
+    const watcher = makeWatcher();
+    watcher._analyzeFile = jest.fn(async () => {});
+    watcher.analysisQueue.push({ filePath: file, mtime: 1, eventType: 'add' });
+
+    const release = claimUserAnalysis(path.join(root, 'other-discover-file.pdf'));
+    await watcher._processQueue();
+    expect(watcher._analyzeFile).not.toHaveBeenCalled();
+    expect(watcher._userAnalysisHoldTimer).not.toBeNull();
+
+    // Still running at the next check: still held.
+    await jest.advanceTimersByTimeAsync(5000);
+    expect(watcher._analyzeFile).not.toHaveBeenCalled();
+
+    release();
+    await jest.advanceTimersByTimeAsync(5000);
+    expect(watcher._analyzeFile).toHaveBeenCalledTimes(1);
+    expect(watcher._userAnalysisHoldTimer).toBeNull();
+  });
+});

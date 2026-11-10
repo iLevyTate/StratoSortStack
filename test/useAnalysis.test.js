@@ -3,7 +3,11 @@
  * Tests file analysis logic and state management
  */
 
+import * as React from 'react';
 import { renderHook, act } from '@testing-library/react';
+// The same module instances the renderer uses; a later test resets the
+// registry, after which a require() would load a second React.
+import { useAnalysis as useAnalysisOriginal } from '../src/renderer/phases/discover/useAnalysis';
 
 // Mock react-redux
 jest.mock('react-redux', () => ({
@@ -1044,5 +1048,103 @@ describe('applyAnalysisOutcome naming trust', () => {
       trustMainProcess: true
     });
     expect(name).toBe('timeline-1-2026-06-01.mp4');
+  });
+});
+
+describe('useAnalysis — a run aborted during start-up', () => {
+  // Live run (dev build, React StrictMode): Discover remounted, the resume
+  // started a run, StrictMode's simulated unmount aborted it during its 10 ms
+  // start-up pause, and the run still sent its batch. An aborted run's
+  // listeners ignore every event, so no result reached the list ("0 ready")
+  // until the 5-minute inactivity lock cancelled the batch.
+  const useAnalysis = (opts) => useAnalysisOriginal(opts);
+  const files = Array.from({ length: 40 }, (_, i) => ({
+    path: `/batch/file-${i}.txt`,
+    name: `file-${i}.txt`
+  }));
+  const setters = () => ({
+    setIsAnalyzing: jest.fn(),
+    setAnalysisProgress: jest.fn(),
+    setCurrentAnalysisFile: jest.fn(),
+    setAnalysisResults: jest.fn(),
+    setFileStates: jest.fn()
+  });
+  const options = (overrides = {}) => ({
+    selectedFiles: files,
+    fileStates: {},
+    analysisResults: [],
+    isAnalyzing: false,
+    analysisProgress: { current: 0, total: 0 },
+    namingSettings: { convention: 'original', separator: '-', dateFormat: 'YYYY-MM-DD' },
+    setters: setters(),
+    updateFileState: jest.fn(),
+    addNotification: jest.fn(),
+    actions: { setPhaseData: jest.fn(), advancePhase: jest.fn() },
+    ...overrides
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.useFakeTimers();
+    global.window.electronAPI = mockElectronAPI;
+    mockElectronAPI.analysis.batch.mockResolvedValue({
+      success: true,
+      results: files.map((file) => ({
+        filePath: file.path,
+        success: true,
+        result: { category: 'documents', suggestedName: `${file.name}-done` }
+      })),
+      errors: [],
+      total: files.length,
+      successful: files.length
+    });
+    mockElectronAPI.analysis.getReadyQueue.mockResolvedValue({ success: true, readyFiles: [] });
+    mockElectronAPI.settings.get.mockResolvedValue({ maxConcurrentAnalysis: 3 });
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  test('an unmount during the start-up pause sends no batch', async () => {
+    const opts = options();
+    const { result, unmount } = renderHook(() => useAnalysis(opts));
+    let promise;
+    await act(async () => {
+      promise = result.current.analyzeFiles(files);
+    });
+    unmount();
+    await act(async () => {
+      jest.advanceTimersByTime(100);
+      await promise;
+    });
+    expect(mockElectronAPI.analysis.batch).not.toHaveBeenCalled();
+    expect(opts.addNotification).not.toHaveBeenCalledWith(
+      expect.stringMatching(/complete/i),
+      expect.anything(),
+      expect.anything(),
+      expect.anything()
+    );
+  });
+
+  test('under StrictMode a resumed run sends one batch and its results reach the list', async () => {
+    const opts = options({
+      isAnalyzing: true,
+      fileStates: Object.fromEntries(files.map((f) => [f.path, { state: 'pending' }]))
+    });
+    renderHook(() => useAnalysis(opts), { wrapper: React.StrictMode });
+    for (let i = 0; i < 10; i += 1) {
+      await act(async () => {
+        jest.advanceTimersByTime(500);
+      });
+    }
+    expect(mockElectronAPI.analysis.batch).toHaveBeenCalledTimes(1);
+    const applied = opts.setters.setAnalysisResults.mock.calls
+      .map((call) => call[0])
+      .filter(Array.isArray)
+      .pop();
+    expect(applied).toEqual(
+      expect.arrayContaining([expect.objectContaining({ path: '/batch/file-0.txt' })])
+    );
   });
 });
