@@ -168,6 +168,33 @@ describe('UnifiedSearchModal', () => {
       }
     });
 
+    // The Atlas stays mounted after its first visit (WebGL rebuild is slow) and
+    // is only hidden visually; without `inert` its controls stay in the Tab order.
+    test('the hidden Atlas tab is inert while another tab is active', () => {
+      const {
+        registerOverlay,
+        unregisterOverlay
+      } = require('../../src/renderer/utils/overlayStack');
+      registerOverlay('knowledge-os-modal');
+      try {
+        renderWithRedux(<UnifiedSearchModal isOpen={true} onClose={jest.fn()} />);
+
+        fireEvent.keyDown(document, { key: '3', ctrlKey: true });
+        const atlasWrapper = () => screen.getByTestId('atlas-tab').parentElement;
+        expect(atlasWrapper()).not.toHaveAttribute('inert');
+        expect(atlasWrapper()).toHaveAttribute('aria-hidden', 'false');
+
+        fireEvent.keyDown(document, { key: '1', ctrlKey: true });
+        expect(atlasWrapper()).toHaveAttribute('aria-hidden', 'true');
+        expect(atlasWrapper()).toHaveAttribute('inert');
+
+        fireEvent.keyDown(document, { key: '3', ctrlKey: true });
+        expect(atlasWrapper()).not.toHaveAttribute('inert');
+      } finally {
+        unregisterOverlay('knowledge-os-modal');
+      }
+    });
+
     test('should switch back to search tab', async () => {
       renderWithRedux(<UnifiedSearchModal isOpen={true} onClose={jest.fn()} initialTab="graph" />);
 

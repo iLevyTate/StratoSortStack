@@ -1796,6 +1796,7 @@ export default function UnifiedSearchModal({
         )}
 
         {/* Atlas Tab Content — keep mounted after first visit to avoid WebGL rebuild */}
+        {/* While hidden it is inert, so its controls leave the Tab order (display:none would collapse the canvas) */}
         {graphViewEnabled && atlasMounted && (
           <div
             className={
@@ -1804,6 +1805,7 @@ export default function UnifiedSearchModal({
                 : 'pointer-events-none absolute inset-0 -z-10 opacity-0'
             }
             aria-hidden={activeTab !== 'atlas'}
+            inert={activeTab !== 'atlas'}
           >
             <AtlasTabContent
               isActive={activeTab === 'atlas'}

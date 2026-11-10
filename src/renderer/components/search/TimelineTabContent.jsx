@@ -5,7 +5,7 @@
  * onOpenFile. Renders a virtualized list of year/month/undated headers and
  * item rows built by buildTimelineRows().
  */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import PropTypes from 'prop-types';
 import { List as VirtualizedList } from 'react-window';
 import { buildTimelineRows, formatTimelineDay } from '../../utils/timelineRows';
@@ -125,11 +125,14 @@ export default function TimelineTabContent({
   loadMore,
   onOpenFile
 }) {
-  const containerRef = useRef(null);
+  // The measured container only exists while there are rows, so it is held in
+  // state: the observer attaches when the first page arrives and re-attaches
+  // after a refresh emptied the list.
+  const [containerEl, setContainerEl] = useState(/** @type {HTMLDivElement | null} */ (null));
   const [height, setHeight] = useState(400);
 
   useEffect(() => {
-    const el = containerRef.current;
+    const el = containerEl;
     if (!el) return;
     const ro = new ResizeObserver((entries) => {
       const entry = entries[0];
@@ -140,7 +143,7 @@ export default function TimelineTabContent({
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [containerEl]);
 
   const rows = useMemo(() => buildTimelineRows(items), [items]);
 
@@ -173,7 +176,7 @@ export default function TimelineTabContent({
       )}
 
       {rows.length > 0 && (
-        <div ref={containerRef} className="flex-1 min-h-0 flex flex-col overflow-x-visible">
+        <div ref={setContainerEl} className="flex-1 min-h-0 flex flex-col overflow-x-visible">
           <VirtualizedList
             rowCount={rows.length}
             rowHeight={rowHeight}
