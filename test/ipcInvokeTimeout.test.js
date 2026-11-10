@@ -47,6 +47,27 @@ describe('getIpcInvokeTimeout', () => {
     });
   });
 
+  // One request carries a whole organize batch (up to 1000 moves, possibly
+  // large files going to another drive). With the 5-minute AI budget the
+  // preload told main to stop a batch that was still moving files and the
+  // user saw a timeout; the rest only moved at the next launch.
+  test('does not put files:perform-operation on the AI budget or any other short one', () => {
+    expect(getIpcInvokeTimeout(IPC_CHANNELS.FILES.PERFORM_OPERATION)).not.toBe(3000);
+    jest.isolateModules(() => {
+      jest.doMock('../src/shared/performanceConstants', () =>
+        jest.requireActual('../src/shared/performanceConstants')
+      );
+      const { TIMEOUTS } = require('../src/shared/performanceConstants');
+      const real = require('../src/shared/ipcInvokeTimeout');
+      const budget = real.getIpcInvokeTimeout(IPC_CHANNELS.FILES.PERFORM_OPERATION);
+      expect(budget).toBe(real.FILE_OPERATION_INVOKE_TIMEOUT_MS);
+      expect(budget).toBeGreaterThan(TIMEOUTS.AI_ANALYSIS_LONG);
+      expect(budget).toBeGreaterThanOrEqual(real.ANALYZE_BATCH_INVOKE_TIMEOUT_MS);
+      // setTimeout fires at once for a delay above 2^31 - 1.
+      expect(budget).toBeLessThanOrEqual(2 ** 31 - 1);
+    });
+  });
+
   test('maps suggestions:get-file to AI_ANALYSIS_LONG', () => {
     expect(getIpcInvokeTimeout(IPC_CHANNELS.SUGGESTIONS.GET_FILE_SUGGESTIONS)).toBe(3000);
   });

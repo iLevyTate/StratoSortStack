@@ -37,6 +37,20 @@ const ANALYZE_BATCH_INVOKE_TIMEOUT_MS =
   (TIMEOUTS.ANALYSIS_RUN_MAX || 6 * 60 * 60 * 1000) + 3 * (TIMEOUTS.GLOBAL_ANALYSIS || 600000);
 
 /**
+ * FILES.PERFORM_OPERATION is one request for a whole organize batch (up to
+ * 1000 moves) or one move, copy or delete. A move to another drive copies and
+ * checksums the file, so neither has an upper bound. The 5-minute AI budget
+ * cut off batches that were still moving files: main was told to stop, the
+ * user saw a timeout, and the rest only moved at the next launch. The request
+ * therefore gets the longest delay a timer can hold (about 24.8 days; a
+ * longer one fires at once). Stop is what ends a batch early, and main gives
+ * up on a move that does not answer once the batch is stopped. A single
+ * move, copy or delete has no Stop: it ends when the operating system
+ * answers or fails the request.
+ */
+const FILE_OPERATION_INVOKE_TIMEOUT_MS = 2 ** 31 - 1;
+
+/**
  * @param {string} channel
  * @returns {number} Timeout in milliseconds
  */
@@ -51,7 +65,6 @@ function getIpcInvokeTimeout(channel) {
     channel === IPC_CHANNELS.ANALYSIS.ANALYZE_IMAGE ||
     channel === IPC_CHANNELS.ANALYSIS.ANALYZE_DOCUMENT ||
     channel === IPC_CHANNELS.SUGGESTIONS.GET_FILE_SUGGESTIONS ||
-    channel === IPC_CHANNELS.FILES.PERFORM_OPERATION ||
     channel === IPC_CHANNELS.ORGANIZE.BATCH ||
     channel === IPC_CHANNELS.SMART_FOLDERS.ADD ||
     channel === IPC_CHANNELS.SMART_FOLDERS.GENERATE_DESCRIPTION ||
@@ -65,6 +78,9 @@ function getIpcInvokeTimeout(channel) {
   }
   if (channel === IPC_CHANNELS.ANALYSIS.ANALYZE_BATCH) {
     timeout = ANALYZE_BATCH_INVOKE_TIMEOUT_MS;
+  }
+  if (channel === IPC_CHANNELS.FILES.PERFORM_OPERATION) {
+    timeout = FILE_OPERATION_INVOKE_TIMEOUT_MS;
   }
   // Embedding search/scoring operations involve embedding generation through the semaphore
   if (
@@ -128,6 +144,7 @@ function getIpcInvokeTimeout(channel) {
 
 module.exports = {
   ANALYZE_BATCH_INVOKE_TIMEOUT_MS,
+  FILE_OPERATION_INVOKE_TIMEOUT_MS,
   VC_RUNTIME_INSTALL_INVOKE_TIMEOUT_MS,
   getIpcInvokeTimeout
 };

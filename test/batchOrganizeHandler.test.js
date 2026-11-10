@@ -107,10 +107,13 @@ jest.mock('../src/shared/pathSanitization', () => ({
 }));
 
 jest.mock('../src/shared/promiseUtils', () => {
-  // Minimal Semaphore for tests (no timeout/queue-limit overhead)
+  // Minimal Semaphore for tests. Like the real one, a waiter given a queue
+  // timeout is rejected when it runs out, so a batch that queued its moves
+  // behind one again would fail the long-batch test below.
   class MockSemaphore {
-    constructor(max) {
+    constructor(max, _maxQueue, queueTimeoutMs) {
       this.max = max;
+      this.queueTimeoutMs = queueTimeoutMs;
       this.active = 0;
       this.queue = [];
     }
@@ -119,11 +122,22 @@ jest.mock('../src/shared/promiseUtils', () => {
         this.active++;
         return;
       }
-      await new Promise((resolve) => this.queue.push(resolve));
+      await new Promise((resolve, reject) => {
+        const waiter = { resolve, timeout: undefined };
+        if (this.queueTimeoutMs > 0) {
+          waiter.timeout = setTimeout(() => {
+            this.queue.splice(this.queue.indexOf(waiter), 1);
+            reject(new Error('Request queue timeout'));
+          }, this.queueTimeoutMs);
+        }
+        this.queue.push(waiter);
+      });
     }
     release() {
       if (this.queue.length > 0) {
-        this.queue.shift()();
+        const waiter = this.queue.shift();
+        clearTimeout(waiter.timeout);
+        waiter.resolve();
       } else if (this.active > 0) {
         this.active--;
       }
@@ -1501,6 +1515,55 @@ describe('Batch Organize Handler', () => {
       expect(renewalsDuringCopy).toBeGreaterThanOrEqual(3);
       expect(batchLockManager.renewBatchLock).toHaveBeenCalledWith(result.batchId);
       // The renewal stops with the move.
+      expect(jest.getTimerCount()).toBe(0);
+    });
+
+    // The batch had three 5-minute limits of its own (a wait-for-a-slot
+    // timeout, an elapsed-time check, the renderer's request timeout). A
+    // batch of large files going to another drive hit them while every move
+    // was healthy: the files already moved were moved back.
+    test('a batch still copying after 5 minutes finishes; a file waiting its turn is moved, nothing is rolled back', async () => {
+      jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick', 'queueMicrotask'] });
+      const svc = makeStableSvc();
+      // Five large files fill every slot; the sixth waits for one.
+      const bigFiles = [1, 2, 3, 4, 5].map((n) => `/src/big${n}.mp4`);
+      fs.rename.mockImplementation(async (source) => {
+        if (bigFiles.includes(source)) throw exdev();
+      });
+      const { moved, finishCopy } = stubSlowCrossDeviceMove();
+
+      const pending = handleBatchOrganize({
+        ...params,
+        getServiceIntegration: jest.fn(() => svc),
+        operation: {
+          operations: [
+            ...bigFiles.map((source) => ({
+              source,
+              destination: source.replace('/src/', '/dest/'),
+              type: 'move'
+            })),
+            { source: '/src/doc6.pdf', destination: '/dest/doc6.pdf', type: 'move' }
+          ]
+        }
+      });
+      for (let i = 0; i < 50 && crossDeviceMove.mock.calls.length < 5; i++) await flush();
+      expect(crossDeviceMove).toHaveBeenCalledTimes(5);
+
+      await jest.advanceTimersByTimeAsync(6 * 60 * 1000);
+      await flush();
+      finishCopy();
+      const result = await pending;
+
+      const { executeRollback } = require('../src/main/ipc/files/batchRollback');
+      expect(executeRollback).not.toHaveBeenCalled();
+      expect(moved.sort()).toEqual(bigFiles);
+      expect(result.success).toBe(true);
+      expect(result.successCount).toBe(6);
+      expect(result.failCount).toBe(0);
+      expect(result.results).toHaveLength(6);
+      expect(result.results.every((row) => row.success === true)).toBe(true);
+      expect(svc.processingState.markOrganizeOpError).not.toHaveBeenCalled();
+      expect(svc.processingState.completeOrganizeBatch).toHaveBeenCalledWith(result.batchId);
       expect(jest.getTimerCount()).toBe(0);
     });
 

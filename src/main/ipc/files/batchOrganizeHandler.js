@@ -17,7 +17,7 @@ const { logger: baseLogger, createLogger } = require('../../../shared/logger');
 const { crossDeviceMove, renameNoReplace } = require('../../../shared/atomicFileOperations');
 const { validateFileOperationPath } = require('../../../shared/pathSanitization');
 const { getEffectiveMaxPathLength } = require('../../../shared/securityConfig');
-const { withTimeout, delay, Semaphore } = require('../../../shared/promiseUtils');
+const { withTimeout, delay } = require('../../../shared/promiseUtils');
 const { withCorrelationId } = require('../../../shared/correlationId');
 const { ERROR_CODES } = require('../../../shared/errorHandlingUtils');
 const { deferGhostCleanup, resumeGhostCleanup } = require('../../../shared/ghostCleanupGuard');
@@ -79,7 +79,10 @@ if (typeof createLogger !== 'function' && logger?.setContext) {
   logger.setContext('IPC:Files:BatchOrganize');
 }
 
-// Resource limits from centralized constants (prevents config drift)
+// Resource limits from centralized constants (prevents config drift).
+// MAX_TOTAL_BATCH_TIME is no longer a limit on a running batch (a batch that
+// is still moving files is never cut off for taking long); it is only
+// re-exported, and sizes the batch lock's lease in batchLockManager.
 const MAX_TOTAL_BATCH_TIME = PROCESSING_LIMITS.MAX_TOTAL_BATCH_TIME;
 const { MAX_NUMERIC_RETRIES } = LIMITS;
 const FILE_LOCK_ERROR_CODES = new Set(['EBUSY', 'EPERM', 'EACCES']);
@@ -225,28 +228,39 @@ function _detectPathOverlap(ops) {
 }
 
 /**
- * Concurrency limiter built on the shared Semaphore (p-limit pattern).
- * Returns a function `limit(fn)` that queues `fn` behind `concurrency` slots.
+ * Concurrency limiter (p-limit pattern). Returns a function `limit(fn)` that
+ * queues `fn` behind `concurrency` slots.
  *
- * The queue must be sized for the whole batch: every operation acquires
- * up-front, and the Semaphore DEFAULTS (100-entry queue that throws
- * QUEUE_FULL, 60s waiter timeout) instantly rejected ops 106+ of a large
- * batch — which the unexpected-rejection safety net then escalated into a
- * full batch rollback.
+ * Deliberately not the shared Semaphore: every operation of the batch queues
+ * up-front, and the Semaphore's queue cap and waiter timeout rejected the
+ * ones still waiting (ops 106+ of a large batch; every queued op once slow
+ * cross-volume moves had held the slots for 5 minutes). The
+ * unexpected-rejection safety net then rolled back every completed move. A
+ * queued operation here waits for as long as the moves ahead of it take;
+ * the abort signal is what ends a batch early.
  *
  * @param {number} concurrency - Max concurrent tasks
- * @param {number} maxQueue - Max waiters (size for the full batch)
- * @param {number} queueTimeoutMs - Waiter timeout (align with the batch time budget)
  * @returns {<T>(fn: () => Promise<T>) => Promise<T>}
  */
-const pLimit = (concurrency, maxQueue, queueTimeoutMs) => {
-  const sem = new Semaphore(concurrency, maxQueue, queueTimeoutMs);
+const pLimit = (concurrency) => {
+  let active = 0;
+  /** @type {Array<() => void>} */
+  const waiting = [];
   return async (fn) => {
-    await sem.acquire();
+    if (active < concurrency) {
+      active++;
+    } else {
+      // The finishing task hands its slot over, so `active` stays as it is.
+      await new Promise((resolve) => {
+        waiting.push(() => resolve(undefined));
+      });
+    }
     try {
       return await fn();
     } finally {
-      sem.release();
+      const next = waiting.shift();
+      if (next) next();
+      else active--;
     }
   };
 };
@@ -496,7 +510,6 @@ async function handleBatchOrganize(params) {
       // by OrganizeResumeService at next launch.
       let interruptedCount = 0;
       // batchId already defined above for lock acquisition
-      const batchStartTime = Date.now();
       let shouldRollback = false;
       let rollbackReason = null;
       // Permission failures since the last successful move; a run of them
@@ -572,9 +585,7 @@ async function handleBatchOrganize(params) {
           );
         }
         const batchOperationTotal = batch.operations.length;
-        // Queue sized for the whole batch; waiter timeout aligned with the
-        // batch's own time budget (processOperation aborts past it anyway).
-        const limit = pLimit(effectiveConcurrency, batchOperationTotal + 1, MAX_TOTAL_BATCH_TIME);
+        const limit = pLimit(effectiveConcurrency);
 
         // Abort reasons the USER deliberately triggered (renderer buttons).
         // Anything else on the signal — 'ipc-timeout', 'shutdown' (abortAll),
@@ -617,13 +628,9 @@ async function handleBatchOrganize(params) {
             }
           }
 
-          if (Date.now() - batchStartTime > MAX_TOTAL_BATCH_TIME) {
-            log.error(`[FILE-OPS] Batch ${batchId} exceeded maximum time limit`);
-            shouldRollback = true;
-            rollbackReason = `Batch exceeded maximum time limit of ${MAX_TOTAL_BATCH_TIME}ms`;
-            abortController.abort();
-            return;
-          }
+          // No elapsed-time limit: a batch of large files going to another
+          // drive takes as long as the copies take. It used to be rolled back
+          // when an operation started more than 5 minutes in.
 
           if (i > 0 && i % YIELD_EVERY_N_OPS === 0) {
             await new Promise((resolve) => setImmediate(resolve));
