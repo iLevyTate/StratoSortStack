@@ -121,7 +121,12 @@ function buildAnalysisFromModelJson(parsedJson, context) {
     }
     parsedJson.confidence = Math.min(95, calculatedConfidence);
   } else {
-    parsedJson.confidence = Math.round(rawConfidence);
+    // The prompt asks for 0-100, but models also answer with a 0-1 fraction.
+    // Same reading as the image route and normalizeConfidencePercent: a value
+    // in (0, 1] is a fraction. Rounding it as it stands would leave 0 or 1.
+    const percentConfidence =
+      rawConfidence > 0 && rawConfidence <= 1 ? rawConfidence * 100 : rawConfidence;
+    parsedJson.confidence = Math.round(percentConfidence);
   }
 
   // Build validated result object

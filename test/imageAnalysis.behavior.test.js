@@ -182,6 +182,12 @@ jest.mock('../src/shared/folderUtils', () => ({
   findContainingSmartFolder: jest.fn()
 }));
 
+const mockGetOrganizationGuidance = jest.fn(async () => '');
+jest.mock('../src/main/analysis/organizationGuidance', () => ({
+  ...jest.requireActual('../src/main/analysis/organizationGuidance'),
+  getOrganizationGuidance: () => mockGetOrganizationGuidance()
+}));
+
 describe('Image Analysis Behavior', () => {
   let fs;
   let mockLlamaService;
@@ -195,7 +201,9 @@ describe('Image Analysis Behavior', () => {
     // Get fresh mock references
     mockCacheInstance =
       require('../src/main/services/AnalysisCacheService').getImageAnalysisCache();
-    mockCacheInstance.get.mockReturnValue(null); // Cache miss by default
+    mockCacheInstance.get.mockReset().mockReturnValue(null); // Cache miss by default
+    mockCacheInstance.set.mockReset();
+    mockGetOrganizationGuidance.mockResolvedValue('');
 
     // Access nested mock: getServices() -> returns object with matcher -> matcher has embedText
     mockMatcherInstance = require('../src/main/analysis/semanticFolderMatcher').getServices()
@@ -493,6 +501,36 @@ describe('Image Analysis Behavior', () => {
 
     expect(result).toBe(cachedResult);
     expect(mockLlamaService.analyzeImage).not.toHaveBeenCalled();
+  });
+
+  test('an unchanged image is analyzed again once the organization instructions change', async () => {
+    // A working cache keyed on the signature the code under test builds.
+    const store = new Map();
+    mockCacheInstance.get.mockImplementation((key) => store.get(key) ?? null);
+    mockCacheInstance.set.mockImplementation((key, value) => store.set(key, value));
+    mockLlamaService.analyzeImage.mockResolvedValue({
+      response: JSON.stringify({
+        category: 'Finance',
+        keywords: ['receipt'],
+        confidence: 90,
+        suggestedName: 'tax_receipt',
+        has_text: false
+      })
+    });
+
+    mockGetOrganizationGuidance.mockResolvedValue('Keep receipts in Finance.');
+    await analyzeImageFile('/path/to/guided.png');
+    await analyzeImageFile('/path/to/guided.png');
+    // Same instructions: the second run is a cache hit.
+    expect(mockLlamaService.analyzeImage).toHaveBeenCalledTimes(1);
+
+    mockGetOrganizationGuidance.mockResolvedValue('Put every receipt in Clients.');
+    await analyzeImageFile('/path/to/guided.png');
+
+    expect(mockLlamaService.analyzeImage).toHaveBeenCalledTimes(2);
+    expect(mockLlamaService.analyzeImage.mock.calls[1][0].prompt).toContain(
+      'Put every receipt in Clients.'
+    );
   });
 
   test('handles AI engine unavailability gracefully', async () => {

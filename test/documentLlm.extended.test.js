@@ -83,6 +83,12 @@ jest.mock('../src/main/services/FolderMatchingService', () => ({
   }))
 }));
 
+const mockGetOrganizationGuidance = jest.fn(async () => '');
+jest.mock('../src/main/analysis/organizationGuidance', () => ({
+  ...jest.requireActual('../src/main/analysis/organizationGuidance'),
+  getOrganizationGuidance: () => mockGetOrganizationGuidance()
+}));
+
 const { analyzeTextWithLlama } = require('../src/main/analysis/documentLlm');
 
 describe('documentLlm – extended', () => {
@@ -96,7 +102,10 @@ describe('documentLlm – extended', () => {
     mockLlamaService.listModels.mockResolvedValue([{ name: 'test-model.gguf' }]);
     mockLlamaService.generateText.mockResolvedValue({ response: '{}' });
     // Reset cache to miss by default
-    mockCacheService.get.mockReturnValue(null);
+    mockCacheService.get.mockReset().mockReturnValue(null);
+    mockCacheService.set.mockReset();
+    mockCacheService.generateKey.mockReset().mockReturnValue('cache-key');
+    mockGetOrganizationGuidance.mockResolvedValue('');
   });
 
   // ─── JSON repair fallback ──────────────────────────────────
@@ -217,6 +226,20 @@ describe('documentLlm – extended', () => {
 
     const result = await analyzeTextWithLlama('Text', 'doc.pdf', []);
     expect(result.confidence).toBe(88);
+  });
+
+  test.each([
+    [0.9, 90],
+    [0.45, 45],
+    [1, 100],
+    [0, 0]
+  ])('reads a fractional confidence of %p as %p percent', async (fromModel, expected) => {
+    mockLlamaService.generateText.mockResolvedValue({
+      response: JSON.stringify({ category: 'documents', keywords: ['doc'], confidence: fromModel })
+    });
+
+    const result = await analyzeTextWithLlama('Text', 'doc.pdf', []);
+    expect(result.confidence).toBe(expected);
   });
 
   test('overrides out-of-range LLM confidence', async () => {
@@ -442,6 +465,31 @@ describe('documentLlm – extended', () => {
     expect(second._embeddingForPersistence).toBeUndefined();
     expect(second.keywords).toEqual(['kw']);
     expect(stored._embeddingForPersistence).toBeUndefined();
+  });
+
+  test('changed organization instructions are not answered from the cache', async () => {
+    // A working cache keyed on what the code under test hands to generateKey.
+    const store = new Map();
+    mockCacheService.generateKey.mockImplementation((seed, model) => `${model}|${seed}`);
+    mockCacheService.get.mockImplementation((key) => store.get(key) ?? null);
+    mockCacheService.set.mockImplementation((key, value) => store.set(key, value));
+    mockLlamaService.generateText.mockResolvedValue({
+      response: JSON.stringify({ category: 'Finance', keywords: ['a'], confidence: 80 })
+    });
+
+    mockGetOrganizationGuidance.mockResolvedValue('Keep tax papers in Finance.');
+    await analyzeTextWithLlama('Some invoice text', 'invoice.pdf', []);
+    await analyzeTextWithLlama('Some invoice text', 'invoice.pdf', []);
+    // Same instructions: the second run is a cache hit.
+    expect(mockLlamaService.generateText).toHaveBeenCalledTimes(1);
+
+    mockGetOrganizationGuidance.mockResolvedValue('Put every invoice in Clients.');
+    await analyzeTextWithLlama('Some invoice text', 'invoice.pdf', []);
+
+    expect(mockLlamaService.generateText).toHaveBeenCalledTimes(2);
+    expect(mockLlamaService.generateText.mock.calls[1][0].prompt).toContain(
+      'Put every invoice in Clients.'
+    );
   });
 
   test('the cache stores a copy, not the object handed back to the caller', async () => {
