@@ -794,10 +794,42 @@ export function useFileHandlers({
         }
 
         const expandedFromFolders = await expandDroppedDirectories(droppedDirectories);
-        const enhancedFiles = [...supportedDroppedFiles, ...expandedFromFolders];
+
+        // The check above only saw the dropped folder itself. Its files can
+        // already be queued (the same folder dropped twice), or be dropped
+        // alongside it, and must not be reset to pending and analyzed again.
+        const queuedPaths = new Set(
+          selectedFiles.map((/** @type {any} */ f) => toCanonicalPath(f.path))
+        );
+        const droppedPaths = new Set(supportedDroppedFiles.map((f) => toCanonicalPath(f.path)));
+        let alreadyQueuedCount = 0;
+        const newFromFolders = expandedFromFolders.filter((/** @type {any} */ file) => {
+          const canonical = toCanonicalPath(file.path);
+          if (queuedPaths.has(canonical)) {
+            alreadyQueuedCount += 1;
+            return false;
+          }
+          if (droppedPaths.has(canonical)) return false;
+          droppedPaths.add(canonical);
+          return true;
+        });
+
+        const enhancedFiles = [...supportedDroppedFiles, ...newFromFolders];
         if (enhancedFiles.length === 0) {
-          addNotification('No supported files found in drop', 'warning', 2000, 'drop-empty');
+          if (alreadyQueuedCount > 0) {
+            addNotification('All files are already in the queue', 'info', 2000, 'duplicate-files');
+          } else {
+            addNotification('No supported files found in drop', 'warning', 2000, 'drop-empty');
+          }
           return;
+        }
+        if (alreadyQueuedCount > 0) {
+          addNotification(
+            `Skipped ${alreadyQueuedCount} duplicate file${alreadyQueuedCount !== 1 ? 's' : ''} already in queue`,
+            'info',
+            2000,
+            'duplicate-files'
+          );
         }
 
         // Update file states

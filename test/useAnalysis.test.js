@@ -878,11 +878,10 @@ describe('useAnalysis', () => {
     // refuses a second while it is pending. This stands in for that lock.
     describe('recordings on the per-file path', () => {
       const mediaFiles = (names) => names.map((name) => ({ path: '/rec/' + name, name }));
+      // As the renderer receives it: contextBridge copies an Error's message
+      // and drops the code the preload set on it.
       const refusal = () =>
-        Object.assign(
-          new Error('IPC Error: Operation already in progress: analysis:analyze-media'),
-          { code: 'CONCURRENCY_LIMIT' }
-        );
+        new Error('IPC Error: Operation already in progress: analysis:analyze-media');
       const errorCalls = () => mockUpdateFileState.mock.calls.filter((call) => call[1] === 'error');
       const workers = (count) => {
         mockElectronAPI.system = {
@@ -1010,6 +1009,52 @@ describe('useAnalysis', () => {
           await analyzePromise;
         });
 
+        expect(errorCalls().map((call) => call[0])).toEqual(['/rec/long.mp3']);
+        expect(readyPaths()).toEqual(['/rec/next.mp3']);
+      });
+
+      test('a recording past its limit is not sent again when its request times out', async () => {
+        // The preload ends the request 35 s after the file's limit, with a
+        // timeout error. Sending the file again then would hold the media
+        // request for minutes more and refuse the recordings after it.
+        const files = mediaFiles(['long.mp3', 'next.mp3']);
+        let held = false;
+        workers(1);
+        mockElectronAPI.analysis.batch.mockRejectedValueOnce(new Error('Batch route failed'));
+        mockElectronAPI.files.analyze.mockImplementation((filePath) => {
+          if (held) return Promise.reject(refusal());
+          if (filePath === '/rec/long.mp3') {
+            held = true;
+            return new Promise((resolve, reject) => {
+              setTimeout(() => {
+                held = false;
+                reject(
+                  new Error('IPC Error: IPC timeout after 330000ms for analysis:analyze-media')
+                );
+              }, 330 * 1000);
+            });
+          }
+          return Promise.resolve({ category: 'audio', suggestedName: 'done' });
+        });
+        const hook = renderHook(() => useAnalysis(createMockOptions({ selectedFiles: files })));
+
+        let analyzePromise;
+        await act(async () => {
+          analyzePromise = hook.result.current.analyzeFiles(files);
+          await jest.advanceTimersByTimeAsync(50);
+        });
+        for (let step = 0; step < 40; step += 1) {
+          await act(async () => {
+            await jest.advanceTimersByTimeAsync(10 * 1000);
+          });
+        }
+        await act(async () => {
+          await analyzePromise;
+        });
+
+        expect(
+          mockElectronAPI.files.analyze.mock.calls.filter((call) => call[0] === '/rec/long.mp3')
+        ).toHaveLength(1);
         expect(errorCalls().map((call) => call[0])).toEqual(['/rec/long.mp3']);
         expect(readyPaths()).toEqual(['/rec/next.mp3']);
       });

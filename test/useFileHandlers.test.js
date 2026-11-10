@@ -564,6 +564,123 @@ describe('useFileHandlers', () => {
         expect.arrayContaining([expect.objectContaining({ path: '/dropped-folder/doc.pdf' })])
       );
     });
+
+    const directoryStats = () => ({
+      size: 0,
+      created: new Date().toISOString(),
+      modified: new Date().toISOString(),
+      isDirectory: true
+    });
+
+    test('dropping a folder whose files are all queued adds and analyzes nothing', async () => {
+      mockElectronAPI.files.getStats.mockResolvedValueOnce(directoryStats());
+      mockElectronAPI.smartFolders.scanStructure.mockResolvedValueOnce({
+        files: [
+          { path: '/dropped-folder/doc.pdf', name: 'doc.pdf' },
+          { path: '/dropped-folder/notes.txt', name: 'notes.txt' }
+        ]
+      });
+
+      const { result } = renderHook(() =>
+        useFileHandlers(
+          createMockOptions({
+            selectedFiles: [
+              { path: '/dropped-folder/doc.pdf', name: 'doc.pdf' },
+              { path: '/dropped-folder/notes.txt', name: 'notes.txt' }
+            ]
+          })
+        )
+      );
+
+      await act(async () => {
+        await result.current.handleFileDrop([{ path: '/dropped-folder', name: 'dropped-folder' }]);
+      });
+
+      // Rows that are ready or in flight must not flip back to pending.
+      expect(mockUpdateFileState).not.toHaveBeenCalled();
+      expect(mockAddSelectedFiles).not.toHaveBeenCalled();
+      expect(mockAnalyzeFiles).not.toHaveBeenCalled();
+      expect(mockAddNotification).not.toHaveBeenCalledWith(
+        expect.stringContaining('Added'),
+        'success',
+        expect.anything(),
+        'files-added'
+      );
+      expect(mockAddNotification).toHaveBeenCalledWith(
+        'All files are already in the queue',
+        'info',
+        2000,
+        'duplicate-files'
+      );
+    });
+
+    test('dropping a folder with some queued files adds only the new ones', async () => {
+      mockElectronAPI.files.getStats.mockResolvedValueOnce(directoryStats());
+      mockElectronAPI.smartFolders.scanStructure.mockResolvedValueOnce({
+        files: [
+          { path: '/dropped-folder/doc.pdf', name: 'doc.pdf' },
+          { path: '/dropped-folder/new.txt', name: 'new.txt' }
+        ]
+      });
+
+      const { result } = renderHook(() =>
+        useFileHandlers(
+          createMockOptions({
+            selectedFiles: [{ path: '/dropped-folder/doc.pdf', name: 'doc.pdf' }]
+          })
+        )
+      );
+
+      await act(async () => {
+        await result.current.handleFileDrop([{ path: '/dropped-folder', name: 'dropped-folder' }]);
+      });
+
+      expect(mockUpdateFileState).toHaveBeenCalledTimes(1);
+      expect(mockUpdateFileState).toHaveBeenCalledWith('/dropped-folder/new.txt', 'pending');
+      const analyzed = mockAnalyzeFiles.mock.calls[0][0];
+      expect(analyzed.map((/** @type {any} */ file) => file.path)).toEqual([
+        '/dropped-folder/new.txt'
+      ]);
+      expect(mockAddNotification).toHaveBeenCalledWith(
+        'Added 1 new file for analysis',
+        'success',
+        2500,
+        'files-added'
+      );
+      expect(mockAddNotification).toHaveBeenCalledWith(
+        'Skipped 1 duplicate file already in queue',
+        'info',
+        2000,
+        'duplicate-files'
+      );
+    });
+
+    test('a file dropped together with its folder is analyzed once', async () => {
+      mockElectronAPI.files.getStats
+        .mockResolvedValueOnce(directoryStats())
+        .mockResolvedValueOnce({ size: 10, isDirectory: false });
+      mockElectronAPI.smartFolders.scanStructure.mockResolvedValueOnce({
+        files: [{ path: '/dropped-folder/doc.pdf', name: 'doc.pdf' }]
+      });
+
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      await act(async () => {
+        await result.current.handleFileDrop([
+          { path: '/dropped-folder', name: 'dropped-folder' },
+          { path: '/dropped-folder/doc.pdf', name: 'doc.pdf' }
+        ]);
+      });
+
+      const analyzed = mockAnalyzeFiles.mock.calls[0][0];
+      expect(analyzed).toHaveLength(1);
+      expect(mockAddNotification).toHaveBeenCalledWith(
+        'Added 1 new file for analysis',
+        'success',
+        2500,
+        'files-added'
+      );
+    });
   });
 
   describe('getBatchFileStats', () => {

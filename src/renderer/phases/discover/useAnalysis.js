@@ -115,7 +115,7 @@ async function analyzeWithRetry(
     // slightly longer timeout, so the next recording is refused for a short
     // while. Wait for it; this is not a failed analysis and uses no attempt.
     if (
-      error?.code === 'CONCURRENCY_LIMIT' &&
+      isMediaRequestBusy(error) &&
       isMediaFilePath(filePath) &&
       mediaBusyWaitedMs < MEDIA_BUSY_MAX_WAIT_MS
     ) {
@@ -158,6 +158,18 @@ async function analyzeWithRetry(
     }
     throw error;
   }
+}
+
+/**
+ * The preload's refusal reaches this code through contextBridge, which copies
+ * an Error's message but not its `code`. The message is what identifies it.
+ * @param {any} error
+ * @returns {boolean} the media request was refused because one is still pending
+ */
+function isMediaRequestBusy(error) {
+  if (!error) return false;
+  if (error.code === 'CONCURRENCY_LIMIT') return true;
+  return /Operation already in progress: analysis:analyze-media/.test(String(error.message || ''));
 }
 
 /**
@@ -1703,12 +1715,26 @@ export function useAnalysis(options = {}) {
           // file fails first and the run goes on to the next.
           lastProgressAtRef.current = Date.now();
 
+          // The limit below ends the wait, not the request. Once it has
+          // passed, the request must not be sent again when it times out in
+          // the preload: for a recording that would hold the one media
+          // request for minutes more and refuse every recording after it.
+          let gaveUp = false;
+          const fileSignal = {
+            get aborted() {
+              return gaveUp || abortSignal.aborted;
+            }
+          };
+
           try {
             const analysis = await withTimeout(
-              analyzeWithRetry(file.path, 1, abortSignal, namingSettings),
+              analyzeWithRetry(file.path, 1, fileSignal, namingSettings),
               PER_FILE_LIMIT_MS,
               `Analysis for ${fileName}`
-            );
+            ).catch((/** @type {any} */ error) => {
+              gaveUp = true;
+              throw error;
+            });
 
             // This prevents state updates if the user cancelled while analysis was in flight
             if (!isActiveRun() || abortSignal.aborted) return;
