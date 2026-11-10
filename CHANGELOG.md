@@ -565,6 +565,29 @@ Changes you will notice:
 - **"Update ready" stays after a later update check fails.**
 - **Search window.** The Timeline list fills the window instead of staying 400 px tall, and the
   hidden Atlas tab is no longer reachable with the Tab key.
+- **Organizing many or large files to another drive no longer stops after five minutes.** The batch
+  was cut off, a timeout was shown and the files already moved could be moved back. A batch that is
+  still moving files now runs until it is done or you press Stop.
+- **A failed settings read can no longer replace your saved settings with the defaults.** Settings
+  now says the read failed and offers Try again; nothing is saved until the real settings have
+  loaded.
+- **Chat.** Dragging files or folders onto the Document scope panel adds them, and says so when
+  nothing could be added. A reopened chat shows each answer as it first appeared. Retry after a
+  failed request saves the question with the answer. Chats scoped to more than 200 documents are
+  saved and keep their memory.
+- **Files whose search indexing hit a temporary error are retried on their own** after a short wait,
+  also after a restart, instead of waiting until another file is analyzed.
+- **Analysis history no longer mixes up two files that used the same path.** Analyzing a new file
+  where an organized file used to be, or moving or deleting a file from there, no longer removes or
+  re-points the organized file's history.
+- **Setup wizard.** No false "Required model downloads stopped" right after clicking Download. When
+  the AI engine cannot start, the wizard says so with the reason instead of listing installed models
+  as missing. An image model whose projector file did not download is shown as failed, and the retry
+  fetches (and Cancel stops) only that file.
+- **Dropping a folder whose files are already in the Discover queue no longer analyzes them again;**
+  only new files are added.
+- **Recordings queued behind one that timed out now really wait their turn.** The earlier fix did
+  not take effect in the packaged app.
 
 ## [5.1.2] - 2026-11-01
 
