@@ -879,6 +879,68 @@ describe('lifecycle – OS shutdown hooks (LC-07)', () => {
     );
   });
 
+  // The pre-cleanup phase runs every registered listener cleanup. If that
+  // unhooks the quit gate, a second Quit or a window close ends the process
+  // while services are still persisting.
+  test('a second quit or a window close during shutdown does not end the process early', async () => {
+    electron.app.removeListener.mockClear();
+    electron.app.exit.mockClear();
+    electron.app.quit.mockClear();
+
+    let finishServiceShutdown;
+    let serviceShutdownStarted;
+    const reachedServiceShutdown = new Promise((resolve) => {
+      serviceShutdownStarted = resolve;
+    });
+    const serviceIntegration = {
+      shutdown: jest.fn(() => {
+        serviceShutdownStarted();
+        return new Promise((resolve) => {
+          finishServiceShutdown = resolve;
+        });
+      })
+    };
+
+    const cleanup = lifecycle.registerLifecycleHandlers(jest.fn());
+    lifecycle.initializeLifecycle({
+      ...baseConfig(),
+      getServiceIntegration: () => serviceIntegration,
+      getEventListeners: () => [cleanup.cleanupAppListeners],
+      getGlobalProcessListeners: () => [cleanup.cleanupProcessListeners]
+    });
+    const registered = (name) =>
+      electron.app.on.mock.calls
+        .filter(([event]) => event === name)
+        .map(([, handler]) => handler)
+        .filter(
+          (handler) =>
+            !electron.app.removeListener.mock.calls.some(
+              ([event, removed]) => event === name && removed === handler
+            )
+        );
+
+    const [beforeQuit] = registered('before-quit');
+    const firstQuit = beforeQuit({ preventDefault: jest.fn() });
+    await reachedServiceShutdown;
+
+    // Second Quit (menu, tray, Ctrl+Q): still held off.
+    const secondEvent = { preventDefault: jest.fn() };
+    expect(registered('before-quit')).toHaveLength(1);
+    await registered('before-quit')[0](secondEvent);
+    expect(secondEvent.preventDefault).toHaveBeenCalled();
+
+    // Window X: Electron quits by default when nothing listens for
+    // window-all-closed, and the app's own handler must not ask to quit.
+    expect(registered('window-all-closed')).toHaveLength(1);
+    registered('window-all-closed')[0]();
+    expect(electron.app.quit).not.toHaveBeenCalled();
+    expect(electron.app.exit).not.toHaveBeenCalled();
+
+    finishServiceShutdown();
+    await firstQuit;
+    expect(electron.app.exit).toHaveBeenCalledTimes(1);
+  });
+
   test('attachSessionEndFlush runs the quit cleanup on the window session-end event', async () => {
     const window = { on: jest.fn(), removeListener: jest.fn() };
     const detach = lifecycle.attachSessionEndFlush(window);

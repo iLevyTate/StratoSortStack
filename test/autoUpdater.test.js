@@ -533,6 +533,65 @@ describe('autoUpdater', () => {
   // list that status, and strict safeSend blocked it with an error log on
   // every launch. Drive every path that sends APP_UPDATE and validate each
   // payload against the real schema so sender and contract cannot drift.
+  // electron-updater keeps a downloaded installer and still installs it on
+  // quit when a later check fails, so the app must keep saying so.
+  describe('a failed check after a completed download', () => {
+    function sentStatuses() {
+      const { safeSend } = require('../src/main/ipc/ipcWrappers');
+      return safeSend.mock.calls.map((call) => call[2]?.status);
+    }
+
+    async function initWithDownloadedUpdate() {
+      process.env.STRATOSORT_ENABLE_AUTO_UPDATES = 'true';
+      const mockWindow = { isDestroyed: jest.fn().mockReturnValue(false), webContents: {} };
+      mockGetAllWindows.mockReturnValue([mockWindow]);
+
+      const updater = require('../src/main/core/autoUpdater');
+      await updater.initializeAutoUpdater(false, jest.fn().mockReturnValue(mockWindow));
+      mockAutoUpdaterHandlers.get('update-downloaded')();
+      expect(updater.hasPendingDownloadedUpdate()).toBe(true);
+      return updater;
+    }
+
+    testIfSupported('an updater error keeps the downloaded update pending and shown', async () => {
+      const updater = await initWithDownloadedUpdate();
+
+      mockAutoUpdaterHandlers.get('error')(new Error('feed returned 503'));
+
+      expect(updater.hasPendingDownloadedUpdate()).toBe(true);
+      // The renderer hides "Update ready" on an error status.
+      const statuses = sentStatuses();
+      expect(statuses.slice(statuses.lastIndexOf('downloaded'))).toEqual(['downloaded']);
+      // The failure is still reported on the degraded-state banner.
+      const flags = require('../src/main/services/DegradedStateTracker')
+        .getInstance()
+        .list()
+        .filter((flag) => flag.code === 'auto-updater.unavailable');
+      expect(flags).toHaveLength(1);
+    });
+
+    testIfSupported('a manual check that fails keeps the downloaded update pending', async () => {
+      const updater = await initWithDownloadedUpdate();
+      mockAutoUpdater.checkForUpdates.mockRejectedValueOnce(new Error('feed unreachable'));
+
+      const result = await updater.checkForUpdates();
+
+      expect(result).toEqual({ success: false, error: 'feed unreachable' });
+      expect(updater.hasPendingDownloadedUpdate()).toBe(true);
+    });
+
+    testIfSupported('a newer version found by a later check replaces the download', async () => {
+      const updater = await initWithDownloadedUpdate();
+
+      mockAutoUpdaterHandlers.get('update-available')();
+      expect(updater.hasPendingDownloadedUpdate()).toBe(false);
+
+      // With no finished download an error is reported to the renderer again.
+      mockAutoUpdaterHandlers.get('error')(new Error('download failed'));
+      expect(sentStatuses().at(-1)).toBe('error');
+    });
+  });
+
   describe('every app:update payload satisfies the event schema', () => {
     const setPlatform = (value) =>
       Object.defineProperty(process, 'platform', { value, configurable: true });
@@ -587,9 +646,11 @@ describe('autoUpdater', () => {
       mockAutoUpdaterHandlers.get('update-available')();
       mockAutoUpdaterHandlers.get('update-not-available')();
       mockAutoUpdaterHandlers.get('download-progress')({ percent: 42.5 });
-      mockAutoUpdaterHandlers.get('update-downloaded')();
+      // Errors come before the download completes: once an update is
+      // downloaded, an error no longer sends a status.
       mockAutoUpdaterHandlers.get('error')(new Error('feed unreachable'));
       mockAutoUpdaterHandlers.get('error')(undefined);
+      mockAutoUpdaterHandlers.get('update-downloaded')();
 
       const payloads = sentUpdatePayloads();
       expect(payloads.map((p) => p.status)).toEqual(
