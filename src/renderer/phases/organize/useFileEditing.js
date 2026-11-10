@@ -289,7 +289,7 @@ export function useFileSelection(files) {
 
 /**
  * Hook for bulk operations
- * @param {{ selectedFiles: any[], editingFiles: Record<string, any>, setEditingFiles: Function, setSelectedFiles: Function, addNotification: Function, onEditChange?: Function }} params
+ * @param {{ selectedFiles: any[], editingFiles: Record<string, any>, setEditingFiles: Function, setSelectedFiles: Function, addNotification: Function, onEditChange?: Function, onBulkEditChange?: Function }} params
  * @returns {Record<string, any>} Bulk operation state and handlers
  */
 export function useBulkOperations({
@@ -298,7 +298,8 @@ export function useBulkOperations({
   setEditingFiles,
   setSelectedFiles,
   addNotification,
-  onEditChange
+  onEditChange,
+  onBulkEditChange
 }) {
   const [bulkEditMode, setBulkEditMode] = useState(false);
   const [bulkCategory, setBulkCategory] = useState('');
@@ -308,6 +309,7 @@ export function useBulkOperations({
   const bulkCategoryRef = useRef(bulkCategory);
   const addNotificationRef = useRef(addNotification);
   const onEditChangeRef = useRef(onEditChange);
+  const onBulkEditChangeRef = useRef(onBulkEditChange);
 
   // Keep refs in sync with latest values
   useEffect(() => {
@@ -324,7 +326,8 @@ export function useBulkOperations({
   }, [addNotification]);
   useEffect(() => {
     onEditChangeRef.current = onEditChange;
-  }, [onEditChange]);
+    onBulkEditChangeRef.current = onBulkEditChange;
+  }, [onEditChange, onBulkEditChange]);
 
   // Debounced bulk category change ref
   const debouncedBulkCategoryChangeRef = useRef(null);
@@ -348,7 +351,12 @@ export function useBulkOperations({
       // Save the choice the way a single-card edit does. The card edit state
       // alone is dropped when Organize remounts or the file is re-analyzed.
       const persistEdit = onEditChangeRef.current;
-      if (typeof persistEdit === 'function') {
+      const persistBulkEdit = onBulkEditChangeRef.current;
+      if (typeof persistBulkEdit === 'function') {
+        // One call for the whole selection; a call per file costs a store
+        // update per file.
+        persistBulkEdit([...selected], 'category', category);
+      } else if (typeof persistEdit === 'function') {
         selected.forEach((/** @type {any} */ key) => persistEdit(key, 'category', category));
       }
       setBulkEditMode(false);

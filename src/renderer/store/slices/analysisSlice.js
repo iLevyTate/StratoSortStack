@@ -166,6 +166,18 @@ const analysisSlice = createSlice({
         };
       }
     },
+    // One pass for a bulk edit. A dispatch per file re-runs every selector
+    // over the whole list each time, which froze the window on large
+    // selections.
+    updateAnalysisResultsByPaths: (state, action) => {
+      const { paths, changes } = action.payload || {};
+      if (!Array.isArray(paths) || paths.length === 0 || !changes) return;
+      const targets = new Set(paths.map((/** @type {any} */ p) => toCanonicalPath(p)));
+      state.results.forEach((/** @type {any} */ r) => {
+        if (!r || !targets.has(toCanonicalPath(r.path))) return;
+        r.analysis = { ...(r.analysis || {}), ...changes };
+      });
+    },
     updateEmbeddingState: (state, action) => {
       const { path, embeddingPolicy, embeddingStatus } = action.payload || {};
       if (!path) return;
@@ -262,6 +274,7 @@ export const {
   setAnalysisResults,
   mergeAnalysisResults,
   updateAnalysisResult,
+  updateAnalysisResultsByPaths,
   updateEmbeddingState,
   resetAnalysisState,
   resetToSafeState,

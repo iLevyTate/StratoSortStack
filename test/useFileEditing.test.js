@@ -288,6 +288,17 @@ describe('useFileEditing hooks', () => {
       });
     });
 
+    test('saves a bulk category for the whole selection in one call', () => {
+      const onEditChange = jest.fn();
+      const onBulkEditChange = jest.fn();
+      const { result } = renderBulk({ onEditChange, onBulkEditChange });
+
+      applyCategory(result, 'Finance');
+
+      expect(onBulkEditChange.mock.calls).toEqual([[['/a.txt', '/b.txt'], 'category', 'Finance']]);
+      expect(onEditChange).not.toHaveBeenCalled();
+    });
+
     test('says "1 file" when one file is selected', () => {
       const { result, props } = renderBulk({ selectedFiles: new Set(['/a.txt']) });
 
