@@ -268,6 +268,16 @@ function createFailedItemHandler(config) {
   }
 
   /**
+   * Exponential backoff per item: BASE_MS * 2^(retryCount-1), which is
+   * 5s, 10s, 20s for retryCount 1, 2, 3.
+   * @param {{ retryCount: number }} data - Failed-items entry
+   * @returns {number}
+   */
+  function retryBackoffMs(data) {
+    return RETRY.BACKOFF_BASE_MS * 2 ** (data.retryCount - 1);
+  }
+
+  /**
    * Get items whose exponential backoff has elapsed. Pure read: `lastAttempt`
    * is stamped by retryFailedItems only for items it actually re-queues, so an
    * item already sitting in the main queue keeps its original backoff clock
@@ -279,16 +289,39 @@ function createFailedItemHandler(config) {
     const itemsToRetry = [];
 
     for (const data of failedItems.values()) {
-      // Exponential backoff per item: 10s, 20s, 40s
-      // Formula: BASE_MS * 2^(retryCount-1) gives 10s, 20s, 40s for retryCount 1, 2, 3
-      const backoffMs = RETRY.BACKOFF_BASE_MS * 2 ** (data.retryCount - 1);
-
-      if (now - data.lastAttempt >= backoffMs) {
+      if (now - data.lastAttempt >= retryBackoffMs(data)) {
         itemsToRetry.push(data.item);
       }
     }
 
     return itemsToRetry;
+  }
+
+  /**
+   * How long until the next failed item may be retried, so the owner can arm a
+   * timer for it instead of waiting for unrelated work to trigger a flush.
+   * Items already back in the main queue are skipped: their next attempt is
+   * the queue's own flush.
+   * @param {any[]} queue - Main queue
+   * @param {number} [now]
+   * @returns {number|null} Milliseconds (0 when one is already due), or null when nothing waits
+   */
+  function getNextRetryDelay(queue, now = Date.now()) {
+    if (failedItems.size === 0) return null;
+    const queuedIds = new Set(queue.map((item) => item?.id).filter(Boolean));
+    /** @type {number|null} */
+    let earliest = null;
+
+    for (const data of failedItems.values()) {
+      const id = data.item?.id;
+      if (!id || queuedIds.has(id)) continue;
+      const dueIn = data.lastAttempt + retryBackoffMs(data) - now;
+      if (!Number.isFinite(dueIn)) continue;
+      const delay = Math.max(0, dueIn);
+      if (earliest === null || delay < earliest) earliest = delay;
+    }
+
+    return earliest;
   }
 
   /**
@@ -432,6 +465,7 @@ function createFailedItemHandler(config) {
     trackFailedItem,
     addToDeadLetterQueue,
     getItemsToRetry,
+    getNextRetryDelay,
     retryFailedItems,
     getDeadLetterItems,
     clearDeadLetterQueue,
