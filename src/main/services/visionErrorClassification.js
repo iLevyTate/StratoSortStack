@@ -37,6 +37,22 @@ function isVisionDecodePressureError(/** @type {any} */ errorLike) {
   return VISION_DECODE_PRESSURE_PATTERNS.some((pattern) => message.includes(pattern));
 }
 
+/**
+ * Decode pressure as the vision runtime reports it: in the server's own
+ * message, or in the stderr excerpt VisionService attaches to the error
+ * (`visionRuntimeHint`). The excerpt stays out of the message because the
+ * retry and model-availability classifiers match substrings of it, and the
+ * runtime's load banner ("CUDA0", "projector") is in that excerpt.
+ * @param {any} errorLike
+ * @returns {boolean}
+ */
+function isVisionRuntimeDecodePressure(errorLike) {
+  return (
+    isVisionDecodePressureError(errorLike) ||
+    isVisionDecodePressureError(String(errorLike?.visionRuntimeHint || ''))
+  );
+}
+
 function isVisionInputDataError(/** @type {any} */ errorLike) {
   const message = normalizeErrorMessage(errorLike);
   if (isVisionDecodePressureError(message)) {
@@ -55,6 +71,7 @@ function classifyVisionError(/** @type {any} */ errorLike) {
 }
 
 module.exports = {
+  isVisionRuntimeDecodePressure,
   VISION_DECODE_PRESSURE_PATTERNS,
   VISION_INPUT_DATA_PATTERNS,
   normalizeErrorMessage,

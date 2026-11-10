@@ -20,7 +20,7 @@ const { createSingletonHelpers } = require('../../shared/singletonFactory');
 const { AI_DEFAULTS, DEFAULT_AI_MODELS } = require('../../shared/constants');
 const { getModel } = require('../../shared/modelRegistry');
 const { resolveEmbeddingDimension } = require('../../shared/embeddingDimensions');
-const { isVisionDecodePressureError } = require('./visionErrorClassification');
+const { isVisionRuntimeDecodePressure } = require('./visionErrorClassification');
 const { ERROR_CODES } = require('../../shared/errorCodes');
 const { attachErrorCode } = require('../../shared/errorHandlingUtils');
 const { looksLikeCpuIncompatibility } = require('../../shared/llamaErrorClassifier');
@@ -320,6 +320,11 @@ class LlamaService extends EventEmitter {
     // starts from a fresh signal (some consumers cache the signal across
     // operations).
     this._shutdownAbort = new AbortController();
+    // How long an image in a batch waits for a text request to let go of
+    // the text model (_releaseMemoryForBatchVisionRespawn). Well inside the
+    // 300 s an image analysis is allowed, with the runtime start to come.
+    this._batchTextDrainWaitMs = 45000;
+    this._batchTextDrainSliceMs = 2500;
 
     // Vision batch mode — keeps vision server alive across multiple images
     this._visionBatchMode = false;
@@ -707,7 +712,7 @@ class LlamaService extends EventEmitter {
   }
 
   _isVisionDecodePressureError(/** @type {any} */ errorLike) {
-    return isVisionDecodePressureError(errorLike);
+    return isVisionRuntimeDecodePressure(errorLike);
   }
 
   _getContextSequences(type = 'text') {
@@ -1767,7 +1772,10 @@ class LlamaService extends EventEmitter {
         // Set after the load, too: a batch that ended while this load was in
         // flight could not unload a model that was not registered yet, so the
         // next embedding load must still move it back to the GPU.
-        if (loadOptions?.cpuByDesign && loadOptions.besideResident === VISION_RUNTIME_MEMORY_TYPE) {
+        if (
+          loadOptions?.cpuByDesign &&
+          (loadOptions.forVisionBatch || loadOptions.besideResident === VISION_RUNTIME_MEMORY_TYPE)
+        ) {
           this._embeddingCpuForBatch = true;
         }
         return context;
@@ -2144,6 +2152,40 @@ class LlamaService extends EventEmitter {
       embeddingUnloaded
     });
     throw budgetError;
+  }
+
+  /**
+   * Make room for the vision runtime an image in a batch has to respawn
+   * (see _textResidentWhileVisionDown).
+   *
+   * The text model there belongs to a request that is still running: its
+   * load ended with the request's pin on it, so the first attempt is
+   * refused. One image then lost its vision analysis for a text request
+   * that ends seconds later. The request gets a bounded time to end, in
+   * slices so a cancelled or shut-down call stops waiting, and the attempt
+   * is made once more. The wait is here and not in
+   * _releaseMemoryForVisionRuntime: entering batch mode calls that under
+   * the batch-mode lock, which leaving batch mode needs.
+   * @param {AbortSignal} [signal]
+   * @throws {Error & { code: 'MODEL_MEMORY_BUDGET_EXCEEDED' }} the first
+   *   refusal, when the text model is still in use after the wait
+   */
+  async _releaseMemoryForBatchVisionRespawn(signal) {
+    try {
+      await this._releaseMemoryForVisionRuntime('batch');
+      return;
+    } catch (error) {
+      if (/** @type {any} */ (error)?.code !== 'MODEL_MEMORY_BUDGET_EXCEEDED') throw error;
+      const manager = this._modelMemoryManager;
+      const stopped = () => Boolean(signal?.aborted || this._shutdownAbort?.signal?.aborted);
+      const deadline = Date.now() + this._batchTextDrainWaitMs;
+      let drained = false;
+      while (!drained && !stopped() && Date.now() < deadline) {
+        drained = await manager.unloadModel('text', { waitMs: this._batchTextDrainSliceMs });
+      }
+      if (!drained) throw error;
+    }
+    await this._releaseMemoryForVisionRuntime('batch');
   }
 
   async _waitForIdleOperations(
@@ -4221,13 +4263,14 @@ class LlamaService extends EventEmitter {
 
   /**
    * True during a vision batch when the runtime is gone and the text model
-   * sits in memory instead: a text load from inside the batch evicted the
-   * runtime. The next image must free that memory before respawning it.
+   * sits in memory instead, or is still being loaded: a text load from
+   * inside the batch evicted the runtime. The next image frees that memory
+   * before it respawns the runtime (_releaseMemoryForBatchVisionRespawn).
    * @returns {boolean}
    * @private
    */
   _textResidentWhileVisionDown() {
-    if (!this._visionBatchMode || !this._modelMemoryManager?.getLoadedContext?.('text')) {
+    if (!this._visionBatchMode || !this._modelMemoryManager?.isLoadedOrLoading?.('text')) {
       return false;
     }
     try {
@@ -4238,8 +4281,9 @@ class LlamaService extends EventEmitter {
   }
 
   /**
-   * Load options for the embedding model while the text model holds a GPU
-   * too small for both (a 7B text model on a 6 GB card). Without them every
+   * Load options for the embedding model while the text model holds, or is
+   * being loaded onto, a GPU too small for both (a 7B text model on a 6 GB
+   * card). Without them every
    * file evicted the text model to load the ~200 MB embedding model and then
    * reloaded the text model, about 4-5 s per file. The embedding model runs
    * on the CPU beside it instead, without the "running on CPU" warning; it
@@ -4252,7 +4296,7 @@ class LlamaService extends EventEmitter {
     if (modelType !== 'embedding') return undefined;
     if (!this._gpuBackend || this._gpuBackend === 'cpu') return undefined;
     const memory = this._modelMemoryManager;
-    if (!memory?.getLoadedContext?.('text') || memory.getLoadedContext?.('embedding')) {
+    if (!memory?.isLoadedOrLoading?.('text') || memory.getLoadedContext?.('embedding')) {
       return undefined;
     }
     // Both fit on the GPU: load the embedding model there as usual.
@@ -4263,14 +4307,33 @@ class LlamaService extends EventEmitter {
   /**
    * Load options for a model while a vision batch holds the runtime: the
    * embedding model runs on the CPU beside it instead of evicting it.
+   *
+   * The pin outlasts the runtime: a text load inside the batch evicts it and
+   * the text model holds the memory until the next image. The load is then
+   * beside the text model. Declared beside a runtime that is not there, it
+   * evicted the text model (or waited minutes for it) to make room for a
+   * model that takes no VRAM.
    * @private
    * @param {string} modelType
    * @returns {Record<string, any> | undefined}
    */
   _loadOptionsBesideVisionBatch(modelType) {
     if (modelType !== 'embedding' || !this._visionRuntimePinned) return undefined;
-    if (this._modelMemoryManager?.getLoadedContext?.('embedding')) return undefined;
+    const memory = this._modelMemoryManager;
+    if (memory?.getLoadedContext?.('embedding')) return undefined;
     this._embeddingCpuForBatch = true;
+    if (
+      memory?.isLoadedOrLoading?.('text') &&
+      !memory.isLoadedOrLoading(VISION_RUNTIME_MEMORY_TYPE)
+    ) {
+      return {
+        gpuLayersOverride: 0,
+        besideResident: 'text',
+        keepBeside: true,
+        cpuByDesign: true,
+        forVisionBatch: true
+      };
+    }
     return { gpuLayersOverride: 0, besideResident: VISION_RUNTIME_MEMORY_TYPE, cpuByDesign: true };
   }
 
@@ -4405,7 +4468,7 @@ class LlamaService extends EventEmitter {
                 if (!this._visionBatchMode && this._modelMemoryManager) {
                   await this._releaseMemoryForVisionRuntime('single');
                 } else if (this._textResidentWhileVisionDown()) {
-                  await this._releaseMemoryForVisionRuntime('batch');
+                  await this._releaseMemoryForBatchVisionRespawn(signal);
                 }
 
                 const visionService = getVisionService();

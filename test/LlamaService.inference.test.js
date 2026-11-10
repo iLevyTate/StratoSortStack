@@ -377,15 +377,20 @@ describe('LlamaService – inference methods', () => {
     describe('in vision batch mode', () => {
       // A text load inside the batch can evict the runtime and leave the text
       // model resident. Respawning vision on top of it raced into held VRAM.
-      function batchImageService({ textResident, visionAlive }) {
+      function batchImageService({ textResident, textLoading = false, visionAlive }) {
         const service = createTestService();
         service._coordinator = { withModel: jest.fn((_, fn) => fn()) };
         service._visionProjectorStatus = { required: false, available: true, projectorPath: null };
         service._resolveGpuLayersForVisionServer = jest.fn().mockResolvedValue(999);
         service._releaseMemoryForVisionRuntime = jest.fn().mockResolvedValue(undefined);
+        service._batchTextDrainWaitMs = 40;
+        service._batchTextDrainSliceMs = 10;
         service._visionBatchMode = true;
         mockModelMemoryManager.getLoadedContext = jest.fn((type) =>
           type === 'text' && textResident ? mockContext : null
+        );
+        mockModelMemoryManager.isLoadedOrLoading = jest.fn(
+          (type) => type === 'text' && Boolean(textResident || textLoading)
         );
         mockVisionService.isAlive = jest.fn(() => visionAlive);
         return service;
@@ -399,7 +404,9 @@ describe('LlamaService – inference methods', () => {
 
       afterEach(() => {
         delete mockModelMemoryManager.getLoadedContext;
+        delete mockModelMemoryManager.isLoadedOrLoading;
         delete mockVisionService.isAlive;
+        mockModelMemoryManager.unloadModel = jest.fn().mockResolvedValue(undefined);
       });
 
       test('frees the text model a batch text load left behind before respawning vision', async () => {
@@ -416,6 +423,96 @@ describe('LlamaService – inference methods', () => {
 
       test('leaves memory alone when no text model is resident', async () => {
         const service = batchImageService({ textResident: false, visionAlive: false });
+        await service.analyzeImage({ imagePath: '/test.jpg', prompt: 'describe' });
+        expect(service._releaseMemoryForVisionRuntime).not.toHaveBeenCalled();
+      });
+
+      // The text model takes seconds to load. An image that arrived in that
+      // window saw no text model in memory and respawned the runtime on top
+      // of the load.
+      test('makes room again once a text load in progress has ended', async () => {
+        const service = batchImageService({
+          textResident: false,
+          textLoading: true,
+          visionAlive: false
+        });
+        await service.analyzeImage({ imagePath: '/test.jpg', prompt: 'describe' });
+        expect(service._releaseMemoryForVisionRuntime).toHaveBeenCalledWith('batch');
+      });
+
+      // The load ends with its request still running on the model, so the
+      // first attempt finds the text model pinned and refuses.
+      const budgetRefusal = () =>
+        Object.assign(new Error('Cannot start the vision runtime (batch)'), {
+          code: 'MODEL_MEMORY_BUDGET_EXCEEDED'
+        });
+
+      test('waits for the text request to end when the text model is pinned', async () => {
+        const service = batchImageService({ textResident: true, visionAlive: false });
+        service._releaseMemoryForVisionRuntime
+          .mockRejectedValueOnce(budgetRefusal())
+          .mockResolvedValue(undefined);
+        mockModelMemoryManager.unloadModel = jest
+          .fn()
+          .mockResolvedValueOnce(false)
+          .mockResolvedValue(true);
+
+        await expect(
+          service.analyzeImage({ imagePath: '/test.jpg', prompt: 'describe' })
+        ).resolves.toBeDefined();
+
+        expect(mockModelMemoryManager.unloadModel).toHaveBeenCalledWith(
+          'text',
+          expect.objectContaining({ waitMs: 10 })
+        );
+        expect(service._releaseMemoryForVisionRuntime).toHaveBeenCalledTimes(2);
+      });
+
+      test('gives the refusal back when the text request outlasts the wait', async () => {
+        const service = batchImageService({ textResident: true, visionAlive: false });
+        service._releaseMemoryForVisionRuntime.mockRejectedValue(budgetRefusal());
+        mockModelMemoryManager.unloadModel = jest.fn(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          return false;
+        });
+
+        await expect(
+          service.analyzeImage({ imagePath: '/test.jpg', prompt: 'describe' })
+        ).rejects.toMatchObject({ code: 'MODEL_MEMORY_BUDGET_EXCEEDED' });
+        expect(mockModelMemoryManager.unloadModel).toHaveBeenCalled();
+        expect(service._releaseMemoryForVisionRuntime).toHaveBeenCalledTimes(1);
+      });
+
+      test('does not wait for a request that was cancelled', async () => {
+        const service = batchImageService({ textResident: true, visionAlive: false });
+        service._releaseMemoryForVisionRuntime.mockRejectedValue(budgetRefusal());
+        mockModelMemoryManager.unloadModel = jest.fn().mockResolvedValue(false);
+        const cancelled = new AbortController();
+        cancelled.abort();
+
+        await expect(
+          service._releaseMemoryForBatchVisionRespawn(cancelled.signal)
+        ).rejects.toMatchObject({ code: 'MODEL_MEMORY_BUDGET_EXCEEDED' });
+        expect(mockModelMemoryManager.unloadModel).not.toHaveBeenCalled();
+      });
+
+      test('a failure that is not about memory is not waited on', async () => {
+        const service = batchImageService({ textResident: true, visionAlive: false });
+        service._releaseMemoryForVisionRuntime.mockRejectedValue(new Error('manager broke'));
+        mockModelMemoryManager.unloadModel = jest.fn().mockResolvedValue(true);
+
+        await expect(service._releaseMemoryForBatchVisionRespawn()).rejects.toThrow(
+          'manager broke'
+        );
+        expect(mockModelMemoryManager.unloadModel).not.toHaveBeenCalled();
+      });
+
+      test('a text load in progress does not disturb a runtime that is up', async () => {
+        const service = batchImageService({
+          textResident: false,
+          textLoading: true,
+          visionAlive: true
+        });
         await service.analyzeImage({ imagePath: '/test.jpg', prompt: 'describe' });
         expect(service._releaseMemoryForVisionRuntime).not.toHaveBeenCalled();
       });

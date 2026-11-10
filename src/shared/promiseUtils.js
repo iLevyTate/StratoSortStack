@@ -147,6 +147,40 @@ function withTimeout(fnOrPromise, timeoutMs, operationName = 'Operation') {
   };
 }
 
+// The reason main aborts an invoke with when the renderer's limit on it ran
+// out (ipcAbortRegistry's default reason).
+const IPC_TIMEOUT_REASON = 'ipc-timeout';
+
+/**
+ * The reason a signal is aborted with when the time ran out, so the work can
+ * tell that apart from a caller that gave up. Same name and message as the
+ * default reason: work that rethrows it is classified as it was before.
+ * @returns {Error & { timedOut?: boolean }}
+ */
+function createTimeoutAbortReason() {
+  const reason = /** @type {Error & { timedOut?: boolean }} */ (
+    new Error('This operation was aborted')
+  );
+  reason.name = 'AbortError';
+  reason.timedOut = true;
+  return reason;
+}
+
+/**
+ * True when the signal was aborted because the time ran out (by
+ * withAbortableTimeout, AbortSignal.timeout or the renderer's limit on an
+ * invoke), false when its caller gave up.
+ * @param {AbortSignal|null|undefined} signal
+ * @returns {boolean}
+ */
+function isTimeoutAbort(signal) {
+  if (!signal?.aborted) return false;
+  const reason = /** @type {any} */ (signal.reason);
+  return (
+    reason?.timedOut === true || reason?.name === 'TimeoutError' || reason === IPC_TIMEOUT_REASON
+  );
+}
+
 /**
  * Execute a promise with timeout and AbortController support.
  * Enhanced version of withTimeout that provides an AbortController signal
@@ -155,6 +189,7 @@ function withTimeout(fnOrPromise, timeoutMs, operationName = 'Operation') {
  * @param {(abortController: AbortController) => Promise<any>} fn - Function that receives AbortController and returns a Promise
  * @param {number} timeoutMs - Timeout in milliseconds
  * @param {string} [operationName='Operation'] - Name of the operation for error messages
+ * @param {{ signal?: AbortSignal }} [options] - `signal`: the caller's own signal; aborting it cancels the work
  * @returns {Promise<*>} Result of the promise
  * @throws {Error} If the operation times out or the promise rejects
  *
@@ -164,13 +199,6 @@ function withTimeout(fnOrPromise, timeoutMs, operationName = 'Operation') {
  *   5000,
  *   'API fetch'
  * );
- */
-/**
- * @param {(abortController: AbortController) => Promise<any>} fn
- * @param {number} timeoutMs
- * @param {string} [operationName]
- * @param {{ signal?: AbortSignal }} [options]
- * @returns {Promise<any>}
  */
 async function withAbortableTimeout(fn, timeoutMs, operationName = 'Operation', options = {}) {
   const externalSignal = options.signal || null;
@@ -195,7 +223,7 @@ async function withAbortableTimeout(fn, timeoutMs, operationName = 'Operation', 
 
   const timeoutPromise = new Promise((_, reject) => {
     timeoutId = setTimeout(() => {
-      abortController.abort();
+      abortController.abort(createTimeoutAbortReason());
       reject(new Error(`${operationName} timed out after ${timeoutMs}ms`));
     }, timeoutMs);
     // Allow process to exit if this timer is the only thing keeping it alive
@@ -208,7 +236,11 @@ async function withAbortableTimeout(fn, timeoutMs, operationName = 'Operation', 
     // the timeout.
     if (externalSignal) {
       onExternalAbort = () => {
-        abortController.abort();
+        // Out of time is passed on as out of time: the work treats that
+        // differently from a caller that gave up.
+        abortController.abort(
+          isTimeoutAbort(externalSignal) ? createTimeoutAbortReason() : undefined
+        );
         reject(makeCancelledError());
       };
       externalSignal.addEventListener('abort', onExternalAbort, { once: true });
@@ -913,6 +945,7 @@ module.exports = {
   throwIfAborted,
   withTimeout,
   withAbortableTimeout,
+  isTimeoutAbort,
   createTimeoutRace,
 
   // Retry

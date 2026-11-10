@@ -243,6 +243,79 @@ describe('SmartFolderWatcher image batch and vision batch mode', () => {
     expect(mockLlama.exitVisionBatchMode).not.toHaveBeenCalled();
   });
 
+  describe('when images in the batch need no analysis', () => {
+    // _analyzeFile drops an item the history has caught up with, most often
+    // the change event that follows the watcher's own read of a file. The
+    // batch used to enter vision batch mode before that was known: text and
+    // embedding models unloaded, the vision runtime started, the text model
+    // loaded again on the way out, and nothing analyzed.
+    const fsPromises = require('fs').promises;
+    const upToDate = { fileSize: 10, lastModified: 1000 };
+
+    beforeEach(() => {
+      fsPromises.stat.mockResolvedValue({ mtimeMs: 1000, size: 10 });
+    });
+    afterEach(() => {
+      fsPromises.stat.mockReset();
+    });
+
+    test('does not enter vision batch mode when the history has every image', async () => {
+      watcher.analysisHistoryService.getAnalysisByPath.mockResolvedValue(upToDate);
+      queueImages(watcher, 2);
+
+      await watcher._processQueue();
+
+      expect(mockLlama.enterVisionBatchMode).not.toHaveBeenCalled();
+      expect(mockLlama.exitVisionBatchMode).not.toHaveBeenCalled();
+      // The items still go through _analyzeFile, which drops and logs them.
+      expect(watcher._analyzeWithTimeout).toHaveBeenCalledTimes(2);
+      expect(watcher._inFlightItems.size).toBe(0);
+      expect(watcher.analysisQueue).toEqual([]);
+    });
+
+    test('enters once when one image of the batch still needs analysis', async () => {
+      watcher.analysisHistoryService.getAnalysisByPath.mockImplementation(async (filePath) =>
+        filePath.endsWith('photo-1.png') ? null : upToDate
+      );
+      queueImages(watcher, 3);
+
+      await watcher._processQueue();
+
+      expect(mockLlama.enterVisionBatchMode).toHaveBeenCalledTimes(1);
+      expect(scopeAtAnalysis).toEqual([true, true, true]);
+      expect(mockLlama.exitVisionBatchMode).toHaveBeenCalledTimes(1);
+    });
+
+    test('an embedding retry, which reuses its analysis, does not enter', async () => {
+      queueImages(watcher, 1);
+      watcher.analysisQueue[0].cachedAnalysis = { category: 'Photos' };
+
+      await watcher._processQueue();
+
+      expect(mockLlama.enterVisionBatchMode).not.toHaveBeenCalled();
+      expect(watcher._analyzeWithTimeout).toHaveBeenCalledTimes(1);
+    });
+
+    test('an image deleted since it was queued does not enter', async () => {
+      fsPromises.stat.mockRejectedValue(Object.assign(new Error('gone'), { code: 'ENOENT' }));
+      queueImages(watcher, 1);
+
+      await watcher._processQueue();
+
+      expect(mockLlama.enterVisionBatchMode).not.toHaveBeenCalled();
+    });
+
+    test('an explicit reanalysis enters although the history has the image', async () => {
+      watcher.analysisHistoryService.getAnalysisByPath.mockResolvedValue(upToDate);
+      queueImages(watcher, 1);
+      watcher.analysisQueue[0].eventType = 'reanalyze';
+
+      await watcher._processQueue();
+
+      expect(mockLlama.enterVisionBatchMode).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('when a Discover analysis starts during the batch', () => {
     // The queue is held while the user analyzes, but that was only looked at
     // before a batch began: up to 19 more images then ran beside the user.

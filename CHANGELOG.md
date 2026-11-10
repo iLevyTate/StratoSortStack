@@ -468,6 +468,59 @@ Changes you will notice:
   and an older result can no longer overwrite a newer one.
 - Test runs that failed with every test passing: a log-file error arriving after logging had shut
   down was written to a console that was already gone. Such late errors are no longer printed.
+- **Organize no longer shows "1% confidence" on its strongest matches.** A match boosted by its
+  cluster got a score above 100%, which the card read as a percentage and divided by 100 again. The
+  card and the details panel now show the same value, capped at 100%.
+- **Target-folder descriptions in Organize keep the letter s at both ends.** "sales reports" was
+  shown as "ales report".
+- **A file the watcher is already analyzing is not queued again by the watcher's own read of it.**
+  On Windows, reading a file updates its last-access time, which was reported as a change.
+- **An image batch whose files are all analyzed already no longer swaps models** to analyze nothing.
+- **Content dates:** a written year of 0000–0099 is no longer read as 1900–1999, a year of five or
+  six digits is rejected, a date written with `Z` keeps its day west of Greenwich, and a number from
+  the model is a year or nothing. Search results and cluster time ranges show a document's own day,
+  not the day before.
+- **Smart-folder watcher, embedding retries.** A retry that only embeds a finished result no longer
+  replaces a reanalysis or a change waiting for the same file, no longer leaves the file without an
+  embedding when the waiting item is skipped, does not embed a result for a file that has changed
+  since, and no longer hides a real edit made while it runs.
+- **Smart-folder watcher:** a recording gets the three hours a Discover run allows instead of ten
+  minutes; a file deleted or renamed during its analysis gets no history entry or notification; and
+  "Reanalyze all" can no longer start the same file beside itself.
+- **A transcript the text model gave no answer for is tried again** by the watcher, and is recorded
+  as provisional instead of as a finished transcription with confidence 0. The same holds when the
+  model is not installed or its answer cannot be read.
+- **Stop works while a batch is still checking its files,** when it was answered "unknown batch"
+  before. A batch also ends when the window that asked for it is closed or reloaded, and a batch
+  that has ended or was cancelled sends no late progress.
+- **A batch that ran to its end sends its last progress report,** so the search and embedding counts
+  that refresh on it are current.
+- **The history keeps the size and date a file had when its analysis started,** not those of a
+  version saved while the model worked.
+- **A Discover run that stops making progress says so.** A silent five-minute check ended the run
+  before the ten-minute check that would have shown a notice. There is one check now, and it shows
+  the notice without stating a duration it cannot know. On the one-file-at-a-time path a slow file
+  fails alone instead of ending the run.
+- **Stop no longer turns vision off.** Five cancelled vision requests opened the breaker and every
+  image got OCR only for five minutes. A request the user stopped is no longer counted; one that
+  timed out still is.
+- **An OCR result that stands in for the vision model is never cached,** whatever made the vision
+  model unavailable, so the next analysis asks the vision model again.
+- **An image that cannot be decoded is not sent to the vision model.** An SVG, a TIFF or a damaged
+  WebP whose conversion failed went to the model as if it were a PNG, was rejected and retried, and
+  each rejection counted toward turning vision off for the images after it. Such a file is now
+  analyzed from its text if it has any, else from its name, and the reason shown names the file.
+  Text from the vision runtime's error log no longer appears in error messages.
+- **In an image batch, an image waits for a document that is still using the text model** (up to 45
+  s) instead of losing its vision analysis, and an image that arrives while the text model is still
+  loading no longer starts the vision runtime on top of it.
+- **Embedding models and a small GPU.** An embedding load that starts while the text model is still
+  loading runs on the CPU instead of waiting and then unloading the text model. Inside an image
+  batch, an embedding load no longer unloads the text model that took the vision runtime's place.
+- **A text model larger than the memory budget loads without waiting out the full timeout** once
+  nothing else is left to unload.
+- **Whisper runs on the CPU while the text model is still being loaded** onto a GPU that cannot hold
+  both.
 
 ## [5.1.2] - 2026-11-01
 

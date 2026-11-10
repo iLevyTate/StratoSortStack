@@ -81,6 +81,11 @@ class ModelMemoryManager {
     const estimatedUsage = Math.ceil(fileSizeBytes * 1.3);
     const oldEstimate = this._modelSizeEstimates[modelType];
     this._modelSizeEstimates[modelType] = estimatedUsage;
+    // A load of this model that is in progress reserved the old guess. The
+    // first text load of a session held 4 GiB for a 5.8 GiB model, so an
+    // embedding model asked for meanwhile was told both fit on the GPU.
+    const pending = this._pendingLoads.get(modelType);
+    if (pending) pending.sizeBytes = estimatedUsage;
     logger.debug('[Memory] Updated model size estimate from file', {
       modelType,
       fileSizeMB: Math.round(fileSizeBytes / 1024 / 1024),
@@ -208,6 +213,19 @@ class ModelMemoryManager {
       return entry.context;
     }
     return null;
+  }
+
+  /**
+   * Whether a model holds memory or is about to: it is in memory, or a load
+   * of it is in progress. A caller that asked only getLoadedContext saw
+   * nothing for the seconds a load takes, while the budget already counted
+   * it. Asking does not count as using the model.
+   * @param {string} modelType
+   * @returns {boolean}
+   */
+  isLoadedOrLoading(modelType) {
+    const entry = this._loadedModels.get(modelType);
+    return Boolean(entry && !entry.disposing) || this._pendingLoads.has(modelType);
   }
 
   /**
@@ -364,8 +382,9 @@ class ModelMemoryManager {
 
   /**
    * Whether optional background work may use a model without forcing a load.
-   * Returns true when the model is already resident, or when a fresh load fits
-   * within the current budget. Unlike ensureModelLoaded(), this never proceeds
+   * Returns true when the model is the only thing in memory (a call on a
+   * loaded context loads nothing), when it is resident with headroom left
+   * beside the others, or when a fresh load fits within the current budget. Unlike ensureModelLoaded(), this never proceeds
    * when the budget is exceeded — callers use it to skip non-critical inference
    * (e.g. graph cluster label refinement) instead of risking native OOM.
    *
@@ -374,7 +393,13 @@ class ModelMemoryManager {
    */
   canRunOptionalLoad(modelType) {
     this._refreshMemoryBudget();
-    if (this._loadedModels.has(modelType)) {
+    const entry = this._loadedModels.get(modelType);
+    if (entry) {
+      if (entry.disposing) return false;
+      // A model whose estimate is above the budget on its own (7B on a 6 GB
+      // card) never has headroom, so this said no for the rest of the session
+      // while the model sat idle in memory.
+      if (this._loadedModels.size === 1 && this._pendingLoadEntries().length === 0) return true;
       const remaining = Math.max(
         0,
         this._maxMemoryUsage - this._currentMemoryUsage - this._pendingLoadBytes()
@@ -475,7 +500,10 @@ class ModelMemoryManager {
     // evicted here once it is idle.
     if (!fits() && othersHoldMemory() && this._pinnedResidentWaitMs > 0) {
       const deadline = Date.now() + this._pinnedResidentWaitMs;
-      while (!fits() && Date.now() < deadline) {
+      // Once nothing else holds memory there is nothing left to wait for: a
+      // model whose own estimate exceeds the budget never fits, and waited
+      // out the whole three minutes after the resident had gone.
+      while (!fits() && othersHoldMemory() && Date.now() < deadline) {
         await delay(this._pinnedResidentPollMs);
         this._refreshMemoryBudget();
         while (!fits() && this._loadedModels.size > 0) {

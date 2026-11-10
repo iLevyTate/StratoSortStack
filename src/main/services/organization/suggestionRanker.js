@@ -97,6 +97,10 @@ function calculateConfidence(suggestion) {
     confidence = Math.min(1.0, confidence * 1.3);
   }
 
+  // `score` is also the ranking key, and the cluster boost multiplies it past
+  // 1. Callers read anything above 1 as a percentage (1.24 became "1%").
+  confidence = Math.min(1.0, confidence);
+
   return Math.round(confidence * 100) / 100;
 }
 

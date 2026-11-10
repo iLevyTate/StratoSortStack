@@ -1959,6 +1959,14 @@ describe('WhisperService — CPU beside a GPU-filling text model', () => {
     expect(memory.registerExternalConsumer.mock.calls[0][0].sizeBytes).toBeGreaterThan(0);
   });
 
+  test('runs on the CPU when the text model is still being loaded', async () => {
+    // The load has reserved the GPU but has no context yet.
+    const memory = memoryWith({ textResident: false, fits: false });
+    memory.isLoadedOrLoading = jest.fn((type) => type === 'text');
+    const { init } = await load(memory);
+    expect(init.mock.calls[0][0].useGpu).toBe(false);
+  });
+
   test('uses the GPU when no text model is resident', async () => {
     const { init } = await load(memoryWith({ textResident: false, fits: false }));
     expect(init.mock.calls[0][0].useGpu).toBe(true);

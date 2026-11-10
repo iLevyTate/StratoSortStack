@@ -17,6 +17,12 @@ jest.mock('../src/shared/logger', () => {
 });
 
 // Mock llama utils
+// The real function, wrapped so a test can see the service use it.
+jest.mock('../src/shared/contentDateSanity', () => {
+  const actual = jest.requireActual('../src/shared/contentDateSanity');
+  return { ...actual, toLocalCalendarMs: jest.fn(actual.toLocalCalendarMs) };
+});
+
 jest.mock('../src/main/llamaUtils', () => ({
   getTextModel: jest.fn(() => 'qwen3:0.6b')
 }));
@@ -588,6 +594,75 @@ describe('ClusteringService', () => {
       expect(graphData[0].timeRange.startMs).toBeLessThan(graphData[0].timeRange.endMs);
       expect(Array.isArray(graphData[0].memberMeta)).toBe(true);
       expect(graphData[0].memberMeta).toHaveLength(2);
+    });
+
+    test('a document date is a day: the range starts and ends at local midnight', () => {
+      // Parsed as UTC midnight, the range of a cluster dated May 5 to June 1
+      // was labelled "May 4 – May 31" west of Greenwich.
+      service.clusters = [
+        {
+          id: 0,
+          members: [
+            {
+              id: 'file:first',
+              embedding: [1, 0],
+              metadata: { filePath: 'C:\\Docs\\first.pdf', documentDate: '2024-05-05' }
+            },
+            {
+              id: 'file:last',
+              embedding: [1, 0.02],
+              metadata: { filePath: 'C:\\Docs\\last.pdf', documentDate: '2024-06-01' }
+            }
+          ]
+        }
+      ];
+      service.centroids = [[1, 0]];
+
+      const { timeRange } = service.getClustersForGraph()[0];
+
+      expect(timeRange.startMs).toBe(new Date(2024, 4, 5).getTime());
+      expect(timeRange.endMs).toBe(new Date(2024, 5, 1).getTime());
+      expect(new Date(timeRange.start).getDate()).toBe(5);
+      expect(new Date(timeRange.end).getDate()).toBe(1);
+    });
+
+    // Where the zone is UTC, as on CI, Date.parse gives the test above the
+    // same instants. The ones the helper is made to return here come from no
+    // parse of the stored values.
+    test('the range comes from the calendar-day helper, in every time zone', () => {
+      const { toLocalCalendarMs } = require('../src/shared/contentDateSanity');
+      const days = {
+        '2024-05-05': new Date(2031, 0, 15, 12).getTime(),
+        '2024-06-01': new Date(2031, 2, 20, 12).getTime()
+      };
+      toLocalCalendarMs.mockImplementation((value) => days[value] ?? null);
+      service.clusters = [
+        {
+          id: 0,
+          members: [
+            {
+              id: 'file:first',
+              embedding: [1, 0],
+              metadata: { filePath: 'C:\\Docs\\first.pdf', documentDate: '2024-05-05' }
+            },
+            {
+              id: 'file:last',
+              embedding: [1, 0.02],
+              metadata: { filePath: 'C:\\Docs\\last.pdf', documentDate: '2024-06-01' }
+            }
+          ]
+        }
+      ];
+      service.centroids = [[1, 0]];
+
+      try {
+        const { timeRange } = service.getClustersForGraph()[0];
+        expect(timeRange.startMs).toBe(days['2024-05-05']);
+        expect(timeRange.endMs).toBe(days['2024-06-01']);
+      } finally {
+        const actual = jest.requireActual('../src/shared/contentDateSanity');
+        toLocalCalendarMs.mockImplementation(actual.toLocalCalendarMs);
+      }
     });
 
     test('derives member path and folder from metadata.filePath fallback', () => {

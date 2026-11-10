@@ -615,6 +615,8 @@ async function analyzeMediaFile(filePath, dependencies = {}, options = {}) {
     const hasUsableTranscript = transcriptForLlm.trim().length > 0;
 
     let llmResult = cloudAnalysis;
+    /** @type {string|null} Why the text model gave no answer for a transcript it was sent. */
+    let llmFailure = null;
     if (!llmResult && hasUsableTranscript) {
       try {
         // analyzeTextWithLlama is positional:
@@ -630,6 +632,21 @@ async function analyzeMediaFile(filePath, dependencies = {}, options = {}) {
           smartFolderId,
           fileType: kind
         });
+        // The text model reports a failure it survived (engine error, model
+        // not installed, an answer it could not parse) by returning
+        // `{ error }`, not by throwing. Spread into the result below, that
+        // object was stored as a finished transcription with confidence 0.
+        if (llmResult?.error) {
+          if (isMemoryBudgetExceeded(llmResult.error)) {
+            const budgetError = /** @type {Error & { code?: string }} */ (
+              new Error(String(llmResult.error))
+            );
+            budgetError.code = 'MODEL_MEMORY_BUDGET_EXCEEDED';
+            throw budgetError;
+          }
+          llmFailure = String(llmResult.error);
+          llmResult = null;
+        }
       } catch (err) {
         // A cancel, or a model load refused while another model holds the
         // memory, is not a result. Storing the confidence-60 stub below would
@@ -642,9 +659,12 @@ async function analyzeMediaFile(filePath, dependencies = {}, options = {}) {
         ) {
           throw err;
         }
+        llmFailure = String(err?.message || 'AI analysis failed for the transcript.');
+      }
+      if (llmFailure) {
         logger.warn('[Media] LLM transcript analysis failed', {
           file: fileName,
-          error: err?.message
+          error: llmFailure
         });
       }
     }
@@ -685,7 +705,18 @@ async function analyzeMediaFile(filePath, dependencies = {}, options = {}) {
                 : 'Spoken content transcribed via whisper.cpp'
               : 'Media file with no detectable speech'),
         contentLength: transcriptForLlm.length,
-        extractionMethod
+        extractionMethod,
+        // The transcript is real, the category and keywords are placeholders:
+        // provisional, as a document whose text was read but not analyzed, so
+        // it is retried when the model answers again and not embedded as is.
+        ...(llmFailure
+          ? {
+              error: llmFailure,
+              fallbackReason: 'ai_analysis_failed',
+              isFallback: true,
+              _isFallback: true
+            }
+          : {})
       },
       baseFallback
     );

@@ -75,11 +75,19 @@ describe('LlamaService._loadOptionsBesideText', () => {
   const LlamaService = LlamaServiceModule.LlamaService || LlamaServiceModule;
   const pick = LlamaService.prototype._loadOptionsBesideText;
 
-  const service = ({ backend = 'cuda', text = true, embedding = false, fits = false } = {}) => ({
+  const service = ({
+    backend = 'cuda',
+    text = true,
+    textLoading = false,
+    embedding = false,
+    fits = false
+  } = {}) => ({
     _gpuBackend: backend,
     _modelMemoryManager: {
       getLoadedContext: (type) =>
         (type === 'text' && text) || (type === 'embedding' && embedding) ? {} : null,
+      isLoadedOrLoading: (type) =>
+        (type === 'text' && (text || textLoading)) || (type === 'embedding' && embedding),
       canLoadModel: () => fits
     }
   });
@@ -105,5 +113,106 @@ describe('LlamaService._loadOptionsBesideText', () => {
 
   test('only the embedding model is affected', () => {
     expect(pick.call(service(), 'text')).toBeUndefined();
+  });
+
+  describe('while the text model is still loading', () => {
+    // The first document's text load takes several seconds. An embedding
+    // request in that window was offered no CPU option, because only a text
+    // model already in memory counted: it waited for the text model to go
+    // idle and then evicted it.
+    function managerLoadingText() {
+      const llamaService = {
+        _models: { text: null, vision: null, embedding: null },
+        _contexts: { text: null, vision: null, embedding: null },
+        _loadModel: jest.fn().mockResolvedValue({ ctx: 'embedding' }),
+        _unloadModel: jest.fn().mockResolvedValue(undefined)
+      };
+      const manager = new ModelMemoryManager(llamaService);
+      manager._maxMemoryUsage = 5 * GiB;
+      jest.spyOn(manager, '_refreshMemoryBudget').mockImplementation(() => {});
+      manager._modelSizeEstimates.embedding = 181 * MiB;
+      manager._pinnedResidentWaitMs = 0;
+      const endTextLoad = manager.reserveLoad('text', 5806 * MiB);
+      return { manager, llamaService, endTextLoad };
+    }
+
+    test('a text load in progress counts as the text model holding the GPU', () => {
+      expect(pick.call(service({ text: false, textLoading: true }), 'embedding')).toEqual({
+        gpuLayersOverride: 0,
+        besideResident: 'text',
+        keepBeside: true,
+        cpuByDesign: true
+      });
+    });
+
+    test('the embedding model loads on the CPU beside it, without waiting for it', async () => {
+      const { manager, llamaService } = managerLoadingText();
+
+      const options = pick.call({ _gpuBackend: 'cuda', _modelMemoryManager: manager }, 'embedding');
+      await manager.ensureModelLoaded('embedding', options);
+
+      expect(llamaService._loadModel).toHaveBeenCalledWith(
+        'embedding',
+        expect.objectContaining({ gpuLayersOverride: 0 })
+      );
+      // The text load is still in progress and was not disturbed.
+      expect(manager.getMemoryStatus().pendingLoads).toContain('text');
+      expect(llamaService._unloadModel).not.toHaveBeenCalled();
+    });
+
+    test('once the text load failed, the embedding model loads on the GPU as usual', () => {
+      const { manager, endTextLoad } = managerLoadingText();
+      endTextLoad();
+
+      expect(
+        pick.call({ _gpuBackend: 'cuda', _modelMemoryManager: manager }, 'embedding')
+      ).toBeUndefined();
+    });
+  });
+});
+
+describe('ModelMemoryManager.isLoadedOrLoading', () => {
+  function emptyManager() {
+    const manager = new ModelMemoryManager({
+      _models: {},
+      _contexts: {},
+      _loadModel: jest.fn(),
+      _unloadModel: jest.fn()
+    });
+    jest.spyOn(manager, '_refreshMemoryBudget').mockImplementation(() => {});
+    return manager;
+  }
+
+  test('false for a model that is neither in memory nor being loaded', () => {
+    expect(emptyManager().isLoadedOrLoading('text')).toBe(false);
+  });
+
+  test('true for a model in memory, without marking it as used', () => {
+    const manager = emptyManager();
+    manager._loadedModels.set('text', { context: {}, lastUsed: 1, sizeBytes: GiB });
+
+    expect(manager.isLoadedOrLoading('text')).toBe(true);
+    expect(manager._loadedModels.get('text').lastUsed).toBe(1);
+  });
+
+  test('true while a load is in progress, false once it ended without a model', () => {
+    const manager = emptyManager();
+    const endLoad = manager.reserveLoad('text', GiB);
+
+    expect(manager.isLoadedOrLoading('text')).toBe(true);
+    endLoad();
+    expect(manager.isLoadedOrLoading('text')).toBe(false);
+  });
+
+  test('false for a model that is being unloaded', () => {
+    const manager = emptyManager();
+    manager._loadedModels.set('text', {
+      context: {},
+      lastUsed: 1,
+      sizeBytes: GiB,
+      disposing: true
+    });
+
+    expect(manager.isLoadedOrLoading('text')).toBe(false);
   });
 });

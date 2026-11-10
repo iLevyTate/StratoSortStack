@@ -106,6 +106,32 @@ describe('LlamaService vision batch keeps the runtime', () => {
     expect(service._loadOptionsBesideVisionBatch('embedding')).toBeUndefined();
   });
 
+  // A text load inside the batch evicted the runtime: declared beside a
+  // runtime that is not there, the load evicted the text model instead.
+  test('an embedding load is CPU-only beside the text model that replaced the runtime', async () => {
+    await service.enterVisionBatchMode();
+    mockManager.isLoadedOrLoading = jest.fn((type) => type === 'text');
+    try {
+      expect(service._loadOptionsBesideVisionBatch('embedding')).toEqual({
+        gpuLayersOverride: 0,
+        besideResident: 'text',
+        keepBeside: true,
+        cpuByDesign: true,
+        forVisionBatch: true
+      });
+      // Still the batch's CPU model: unloaded when the batch ends.
+      expect(service._embeddingCpuForBatch).toBe(true);
+
+      // The runtime is up (or starting) again: beside the runtime as before.
+      mockManager.isLoadedOrLoading = jest.fn(() => true);
+      expect(service._loadOptionsBesideVisionBatch('embedding').besideResident).toBe(
+        'vision-runtime'
+      );
+    } finally {
+      delete mockManager.isLoadedOrLoading;
+    }
+  });
+
   test('outside a batch an embedding load gets no special options', () => {
     expect(service._loadOptionsBesideVisionBatch('embedding')).toBeUndefined();
   });

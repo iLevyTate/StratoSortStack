@@ -151,6 +151,14 @@ describe('Suggestion Ranker', () => {
       expect(calculateConfidence({ confidence: 0, score: 0.4 })).toBe(0.4);
     });
 
+    // The cluster boost multiplies `score` by 1.3 for ranking, so a strong
+    // match arrives here above 1. Organize reads anything above 1 as a
+    // percentage, which turned 1.24 into "1% confidence" on the card.
+    test('never reports more than 1 for a score a ranking boost pushed past it', () => {
+      expect(calculateConfidence({ confidence: 0.75, score: 0.95 * 1.3 })).toBe(1);
+      expect(calculateConfidence({ score: 1.01 })).toBe(1);
+    });
+
     test('does not boost confidence for multiple sources alone', () => {
       const confidence = calculateConfidence({
         confidence: 0.7,

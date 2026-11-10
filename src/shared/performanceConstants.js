@@ -122,8 +122,13 @@ const TIMEOUTS = {
   // GPU process exits before the sticky .gpu-fallback flag is cleared.
   GPU_FALLBACK_STABLE_RUN: 30000,
   // Analysis lock and monitoring timeouts
-  ANALYSIS_LOCK: 5 * 60 * 1000, // 5 minutes - forces lock release if analysis hangs
-  GLOBAL_ANALYSIS: 10 * 60 * 1000, // 10 minutes - max total analysis time
+  // A Discover run with no progress for this long is stopped and its lock
+  // released; one file on the per-file path gets 5 s less.
+  ANALYSIS_LOCK: 5 * 60 * 1000,
+  // What the smart-folder watcher allows one document or image. Not a limit
+  // on a Discover run: there it is the base of the run cap (6x, at least an
+  // hour, up to ANALYSIS_RUN_MAX) and how often that cap is checked.
+  GLOBAL_ANALYSIS: 10 * 60 * 1000,
   HEARTBEAT_INTERVAL: 30000, // 30 seconds - progress heartbeat during analysis
   // Longest a Discover analysis run may take before it is stopped as runaway.
   ANALYSIS_RUN_MAX: 6 * 60 * 60 * 1000,
@@ -131,6 +136,8 @@ const TIMEOUTS = {
   // still be reported as alive. Each is longer than what main allows one
   // file: text extraction plus the model call for a document or image; a
   // recording of up to 4 hours, transcribed in one piece, for audio/video.
+  // BATCH_MEDIA_QUIET_MAX is also what the smart-folder watcher allows one
+  // recording (SmartFolderWatcher._analysisTimeoutMs).
   BATCH_FILE_QUIET_MAX: 15 * 60 * 1000,
   BATCH_MEDIA_QUIET_MAX: 3 * 60 * 60 * 1000,
   STALE_ACTIVITY: 15 * 60 * 1000, // 15 minutes - activity considered stale

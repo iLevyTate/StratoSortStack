@@ -53,6 +53,9 @@ const NON_TRANSIENT_ERROR_PATTERNS = [
   'unsupported image format',
   'zero length image',
   'invalid image',
+  // llama-server's answer for bytes it cannot decode ("Failed to load image
+  // or audio file"): the file's fault, not the runtime's.
+  'failed to load image',
   // The memory manager refusing a load is a sizing decision, not a backend
   // fault. Five refusals in a row used to open the text breaker for 300 s.
   'memory budget exceeded'

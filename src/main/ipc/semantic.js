@@ -1321,7 +1321,7 @@ async function handleComputeClusters(
           );
         } else if (!memoryAllowsOptionalText) {
           logger.info(
-            '[EMBEDDINGS] Skipping background LLM label refinement — text model not loaded and memory budget is tight'
+            '[EMBEDDINGS] Skipping background LLM label refinement — no memory headroom for optional text work right now'
           );
         } else {
           service.generateClusterLabels({ skipLLM: false }).catch((/** @type {any} */ err) => {

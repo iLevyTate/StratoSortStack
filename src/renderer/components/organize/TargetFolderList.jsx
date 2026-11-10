@@ -18,7 +18,7 @@ const VIRTUALIZATION_THRESHOLD = 20;
 export const unquoteDescription = (text) =>
   String(text || '')
     .trim()
-    .replace(/^[s"'“”‘’]+|[s"'“”‘’]+$/g, '');
+    .replace(/^[\s"'“”‘’]+|[\s"'“”‘’]+$/g, '');
 
 const getListHeight = (folderCount, viewportHeight) => {
   const maxFraction = folderCount <= 10 ? 0.35 : 0.45;

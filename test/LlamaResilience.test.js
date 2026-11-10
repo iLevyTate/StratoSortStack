@@ -216,6 +216,25 @@ describe('LlamaResilience', () => {
       expect(breaker.getStats().failedRequests).toBe(0);
     });
 
+    // What llama-server answers for bytes it cannot decode: the file is at
+    // fault, and five of them in a row used to shut vision off for 300 s.
+    test('an image the runtime could not load does not open the circuit breaker', async () => {
+      withRetry.mockImplementation((operation) => operation);
+      const rejectedOp = jest
+        .fn()
+        .mockRejectedValue(new Error('Failed to load image or audio file'));
+
+      for (let i = 0; i < 5; i++) {
+        await expect(
+          withLlamaResilience(rejectedOp, { modelType: 'vision', allowCPUFallback: false })
+        ).rejects.toThrow(/failed to load image/i);
+      }
+
+      const breaker = _circuitBreakers.get('vision');
+      expect(breaker.getState()).toBe('CLOSED');
+      expect(breaker.getStats().failedRequests).toBe(0);
+    });
+
     test('getLlamaCircuitSummary lists breaker states and the open ones', () => {
       expect(getLlamaCircuitSummary()).toEqual({ states: {}, open: [] });
 

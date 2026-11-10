@@ -60,6 +60,7 @@ jest.mock('../../src/main/ipc/files/batchRollback', () => ({
 
 jest.mock('../../src/main/ipc/files/batchProgressReporter', () => ({
   sendFileOperationBatchComplete: jest.fn(),
+  flushOperationProgress: jest.fn(),
   sendOperationProgress: jest.fn(),
   sendChunkedResults: jest.fn().mockResolvedValue({ sent: true, totalChunks: 0 })
 }));

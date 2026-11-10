@@ -2183,8 +2183,8 @@ class WhisperService extends EventEmitter {
   }
 
   /**
-   * Whether to run Whisper on the CPU because the text model holds a
-   * dedicated GPU that cannot also fit it. Never on unified memory, where CPU
+   * Whether to run Whisper on the CPU because the text model holds, or is
+   * being loaded onto, a dedicated GPU that cannot also fit it. Never on unified memory, where CPU
    * and GPU share the same budget and moving Whisper would gain nothing.
    * @param {string} modelPath
    * @returns {Promise<boolean>}
@@ -2192,7 +2192,12 @@ class WhisperService extends EventEmitter {
    */
   async _shouldRunOnCpuBesideText(modelPath) {
     const manager = this._getMemoryManager();
-    if (!manager?.getLoadedContext?.('text')) return false;
+    // Loaded or being loaded: a load in progress has reserved the GPU already.
+    const textHoldsGpu =
+      typeof manager?.isLoadedOrLoading === 'function'
+        ? manager.isLoadedOrLoading('text')
+        : Boolean(manager?.getLoadedContext?.('text'));
+    if (!manager || !textHoldsGpu) return false;
     if (typeof manager.canFitExternalLoad !== 'function') return false;
     const gpu = /** @type {any} */ (this._gpuInfo);
     if (gpu?.type === 'metal' || gpu?.isAppleSilicon || gpu?.unifiedMemory) return false;

@@ -126,6 +126,10 @@ function isMediaFilePath(filePath) {
   return MEDIA_EXTENSIONS.has(filePath.slice(dot).toLowerCase());
 }
 
+// What one file gets on the per-file path: under the time a run may go
+// without progress, so the file is what fails, not the run.
+const PER_FILE_LIMIT_MS = Math.min(TIMEOUTS.AI_ANALYSIS_LONG, TIMEOUTS.ANALYSIS_LOCK - 5000);
+
 /**
  * A run with audio or video always takes the batch path. One recording is
  * many minutes of work; the per-file path gives a file 5 minutes, then
@@ -1057,7 +1061,9 @@ export function useAnalysis(options = {}) {
         return { started: false, reason: 'superseded' };
       }
 
-      // Safety timeout - store in ref for proper cleanup
+      // The one check for a run that stopped making progress (a second one,
+      // after twice this long, could never fire first and was the only one
+      // that told the user). Stored in a ref for cleanup.
       const scheduleLockTimeoutCheck = () => {
         lockTimeoutRef.current = setTimeout(() => {
           if (!isActiveRun()) {
@@ -1083,6 +1089,12 @@ export function useAnalysis(options = {}) {
           });
           resetAnalysisState('Analysis lock timeout');
           lockTimeoutRef.current = null;
+          addNotification(
+            'Analysis was stopped because it stopped making progress. Unfinished files are ready to analyze again.',
+            'warning',
+            5000,
+            'analysis-timeout'
+          );
         }, TIMEOUTS.ANALYSIS_LOCK);
       };
       scheduleLockTimeoutCheck();
@@ -1154,22 +1166,17 @@ export function useAnalysis(options = {}) {
       }, TIMEOUTS.HEARTBEAT_INTERVAL);
       heartbeatIntervalRef.current = heartbeat;
 
-      // Global analysis watchdog:
-      // - inactivity timeout: reset only when there is no progress for GLOBAL_ANALYSIS window
-      // - hard cap timeout: absolute upper bound to avoid runaway background loops
+      // Global analysis watchdog: an absolute upper bound on one run, to
+      // avoid runaway background loops. A run that stops making progress is
+      // ended by the lock check above.
       const analysisStartedAt = Date.now();
       const fallbackPerFileMs = 45000;
       const maxHardCapMs = TIMEOUTS.ANALYSIS_RUN_MAX;
       const baselineHardCapMs = Math.max(TIMEOUTS.GLOBAL_ANALYSIS * 6, 60 * 60 * 1000);
       let hardCapMs = baselineHardCapMs;
       let hardCapLabel = `${Math.round(hardCapMs / 60000)} min`;
-      const windowLabel = `${Math.round(TIMEOUTS.GLOBAL_ANALYSIS / 60000)} min`;
-      const stopAnalysisForTimeout = (/** @type {any} */ reason) => {
-        logger.warn('Global analysis timeout', {
-          reason,
-          windowLabel,
-          hardCapLabel
-        });
+      const stopAnalysisForTimeout = () => {
+        logger.warn('Global analysis timeout', { hardCapLabel });
         captureCancelledBatchSnapshot(runId);
         if (analysisRunIdRef.current === runId) {
           analysisRunIdRef.current += 1;
@@ -1189,10 +1196,7 @@ export function useAnalysis(options = {}) {
           clearTimeout(lockTimeoutRef.current);
           lockTimeoutRef.current = null;
         }
-        const timeoutMessage =
-          reason === 'hard_cap'
-            ? `Analysis exceeded the safety window (${hardCapLabel}). Consider reducing file count per run.`
-            : `Analysis was stopped after no progress for ${windowLabel}.`;
+        const timeoutMessage = `Analysis exceeded the safety window (${hardCapLabel}). Consider reducing file count per run.`;
         startTransition(() => {
           flushPendingResults(true);
           pendingFilesRef.current = [];
@@ -1211,10 +1215,6 @@ export function useAnalysis(options = {}) {
             return;
           }
           const elapsedMs = Date.now() - analysisStartedAt;
-          const lastProgressAt = Number.isFinite(lastProgressAtRef.current)
-            ? lastProgressAtRef.current
-            : 0;
-          const inactivityMs = lastProgressAt ? Date.now() - lastProgressAt : Infinity;
           const state = /** @type {any} */ (store.getState());
           const progressState =
             state.analysis.analysisProgress || analysisProgressRef.current || {};
@@ -1228,12 +1228,7 @@ export function useAnalysis(options = {}) {
           }
           if (elapsedMs >= hardCapMs) {
             analysisTimeoutRef.current = null;
-            queueMicrotask(() => stopAnalysisForTimeout('hard_cap'));
-            return;
-          }
-          if (inactivityMs >= TIMEOUTS.GLOBAL_ANALYSIS) {
-            analysisTimeoutRef.current = null;
-            queueMicrotask(() => stopAnalysisForTimeout('inactivity'));
+            queueMicrotask(() => stopAnalysisForTimeout());
             return;
           }
           scheduleGlobalTimeoutCheck();
@@ -1330,7 +1325,7 @@ export function useAnalysis(options = {}) {
         logger.info('Configured global analysis watchdog', {
           fileCount: uniqueFiles.length,
           concurrency,
-          inactivityWindowMin: Math.round(TIMEOUTS.GLOBAL_ANALYSIS / 60000),
+          inactivityWindowMin: Math.round(TIMEOUTS.ANALYSIS_LOCK / 60000),
           hardCapMin: Math.round(hardCapMs / 60000)
         });
         logger.info(`Starting analysis of ${uniqueFiles.length} files`);
@@ -1624,10 +1619,14 @@ export function useAnalysis(options = {}) {
             modified: file.modified
           };
 
+          // Counted from here, with a limit just under the run's own, a slow
+          // file fails first and the run goes on to the next.
+          lastProgressAtRef.current = Date.now();
+
           try {
             const analysis = await withTimeout(
               analyzeWithRetry(file.path, 1, abortSignal, namingSettings),
-              TIMEOUTS.AI_ANALYSIS_LONG,
+              PER_FILE_LIMIT_MS,
               `Analysis for ${fileName}`
             );
 

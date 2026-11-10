@@ -106,6 +106,20 @@ function isAnalysisProgressPayload(payload) {
   return type === 'batch_analyze' || type === 'analyze';
 }
 
+/**
+ * A batch report that arrives while no analysis is running was sent before
+ * main heard of the Stop, or by a batch that nothing here waits for. Written
+ * to the store, its counts read as a paused analysis in Discover.
+ *
+ * @param {*} payload
+ * @returns {boolean}
+ */
+function isBatchProgressWithoutAnalysis(payload) {
+  if (String(payload?.type || '').toLowerCase() !== 'batch_analyze') return false;
+  const analysis = storeRef?.getState?.()?.analysis;
+  return Boolean(analysis) && analysis.isAnalyzing === false;
+}
+
 function dedupePathsByCanonicalValue(/** @type {any} */ paths) {
   const canonicalSeen = new Set();
   const deduped = [];
@@ -400,7 +414,10 @@ const ipcMiddleware = (/** @type {any} */ store) => {
         (/** @type {any} */ data) => {
           const { valid, data: validatedData } = validateIncomingEvent('operation-progress', data);
           if (!valid) return;
-          if (isAnalysisProgressPayload(validatedData)) {
+          if (
+            isAnalysisProgressPayload(validatedData) &&
+            !isBatchProgressWithoutAnalysis(validatedData)
+          ) {
             dispatchThrottledProgressToStore(normalizeAnalysisProgressPayload(validatedData));
           }
           // Re-dispatch every event as a DOM CustomEvent: runBatchPath's progress

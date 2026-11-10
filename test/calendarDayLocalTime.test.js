@@ -27,7 +27,7 @@ const PROBE = `
 process.env.TZ = process.argv[1];
 require.cache[require.resolve('electron')] = { exports: {}, loaded: true };
 const { generateSuggestedNameFromAnalysis, formatDate } = require('./src/shared/namingConventions');
-const { toWrittenCalendarDay } = require('./src/shared/contentDateSanity');
+const { toWrittenCalendarDay, toLocalCalendarDay, toLocalCalendarMs } = require('./src/shared/contentDateSanity');
 const { buildAnalysisFromModelJson } = require('./src/main/analysis/modelAnalysisResult');
 const { getAnalysisByDateRange } = require('./src/main/services/analysisHistory/queries');
 const foundInRange = (at, start, end) =>
@@ -62,6 +62,23 @@ process.stdout.write(
       toWrittenCalendarDay
     ),
     writtenYearFirst: ['2024 May 5', '2024 June', '2024 May 5 10:00'].map(toWrittenCalendarDay),
+    shownDays: ['2024-05-05', '2024-01-01', '2024-12-31', '0024-05-05'].map((day) => {
+      const shown = new Date(toLocalCalendarMs(day));
+      return [shown.getFullYear(), shown.getMonth() + 1, shown.getDate(), shown.getHours()];
+    }),
+    shownInstant: toLocalCalendarMs('2024-05-05T03:00:00Z') === Date.parse('2024-05-05T03:00:00Z'),
+    shownNothing: [null, undefined, '', 'not a date'].map(toLocalCalendarMs),
+    writtenWithZone: ['2024-05-05Z', '2024-05Z', '2024Z', '2024-05-05z'].map(toWrittenCalendarDay),
+    writtenOddYears: ['0001-01-01', '0024-05-05', '0099-12-31', '20255-01-01', '19999', '202501'].map(
+      toWrittenCalendarDay
+    ),
+    oddYearModelDates: ['0024-05-05', '20255-01-01', '19999'].map(
+      (date) =>
+        buildAnalysisFromModelJson(
+          { date, category: 'Finance', keywords: ['invoice'], confidence: 80 },
+          { originalFileName: 'invoice.pdf', smartFolders: [], fileDate: '2026-01-02', logger: quiet }
+        ).date
+    ),
     rangeEndingLateOnItsLastDay: foundInRange(
       new Date(2026, 11, 31, 23, 29),
       new Date(2026, 10, 15, 0, 30),
@@ -158,6 +175,61 @@ describe('a date the model wrote out is stored as the day written', () => {
       expect(inZone(zone).writtenYearFirst).toEqual(['2024-05-05', '2024-06-01', '2024-05-05']);
     }
   );
+});
+
+describe('a written date with nothing but a Z after it is the day written', () => {
+  // "2024-05-05Z" is midnight UTC. Only "T" or a space was let through after
+  // the day, so this one was read as a moment and came out as the 4th west of
+  // Greenwich.
+  test.each(['America/Los_Angeles', 'America/New_York', 'Europe/Berlin', 'Asia/Tokyo', 'UTC'])(
+    'in %s',
+    (zone) => {
+      expect(inZone(zone).writtenWithZone).toEqual([
+        '2024-05-05',
+        '2024-05-01',
+        '2024-01-01',
+        '2024-05-05'
+      ]);
+    }
+  );
+});
+
+describe('a stored day is shown as that day', () => {
+  // Search results and the time ranges of clusters parsed "2024-05-05" as
+  // UTC midnight and formatted it in local time: May 4 west of Greenwich.
+  test.each(['America/Los_Angeles', 'America/New_York', 'Europe/Berlin', 'Asia/Tokyo', 'UTC'])(
+    'in %s',
+    (zone) => {
+      expect(inZone(zone).shownDays).toEqual([
+        [2024, 5, 5, 0],
+        [2024, 1, 1, 0],
+        [2024, 12, 31, 0],
+        [24, 5, 5, 0]
+      ]);
+      // A moment in time is still that moment.
+      expect(inZone(zone).shownInstant).toBe(true);
+      expect(inZone(zone).shownNothing).toEqual([null, null, null, null]);
+    }
+  );
+});
+
+describe('a year that is not four digits of a real year', () => {
+  // Date.UTC reads the years 0-99 as 1900-1999, so a misread "0024-05-05"
+  // was stored as 1924 and passed the plausibility window. A year of five
+  // or six digits parses as that year; its first four digits looked
+  // plausible.
+  test.each(['America/Los_Angeles', 'Asia/Tokyo', 'UTC'])('in %s', (zone) => {
+    expect(inZone(zone).writtenOddYears).toEqual([
+      '0001-01-01',
+      '0024-05-05',
+      '0099-12-31',
+      null,
+      null,
+      null
+    ]);
+    // None of them is a content date: the file's date is used.
+    expect(inZone(zone).oddYearModelDates).toEqual(['2026-01-02', '2026-01-02', '2026-01-02']);
+  });
 });
 
 describe('a range of local days finds the history entries in it', () => {

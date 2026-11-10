@@ -50,6 +50,7 @@ jest.mock('../src/main/services/BatchAnalysisService', () =>
 
 jest.mock('../src/main/ipc/files/batchProgressReporter', () => ({
   sendFileOperationBatchComplete: jest.fn(),
+  flushOperationProgress: jest.fn(),
   sendOperationProgress: jest.fn(),
   sendFileComplete: jest.fn()
 }));

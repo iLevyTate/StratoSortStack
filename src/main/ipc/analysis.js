@@ -23,7 +23,11 @@ const {
 } = require('./analysisUtils');
 const BatchAnalysisService = require('../services/BatchAnalysisService');
 const { claimUserAnalysis, withUserAnalysis } = require('../analysis/userAnalysisInFlight');
-const { sendOperationProgress, sendFileComplete } = require('./files/batchProgressReporter');
+const {
+  sendOperationProgress,
+  flushOperationProgress,
+  sendFileComplete
+} = require('./files/batchProgressReporter');
 const { createMediaAnalyzerAdapter } = require('../services/mediaAnalyzerAdapter');
 const { getInstance: getWhisperService } = require('../services/WhisperService');
 
@@ -42,6 +46,64 @@ function safeGetWhisperService() {
   } catch {
     return null;
   }
+}
+
+/**
+ * The size and dates of a file before its analysis. Nothing holds the file
+ * open while the model works, so it can be saved again in that time. Read
+ * after the pass, the history kept the size and date of a version the result
+ * does not describe, and that version then counted as analyzed.
+ * @param {string} filePath
+ * @returns {Promise<import('fs').Stats|null>}
+ */
+async function statBeforeAnalysis(filePath) {
+  try {
+    return await fs.stat(filePath);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The stats to record with a result: those from before the pass. None when
+ * the file is gone by now, so the record reads the file itself and fails, as
+ * it always did for a file removed during its analysis.
+ * @param {string} filePath
+ * @param {import('fs').Stats|null} before
+ * @returns {Promise<import('fs').Stats|null>}
+ */
+async function statsToRecord(filePath, before) {
+  if (!before) return null;
+  try {
+    await fs.stat(filePath);
+    return before;
+  } catch {
+    return null;
+  }
+}
+
+// The same events the live log feed detaches on (liveLogFeed.js).
+// 'did-navigate' and not 'did-start-navigation': that one also fires for a
+// navigation that 'will-navigate' then blocks, with the page still there.
+const SENDER_GONE_EVENTS = ['destroyed', 'render-process-gone', 'did-navigate'];
+
+/**
+ * Stops a batch when the renderer that asked for it goes away: its process
+ * died, its window closed, or the page was loaded again (Reload, the
+ * automatic reload after a crash). Nothing told main, so the batch ran on
+ * with no owner: the watcher waited behind it, its progress was written into
+ * the new page, and a new Analyze ran the same files beside it.
+ * @param {any} sender - event.sender (a WebContents)
+ * @param {(reason: string) => void} cancelRun
+ * @returns {() => void} Removes the listeners.
+ */
+function cancelWhenSenderGoesAway(sender, cancelRun) {
+  if (typeof sender?.on !== 'function' || typeof sender?.removeListener !== 'function') {
+    return () => {};
+  }
+  const onGone = () => cancelRun('The window that started the analysis closed or was reloaded');
+  SENDER_GONE_EVENTS.forEach((name) => sender.on(name, onGone));
+  return () => SENDER_GONE_EVENTS.forEach((name) => sender.removeListener(name, onGone));
 }
 
 /** @type {InstanceType<typeof BatchAnalysisService> | null} */
@@ -90,6 +152,7 @@ async function resolveNamingSettings(settingsService, namingOverride) {
  * @param {import('./ipcWrappers').LoggerLike} logger
  * @param {string} logPrefix
  * @param {Record<string, any>|null|undefined} [namingOverride] - Discover session naming (wins over Settings when set)
+ * @param {import('fs').Stats|null} [fileStats] - Stats read before the analysis; read now when absent
  */
 async function applyUserNamingFromSettings(
   filePath,
@@ -97,7 +160,8 @@ async function applyUserNamingFromSettings(
   settingsService,
   logger,
   logPrefix,
-  namingOverride = null
+  namingOverride = null,
+  fileStats = null
 ) {
   if (!result || typeof result !== 'object') {
     return result;
@@ -120,7 +184,7 @@ async function applyUserNamingFromSettings(
     if (!namingSettings) {
       return result;
     }
-    const stats = await fs.stat(filePath);
+    const stats = fileStats || (await fs.stat(filePath));
     const fileTimestamps = { created: stats.birthtime, modified: stats.mtime };
     const originalFileName = path.basename(filePath);
     const preservedLlm =
@@ -486,6 +550,7 @@ function registerAnalysisIpc(servicesOrParams) {
             getFolderNamesString(folderCategories)
           );
 
+          const statsBefore = await statBeforeAnalysis(cleanPath);
           const result = await analyzeDocumentFile(cleanPath, folderCategories, { abortSignal });
           await applyUserNamingFromSettings(
             cleanPath,
@@ -493,7 +558,8 @@ function registerAnalysisIpc(servicesOrParams) {
             settingsService,
             logger,
             LOG_PREFIX,
-            namingOverride
+            namingOverride,
+            statsBefore
           );
           const duration = performance.now() - startTime;
           systemAnalytics?.recordProcessingTime?.(duration);
@@ -504,6 +570,7 @@ function registerAnalysisIpc(servicesOrParams) {
             result,
             processingTime: duration,
             modelType: 'llm',
+            fileStats: await statsToRecord(cleanPath, statsBefore),
             analysisHistory: serviceIntegration?.analysisHistory,
             logger
           });
@@ -608,6 +675,7 @@ function registerAnalysisIpc(servicesOrParams) {
             getFolderNamesString(folderCategories)
           );
 
+          const statsBefore = await statBeforeAnalysis(cleanPath);
           const result = await analyzeImageFile(cleanPath, folderCategories, { abortSignal });
           await applyUserNamingFromSettings(
             cleanPath,
@@ -615,7 +683,8 @@ function registerAnalysisIpc(servicesOrParams) {
             settingsService,
             logger,
             IMAGE_LOG_PREFIX,
-            namingOverride
+            namingOverride,
+            statsBefore
           );
           const duration = performance.now() - startTime;
           systemAnalytics?.recordProcessingTime?.(duration);
@@ -626,6 +695,7 @@ function registerAnalysisIpc(servicesOrParams) {
             result,
             processingTime: duration,
             modelType: 'vision',
+            fileStats: await statsToRecord(cleanPath, statsBefore),
             analysisHistory: serviceIntegration?.analysisHistory,
             logger
           });
@@ -736,6 +806,7 @@ function registerAnalysisIpc(servicesOrParams) {
             })
           );
           const isCancelled = () => Boolean(abortSignal?.aborted);
+          const statsBefore = await statBeforeAnalysis(cleanPath);
           const result = await analyzer(cleanPath, folderCategories, { isCancelled, abortSignal });
           await applyUserNamingFromSettings(
             cleanPath,
@@ -743,7 +814,8 @@ function registerAnalysisIpc(servicesOrParams) {
             settingsService,
             logger,
             MEDIA_LOG_PREFIX,
-            namingOverride
+            namingOverride,
+            statsBefore
           );
           const duration = performance.now() - startTime;
           systemAnalytics?.recordProcessingTime?.(duration);
@@ -754,6 +826,7 @@ function registerAnalysisIpc(servicesOrParams) {
             result,
             processingTime: duration,
             modelType: 'whisper',
+            fileStats: await statsToRecord(cleanPath, statsBefore),
             analysisHistory: serviceIntegration?.analysisHistory,
             logger
           });
@@ -872,91 +945,15 @@ function registerAnalysisIpc(servicesOrParams) {
         }
       }
 
-      const pathValidation = await Promise.allSettled(
-        rawPaths.map((/** @type {string} */ filePath) => validateAnalysisPath(filePath))
-      );
-      /** @type {string[]} */
-      const validatedPaths = [];
-      /** @type {Array<Record<string, any>>} */
-      const validationErrors = [];
-      /** @type {Array<Record<string, any>>} */
-      const validationFailureResults = [];
-
-      pathValidation.forEach((result, index) => {
-        const originalPath = rawPaths[index];
-        if (result.status === 'fulfilled') {
-          validatedPaths.push(result.value);
-          return;
-        }
-
-        const reasonMessage =
-          result.reason && typeof result.reason.message === 'string'
-            ? result.reason.message
-            : 'Invalid file path provided';
-        const validationError = {
-          filePath: originalPath,
-          error: reasonMessage,
-          code: 'INVALID_PATH'
-        };
-        validationErrors.push(validationError);
-        validationFailureResults.push({
-          filePath: originalPath,
-          success: false,
-          error: reasonMessage,
-          code: 'INVALID_PATH'
-        });
-      });
-
-      if (validationErrors.length > 0) {
-        logger.warn(`${LOG_PREFIX} Batch path validation failed for some files`, {
-          batchId,
-          invalidCount: validationErrors.length,
-          totalCount: rawPaths.length
-        });
-      }
-
-      if (validatedPaths.length === 0 || (options.stopOnError && validationErrors.length > 0)) {
-        return {
-          success: false,
-          cancelled: false,
-          results: validationFailureResults,
-          errors: validationErrors,
-          total: rawPaths.length,
-          processed: 0,
-          successful: 0,
-          hasErrors: validationErrors.length > 0,
-          batchId
-        };
-      }
-      /** @type {any[]} */
-      let folderCategories = [];
-      if (
-        Array.isArray(normalizedPayload.smartFolders) &&
-        normalizedPayload.smartFolders.length > 0
-      ) {
-        try {
-          folderCategories = mapFoldersToCategories(normalizedPayload.smartFolders);
-        } catch (folderError) {
-          logger.warn(`${LOG_PREFIX} Failed to normalize provided smart folders`, {
-            error: folderError?.message
-          });
-        }
-      }
-      if (!Array.isArray(folderCategories) || folderCategories.length === 0) {
-        folderCategories = getFolderCategories(getCustomFolders, mapFoldersToCategories, logger);
-      }
-
-      logger.info(`${LOG_PREFIX} Starting batch analysis`, {
-        batchId,
-        totalFiles: validatedPaths.length,
-        folders: folderCategories.length,
-        sectionOrder: options.sectionOrder || 'documents-first'
-      });
-
       // Batch-scoped AbortController: every cancel path (renderer
-      // CANCEL_BATCH, IPC abort signal, app shutdown) aborts it so in-flight
-      // LLM/vision inference stops immediately instead of waiting for the
-      // next cooperative isCancelled() poll.
+      // CANCEL_BATCH, IPC abort signal, app shutdown, the renderer going
+      // away) aborts it so in-flight LLM/vision inference stops immediately
+      // instead of waiting for the next cooperative isCancelled() poll.
+      //
+      // The run is registered before its paths are checked. The check reads
+      // the disk for every file, and a Stop that arrived during it was
+      // answered "unknown batch" and never sent again: the batch then ran to
+      // its end with nothing able to stop it.
       const batchAbortController = new AbortController();
       /** @type {Record<string, any>} */
       const runState = {
@@ -969,6 +966,18 @@ function registerAnalysisIpc(servicesOrParams) {
         abortController: batchAbortController
       };
       activeBatchRuns.set(batchId, runState);
+      const cancelRun = (/** @type {string} */ reason) => {
+        runState.cancelled = true;
+        if (!runState.reason) {
+          runState.reason = reason;
+          runState.requestedAt = Date.now();
+        }
+        batchAbortController.abort();
+      };
+      // A report of this run is shown only while the run is wanted: not after
+      // a cancel, and not after the run ended or its id went to another run.
+      const progressStillWanted = () =>
+        !runState.cancelled && activeBatchRuns.get(batchId) === runState;
 
       // Bridge the ipcRegistry AbortSignal into runState.cancelled so a
       // preload-timeout or renderer cancel flips the cooperative cancel
@@ -980,49 +989,126 @@ function registerAnalysisIpc(servicesOrParams) {
       const ipcAbortSignal = event?.abortSignal;
       if (ipcAbortSignal) {
         if (ipcAbortSignal.aborted) {
-          runState.cancelled = true;
-          runState.reason = runState.reason || 'ipc-abort-signal';
-          runState.requestedAt = runState.requestedAt || Date.now();
-          batchAbortController.abort();
+          cancelRun('ipc-abort-signal');
         } else {
-          const onAbort = () => {
-            runState.cancelled = true;
-            if (!runState.reason) {
-              runState.reason = 'ipc-abort-signal';
-              runState.requestedAt = Date.now();
-            }
-            batchAbortController.abort();
-          };
+          const onAbort = () => cancelRun('ipc-abort-signal');
           ipcAbortSignal.addEventListener('abort', onAbort, { once: true });
           removeAbortListener = () => ipcAbortSignal.removeEventListener?.('abort', onAbort);
         }
       }
+      const stopWatchingSender = cancelWhenSenderGoesAway(event?.sender, cancelRun);
 
-      // The service reports only when a file starts or finishes, and one long
-      // recording is many minutes of work. The renderer takes 5 minutes without
-      // a report for a stuck analysis and resets it. So the last report is
-      // repeated while the batch runs: silence then means main stopped
-      // answering. Only for as long as one file may take, so a file that hangs
-      // is still noticed.
-      const quietBudgetMs = validatedPaths.some((/** @type {string} */ p) => isMediaPath(p))
-        ? TIMEOUTS.BATCH_MEDIA_QUIET_MAX
-        : TIMEOUTS.BATCH_FILE_QUIET_MAX;
-      /** @type {Record<string, any> | null} */
-      let lastProgressPayload = null;
-      let lastProgressAt = 0;
-      const progressHeartbeat = setInterval(() => {
-        if (!lastProgressPayload || runState.cancelled) return;
-        if (Date.now() - lastProgressAt > quietBudgetMs) return;
-        if (typeof getMainWindow === 'function') {
-          sendOperationProgress(getMainWindow, lastProgressPayload);
-        }
-      }, TIMEOUTS.HEARTBEAT_INTERVAL);
-      progressHeartbeat.unref?.();
-
-      // The smart-folder watcher defers these files until the batch is done,
-      // so a file it also sees is not analyzed twice at once.
-      const releaseUserAnalysis = claimUserAnalysis(validatedPaths);
+      /** @type {ReturnType<typeof setInterval> | null} */
+      let progressHeartbeat = null;
+      let releaseUserAnalysis = () => {};
       try {
+        const pathValidation = await Promise.allSettled(
+          rawPaths.map((/** @type {string} */ filePath) => validateAnalysisPath(filePath))
+        );
+        /** @type {string[]} */
+        const validatedPaths = [];
+        /** @type {Array<Record<string, any>>} */
+        const validationErrors = [];
+        /** @type {Array<Record<string, any>>} */
+        const validationFailureResults = [];
+
+        pathValidation.forEach((result, index) => {
+          const originalPath = rawPaths[index];
+          if (result.status === 'fulfilled') {
+            validatedPaths.push(result.value);
+            return;
+          }
+
+          const reasonMessage =
+            result.reason && typeof result.reason.message === 'string'
+              ? result.reason.message
+              : 'Invalid file path provided';
+          const validationError = {
+            filePath: originalPath,
+            error: reasonMessage,
+            code: 'INVALID_PATH'
+          };
+          validationErrors.push(validationError);
+          validationFailureResults.push({
+            filePath: originalPath,
+            success: false,
+            error: reasonMessage,
+            code: 'INVALID_PATH'
+          });
+        });
+
+        if (validationErrors.length > 0) {
+          logger.warn(`${LOG_PREFIX} Batch path validation failed for some files`, {
+            batchId,
+            invalidCount: validationErrors.length,
+            totalCount: rawPaths.length
+          });
+        }
+
+        if (validatedPaths.length === 0 || (options.stopOnError && validationErrors.length > 0)) {
+          return {
+            success: false,
+            cancelled: false,
+            results: validationFailureResults,
+            errors: validationErrors,
+            total: rawPaths.length,
+            processed: 0,
+            successful: 0,
+            hasErrors: validationErrors.length > 0,
+            batchId
+          };
+        }
+        /** @type {any[]} */
+        let folderCategories = [];
+        if (
+          Array.isArray(normalizedPayload.smartFolders) &&
+          normalizedPayload.smartFolders.length > 0
+        ) {
+          try {
+            folderCategories = mapFoldersToCategories(normalizedPayload.smartFolders);
+          } catch (folderError) {
+            logger.warn(`${LOG_PREFIX} Failed to normalize provided smart folders`, {
+              error: folderError?.message
+            });
+          }
+        }
+        if (!Array.isArray(folderCategories) || folderCategories.length === 0) {
+          folderCategories = getFolderCategories(getCustomFolders, mapFoldersToCategories, logger);
+        }
+
+        logger.info(`${LOG_PREFIX} Starting batch analysis`, {
+          batchId,
+          totalFiles: validatedPaths.length,
+          folders: folderCategories.length,
+          sectionOrder: options.sectionOrder || 'documents-first'
+        });
+
+        // The service reports only when a file starts or finishes, and one long
+        // recording is many minutes of work. The renderer takes 5 minutes without
+        // a report for a stuck analysis and resets it. So the last report is
+        // repeated while the batch runs: silence then means main stopped
+        // answering. Only for as long as one file may take, so a file that hangs
+        // is still noticed.
+        const quietBudgetMs = validatedPaths.some((/** @type {string} */ p) => isMediaPath(p))
+          ? TIMEOUTS.BATCH_MEDIA_QUIET_MAX
+          : TIMEOUTS.BATCH_FILE_QUIET_MAX;
+        /** @type {Record<string, any> | null} */
+        let lastProgressPayload = null;
+        let lastProgressAt = 0;
+        progressHeartbeat = setInterval(() => {
+          if (!lastProgressPayload || runState.cancelled) return;
+          if (Date.now() - lastProgressAt > quietBudgetMs) return;
+          if (typeof getMainWindow === 'function') {
+            sendOperationProgress(getMainWindow, lastProgressPayload, {
+              stillWanted: progressStillWanted
+            });
+          }
+        }, TIMEOUTS.HEARTBEAT_INTERVAL);
+        progressHeartbeat.unref?.();
+
+        // The smart-folder watcher defers these files until the batch is done,
+        // so a file it also sees is not analyzed twice at once.
+        releaseUserAnalysis = claimUserAnalysis(validatedPaths);
         // BatchAnalysisService.analyzeFiles' JSDoc enumerates only a subset of
         // the options it consumes and elides successful/cancelled from its
         // return type; cast until that service opts in to checkjs.
@@ -1047,7 +1133,9 @@ function registerAnalysisIpc(servicesOrParams) {
                 lastProgressPayload = { type: 'batch_analyze', batchId, ...progress };
                 lastProgressAt = Date.now();
                 if (typeof getMainWindow === 'function') {
-                  sendOperationProgress(getMainWindow, lastProgressPayload);
+                  sendOperationProgress(getMainWindow, lastProgressPayload, {
+                    stillWanted: progressStillWanted
+                  });
                 }
               },
               onFileComplete: (/** @type {any} */ item) => {
@@ -1113,6 +1201,7 @@ function registerAnalysisIpc(servicesOrParams) {
                   logPrefix: LOG_PREFIX,
                   fn: async () => {
                     const started = performance.now();
+                    const statsBefore = await statBeforeAnalysis(filePath);
                     const result = await analyzeDocumentFile(filePath, smartFolders, {
                       abortSignal: batchAbortController.signal
                     });
@@ -1122,7 +1211,8 @@ function registerAnalysisIpc(servicesOrParams) {
                       settingsService,
                       logger,
                       LOG_PREFIX,
-                      namingOverride
+                      namingOverride,
+                      statsBefore
                     );
                     const processingTime = performance.now() - started;
                     await recordAnalysisResult({
@@ -1130,6 +1220,7 @@ function registerAnalysisIpc(servicesOrParams) {
                       result,
                       processingTime,
                       modelType: 'llm',
+                      fileStats: await statsToRecord(filePath, statsBefore),
                       analysisHistory: serviceIntegration?.analysisHistory,
                       logger
                     });
@@ -1148,6 +1239,7 @@ function registerAnalysisIpc(servicesOrParams) {
                   logPrefix: '[IPC-IMAGE-ANALYSIS]',
                   fn: async () => {
                     const started = performance.now();
+                    const statsBefore = await statBeforeAnalysis(filePath);
                     const result = await analyzeImageFile(filePath, smartFolders, {
                       abortSignal: batchAbortController.signal
                     });
@@ -1157,7 +1249,8 @@ function registerAnalysisIpc(servicesOrParams) {
                       settingsService,
                       logger,
                       '[IPC-IMAGE-ANALYSIS]',
-                      namingOverride
+                      namingOverride,
+                      statsBefore
                     );
                     const processingTime = performance.now() - started;
                     await recordAnalysisResult({
@@ -1165,6 +1258,7 @@ function registerAnalysisIpc(servicesOrParams) {
                       result,
                       processingTime,
                       modelType: 'vision',
+                      fileStats: await statsToRecord(filePath, statsBefore),
                       analysisHistory: serviceIntegration?.analysisHistory,
                       logger
                     });
@@ -1200,6 +1294,7 @@ function registerAnalysisIpc(servicesOrParams) {
                         whisperService: safeGetWhisperService()
                       })
                     );
+                    const statsBefore = await statBeforeAnalysis(filePath);
                     const result = await adapter(filePath, smartFolders, {
                       ...opts,
                       abortSignal: batchAbortController.signal
@@ -1210,7 +1305,8 @@ function registerAnalysisIpc(servicesOrParams) {
                       settingsService,
                       logger,
                       '[IPC-MEDIA-ANALYSIS]',
-                      namingOverride
+                      namingOverride,
+                      statsBefore
                     );
                     const processingTime = performance.now() - started;
                     await recordAnalysisResult({
@@ -1218,6 +1314,7 @@ function registerAnalysisIpc(servicesOrParams) {
                       result,
                       processingTime,
                       modelType: 'media',
+                      fileStats: await statsToRecord(filePath, statsBefore),
                       analysisHistory: serviceIntegration?.analysisHistory,
                       logger
                     });
@@ -1232,6 +1329,13 @@ function registerAnalysisIpc(servicesOrParams) {
           /** @type {() => undefined} */ (() => undefined)
         );
         const batchResult = await batchPromise;
+
+        // The last report is usually still held by the throttle, and is dropped
+        // once this run is unregistered below. The search and embedding counts
+        // refresh on it, so a run that reached its end sends it itself.
+        if (lastProgressPayload && !runState.cancelled && typeof getMainWindow === 'function') {
+          flushOperationProgress(getMainWindow, lastProgressPayload);
+        }
 
         // Whole-batch wall-clock is used for the completion log only.
         // Per-file processing samples are recorded in onFileComplete so the
@@ -1262,9 +1366,10 @@ function registerAnalysisIpc(servicesOrParams) {
           batchId
         };
       } finally {
-        clearInterval(progressHeartbeat);
+        if (progressHeartbeat) clearInterval(progressHeartbeat);
         releaseUserAnalysis();
         removeAbortListener?.();
+        stopWatchingSender();
         // Only this run's own entry: an evicted run that finishes late must
         // not remove the run that replaced it, or that run can no longer be
         // cancelled.
