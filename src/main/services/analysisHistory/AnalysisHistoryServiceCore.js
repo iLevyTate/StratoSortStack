@@ -74,6 +74,18 @@ const {
 const { performMaintenanceIfNeeded, migrateHistory } = require('./maintenance');
 
 const logger = createLogger('AnalysisHistoryService');
+
+/**
+ * Where an entry's file lives now: `organization.actual` once it has been
+ * moved, `originalPath` until then. `originalPath` is never rewritten, so
+ * after a move it names a place another file may since have taken. Path-keyed
+ * writes match on this, never on a path the file has left.
+ * @param {any} entry
+ * @returns {string|null}
+ */
+function currentPathOf(entry) {
+  return entry?.organization?.actual || entry?.originalPath || null;
+}
 class AnalysisHistoryServiceCore {
   constructor() {
     this.userDataPath = app.getPath('userData');
@@ -1286,12 +1298,11 @@ class AnalysisHistoryServiceCore {
       const entries = this.analysisHistory?.entries || {};
       for (const entry of Object.values(entries)) {
         const actualPath = entry.organization?.actual || null;
-        const updateKey =
-          entry.originalPath && updateMap.has(entry.originalPath)
-            ? entry.originalPath
-            : actualPath && updateMap.has(actualPath)
-              ? actualPath
-              : null;
+        // Current path only. A moved entry's originalPath may be another
+        // file's path now; matching it re-pointed this entry at that file's
+        // destination and left the moved file without history.
+        const currentPath = currentPathOf(entry);
+        const updateKey = currentPath && updateMap.has(currentPath) ? currentPath : null;
         const update = updateKey ? updateMap.get(updateKey) : null;
         if (update) {
           // Track old actual path for index update
@@ -1442,7 +1453,7 @@ class AnalysisHistoryServiceCore {
   }
 
   /**
-   * Update tags for an entry identified by path.
+   * Update tags for an entry identified by its current path.
    *
    * @param {string} filePath
    * @param {string[]} tags
@@ -1464,9 +1475,7 @@ class AnalysisHistoryServiceCore {
       const now = new Date().toISOString();
 
       for (const entry of Object.values(entries)) {
-        const original = entry?.originalPath;
-        const actual = entry?.organization?.actual;
-        if (original !== target && actual !== target) continue;
+        if (currentPathOf(entry) !== target) continue;
 
         // Clone for index removal
         const oldEntry = deepClone(entry);
@@ -1506,7 +1515,8 @@ class AnalysisHistoryServiceCore {
    *
    * This is the persistence layer for staged embedding workflows.
    *
-   * Matches either the original path or the organization.actual path.
+   * Matches the entry's current path (organization.actual once moved,
+   * otherwise the original path).
    *
    * @param {string} filePath
    * @param {{policy?: 'embed'|'skip'|'web_only'|null, status?: 'unknown'|'pending'|'done'|'skipped'|'error'|null, model?: string|null, error?: string|null}} update
@@ -1542,9 +1552,7 @@ class AnalysisHistoryServiceCore {
       };
 
       for (const entry of Object.values(entries)) {
-        const original = entry?.originalPath;
-        const actual = entry?.organization?.actual;
-        if (original !== target && actual !== target) continue;
+        if (currentPathOf(entry) !== target) continue;
 
         if (!entry.embedding || typeof entry.embedding !== 'object') {
           entry.embedding = { policy: null, status: 'unknown', model: null, updatedAt: now };
@@ -1596,7 +1604,10 @@ class AnalysisHistoryServiceCore {
    * Remove analysis history entries associated with a path.
    * Used to keep BM25/analysis-history-backed search in sync after deletes.
    *
-   * Matches either the original path or the organization.actual path.
+   * Matches the entry's current path (organization.actual once moved,
+   * otherwise the original path). A path the file has left never matches: a
+   * different file may live there now, and deleting it must not take the moved
+   * file's history with it.
    *
    * @param {string} filePath
    * @returns {Promise<{removed: number, error?: string}>}
@@ -1614,9 +1625,7 @@ class AnalysisHistoryServiceCore {
     try {
       const entries = this.analysisHistory?.entries || {};
       for (const [id, entry] of Object.entries(entries)) {
-        const original = entry?.originalPath;
-        const actual = entry?.organization?.actual;
-        if (original === target || actual === target) {
+        if (currentPathOf(entry) === target) {
           removedEntries.push({
             id,
             fileHash: entry.fileHash,

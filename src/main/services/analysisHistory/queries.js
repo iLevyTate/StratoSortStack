@@ -59,7 +59,27 @@ function sortEntries(entries, sortBy, sortOrder) {
 }
 
 /**
- * Get analysis by file path
+ * Whether a path-lookup hit is the entry for the file that lives at the path
+ * now. An index saved before moved entries dropped their originalPath key can
+ * still map the path a file left to that file's entry, and a different file
+ * may sit there today. A key whose entry is gone, or an entry without any
+ * path (legacy/partial), is left for the caller to resolve as before.
+ * @param {Record<string, any>|undefined} entry - Candidate entry
+ * @param {string} filePath - Path as asked
+ * @param {string} normalized - Normalized form of `filePath`
+ * @returns {boolean}
+ */
+function entryIsAtPath(entry, filePath, normalized) {
+  if (!entry) return true;
+  const current = entry.organization?.actual || entry.originalPath;
+  if (typeof current !== 'string' || !current) return true;
+  return current === filePath || normalizePathForLookup(current) === normalized;
+}
+
+/**
+ * Get analysis by file path. Resolves the entry whose file lives at the path
+ * now (`organization.actual`, or `originalPath` when it was never moved), not
+ * an entry that merely started out there.
  * @param {Record<string, any>} analysisHistory - Analysis history data
  * @param {Record<string, any>} analysisIndex - Analysis index
  * @param {string} filePath - File path to look up
@@ -71,14 +91,22 @@ function getAnalysisByPath(analysisHistory, analysisIndex, filePath) {
   const normalized = normalizePathForLookup(filePath);
 
   // Fast paths: exact key, then normalized key (for new indexes)
-  let entryId =
-    analysisIndex.pathLookup[filePath] ??
-    (normalized ? analysisIndex.pathLookup[normalized] : undefined);
+  let entryId;
+  for (const key of [filePath, normalized]) {
+    const candidateId = key ? analysisIndex.pathLookup[key] : undefined;
+    if (candidateId && entryIsAtPath(analysisHistory.entries[candidateId], filePath, normalized)) {
+      entryId = candidateId;
+      break;
+    }
+  }
 
   // Backfill for legacy indexes that only stored the original-cased path on Windows
   if (!entryId && normalized && process.platform === 'win32') {
     for (const [storedPath, id] of Object.entries(analysisIndex.pathLookup)) {
-      if (normalizePathForLookup(storedPath) === normalized) {
+      if (
+        normalizePathForLookup(storedPath) === normalized &&
+        entryIsAtPath(analysisHistory.entries[id], filePath, normalized)
+      ) {
         entryId = id;
         // Cache the normalized key to avoid future scans
         analysisIndex.pathLookup[normalized] = id;

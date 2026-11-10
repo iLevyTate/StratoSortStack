@@ -111,6 +111,24 @@ describe('queries', () => {
       expect(result).toBeNull();
     });
 
+    // A moved entry keeps its originalPath; an index saved before moves
+    // dropped that key can still map the old path to it. Another file may
+    // live at the old path now, so the stale key must not resolve.
+    test('does not resolve a path the entry has moved away from', () => {
+      const moved = {
+        id: 'entry-1',
+        originalPath: '/downloads/report.pdf',
+        organization: { actual: '/docs/report.pdf' }
+      };
+      const history = { entries: { 'entry-1': moved } };
+      const index = {
+        pathLookup: { '/downloads/report.pdf': 'entry-1', '/docs/report.pdf': 'entry-1' }
+      };
+
+      expect(queries.getAnalysisByPath(history, index, '/downloads/report.pdf')).toBeNull();
+      expect(queries.getAnalysisByPath(history, index, '/docs/report.pdf')).toBe(moved);
+    });
+
     // Regression: queries.normalizePathForLookup must match the write-side
     // canonicalization in indexManager.js (`normalizePathForIndex`). Previously
     // the lookup helper used a weaker normalizer that missed NFC/NFD differences

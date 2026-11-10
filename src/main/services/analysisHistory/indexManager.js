@@ -58,6 +58,51 @@ function getSizeRange(size) {
 }
 
 /**
+ * Where the entry's file lives now: `organization.actual` once it has been
+ * moved, `originalPath` until then. `originalPath` is never rewritten, so after
+ * a move it names a place another file may since have taken.
+ * @param {Record<string, any>} entry - Analysis entry
+ * @returns {string|null} Current path, or null when the entry has none
+ */
+function getEntryCurrentPath(entry) {
+  const actual = entry?.organization?.actual;
+  if (typeof actual === 'string' && actual) return actual;
+  const original = entry?.originalPath;
+  return typeof original === 'string' && original ? original : null;
+}
+
+/**
+ * Whether the entry's file currently lives at `filePath` (exact or
+ * index-normalized match).
+ * @param {Record<string, any>} entry - Analysis entry
+ * @param {string} filePath - Path to compare
+ * @returns {boolean}
+ */
+function entryLivesAtPath(entry, filePath) {
+  const current = getEntryCurrentPath(entry);
+  if (!current || typeof filePath !== 'string' || !filePath) return false;
+  if (current === filePath) return true;
+  const normalizedCurrent = normalizePathForIndex(current);
+  return Boolean(normalizedCurrent) && normalizedCurrent === normalizePathForIndex(filePath);
+}
+
+/**
+ * Drop a path's lookup keys, but only the ones that still point at this entry:
+ * a newer entry for another file may own the same path by now.
+ * @param {Record<string, any>} index - Analysis index
+ * @param {string} filePath - Path whose keys to drop
+ * @param {string} entryId - Entry the keys must belong to
+ */
+function deletePathKeysOwnedBy(index, filePath, entryId) {
+  if (!filePath) return;
+  if (index.pathLookup[filePath] === entryId) delete index.pathLookup[filePath];
+  const normalized = normalizePathForIndex(filePath);
+  if (normalized && normalized !== filePath && index.pathLookup[normalized] === entryId) {
+    delete index.pathLookup[normalized];
+  }
+}
+
+/**
  * Update all indexes for a new entry
  * @param {Record<string, any>} index - Analysis index
  * @param {Record<string, any>} entry - Analysis entry
@@ -71,11 +116,15 @@ function updateIndexes(index, entry) {
   // File hash index
   index.fileHashes[entry.fileHash] = entry.id;
 
-  // Path lookup index (store both original and normalized for case-insensitive FS)
-  index.pathLookup[entry.originalPath] = entry.id;
-  const normalizedPath = normalizePathForIndex(entry.originalPath);
-  if (normalizedPath && normalizedPath !== entry.originalPath) {
-    index.pathLookup[normalizedPath] = entry.id;
+  // Path lookup index (store both original and normalized for case-insensitive FS).
+  // A moved entry is indexed under its current path only: its originalPath may
+  // belong to another file now, and must not shadow that file's entry.
+  if (!entry.organization?.actual || entryLivesAtPath(entry, entry.originalPath)) {
+    index.pathLookup[entry.originalPath] = entry.id;
+    const normalizedPath = normalizePathForIndex(entry.originalPath);
+    if (normalizedPath && normalizedPath !== entry.originalPath) {
+      index.pathLookup[normalizedPath] = entry.id;
+    }
   }
 
   if (entry.organization?.actual) {
@@ -127,19 +176,13 @@ function updateIndexes(index, entry) {
 function removeFromIndexes(index, entry) {
   // Remove from various indexes
   delete index.fileHashes[entry.fileHash];
-  const normalizedPath = normalizePathForIndex(entry.originalPath);
-  delete index.pathLookup[entry.originalPath];
-  if (normalizedPath && normalizedPath !== entry.originalPath) {
-    delete index.pathLookup[normalizedPath];
-  }
+  // Path keys go only while they still point at this entry: the path a moved
+  // entry left may be another file's key by now.
+  deletePathKeysOwnedBy(index, entry.originalPath, entry.id);
 
   // Also remove organization.actual paths to prevent orphaned index entries
   if (entry.organization?.actual) {
-    delete index.pathLookup[entry.organization.actual];
-    const normalizedActual = normalizePathForIndex(entry.organization.actual);
-    if (normalizedActual && normalizedActual !== entry.organization.actual) {
-      delete index.pathLookup[normalizedActual];
-    }
+    deletePathKeysOwnedBy(index, entry.organization.actual, entry.id);
   }
 
   // Remove from tag index
@@ -193,7 +236,7 @@ function removeFromIndexes(index, entry) {
  *
  * @param {Record<string, any>} index - Analysis index
  * @param {Record<string, any>} entry - Entry that was updated
- * @param {string} oldActualPath - Previous organization.actual path (if any)
+ * @param {string|null} oldActualPath - Previous organization.actual path (if any)
  * @param {string} newActualPath - New organization.actual path
  */
 function updatePathIndexForMove(index, entry, oldActualPath, newActualPath) {
@@ -201,11 +244,13 @@ function updatePathIndexForMove(index, entry, oldActualPath, newActualPath) {
 
   // Remove old actual path from index (if any)
   if (oldActualPath) {
-    delete index.pathLookup[oldActualPath];
-    const normalizedOld = normalizePathForIndex(oldActualPath);
-    if (normalizedOld && normalizedOld !== oldActualPath) {
-      delete index.pathLookup[normalizedOld];
-    }
+    deletePathKeysOwnedBy(index, oldActualPath, entry.id);
+  }
+
+  // The file has left originalPath too (a first move has no old actual path).
+  // The keys are re-added below when the move brings it back there.
+  if (entry.originalPath) {
+    deletePathKeysOwnedBy(index, entry.originalPath, entry.id);
   }
 
   // Add new actual path to index

@@ -728,6 +728,50 @@ describe('AnalysisHistoryServiceCore', () => {
     });
   });
 
+  describe('path-keyed writes use the current path of a moved entry', () => {
+    const movedEntry = () => ({
+      id: 'a',
+      fileHash: 'h1',
+      timestamp: '2024-01-15T10:00:00Z',
+      originalPath: '/downloads/file.pdf',
+      fileName: 'file.pdf',
+      fileSize: 1,
+      analysis: { tags: [], category: 'docs' },
+      organization: { actual: '/docs/file.pdf' }
+    });
+
+    beforeEach(async () => {
+      await service.initialize();
+      service.analysisHistory.entries = { a: movedEntry() };
+    });
+
+    test('removeEntriesByPath ignores the path the file left', async () => {
+      expect(await service.removeEntriesByPath('/downloads/file.pdf')).toEqual({ removed: 0 });
+      expect(Object.keys(service.analysisHistory.entries)).toEqual(['a']);
+
+      expect(await service.removeEntriesByPath('/docs/file.pdf')).toEqual({ removed: 1 });
+    });
+
+    test('updateEntryPaths does not move it on behalf of a file at the old path', async () => {
+      const result = await service.updateEntryPaths([
+        { oldPath: '/downloads/file.pdf', newPath: '/photos/other.pdf', newName: 'other.pdf' }
+      ]);
+
+      expect(result).toMatchObject({ updated: 0, notFound: 1 });
+      expect(service.analysisHistory.entries.a).toEqual(movedEntry());
+    });
+
+    test('updateTags and updateEmbeddingStateByPath miss on the old path', async () => {
+      expect(await service.updateTags('/downloads/file.pdf', ['x'])).toMatchObject({ updated: 0 });
+      expect(
+        await service.updateEmbeddingStateByPath('/downloads/file.pdf', { status: 'done' })
+      ).toMatchObject({ updated: 0 });
+      expect(service.analysisHistory.entries.a).toEqual(movedEntry());
+
+      expect(await service.updateTags('/docs/file.pdf', ['x'])).toMatchObject({ updated: 1 });
+    });
+  });
+
   describe('getAnalysisByPath', () => {
     beforeEach(async () => {
       await service.initialize();
