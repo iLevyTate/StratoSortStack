@@ -867,9 +867,25 @@ async function getAvailablePort() {
   });
 }
 
+/**
+ * The caller gave up before the request was sent; nothing reached the runtime.
+ * Named AbortError so LlamaResilience does not count it against the breaker.
+ */
+function createVisionAbortError() {
+  const err = new Error('Vision request aborted');
+  err.name = 'AbortError';
+  return err;
+}
+
 async function requestJson(
   /** @type {any} */ { method, port, path: endpointPath, body, timeoutMs, signal, apiKey }
 ) {
+  // A caller that has already given up gets its rejection without a request
+  // being created. This used to destroy a fresh request before its 'error'
+  // listener was attached: the error surfaced as an uncaught exception and
+  // the promise never settled, so analyzeImage kept its in-flight count and
+  // the runtime stayed pinned in memory until the app was restarted.
+  if (signal?.aborted) throw createVisionAbortError();
   const payload = body ? JSON.stringify(body) : null;
   const options = {
     method,
@@ -925,7 +941,20 @@ async function requestJson(
           settleReject(error);
         }
       });
+      // A runtime that crashes or is stopped after its headers went out closes
+      // the response without 'end', and the request reports no error for it.
+      // Nothing else would settle this: the image would stay in flight and
+      // the batch would wait on it. A timeout or an abort has rejected already
+      // by the time this runs, so their reason is the one the caller sees.
+      res.on('close', () => {
+        if (!res.complete) {
+          settleReject(new Error('Vision response ended before it was complete'));
+        }
+      });
     });
+    // Attached before anything can destroy the request: a destroy with no
+    // 'error' listener is an uncaught exception and leaves this unsettled.
+    req.on('error', settleReject);
 
     if (timeoutMs) {
       req.setTimeout(timeoutMs, () => {
@@ -934,10 +963,6 @@ async function requestJson(
     }
 
     if (signal) {
-      if (signal.aborted) {
-        req.destroy(new Error('Vision request aborted'));
-        return;
-      }
       // Removable listener: { once: true } only fires-and-removes on abort,
       // which means the success path leaves the closure attached to the
       // signal forever. Reused AbortControllers across many requests would
@@ -949,7 +974,6 @@ async function requestJson(
       signal.addEventListener('abort', abortListener, { once: true });
     }
 
-    req.on('error', settleReject);
     if (payload) req.write(payload);
     req.end();
   });
@@ -1019,6 +1043,12 @@ class VisionService {
     // tear the server down while one is running (audit row ML-05), and the
     // memory manager must not evict it either: each request holds a ref.
     this._inFlightRequests = 0;
+    /**
+     * One entry per request in flight. `manager` is the memory manager whose
+     * ref this request holds, null while it holds none.
+     * @type {Set<{ manager: any }>}
+     */
+    this._requestHolds = new Set();
     /** @type {{ manager: any, type: string } | null} */
     this._memoryRegistration = null;
     /** @type {any} */
@@ -1088,12 +1118,18 @@ class VisionService {
    * objection. Eviction under pressure runs shutdown(); a request in flight
    * pins the entry via acquireRef so eviction skips it.
    * @param {any} config
+   * @param {any} [child] the process the registration is for, when known
    */
-  async _registerWithMemoryManager(config) {
+  async _registerWithMemoryManager(config, child) {
     const manager = this._getMemoryManager();
     if (!manager || typeof manager.registerExternalConsumer !== 'function') return;
     if (this._memoryRegistration) return;
     const sizeBytes = await this.estimateRuntimeMemoryBytes(config);
+    // The runtime can go away while its files are measured (a crash, or a
+    // text load that took its memory). Registering it then would leave the
+    // budget charged for a process that no longer exists.
+    if (child && this._process !== child) return;
+    if (this._memoryRegistration) return;
     try {
       const registered = manager.registerExternalConsumer({
         type: VISION_RUNTIME_MEMORY_TYPE,
@@ -1108,8 +1144,10 @@ class VisionService {
       });
       if (registered) {
         this._memoryRegistration = { manager, type: VISION_RUNTIME_MEMORY_TYPE };
-        for (let i = 0; i < this._inFlightRequests; i += 1) {
+        for (const hold of this._requestHolds) {
+          if (hold.manager) continue;
           manager.acquireRef?.(VISION_RUNTIME_MEMORY_TYPE);
+          hold.manager = manager;
         }
       }
     } catch (error) {
@@ -1132,14 +1170,33 @@ class VisionService {
     }
   }
 
+  /**
+   * Count a request as in flight and pin the runtime in the memory budget.
+   *
+   * The returned function ends the request. It releases the ref on the
+   * manager it was taken from, not on whatever is registered by then: a
+   * request that times out shuts the runtime down, which drops the
+   * registration before the request is over. Releasing through
+   * `_memoryRegistration` skipped the release in that case and the runtime
+   * stayed pinned, unevictable, for the rest of the session.
+   * @returns {() => void} ends the request; calling it again does nothing
+   */
   _beginRequest() {
+    /** @type {{ manager: any }} */
+    const hold = { manager: null };
+    this._requestHolds.add(hold);
     this._inFlightRequests += 1;
-    this._memoryRegistration?.manager.acquireRef?.(this._memoryRegistration.type);
-  }
-
-  _endRequest() {
-    this._inFlightRequests = Math.max(0, this._inFlightRequests - 1);
-    this._memoryRegistration?.manager.releaseRef?.(this._memoryRegistration.type);
+    const manager = this._memoryRegistration?.manager;
+    if (manager) {
+      manager.acquireRef?.(VISION_RUNTIME_MEMORY_TYPE);
+      hold.manager = manager;
+    }
+    return () => {
+      if (!this._requestHolds.delete(hold)) return;
+      this._inFlightRequests = Math.max(0, this._inFlightRequests - 1);
+      hold.manager?.releaseRef?.(VISION_RUNTIME_MEMORY_TYPE);
+      hold.manager = null;
+    };
   }
 
   _extractDecodePressureHint() {
@@ -1212,6 +1269,13 @@ class VisionService {
 
     this._idleShutdownTimer = setTimeout(() => {
       this._idleShutdownTimer = null;
+      // Idle means idle: a request still running when the timer fires (one
+      // image finished and armed it while another was mid-inference) keeps
+      // the runtime, and the timer starts over.
+      if (this._inFlightRequests > 0) {
+        this.scheduleIdleShutdown(reason);
+        return;
+      }
       // Do NOT track() here — shutdown() calls drain(), which would await
       // this very promise, creating a circular wait with a 5s timeout stall.
       this.shutdown().catch((error) => {
@@ -1614,7 +1678,48 @@ class VisionService {
     return DEFAULT_STARTUP_TIMEOUT_MS;
   }
 
-  async _startServer(/** @type {any} */ config) {
+  /**
+   * Start the runtime with its memory counted from the first moment.
+   *
+   * The runtime entered the memory budget only after its health check passed
+   * (about a minute on a laptop GPU). A model load that asked for room during
+   * that minute was told the memory was free and loaded beside the runtime.
+   * The reservation ends when the start does: by then the runtime is
+   * registered as a resident, or it failed and holds nothing.
+   * @param {any} config
+   */
+  async _startServer(config) {
+    // Before the reservation: with no runtime staged for this backend this
+    // is a download, and a model load would wait on memory that nothing is
+    // using yet. _spawnServer gets the same path back from the cache.
+    await this._ensureBinary();
+    const endReservation = await this._reserveRuntimeMemory(config);
+    try {
+      await this._spawnServer(config);
+    } finally {
+      endReservation();
+    }
+  }
+
+  /**
+   * @param {any} config
+   * @returns {Promise<() => void>} ends the reservation
+   */
+  async _reserveRuntimeMemory(config) {
+    const manager = this._getMemoryManager();
+    if (!manager || typeof manager.reserveLoad !== 'function') return () => {};
+    try {
+      const sizeBytes = await this.estimateRuntimeMemoryBytes(config);
+      return manager.reserveLoad(VISION_RUNTIME_MEMORY_TYPE, sizeBytes);
+    } catch (error) {
+      logger.debug('[VisionService] Memory reservation failed', {
+        error: /** @type {any} */ (error)?.message
+      });
+      return () => {};
+    }
+  }
+
+  async _spawnServer(/** @type {any} */ config) {
     const binaryPath = await this._ensureBinary();
     const port = await getAvailablePort();
     this._apiKey = crypto.randomBytes(32).toString('hex');
@@ -1673,7 +1778,10 @@ class VisionService {
     // preventing both a stale listener and an unhandled promise rejection when the
     // process later exits normally.
     let earlyExitHandler;
+    /** @type {(error: Error) => void} */
+    let failStartup = () => {};
     const earlyExitPromise = new Promise((_, reject) => {
+      failStartup = reject;
       earlyExitHandler = (/** @type {any} */ code, /** @type {any} */ signal) => {
         abortController.abort(); // Signal health check to stop polling
         const stderr = stderrChunks.join('').slice(-500);
@@ -1690,9 +1798,14 @@ class VisionService {
       logger.debug('[VisionService] Early exit promise rejected', { error: e.message });
     });
 
-    // Handle spawn-level errors (e.g. ENOENT when binary doesn't exist)
+    // Handle spawn-level errors (e.g. ENOENT when binary doesn't exist). A
+    // child that never started may emit no 'exit', so this has to end the
+    // start itself; otherwise the health check polls a dead port until the
+    // startup timeout. Once the start has settled this is only a log line.
     child.on('error', (err) => {
       logger.error('[VisionService] Failed to spawn vision runtime', { error: err.message });
+      abortController.abort();
+      failStartup(new Error(`Vision runtime failed to start: ${err.message}`));
     });
 
     // Clean up state when the process exits (for both startup failures and runtime crashes)
@@ -1751,7 +1864,7 @@ class VisionService {
       // spurious rejection when the process later exits normally.
       child.removeListener('exit', earlyExitHandler);
       this._isReady = true;
-      await this._registerWithMemoryManager(config);
+      await this._registerWithMemoryManager(config, child);
 
       // Multimodal capability probe. When the model declares mmprojRequired,
       // llama-server emits `clip_model_load:` lines during projector init.
@@ -1901,6 +2014,9 @@ class VisionService {
       throw new Error('Vision model not found: missing multimodal projector');
     }
 
+    // Cancelled while it waited its turn: do not start a runtime for it.
+    if (signal?.aborted) throw createVisionAbortError();
+
     // Fail fast while a recent startup failure is inside its cooldown so a
     // queued batch degrades to OCR-only in milliseconds (the message contains
     // "vision runtime" on purpose — imageAnalysis.js routes it through
@@ -1926,6 +2042,51 @@ class VisionService {
     }
 
     this._clearIdleShutdownTimer();
+    // In flight from here, not from the HTTP request. A text load that finds
+    // the runtime idle shuts it down for its memory; counting only the HTTP
+    // request left a gap (runtime just became ready, image file still being
+    // read) in which the runtime was taken from under the image that had
+    // started it, and the image fell back to OCR.
+    const endRequest = this._beginRequest();
+    try {
+      return await this._analyzeImageWithRuntime({
+        imageBase64,
+        imagePath,
+        prompt,
+        systemPrompt,
+        maxTokens,
+        temperature,
+        timeoutMs,
+        signal,
+        config
+      });
+    } finally {
+      endRequest();
+      // Every way out re-arms the idle timer cleared above. A failure between
+      // the runtime starting and the request going out (image file gone, a
+      // cancel) used to skip this and leave the runtime resident for good.
+      this.scheduleIdleShutdown('analyzeImage');
+    }
+  }
+
+  /**
+   * analyzeImage after its cheap checks: start or reuse the runtime, then
+   * send the request.
+   * @param {any} request
+   */
+  async _analyzeImageWithRuntime(request) {
+    const {
+      imageBase64,
+      imagePath,
+      prompt,
+      systemPrompt,
+      maxTokens,
+      temperature,
+      timeoutMs,
+      signal,
+      config
+    } = request;
+
     try {
       await this._ensureServer(config);
     } catch (err) {
@@ -1951,6 +2112,10 @@ class VisionService {
       _maybeRaiseVisionUnavailable(err, 'exited-after-startup');
       throw err;
     }
+
+    // Cancelled while the runtime was starting, which can take a minute. The
+    // runtime itself is healthy, so it stays up for the next image.
+    if (signal?.aborted) throw createVisionAbortError();
 
     // If the startup probe determined the runtime can't actually decode
     // images, fail fast with a clear error rather than letting llama-server
@@ -2003,7 +2168,10 @@ class VisionService {
 
     const dataUrl = `data:${mimeType};base64,${imageData}`;
     const requestTimeoutMs = normalizeTimeoutMs(timeoutMs, DEFAULT_REQUEST_TIMEOUT_MS);
-    this._beginRequest();
+    // Last check before the request goes out (the image file was read since
+    // the previous one). Past this point an abort interrupts a running
+    // inference and the catch below restarts the runtime.
+    if (signal?.aborted) throw createVisionAbortError();
     try {
       const response = await requestJson({
         method: 'POST',
@@ -2066,9 +2234,6 @@ class VisionService {
         }
       }
       throw error;
-    } finally {
-      this._endRequest();
-      this.scheduleIdleShutdown('analyzeImage');
     }
   }
 
@@ -2205,6 +2370,7 @@ module.exports = {
   _createUtf8ChunkDecoder: createUtf8ChunkDecoder,
   _detectBase64Mime: detectBase64Mime,
   _detectMimeFromPath: detectMimeFromPath,
+  _requestJson: requestJson,
   confirmGpuBackend,
   // Exposed so WhisperService can locate the on-disk vision runtime root
   // (which holds the bundled CUDA 12 runtime DLLs whisper.node depends on)

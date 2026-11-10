@@ -146,7 +146,7 @@ describe('BatchAnalysisService', () => {
         try {
           const result = await processor(items[i], i);
           results.push(result);
-          if (result.success) successful++;
+          if (result?.success) successful++;
         } catch (error) {
           errors.push({ item: items[i], error });
         }
@@ -300,7 +300,7 @@ describe('BatchAnalysisService', () => {
           try {
             const result = await processor(items[i], i);
             results.push(result);
-            if (result.success) successful++;
+            if (result?.success) successful++;
             else errors.push({ item: items[i], error: result.error });
           } catch (error) {
             results.push({
@@ -691,6 +691,42 @@ describe('BatchAnalysisService', () => {
       expect(result.warnings).toEqual(
         expect.arrayContaining([expect.stringContaining('Flush timeout')])
       );
+    });
+  });
+
+  describe('a cancelled run', () => {
+    const abortError = () => Object.assign(new Error('Aborted'), { name: 'AbortError' });
+
+    test('a file aborted by the cancel is not reported as a failed file', async () => {
+      let cancelled = false;
+      analyzeDocumentFile.mockImplementation(async () => {
+        cancelled = true;
+        throw abortError();
+      });
+      const onFileComplete = jest.fn();
+
+      const result = await service.analyzeFiles(['/path/to/doc.pdf'], [], {
+        isCancelled: () => cancelled,
+        onFileComplete
+      });
+
+      expect(result.results).toEqual([]);
+      expect(result.errors).toEqual([]);
+      expect(onFileComplete).not.toHaveBeenCalled();
+    });
+
+    test('an abort the run did not ask for is still a failed file', async () => {
+      analyzeDocumentFile.mockRejectedValue(abortError());
+      const onFileComplete = jest.fn();
+
+      const result = await service.analyzeFiles(['/path/to/doc.pdf'], [], {
+        isCancelled: () => false,
+        onFileComplete
+      });
+
+      expect(result.results).toHaveLength(1);
+      expect(result.results[0].success).toBe(false);
+      expect(onFileComplete).toHaveBeenCalledTimes(1);
     });
   });
 

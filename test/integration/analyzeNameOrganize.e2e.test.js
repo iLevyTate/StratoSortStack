@@ -151,8 +151,8 @@ describe('analyze -> apply naming -> organize end-to-end', () => {
       path: sourcePath,
       name: 'Annual Report 2024.pdf',
       size: 9,
-      created: new Date('2025-06-15T00:00:00Z'),
-      modified: new Date('2025-06-15T00:00:00Z')
+      created: new Date(2025, 5, 15, 12),
+      modified: new Date(2025, 5, 15, 12)
     };
 
     const namingSettings = {
@@ -212,15 +212,15 @@ describe('analyze -> apply naming -> organize end-to-end', () => {
       path: sourceA,
       name: 'invoice-a.pdf',
       size: 1,
-      created: new Date('2025-03-10T00:00:00Z'),
-      modified: new Date('2025-03-10T00:00:00Z')
+      created: new Date(2025, 2, 10, 12),
+      modified: new Date(2025, 2, 10, 12)
     };
     const fileB = {
       path: sourceB,
       name: 'invoice-b.pdf',
       size: 1,
-      created: new Date('2025-04-22T00:00:00Z'),
-      modified: new Date('2025-04-22T00:00:00Z')
+      created: new Date(2025, 3, 22, 12),
+      modified: new Date(2025, 3, 22, 12)
     };
     const analysisA = {
       suggestedName: 'Acme Inc Invoice',

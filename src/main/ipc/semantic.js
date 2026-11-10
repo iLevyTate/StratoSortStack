@@ -2435,6 +2435,9 @@ async function handleReanalyzeAll(
     const totalToProcess = result.queued;
     if (totalToProcess > 0) {
       const batchId = `reanalyze-all-${Date.now()}`;
+      // Its own type, not 'batch_analyze': that one is a Discover batch's
+      // progress, and the renderer shows it as the running analysis.
+      const progressType = 'reanalyze';
 
       // Clear any existing polling interval to prevent duplicate progress bars
       if (/** @type {any} */ (global).__reanalyzePollInterval) {
@@ -2451,7 +2454,7 @@ async function handleReanalyzeAll(
             const win = getMainWindow();
             if (win && !win.isDestroyed()) {
               safeSend(win.webContents, IPC_EVENTS.OPERATION_PROGRESS, {
-                type: 'batch_analyze',
+                type: progressType,
                 batchId,
                 completed: totalToProcess,
                 total: totalToProcess,
@@ -2474,7 +2477,7 @@ async function handleReanalyzeAll(
           const win = getMainWindow();
           if (win && !win.isDestroyed()) {
             safeSend(win.webContents, IPC_EVENTS.OPERATION_PROGRESS, {
-              type: 'batch_analyze',
+              type: progressType,
               batchId,
               completed,
               total: totalToProcess,
@@ -2491,7 +2494,7 @@ async function handleReanalyzeAll(
             const win = getMainWindow();
             if (win && !win.isDestroyed()) {
               safeSend(win.webContents, IPC_EVENTS.OPERATION_PROGRESS, {
-                type: 'batch_analyze',
+                type: progressType,
                 batchId,
                 completed: totalToProcess,
                 total: totalToProcess,

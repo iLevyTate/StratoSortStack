@@ -211,7 +211,8 @@ export function useSearchModalStats({
 
     const handleOperationProgress = (/** @type {any} */ event) => {
       const payload = event?.detail;
-      if (!payload || payload.type !== 'batch_analyze') return;
+      // A Discover batch or the watcher's reanalysis: both add embeddings.
+      if (!payload || (payload.type !== 'batch_analyze' && payload.type !== 'reanalyze')) return;
 
       scheduleRefresh(false);
 

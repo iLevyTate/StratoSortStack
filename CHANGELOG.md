@@ -203,6 +203,93 @@ Changes you will notice:
 
 ### Fixed
 
+- **A Discover run with a long recording is no longer cut off or started over.** The batch request
+  ended after a fixed 30 minutes, and five minutes without a finished file was taken for a stuck
+  analysis. Either way the rest of the run went one file at a time, where a recording gets five
+  minutes and is then transcribed again from the start, and where Stop does not reach the work in
+  progress. A run with audio or video now always goes through the batch, the batch keeps reporting
+  while one long file is transcribed, and the run is bounded by its own checks (no progress, and at
+  most six hours).
+- **Stop leaves nothing behind.** After a cancel, a file that was in flight could still report
+  progress, which put back counts that read as a paused analysis; a document that was mid-analysis
+  was listed as failed; and an image whose vision request was cancelled was stored with a
+  filename-only "Limited analysis" result. A cancelled batch now reports nothing more, and a
+  cancelled file is neither failed nor recorded.
+- **Leaving Discover during an analysis no longer says "Analysis cancelled by user".** The notice
+  now appears only when you stop the run. A run left behind this way also no longer writes over the
+  progress of the run a returning Discover started.
+- **The Dashboard waits for a running analysis.** Switching to the Dashboard closed Discover, which
+  stopped the run without saying so. The Dashboard toggle and **Back to dashboard** now explain that
+  the dashboard opens when the analysis finishes; the way back to Guided stays open.
+- **Progress from other work no longer shows as analysis progress.** Organize batches, model
+  downloads and **Reanalyze all** report on the same channel as a Discover batch, and their counts
+  were written into the analysis state: "Analysis continuing in background: 3/7 files" could be an
+  organize batch, and a finished reanalysis could leave a paused analysis behind. Only a Discover
+  analysis updates that state now, and another sender can no longer take over the running batch
+  (after which its progress was dropped and Stop did nothing).
+- **A file that finishes right after another appears without waiting for the next one.** The second
+  result was held back until another file finished, which behind a long recording could be many
+  minutes.
+- **The completion notice counts every file of a run that waited for an earlier batch,** not only
+  the files the run analyzed itself.
+- **Dates follow your calendar day, not the UTC day.** A file saved in the evening west of Greenwich
+  was named and dated for the next day, and a date written in a document or file name moved back a
+  day east of it. Suggested names, the file date given to the model, dates the model reads from the
+  content and the settings export file name now use the local day. A date-range search of the
+  analysis history also no longer skips the first or last month of the range.
+- **A recording longer than the transcription limit is recorded once instead of failing every
+  time.** Each attempt decoded the audio up to the limit before failing, and the smart-folder
+  watcher retried it. The file is now kept as "not transcribed", with the limit in its description.
+- **Two models are no longer loaded onto a GPU that has room for one.** A model counted against the
+  memory budget only once it had finished loading, and the vision runtime only once it had started
+  (about a minute on a laptop GPU), so a text model and the vision runtime started moments apart
+  both fit on paper. Memory now counts from the moment a load begins, a second caller for the same
+  model shares the load, and background work does not start on memory that is spoken for.
+- **An image being analyzed keeps the vision runtime.** The runtime could be shut down under an
+  image in three ways: by its idle timer while another image was still running, by a text model
+  taking its memory between its start and the request, and by a start that failed without reporting
+  it (the app then polled a dead port until the startup timeout). Each left the image with an
+  OCR-only result or the batch waiting. A request that timed out also kept the runtime pinned in
+  memory for the rest of the session, and a runtime that crashed part way through an answer left its
+  image waiting for good.
+- **Cancelling one analysis no longer cancels another that was waiting for the same transcription.**
+  Two analyses of one recording share a transcription; cancelling the first failed the second as
+  cancelled, and cancelling the second did nothing until the transcription ended. Each now follows
+  its own cancel.
+- **The smart-folder watcher checks again before it analyzes.** A file queued while a Discover run
+  held the queue was analyzed a second time although the run had just analyzed it, and a file saved
+  while it was being analyzed was recorded as up to date with the old content. The watcher now asks
+  the history when a file's turn comes and records the file as it was when the analysis started. An
+  image batch (up to 20 images) also pauses when a Discover run starts, instead of finishing beside
+  it, and a reanalysis you asked for is no longer turned into a plain update by a change to the same
+  file.
+- **A batch replaced as stale is stopped,** instead of running beside its replacement, and when it
+  ends late it no longer makes the replacement impossible to cancel.
+- **Quieter logs.** A model load refused because another model is in use is no longer logged as an
+  unclassified failure with a stack trace, waiting for a model that is in use warns once instead of
+  every two seconds, and the batch concurrency in the memory-pressure warning is the one that
+  applies.
+- **A file's status is no longer put back by a later change.** Each change to the list of file
+  statuses was worked out from the list as the page last drew it. A second change in the same
+  moment, or one made after you had left the page (a Discover run ends when its last file is let go,
+  which can be minutes later), put that older list back over everything changed since. Every change
+  in Discover and Organize now starts from the current list.
+- **"Analysis paused" no longer appears after Stop.** Progress reaches the screen at most every 80
+  ms, and an update that arrived inside that window was written when it ended, also when the
+  analysis had been stopped or reset in between. Counts without a running analysis read as a paused
+  one. The held update is now dropped when its analysis ends.
+- **The progress of a run that waited for an earlier batch counts the whole run.** Such a run sends
+  only the files the earlier batch did not finish, and the count shown restarted with them: "1 of
+  10" on a run of 40 with 30 done. It now continues from what was done, "31 of 40".
+- **A second Analyze right after the first no longer replaces it.** A run records its first progress
+  a moment after it starts, and until then it looked like a run that had stopped responding: a
+  second request in that moment reset it and took its place. The second request now waits its turn
+  behind the first.
+- **Development builds: a resumed analysis keeps its activity signal.** Under React StrictMode the
+  run that was aborted while starting carried on as if it had started, reported the analysis as
+  started a second time, and switched off the 30-second activity signal of the run that replaced it
+  (and of every run after that), so a long first file could be taken for a stuck analysis. A run
+  replaced while starting now stops there, and a run only ever stops its own signal.
 - **Analyzed files show up again after Discover remounts mid-start.** A run that Discover's unmount
   (or React StrictMode in development) aborted during its first moments still sent its batch, then
   ignored every result: the list stayed on "0 ready" with loading placeholders, and five minutes

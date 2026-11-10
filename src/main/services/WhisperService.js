@@ -668,6 +668,32 @@ function whisperVariantFor(gpuInfo) {
   return [];
 }
 
+/**
+ * Wait for a transcription another caller started, for as long as this
+ * caller wants to wait: its own cancel ends the wait and leaves the pass
+ * running for the caller that started it.
+ * @param {Promise<any>} pending
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<any>}
+ */
+async function waitUnlessAborted(pending, signal) {
+  if (!signal) return pending;
+  const cancelled = () =>
+    attachErrorCode(new Error('Transcription cancelled'), ERROR_CODES.OPERATION_CANCELLED);
+  if (signal.aborted) throw cancelled();
+  /** @type {() => void} */
+  let onAbort = () => {};
+  const aborted = new Promise((_resolve, reject) => {
+    onAbort = () => reject(cancelled());
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([pending, aborted]);
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+  }
+}
+
 class WhisperService extends EventEmitter {
   /**
    * @param {Object} [options]
@@ -1181,11 +1207,21 @@ class WhisperService extends EventEmitter {
       // Skipped when useCache is false because a forced re-analysis caller
       // explicitly wants its own pass; joining an in-flight call would
       // return a stale (cached-by-the-other-caller) transcript.
-      const pending = this._pendingTranscriptions.get(cacheKey);
-      if (pending) {
-        const result = await pending;
-        // Clone: callers may mutate (e.g., normalize for downstream stages).
-        return { ...result, cached: true };
+      let pending = this._pendingTranscriptions.get(cacheKey);
+      while (pending) {
+        try {
+          const result = await waitUnlessAborted(pending, signal);
+          // Clone: callers may mutate (e.g., normalize for downstream stages).
+          return { ...result, cached: true };
+        } catch (error) {
+          // The pass runs under the signal of the caller that started it
+          // (the watcher, say, which yields to a Discover run). That caller
+          // stopping is not this one stopping: join whoever took the file
+          // over, or run the pass below.
+          if (error?.code !== ERROR_CODES.OPERATION_CANCELLED || signal?.aborted) throw error;
+        }
+        const next = this._pendingTranscriptions.get(cacheKey);
+        pending = next === pending ? undefined : next;
       }
     }
 
@@ -1277,7 +1313,13 @@ class WhisperService extends EventEmitter {
       // .catch(() => {}) absorption is essential — without it Node logs an
       // unhandled-rejection warning when the awaiter handles it but the
       // tap-handler (this finally) is "additional" from the runtime's view.
-      work.finally(() => this._pendingTranscriptions.delete(cacheKey)).catch(() => {});
+      work
+        .finally(() => {
+          if (this._pendingTranscriptions.get(cacheKey) === work) {
+            this._pendingTranscriptions.delete(cacheKey);
+          }
+        })
+        .catch(() => {});
     }
     return work;
   }

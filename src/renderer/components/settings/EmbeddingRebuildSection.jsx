@@ -156,7 +156,8 @@ function EmbeddingRebuildSection({ addNotification }) {
   useEffect(() => {
     const handleOperationProgress = (event) => {
       const payload = event?.detail;
-      if (!payload || payload.type !== 'batch_analyze') return;
+      // A Discover batch or the watcher's reanalysis: both add embeddings.
+      if (!payload || (payload.type !== 'batch_analyze' && payload.type !== 'reanalyze')) return;
 
       const completed = Number(payload.completed);
       const total = Number(payload.total);

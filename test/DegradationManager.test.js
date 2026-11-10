@@ -128,6 +128,28 @@ describe('DegradationManager', () => {
     expect(nullResult.action).toBe('none');
   });
 
+  test('a load refused by the memory budget is a known outcome, not an unclassified failure', async () => {
+    const manager = new DegradationManager();
+    const refused = Object.assign(
+      new Error(
+        'Cannot load text model: memory budget exceeded and resident models are in active use'
+      ),
+      { code: 'MODEL_MEMORY_BUDGET_EXCEEDED' }
+    );
+    const result = await manager.handleError(refused, { modelType: 'text' });
+    expect(result).toMatchObject({
+      action: 'none',
+      reason: 'memory_budget',
+      shouldNotifyUser: false,
+      originalError: refused
+    });
+    // The wrapped message alone (code lost crossing a boundary) classifies the same way.
+    const byMessage = await manager.handleError(
+      new Error('Llama operation failed: Cannot load text model: memory budget exceeded')
+    );
+    expect(byMessage.reason).toBe('memory_budget');
+  });
+
   test('handleError logs unknown errors so novel failure modes surface in production', async () => {
     // Capture logger calls via the manager's logger reference. We can't easily
     // intercept the createLogger() factory output from here, but we CAN assert

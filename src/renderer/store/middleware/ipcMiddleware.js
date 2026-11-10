@@ -12,6 +12,7 @@ import { logger } from '../../../shared/logger';
 import { IPC_CHANNELS } from '../../../shared/constants';
 import { validateEventPayload, hasEventSchema } from '../../../shared/ipcEventSchemas';
 import { toCanonicalPath } from '../../utils/canonicalPath';
+import { toRunCounts } from '../analysisRunBase';
 
 /**
  * Validate incoming IPC event data against schema.
@@ -71,7 +72,38 @@ function normalizeAnalysisProgressPayload(payload) {
     normalized.total = total;
   }
 
+  // A batch that is the rest of a run: main counts within the batch, the
+  // store holds the counts of the run.
+  const ofRun =
+    type === 'batch_analyze' && Number.isFinite(Number(normalized.current))
+      ? toRunCounts(payload.batchId, Number(normalized.current))
+      : null;
+  if (ofRun) {
+    normalized.current = ofRun.current;
+    normalized.total = ofRun.total;
+  }
+
   return normalized;
+}
+
+/**
+ * Whether an operation-progress payload reports a Discover analysis.
+ *
+ * The channel also carries organize batches, model downloads, the watcher's
+ * reanalysis and setup hints, each with its own listener. Written into the
+ * analysis slice, their counts replaced the progress of an analysis running at
+ * the same time ("Analysis continuing in background: 3/7 files" showing an
+ * organize batch) and left counts behind that read as a paused analysis.
+ * A payload without a type is analysis progress from before types existed.
+ *
+ * @param {*} payload
+ * @returns {boolean}
+ */
+function isAnalysisProgressPayload(payload) {
+  if (!payload || typeof payload !== 'object') return false;
+  if (payload.type === undefined || payload.type === null || payload.type === '') return true;
+  const type = String(payload.type).toLowerCase();
+  return type === 'batch_analyze' || type === 'analyze';
 }
 
 function dedupePathsByCanonicalValue(/** @type {any} */ paths) {
@@ -288,6 +320,26 @@ let ipcProgressTrailingTimer = null;
 /** @type {any} */
 let ipcProgressPendingPayload = null;
 
+/**
+ * The actions that end an analysis or clear its state. An update still held
+ * by the throttle then belongs to the analysis that ended: written when the
+ * window closes, it put back the counts that Stop had just cleared, and
+ * counts without a running analysis read as a paused one in Discover.
+ */
+const ANALYSIS_END_ACTION_TYPES = new Set([
+  'analysis/stopAnalysis',
+  'analysis/resetAnalysisState',
+  'analysis/resetToSafeState'
+]);
+
+function dropPendingIpcProgress() {
+  if (ipcProgressTrailingTimer) {
+    clearTimeout(ipcProgressTrailingTimer);
+    ipcProgressTrailingTimer = null;
+  }
+  ipcProgressPendingPayload = null;
+}
+
 function flushPendingIpcProgressToStore() {
   ipcProgressTrailingTimer = null;
   if (!ipcProgressPendingPayload) return;
@@ -308,11 +360,7 @@ function dispatchThrottledProgressToStore(/** @type {any} */ normalizedPayload) 
   }
 
   if (isTerminalOperationProgressPayload(normalizedPayload)) {
-    if (ipcProgressTrailingTimer) {
-      clearTimeout(ipcProgressTrailingTimer);
-      ipcProgressTrailingTimer = null;
-    }
-    ipcProgressPendingPayload = null;
+    dropPendingIpcProgress();
     lastIpcProgressStoreDispatchMs = Date.now();
     safeDispatch(updateProgress, normalizedPayload);
     return;
@@ -352,9 +400,11 @@ const ipcMiddleware = (/** @type {any} */ store) => {
         (/** @type {any} */ data) => {
           const { valid, data: validatedData } = validateIncomingEvent('operation-progress', data);
           if (!valid) return;
-          const normalized = normalizeAnalysisProgressPayload(validatedData);
-          dispatchThrottledProgressToStore(normalized);
-          // Re-dispatch as DOM CustomEvent so runBatchPath's progress listener receives it
+          if (isAnalysisProgressPayload(validatedData)) {
+            dispatchThrottledProgressToStore(normalizeAnalysisProgressPayload(validatedData));
+          }
+          // Re-dispatch every event as a DOM CustomEvent: runBatchPath's progress
+          // listener and the listeners of the other senders read it from there.
           window.dispatchEvent(new CustomEvent('operation-progress', { detail: validatedData }));
         }
       );
@@ -743,17 +793,14 @@ const ipcMiddleware = (/** @type {any} */ store) => {
   }
 
   return (/** @type {any} */ next) => (/** @type {any} */ action) => {
+    if (ANALYSIS_END_ACTION_TYPES.has(action?.type)) dropPendingIpcProgress();
     return next(action);
   };
 };
 
 // Export cleanup function for use during hot reload or app teardown
 export const cleanupIpcListeners = (isTeardown = false) => {
-  if (ipcProgressTrailingTimer) {
-    clearTimeout(ipcProgressTrailingTimer);
-    ipcProgressTrailingTimer = null;
-  }
-  ipcProgressPendingPayload = null;
+  dropPendingIpcProgress();
   lastIpcProgressStoreDispatchMs = 0;
 
   cleanupFunctions.forEach((cleanup) => {

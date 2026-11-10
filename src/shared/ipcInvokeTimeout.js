@@ -26,6 +26,17 @@ const LIVE_LOG_INVOKE_TIMEOUT_MS = 5000;
 const VC_RUNTIME_INSTALL_INVOKE_TIMEOUT_MS = 11 * 60 * 1000;
 
 /**
+ * ANALYSIS.ANALYZE_BATCH is one request for a whole Discover run. The run has
+ * its own watchdogs (no progress, and a cap of at most ANALYSIS_RUN_MAX) and
+ * cancels the batch in main when one fires. A fixed 30 minutes here cut every
+ * longer run off instead: main was told to stop the batch and the rest went
+ * through the per-file path. This budget only has to outlast the run, so that
+ * the watchdogs act first.
+ */
+const ANALYZE_BATCH_INVOKE_TIMEOUT_MS =
+  (TIMEOUTS.ANALYSIS_RUN_MAX || 6 * 60 * 60 * 1000) + 3 * (TIMEOUTS.GLOBAL_ANALYSIS || 600000);
+
+/**
  * @param {string} channel
  * @returns {number} Timeout in milliseconds
  */
@@ -48,12 +59,12 @@ function getIpcInvokeTimeout(channel) {
   ) {
     timeout = TIMEOUTS.AI_ANALYSIS_LONG || 180000;
   }
-  // Batch analysis and batch suggestions can exceed per-file timeouts on CPU-bound systems.
-  if (
-    channel === IPC_CHANNELS.ANALYSIS.ANALYZE_BATCH ||
-    channel === IPC_CHANNELS.SUGGESTIONS.GET_BATCH_SUGGESTIONS
-  ) {
+  // Batch suggestions can exceed per-file timeouts on CPU-bound systems.
+  if (channel === IPC_CHANNELS.SUGGESTIONS.GET_BATCH_SUGGESTIONS) {
     timeout = TIMEOUTS.AI_ANALYSIS_BATCH || 300000;
+  }
+  if (channel === IPC_CHANNELS.ANALYSIS.ANALYZE_BATCH) {
+    timeout = ANALYZE_BATCH_INVOKE_TIMEOUT_MS;
   }
   // Embedding search/scoring operations involve embedding generation through the semaphore
   if (
@@ -116,6 +127,7 @@ function getIpcInvokeTimeout(channel) {
 }
 
 module.exports = {
+  ANALYZE_BATCH_INVOKE_TIMEOUT_MS,
   VC_RUNTIME_INSTALL_INVOKE_TIMEOUT_MS,
   getIpcInvokeTimeout
 };

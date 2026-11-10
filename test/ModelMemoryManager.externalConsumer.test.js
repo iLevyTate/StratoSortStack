@@ -280,6 +280,32 @@ describe('ModelMemoryManager — canFitExternalLoad (vision runtime budget, ML-0
     expect(llamaService._loadModel).not.toHaveBeenCalled();
   }, 20000);
 
+  test('waiting on a pinned resident warns once, not on every poll', async () => {
+    const llamaService = makeLlamaShim();
+    const manager = new ModelMemoryManager(llamaService);
+    manager._maxMemoryUsage = 5 * 1024 * 1024 * 1024;
+    manager._pinnedResidentWaitMs = 120;
+    manager._pinnedResidentPollMs = 20;
+    jest.spyOn(manager, '_refreshMemoryBudget').mockImplementation(() => {});
+    manager._loadedModels.set('text', {
+      context: {},
+      lastUsed: 1,
+      sizeBytes: 4 * 1024 * 1024 * 1024
+    });
+    manager._currentMemoryUsage = 4 * 1024 * 1024 * 1024;
+    manager.acquireRef('text');
+    manager._modelSizeEstimates.embedding = 2 * 1024 * 1024 * 1024;
+    const evict = jest.spyOn(manager, '_unloadLeastRecentlyUsed');
+
+    await expect(manager.ensureModelLoaded('embedding')).rejects.toMatchObject({
+      code: 'MODEL_MEMORY_BUDGET_EXCEEDED'
+    });
+    const loud = evict.mock.calls.filter(([options]) => !options?.quiet);
+    expect(loud).toHaveLength(1);
+    // More than one poll; how many more depends on how busy the machine is.
+    expect(evict.mock.calls.length).toBeGreaterThan(1);
+  }, 20000);
+
   test('loads once a pinned resident releases during the wait', async () => {
     const llamaService = makeLlamaShim();
     const manager = new ModelMemoryManager(llamaService);

@@ -273,17 +273,19 @@ function getAnalysisByDateRange(analysisHistory, analysisIndex, startDate, endDa
   const start = new Date(startDate);
   const end = new Date(endDate);
 
-  // Get all month keys in range
+  // Get all month keys in range. The index is keyed by the UTC month of each
+  // entry's timestamp, so the walk steps through UTC months too: stepping
+  // local months and reading the UTC key skipped the first or last month of
+  // the range away from Greenwich.
   const monthKeys = [];
-  const current = new Date(start);
-  current.setDate(1); // Start of month
+  const current = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
 
   while (current <= end) {
     const key = current.toISOString().substring(0, 7); // YYYY-MM
     if (analysisIndex.dateIndex[key]) {
       monthKeys.push(key);
     }
-    current.setMonth(current.getMonth() + 1);
+    current.setUTCMonth(current.getUTCMonth() + 1);
   }
 
   // Collect entry IDs from relevant months

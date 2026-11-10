@@ -64,10 +64,38 @@ function toLocalCalendarDay(ms) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+/**
+ * The calendar day a written date names (model output such as "2024-05-05"
+ * or "May 5, 2024"), as YYYY-MM-DD, or null when it does not parse.
+ *
+ * A leading YYYY-MM-DD is kept as written, whatever time and offset follow
+ * it, and so is a value that is only YYYY or YYYY-MM. Anything else ("May 5,
+ * 2024", "2024 May 5") is parsed by V8 as LOCAL time, so its local day is
+ * the day written; toISOString moved it back a day east of Greenwich.
+ * @param {any} value
+ * @returns {string|null}
+ */
+function toWrittenCalendarDay(value) {
+  if (typeof value !== 'string' && typeof value !== 'number' && !(value instanceof Date)) {
+    return null;
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  if (typeof value !== 'string') return toLocalCalendarDay(parsed.getTime());
+  const written = value.trim().match(/^(\d{4})(?:-(\d{2})(?:-(\d{2})(?:[T\s].*)?)?)?$/);
+  if (!written) return toLocalCalendarDay(parsed.getTime());
+  // Through Date.UTC so "2024-02-31" rolls over the way Date itself reads it.
+  const day = new Date(
+    Date.UTC(Number(written[1]), Number(written[2] || 1) - 1, Number(written[3] || 1))
+  );
+  return Number.isNaN(day.getTime()) ? null : day.toISOString().split('T')[0];
+}
+
 module.exports = {
   CONTENT_DATE_MIN_YEAR,
   CONTENT_DATE_FUTURE_SLACK_YEARS,
   isPlausibleContentDate,
   isIsoDateOnly,
-  toLocalCalendarDay
+  toLocalCalendarDay,
+  toWrittenCalendarDay
 };

@@ -345,9 +345,15 @@ async function transcodeToWhisperPcm(inputPath, options = {}) {
       child.stdout.on('data', (chunk) => {
         pcmBytes += chunk.length;
         if (pcmBytes > maxPcmBytes) {
-          const error = new Error(
-            `Media exceeds maximum supported duration (${maxDurationSeconds}s). ` +
-              `Split the file into smaller chunks before transcribing.`
+          // maxDurationSeconds marks this as a limit of the file itself, so
+          // callers record it once instead of retrying a transcode that
+          // buffers hours of audio only to fail the same way.
+          const error = Object.assign(
+            new Error(
+              `Media exceeds maximum supported duration (${maxDurationSeconds}s). ` +
+                `Split the file into smaller chunks before transcribing.`
+            ),
+            { maxDurationSeconds }
           );
           fail(attachErrorCode(error, ERROR_CODES.INVALID_INPUT));
           return;

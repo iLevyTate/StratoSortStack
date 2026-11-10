@@ -14,11 +14,14 @@
  * @returns {string} Formatted date
  */
 function formatDate(date, format) {
-  // Use UTC to avoid timezone-dependent date drift (e.g., near midnight causing off-by-one days)
-  // This keeps filenames stable and aligns with ISO-8601 date expectations in tests and exports.
-  const year = date.getUTCFullYear();
-  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(date.getUTCDate()).padStart(2, '0');
+  // The local calendar day. Every Date that reaches this function is either
+  // a moment (a file's modified time, now) or local midnight of a written
+  // date (parseDateLike below builds those with new Date(y, m, d)). UTC
+  // getters named a file saved in the evening west of Greenwich for the next
+  // day, and moved a date written in the file name back a day east of it.
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
 
   switch (format) {
     case 'YYYY-MM-DD':
@@ -354,7 +357,7 @@ function generateSuggestedNameFromAnalysis({
     // without eating "Annual Report 2024" when the appended date is 2025.
     const appendedYear =
       effectiveDate && !Number.isNaN(effectiveDate.getTime())
-        ? String(effectiveDate.getUTCFullYear())
+        ? String(effectiveDate.getFullYear())
         : null;
     rawSubject = stripGenericTrailingDate(rawSubject, appendedYear);
   }

@@ -160,6 +160,10 @@ jest.mock('../src/main/services/LlamaService', () => ({
 }));
 
 const SmartFolderWatcher = require('../src/main/services/SmartFolderWatcher');
+const {
+  claimUserAnalysis,
+  _resetUserAnalysisInFlight
+} = require('../src/main/analysis/userAnalysisInFlight');
 
 function createWatcher() {
   return new SmartFolderWatcher({
@@ -237,5 +241,85 @@ describe('SmartFolderWatcher image batch and vision batch mode', () => {
     expect(scopeAtAnalysis).toEqual([false, false]);
     expect(mockLlama.runAsVisionBatchMember).not.toHaveBeenCalled();
     expect(mockLlama.exitVisionBatchMode).not.toHaveBeenCalled();
+  });
+
+  describe('when a Discover analysis starts during the batch', () => {
+    // The queue is held while the user analyzes, but that was only looked at
+    // before a batch began: up to 19 more images then ran beside the user.
+    const queued = () => watcher.analysisQueue.map((item) => item.filePath);
+    let release;
+
+    beforeEach(() => {
+      release = null;
+      watcher._analyzeWithTimeout = jest.fn(async () => {
+        if (!release) release = claimUserAnalysis('/discover/report.pdf');
+      });
+    });
+    afterEach(() => {
+      _resetUserAnalysisInFlight();
+    });
+
+    test('hands the images it has not started back to the queue', async () => {
+      queueImages(watcher, 4);
+
+      await watcher._processQueue();
+
+      expect(watcher._analyzeWithTimeout).toHaveBeenCalledTimes(1);
+      expect(queued()).toEqual([
+        '/watched/pics/photo-1.png',
+        '/watched/pics/photo-2.png',
+        '/watched/pics/photo-3.png'
+      ]);
+      expect(watcher._inFlightItems.size).toBe(0);
+      expect(mockLlama.exitVisionBatchMode).toHaveBeenCalledTimes(1);
+
+      // Held for as long as the run lasts, then analyzed.
+      await watcher._processQueue();
+      expect(watcher._analyzeWithTimeout).toHaveBeenCalledTimes(1);
+      release();
+      await watcher._processQueue();
+      expect(watcher._analyzeWithTimeout).toHaveBeenCalledTimes(4);
+      expect(queued()).toEqual([]);
+    });
+
+    test('does not queue an image twice when a change to it was queued meanwhile', async () => {
+      queueImages(watcher, 3);
+      watcher._analyzeWithTimeout.mockImplementationOnce(async () => {
+        release = claimUserAnalysis('/discover/report.pdf');
+        watcher._enqueueAnalysisItem({
+          filePath: '/watched/pics/photo-2.png',
+          mtime: 2,
+          eventType: 'change'
+        });
+      });
+
+      await watcher._processQueue();
+
+      expect(queued()).toEqual(['/watched/pics/photo-1.png', '/watched/pics/photo-2.png']);
+      expect(watcher.analysisQueue[1].eventType).toBe('change');
+    });
+
+    test('a reanalysis it hands back stays one when a change to the file was queued meanwhile', async () => {
+      queueImages(watcher, 3);
+      Object.assign(watcher.analysisQueue[2], { eventType: 'reanalyze', applyNaming: true });
+      watcher._analyzeWithTimeout.mockImplementationOnce(async () => {
+        release = claimUserAnalysis('/discover/report.pdf');
+        watcher._enqueueAnalysisItem({
+          filePath: '/watched/pics/photo-2.png',
+          mtime: 2,
+          eventType: 'change'
+        });
+      });
+
+      await watcher._processQueue();
+
+      expect(queued()).toEqual(['/watched/pics/photo-1.png', '/watched/pics/photo-2.png']);
+      expect(watcher.analysisQueue[1]).toMatchObject({
+        eventType: 'reanalyze',
+        applyNaming: true,
+        mtime: 2
+      });
+      expect(watcher.analysisQueue[0].eventType).toBe('add');
+    });
   });
 });

@@ -19,6 +19,7 @@ const { TRUNCATION, TIMEOUTS } = require('../../shared/performanceConstants');
 const { withTimeout, delay } = require('../../shared/promiseUtils');
 const { createLogger } = require('../../shared/logger');
 const { isMemoryBudgetExceeded } = require('../../shared/analysisProvenance');
+const { toLocalCalendarDay } = require('../../shared/contentDateSanity');
 const { getTextModel, getLlamaService } = require('../llamaUtils');
 const { AppConfig } = require('./documentLlm');
 
@@ -56,6 +57,7 @@ const {
   safeSuggestedName,
   createFallbackAnalysis
 } = require('./fallbackUtils');
+const { createCancellationError } = require('./analysisCancellation');
 const { analysisQueue } = require('./embeddingQueue/stageQueues');
 const { globalDeduplicator } = require('../utils/llmOptimization');
 const {
@@ -368,19 +370,21 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
   // Get file date from stats or default to today
   // Some test fixtures (and some fs polyfills) may not provide a Date-valued mtime.
   const fileDate = (() => {
-    const today = new Date().toISOString().split('T')[0];
+    // The day the user sees in the file manager, not the UTC day: a file
+    // saved in the evening west of Greenwich is not from tomorrow.
+    const today = toLocalCalendarDay(Date.now());
     if (!fileStats) return today;
 
     // Prefer Date-valued mtime when available
     const { mtime } = fileStats;
-    if (mtime && typeof mtime.toISOString === 'function') {
-      return mtime.toISOString().split('T')[0];
+    if (mtime && typeof mtime.getTime === 'function' && Number.isFinite(mtime.getTime())) {
+      return toLocalCalendarDay(mtime.getTime());
     }
 
     // Fall back to numeric mtimeMs when present
     const { mtimeMs } = fileStats;
     if (typeof mtimeMs === 'number' && Number.isFinite(mtimeMs) && mtimeMs > 0) {
-      return new Date(mtimeMs).toISOString().split('T')[0];
+      return toLocalCalendarDay(mtimeMs);
     }
 
     return today;
@@ -908,7 +912,7 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
 
       // Check for cancellation before expensive LLM call
       if (typeof options.isCancelled === 'function' && options.isCancelled()) {
-        throw new Error('Analysis cancelled');
+        throw createCancellationError();
       }
 
       // Backend Caching & Deduplication:

@@ -136,6 +136,64 @@ describe('SmartFolderWatcher defers files Discover is analyzing', () => {
   });
 });
 
+describe('SmartFolderWatcher checks the history again before it analyzes', () => {
+  // The whole queue is held while a Discover run is in progress. An item
+  // queued before the run is no longer "in flight" when the queue resumes, so
+  // only the history can say that Discover has analyzed it meanwhile.
+  test('a queued file that was analyzed elsewhere meanwhile is skipped', async () => {
+    const watcher = makeWatcher({ needsAnalysis: false });
+    await watcher._analyzeFile({ filePath: file, eventType: 'add', mtime: Date.now() });
+    expect(watcher._needsAnalysis).toHaveBeenCalled();
+    expect(watcher.analyzeDocumentFile).not.toHaveBeenCalled();
+  });
+
+  // A change event that arrives while the watcher is analyzing the file is
+  // queued (the history has nothing yet). Run after the first analysis, it
+  // used to analyze the unchanged file again and store the original file
+  // name over the suggested one.
+  test('a change event for a file whose analysis is current is skipped', async () => {
+    const watcher = makeWatcher({ needsAnalysis: false });
+    await watcher._analyzeFile({ filePath: file, eventType: 'change', mtime: Date.now() });
+    expect(watcher.analyzeDocumentFile).not.toHaveBeenCalled();
+  });
+
+  test('an explicit reanalyze request is not checked', async () => {
+    const watcher = makeWatcher({ needsAnalysis: false });
+    await watcher._analyzeFile({ filePath: file, eventType: 'reanalyze' }).catch(() => {});
+    expect(watcher._needsAnalysis).not.toHaveBeenCalled();
+    expect(watcher.analyzeDocumentFile).toHaveBeenCalled();
+  });
+
+  test('an embedding retry is not checked: its analysis is already in the history', async () => {
+    const watcher = makeWatcher({ needsAnalysis: false });
+    watcher._embedAnalyzedFile = jest.fn().mockResolvedValue(undefined);
+    const cachedAnalysis = { analysis: { category: 'Finance', keywords: [] } };
+    await watcher._analyzeFile({ filePath: file, eventType: 'add', cachedAnalysis, retryCount: 1 });
+    expect(watcher._needsAnalysis).not.toHaveBeenCalled();
+    expect(watcher._embedAnalyzedFile).toHaveBeenCalledWith(file, cachedAnalysis);
+  });
+
+  test('the history records the file as it was when the analysis started', async () => {
+    const watcher = makeWatcher();
+    watcher._embedAnalyzedFile = jest.fn().mockResolvedValue(undefined);
+    const before = fs.statSync(file);
+    watcher.analyzeDocumentFile = jest.fn(async () => {
+      // The file is saved again while the model is still reading the old text.
+      fs.writeFileSync(file, 'synthetic, edited during the analysis');
+      fs.utimesSync(file, new Date(), new Date(before.mtimeMs + 60000));
+      return { analysis: { category: 'Finance', keywords: ['invoice'], summary: 'An invoice' } };
+    });
+
+    await watcher._analyzeFile({ filePath: file, eventType: 'add', mtime: before.mtimeMs });
+
+    const recordAnalysis = watcher.analysisHistoryService.recordAnalysis;
+    expect(recordAnalysis).toHaveBeenCalledTimes(1);
+    expect(recordAnalysis.mock.calls[0][0]).toEqual(
+      expect.objectContaining({ size: before.size, lastModified: before.mtimeMs })
+    );
+  });
+});
+
 describe('SmartFolderWatcher holds its queue while a Discover analysis runs', () => {
   // Live run: a startup catch-up of 879 smart-folder files took turns with
   // the user's 11-file Discover batch, file by file, on one GPU.

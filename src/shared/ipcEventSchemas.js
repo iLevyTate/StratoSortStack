@@ -39,6 +39,7 @@ const schemas = z
           .enum([
             'batch_organize',
             'batch_analyze',
+            'reanalyze',
             'model-download',
             'model-download-complete',
             'model-download-error',

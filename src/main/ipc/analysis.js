@@ -11,6 +11,7 @@ const { normalizeNamingConventionState } = require('../../shared/namingConventio
 const { safeFilePath } = require('../utils/safeAccess');
 const { validateFileOperationPath } = require('../../shared/pathSanitization');
 const { isFallbackAnalysis, isMemoryBudgetExceeded } = require('../../shared/analysisProvenance');
+const { isMediaPath } = require('../../shared/fileIdUtils');
 const { mapFoldersToCategories, getFolderNamesString } = require('../../shared/folderUtils');
 const { recognizeIfAvailable } = require('../utils/tesseractUtils');
 const {
@@ -852,6 +853,14 @@ function registerAnalysisIpc(servicesOrParams) {
             startedAt: existing.startedAt,
             ageMs: Date.now() - existing.startedAt
           });
+          // The evicted run may still be working. Stop it, so it does not
+          // analyze beside the run that takes its id.
+          existing.cancelled = true;
+          if (!existing.reason) {
+            existing.reason = 'Replaced by a new batch with the same id';
+            existing.requestedAt = Date.now();
+          }
+          existing.abortController?.abort();
           activeBatchRuns.delete(batchId);
         } else {
           logger.warn(`${LOG_PREFIX} Duplicate active batch id rejected`, { batchId });
@@ -989,6 +998,27 @@ function registerAnalysisIpc(servicesOrParams) {
         }
       }
 
+      // The service reports only when a file starts or finishes, and one long
+      // recording is many minutes of work. The renderer takes 5 minutes without
+      // a report for a stuck analysis and resets it. So the last report is
+      // repeated while the batch runs: silence then means main stopped
+      // answering. Only for as long as one file may take, so a file that hangs
+      // is still noticed.
+      const quietBudgetMs = validatedPaths.some((/** @type {string} */ p) => isMediaPath(p))
+        ? TIMEOUTS.BATCH_MEDIA_QUIET_MAX
+        : TIMEOUTS.BATCH_FILE_QUIET_MAX;
+      /** @type {Record<string, any> | null} */
+      let lastProgressPayload = null;
+      let lastProgressAt = 0;
+      const progressHeartbeat = setInterval(() => {
+        if (!lastProgressPayload || runState.cancelled) return;
+        if (Date.now() - lastProgressAt > quietBudgetMs) return;
+        if (typeof getMainWindow === 'function') {
+          sendOperationProgress(getMainWindow, lastProgressPayload);
+        }
+      }, TIMEOUTS.HEARTBEAT_INTERVAL);
+      progressHeartbeat.unref?.();
+
       // The smart-folder watcher defers these files until the batch is done,
       // so a file it also sees is not analyzed twice at once.
       const releaseUserAnalysis = claimUserAnalysis(validatedPaths);
@@ -1010,12 +1040,14 @@ function registerAnalysisIpc(servicesOrParams) {
               sectionOrder: options.sectionOrder,
               enableVisionBatchMode: options.enableVisionBatchMode,
               onProgress: (/** @type {any} */ progress) => {
+                // The renderer cleared its progress when it cancelled. A later
+                // report (a file that was in flight, the closing flush) would
+                // put counts back that read as a paused analysis.
+                if (runState.cancelled) return;
+                lastProgressPayload = { type: 'batch_analyze', batchId, ...progress };
+                lastProgressAt = Date.now();
                 if (typeof getMainWindow === 'function') {
-                  sendOperationProgress(getMainWindow, {
-                    type: 'batch_analyze',
-                    batchId,
-                    ...progress
-                  });
+                  sendOperationProgress(getMainWindow, lastProgressPayload);
                 }
               },
               onFileComplete: (/** @type {any} */ item) => {
@@ -1230,9 +1262,13 @@ function registerAnalysisIpc(servicesOrParams) {
           batchId
         };
       } finally {
+        clearInterval(progressHeartbeat);
         releaseUserAnalysis();
         removeAbortListener?.();
-        activeBatchRuns.delete(batchId);
+        // Only this run's own entry: an evicted run that finishes late must
+        // not remove the run that replaced it, or that run can no longer be
+        // cancelled.
+        if (activeBatchRuns.get(batchId) === runState) activeBatchRuns.delete(batchId);
       }
     }
   });

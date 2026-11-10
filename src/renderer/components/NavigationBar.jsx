@@ -331,12 +331,16 @@ const VIEW_MODE_OPTIONS = [
   { mode: 'dashboard', label: 'Dashboard', Icon: LayoutGrid, title: 'Dashboard overview' }
 ];
 
+const DASHBOARD_WAITS_FOR_ANALYSIS =
+  'Analysis is still running. The dashboard opens when it finishes.';
+
 /**
  * Segmented control for switching between the guided phased flow and the
  * dashboard overview. Subscribes to ui.viewMode directly and dispatches
- * setViewMode, so it stays interactive during operations — switching surfaces
- * is a presentation choice, not a phase transition, and must never be gated by
- * isBlockedByOperation the way the phase tabs are.
+ * setViewMode, so it is not gated by isBlockedByOperation the way the phase
+ * tabs are: the way back to Guided is always open. The way into the dashboard
+ * waits for a running analysis, because Discover owns the run and App.js
+ * unmounts Discover to show the dashboard, which would stop it.
  */
 const ViewModeToggle = memo(function ViewModeToggle() {
   const dispatch = useAppDispatch();
@@ -349,6 +353,7 @@ const ViewModeToggle = memo(function ViewModeToggle() {
   const dashboardAvailable = useAppSelector((state) =>
     hasDestinationFolder(state.files.smartFolders)
   );
+  const isAnalyzing = useAppSelector((state) => Boolean(state.analysis?.isAnalyzing));
 
   // Single stable handler reads the target mode off the button's data-* attr,
   // avoiding a fresh inline closure per option in the render loop.
@@ -370,13 +375,17 @@ const ViewModeToggle = memo(function ViewModeToggle() {
     >
       {VIEW_MODE_OPTIONS.map(({ mode, label, Icon, title }) => {
         const isActive = viewMode === mode;
-        const isDisabled = mode === 'dashboard' && !dashboardAvailable;
+        const needsFolder = mode === 'dashboard' && !dashboardAvailable;
+        const waitsForAnalysis = mode === 'dashboard' && !isActive && isAnalyzing;
+        const isDisabled = needsFolder || waitsForAnalysis;
         // One descriptive string drives both the hover tooltip and the
         // accessible name, so the control is self-describing at every width —
         // including when the visible text label is collapsed to icon-only.
-        const describedLabel = isDisabled
+        const describedLabel = needsFolder
           ? 'Add a smart folder in Setup to open the dashboard.'
-          : title;
+          : waitsForAnalysis
+            ? DASHBOARD_WAITS_FOR_ANALYSIS
+            : title;
         return (
           <button
             key={mode}
@@ -895,10 +904,15 @@ function NavigationBar() {
   }, [actions]);
 
   // Return to the dashboard the user deep-linked out of. A view switch, not a
-  // phase transition, so it is never gated by isBlockedByOperation.
+  // phase transition, so moves and undo/redo do not gate it. A running
+  // analysis does: it belongs to Discover, which unmounts for the dashboard.
   const handleReturnToDashboard = useCallback(() => {
+    if (isAnalyzing) {
+      showInfo(DASHBOARD_WAITS_FOR_ANALYSIS, 5200);
+      return;
+    }
     dispatch(setViewMode('dashboard'));
-  }, [dispatch]);
+  }, [dispatch, isAnalyzing, showInfo]);
 
   // Only show a nav spinner for loading states other than analysis to avoid duplicate indicators
   const navSpinnerActive = isOrganizing || isLoading || Boolean(isUndoRedoExecuting);
@@ -1020,6 +1034,8 @@ function NavigationBar() {
             variant="subtle"
             size="sm"
             onClick={handleReturnToDashboard}
+            aria-disabled={Boolean(isAnalyzing)}
+            title={isAnalyzing ? DASHBOARD_WAITS_FOR_ANALYSIS : undefined}
             leftIcon={<ArrowLeft className="h-3.5 w-3.5" />}
           >
             Back to dashboard

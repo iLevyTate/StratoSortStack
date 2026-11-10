@@ -324,6 +324,34 @@ describe('queries', () => {
       expect(result.results.length).toBe(1);
       expect(result.results[0].fileName).toBe('jan.pdf');
     });
+
+    // The index is keyed by UTC month. A range given in local time starts or
+    // ends in a different UTC month away from Greenwich; both ends must still
+    // be searched. These run in the zone of the machine, and in UTC (CI) they
+    // pass whichever way the months are walked: calendarDayLocalTime.test.js
+    // runs the same two ranges in a zone on each side of Greenwich.
+    test('finds an entry in the last UTC month of a range that ends late on a local day', () => {
+      const end = new Date(2026, 11, 31, 23, 30);
+      const at = new Date(end.getTime() - 60_000).toISOString();
+      const result = queries.getAnalysisByDateRange(
+        { entries: { 1: { id: 1, timestamp: at, fileName: 'new-year-eve.pdf' } } },
+        { dateIndex: { [at.substring(0, 7)]: [1] } },
+        new Date(2026, 10, 15, 0, 30),
+        end
+      );
+      expect(result.results.map((entry) => entry.fileName)).toEqual(['new-year-eve.pdf']);
+    });
+
+    test('finds an entry in the month a range that starts early on a local day ends in', () => {
+      const at = new Date(2026, 11, 10, 12).toISOString();
+      const result = queries.getAnalysisByDateRange(
+        { entries: { 1: { id: 1, timestamp: at, fileName: 'december.pdf' } } },
+        { dateIndex: { [at.substring(0, 7)]: [1] } },
+        new Date(2026, 10, 15, 0, 30),
+        new Date(2026, 11, 20)
+      );
+      expect(result.results.map((entry) => entry.fileName)).toEqual(['december.pdf']);
+    });
   });
 
   describe('getCategories', () => {

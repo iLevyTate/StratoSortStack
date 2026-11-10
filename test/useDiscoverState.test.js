@@ -20,7 +20,8 @@ jest.mock('../src/shared/logger', () => {
 // Mock the store modules
 jest.mock('../src/renderer/store/hooks', () => ({
   useAppSelector: jest.fn((selector) => selector),
-  useAppDispatch: jest.fn(() => jest.fn())
+  useAppDispatch: jest.fn(() => jest.fn()),
+  useAppStore: jest.fn()
 }));
 
 jest.mock('../src/renderer/store/slices/filesSlice', () => ({
@@ -118,6 +119,9 @@ describe('useDiscoverState', () => {
         return selector(defaultState);
       }
       return selector;
+    });
+    require('../src/renderer/store/hooks').useAppStore.mockReturnValue({
+      getState: () => defaultState
     });
 
     useDiscoverState = require('../src/renderer/phases/discover/useDiscoverState').useDiscoverState;

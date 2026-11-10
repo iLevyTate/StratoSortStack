@@ -41,6 +41,7 @@ const {
   buildSkipResult
 } = require('../src/main/services/mediaAnalyzerAdapter');
 const { ERROR_CODES } = require('../src/shared/errorCodes');
+const { isFallbackAnalysis, isCapabilityFallback } = require('../src/shared/analysisProvenance');
 
 describe('mediaAnalyzerAdapter', () => {
   beforeEach(() => {
@@ -175,6 +176,39 @@ describe('mediaAnalyzerAdapter', () => {
       const whisper = { transcribeMedia: jest.fn() };
       const adapter = createMediaAnalyzerAdapter({ whisperService: whisper });
       await expect(adapter('/tmp/a.mp3', [], {})).rejects.toMatchObject({ code: 'ENOSPC' });
+    });
+
+    test('a file longer than the transcription limit is recorded, not failed', async () => {
+      const err = Object.assign(new Error('Media exceeds maximum supported duration (14400s).'), {
+        code: ERROR_CODES.INVALID_INPUT,
+        maxDurationSeconds: 14400
+      });
+      mockAnalyzeMediaFile.mockRejectedValue(err);
+
+      const adapter = createMediaAnalyzerAdapter({
+        whisperService: { transcribeMedia: jest.fn() }
+      });
+      const result = await adapter('/tmp/conference-day.mp4', [], {});
+
+      expect(result.extractionMethod).toBe('format_unsupported');
+      expect(result.keywords).toEqual(['video', 'too-long']);
+      expect(result.purpose).toBe('Media is longer than the supported 4 hours; not transcribed.');
+      expect(result.suggestedName).toBe('conference-day');
+      expect(isFallbackAnalysis(result)).toBe(true);
+      // A model installed later changes nothing about the length of the file.
+      expect(isCapabilityFallback(result)).toBe(false);
+    });
+
+    test('any other invalid-input error still fails the file', async () => {
+      const err = Object.assign(new Error('filePath must be a string'), {
+        code: ERROR_CODES.INVALID_INPUT
+      });
+      mockAnalyzeMediaFile.mockRejectedValue(err);
+
+      const adapter = createMediaAnalyzerAdapter({
+        whisperService: { transcribeMedia: jest.fn() }
+      });
+      await expect(adapter('/tmp/a.mp3', [], {})).rejects.toBe(err);
     });
 
     test('treats /whisper.+model not found/ message as missing-model even without code', async () => {

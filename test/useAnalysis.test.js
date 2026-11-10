@@ -4,7 +4,7 @@
  */
 
 import * as React from 'react';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, cleanup } from '@testing-library/react';
 // The same module instances the renderer uses; a later test resets the
 // registry, after which a require() would load a second React.
 import { useAnalysis as useAnalysisOriginal } from '../src/renderer/phases/discover/useAnalysis';
@@ -40,7 +40,9 @@ jest.mock('../src/shared/constants', () => ({
     ANALYZING: 'analyzing',
     CATEGORIZED: 'categorized',
     ERROR: 'error'
-  }
+  },
+  SUPPORTED_AUDIO_EXTENSIONS: ['.mp3', '.wav'],
+  SUPPORTED_VIDEO_EXTENSIONS: ['.mp4', '.mov']
 }));
 
 jest.mock('../src/renderer/phases/discover/namingUtils', () => ({
@@ -76,6 +78,35 @@ const mockElectronAPI = {
   settings: {
     get: jest.fn()
   }
+};
+
+// A hook that unmounts in the middle of a run leaves "resume this" in a
+// module-level flag for the next mount, and the next mount is the next
+// test's. Unmount what the test left mounted, then let a mount with
+// nothing selected take the flag: it has nothing to resume.
+const dropParkedResume = () => {
+  cleanup();
+  renderHook(() =>
+    useAnalysisOriginal({
+      selectedFiles: [],
+      fileStates: {},
+      analysisResults: [],
+      isAnalyzing: false,
+      analysisProgress: { current: 0, total: 0 },
+      namingSettings: { convention: 'original', separator: '-', dateFormat: 'YYYY-MM-DD' },
+      setters: {
+        setIsAnalyzing: jest.fn(),
+        setAnalysisProgress: jest.fn(),
+        setCurrentAnalysisFile: jest.fn(),
+        setAnalysisResults: jest.fn(),
+        setFileStates: jest.fn()
+      },
+      updateFileState: jest.fn(),
+      addNotification: jest.fn(),
+      actions: { setPhaseData: jest.fn(), advancePhase: jest.fn() }
+    })
+  );
+  cleanup();
 };
 
 describe('useAnalysis', () => {
@@ -158,6 +189,7 @@ describe('useAnalysis', () => {
   });
 
   afterEach(() => {
+    dropParkedResume();
     jest.useRealTimers();
   });
 
@@ -344,6 +376,408 @@ describe('useAnalysis', () => {
       );
     });
 
+    test('a run with a recording uses the batch route even for one file', async () => {
+      // The per-file route gives a file 5 minutes, then analyzes it again
+      // from the start, and its Stop does not reach the work in main.
+      const { result } = renderHook(() => useAnalysis(createMockOptions()));
+      const files = [{ path: '/media/meeting.mp4', name: 'meeting.mp4' }];
+      mockElectronAPI.analysis.batch.mockResolvedValueOnce({
+        success: true,
+        results: [
+          {
+            filePath: files[0].path,
+            success: true,
+            result: { category: 'video', suggestedName: 'meeting' }
+          }
+        ],
+        errors: [],
+        total: 1,
+        successful: 1
+      });
+
+      await act(async () => {
+        const promise = result.current.analyzeFiles(files);
+        jest.advanceTimersByTime(50);
+        await promise;
+      });
+
+      expect(mockElectronAPI.analysis.batch).toHaveBeenCalledWith(
+        expect.objectContaining({ filePaths: ['/media/meeting.mp4'] })
+      );
+      expect(mockElectronAPI.files.analyze).not.toHaveBeenCalled();
+    });
+
+    test('a batch that keeps reporting progress is not cut off at 30 minutes', async () => {
+      // The batch request had a fixed 30-minute limit. A low-VRAM machine
+      // runs every run of 3 or more files as one sequential batch, so a
+      // larger folder reached it: the batch was cancelled in main and the
+      // rest was analyzed per file.
+      const files = Array.from({ length: 40 }, (_, index) => ({
+        path: '/long-batch/file-' + index + '.txt',
+        name: 'file-' + index + '.txt'
+      }));
+      let resolveBatch;
+      mockElectronAPI.analysis.batch.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveBatch = resolve;
+        })
+      );
+      const { result } = renderHook(() => useAnalysis(createMockOptions({ selectedFiles: files })));
+
+      let analyzePromise;
+      await act(async () => {
+        analyzePromise = result.current.analyzeFiles(files);
+        await jest.advanceTimersByTimeAsync(50);
+      });
+      const clientBatchId = mockElectronAPI.analysis.batch.mock.calls[0][0].batchId;
+
+      // 35 minutes, one file finishing each minute.
+      for (let minute = 1; minute <= 35; minute += 1) {
+        await act(async () => {
+          await jest.advanceTimersByTimeAsync(60 * 1000);
+          window.dispatchEvent(
+            new CustomEvent('operation-progress', {
+              detail: {
+                type: 'batch_analyze',
+                batchId: clientBatchId,
+                completed: minute,
+                total: files.length,
+                currentFile: files[minute].path
+              }
+            })
+          );
+        });
+      }
+
+      expect(mockElectronAPI.files.analyze).not.toHaveBeenCalled();
+      expect(mockAddNotification).not.toHaveBeenCalledWith(
+        expect.anything(),
+        'warning',
+        expect.anything(),
+        'analysis-batch-fallback'
+      );
+
+      await act(async () => {
+        resolveBatch({
+          success: true,
+          results: files.map((file) => ({
+            filePath: file.path,
+            success: true,
+            result: { category: 'documents', suggestedName: file.name + '-done' }
+          })),
+          errors: [],
+          total: files.length,
+          successful: files.length
+        });
+        await jest.advanceTimersByTimeAsync(1000);
+        await analyzePromise;
+      });
+      expect(mockElectronAPI.files.analyze).not.toHaveBeenCalled();
+    });
+
+    test('a file that finishes right after another appears without waiting for the next', async () => {
+      // Results are applied at most every 200 ms. The second of two files
+      // finishing together was held until another file finished, which with
+      // a long recording next in line is many minutes later.
+      const files = Array.from({ length: 40 }, (_, index) => ({
+        path: '/together/file-' + index + '.txt',
+        name: 'file-' + index + '.txt'
+      }));
+      let resolveBatch;
+      mockElectronAPI.analysis.batch.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveBatch = resolve;
+        })
+      );
+      const { result } = renderHook(() => useAnalysis(createMockOptions({ selectedFiles: files })));
+
+      let analyzePromise;
+      await act(async () => {
+        analyzePromise = result.current.analyzeFiles(files);
+        await jest.advanceTimersByTimeAsync(50);
+      });
+      const clientBatchId = mockElectronAPI.analysis.batch.mock.calls[0][0].batchId;
+      const finishFile = (file) =>
+        window.dispatchEvent(
+          new CustomEvent('analysis:file-complete', {
+            detail: {
+              batchId: clientBatchId,
+              item: {
+                filePath: file.path,
+                success: true,
+                result: { category: 'documents', suggestedName: file.name + '-done' }
+              }
+            }
+          })
+        );
+      const shownPaths = () => {
+        const applied = mockSetAnalysisResults.mock.calls
+          .map((call) => call[0])
+          .filter((value) => Array.isArray(value));
+        return applied.length ? applied[applied.length - 1].map((item) => item.path) : [];
+      };
+
+      await act(async () => {
+        finishFile(files[0]);
+        finishFile(files[1]);
+        await jest.advanceTimersByTimeAsync(0);
+      });
+      expect(shownPaths()).toEqual([files[0].path]);
+
+      // No further file finishes; the batch is still running.
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(1000);
+      });
+      expect(shownPaths()).toEqual([files[0].path, files[1].path]);
+
+      await act(async () => {
+        resolveBatch({
+          success: true,
+          results: files.map((file) => ({
+            filePath: file.path,
+            success: true,
+            result: { category: 'documents', suggestedName: file.name + '-done' }
+          })),
+          errors: [],
+          total: files.length,
+          successful: files.length
+        });
+        await jest.advanceTimersByTimeAsync(1000);
+        await analyzePromise;
+      });
+    });
+
+    test('a run waiting for an earlier batch is not reset as stuck', async () => {
+      // Nothing refreshed the liveness clock while the run waited. After 5
+      // minutes it was reset, and the files the earlier batch had not
+      // finished were never analyzed.
+      const files = Array.from({ length: 40 }, (_, index) => ({
+        path: '/waiting/file-' + index + '.txt',
+        name: 'file-' + index + '.txt'
+      }));
+      mockElectronAPI.analysis.batch.mockImplementation(() =>
+        Promise.reject(
+          Object.assign(new Error('Operation already in progress: analysis:analyze-batch'), {
+            code: 'CONCURRENCY_LIMIT'
+          })
+        )
+      );
+      try {
+        const { result } = renderHook(() =>
+          useAnalysis(createMockOptions({ selectedFiles: files }))
+        );
+        let analyzePromise;
+        await act(async () => {
+          analyzePromise = result.current.analyzeFiles(files);
+          await jest.advanceTimersByTimeAsync(50);
+        });
+        for (let minute = 0; minute < 12; minute += 1) {
+          await act(async () => {
+            await jest.advanceTimersByTimeAsync(60 * 1000);
+          });
+        }
+
+        // Still asking after 12 minutes.
+        const triesSoFar = mockElectronAPI.analysis.batch.mock.calls.length;
+        await act(async () => {
+          await jest.advanceTimersByTimeAsync(60 * 1000);
+        });
+        expect(mockElectronAPI.analysis.batch.mock.calls.length).toBeGreaterThan(triesSoFar);
+
+        mockElectronAPI.analysis.batch.mockImplementation(async () => ({
+          success: true,
+          results: files.map((file) => ({
+            filePath: file.path,
+            success: true,
+            result: { category: 'documents', suggestedName: file.name + '-done' }
+          })),
+          errors: [],
+          total: files.length,
+          successful: files.length
+        }));
+        await act(async () => {
+          await jest.advanceTimersByTimeAsync(5000);
+          await analyzePromise;
+        });
+        expect(mockElectronAPI.files.analyze).not.toHaveBeenCalled();
+      } finally {
+        mockElectronAPI.analysis.batch.mockReset();
+      }
+    });
+
+    test.each([
+      ['all of', 40],
+      ['part of', 30]
+    ])(
+      'a run that waited reports every file when the earlier batch did %s it',
+      async (_label, readyCount) => {
+        // Only the results this run recorded were counted. What the earlier
+        // batch finished came from the ready queue, so the run ended with no
+        // notice, or with a count that left those files out.
+        const files = Array.from({ length: 40 }, (_, index) => ({
+          path: '/earlier/file-' + index + '.txt',
+          name: 'file-' + index + '.txt'
+        }));
+        mockElectronAPI.analysis.getReadyQueue.mockResolvedValue({
+          success: true,
+          readyFiles: files.slice(0, readyCount).map((file) => ({
+            path: file.path,
+            name: file.name,
+            analysis: { category: 'documents', suggestedName: file.name + '-earlier' }
+          }))
+        });
+        mockElectronAPI.analysis.batch
+          .mockRejectedValueOnce(
+            Object.assign(new Error('Operation already in progress: analysis:analyze-batch'), {
+              code: 'CONCURRENCY_LIMIT'
+            })
+          )
+          .mockImplementation(async (payload) => ({
+            success: true,
+            results: payload.filePaths.map((filePath) => ({
+              filePath,
+              success: true,
+              result: { category: 'documents', suggestedName: 'done' }
+            })),
+            errors: [],
+            total: payload.filePaths.length,
+            successful: payload.filePaths.length
+          }));
+        try {
+          const { result } = renderHook(() =>
+            useAnalysis(createMockOptions({ selectedFiles: files }))
+          );
+          await act(async () => {
+            const promise = result.current.analyzeFiles(files);
+            await jest.advanceTimersByTimeAsync(60 * 1000);
+            await promise;
+          });
+
+          const sent = mockElectronAPI.analysis.batch.mock.calls.slice(1);
+          expect(sent.map((call) => call[0].filePaths.length)).toEqual(
+            readyCount === files.length ? [] : [files.length - readyCount]
+          );
+          expect(mockAddNotification).toHaveBeenCalledWith(
+            'Analysis complete! 40 files ready',
+            'success',
+            4000,
+            'analysis-complete'
+          );
+        } finally {
+          mockElectronAPI.analysis.batch.mockReset();
+        }
+      }
+    );
+
+    test.each([
+      ['waited for an earlier batch that did 30', 30, { current: 31, total: 40 }],
+      ['did not wait', 0, null]
+    ])(
+      'while its batch is in main, a run that %s has its offset registered',
+      async (_label, readyCount, countsOfFirstFile) => {
+        // Main counts within the files it was sent. The store shows the run,
+        // so the middleware that writes the counts needs what came before.
+        const { toRunCounts } = require('../src/renderer/store/analysisRunBase');
+        const files = Array.from({ length: 40 }, (_, index) => ({
+          path: '/offset/file-' + index + '.txt',
+          name: 'file-' + index + '.txt'
+        }));
+        mockElectronAPI.analysis.getReadyQueue.mockResolvedValue({
+          success: true,
+          readyFiles: files.slice(0, readyCount).map((file) => ({
+            path: file.path,
+            name: file.name,
+            analysis: { category: 'documents', suggestedName: file.name + '-earlier' }
+          }))
+        });
+        const inMain = [];
+        const analyzeSent = async (payload) => {
+          inMain.push({ batchId: payload.batchId, counts: toRunCounts(payload.batchId, 1) });
+          return {
+            success: true,
+            results: payload.filePaths.map((filePath) => ({
+              filePath,
+              success: true,
+              result: { category: 'documents', suggestedName: 'done' }
+            })),
+            errors: [],
+            total: payload.filePaths.length,
+            successful: payload.filePaths.length
+          };
+        };
+        if (readyCount > 0) {
+          mockElectronAPI.analysis.batch.mockRejectedValueOnce(
+            Object.assign(new Error('Operation already in progress: analysis:analyze-batch'), {
+              code: 'CONCURRENCY_LIMIT'
+            })
+          );
+        }
+        mockElectronAPI.analysis.batch.mockImplementation(analyzeSent);
+        try {
+          const { result } = renderHook(() =>
+            useAnalysis(createMockOptions({ selectedFiles: files }))
+          );
+          await act(async () => {
+            const promise = result.current.analyzeFiles(files);
+            await jest.advanceTimersByTimeAsync(60 * 1000);
+            await promise;
+          });
+
+          expect(inMain).toEqual([{ batchId: expect.any(String), counts: countsOfFirstFile }]);
+          // Over: nothing stays registered for a later batch to inherit.
+          expect(toRunCounts(inMain[0].batchId, 1)).toBeNull();
+        } finally {
+          mockElectronAPI.analysis.batch.mockReset();
+        }
+      }
+    );
+
+    test('a second call while the first run is starting is queued behind it', async () => {
+      // A run writes its first progress a moment after it takes the lock.
+      // Until then the store holds what the run before left, which is no
+      // activity at all, and that read as a lock gone stale: the second
+      // call reset the first run and took its place.
+      const group = (folder) =>
+        Array.from({ length: 40 }, (_, index) => ({
+          path: folder + '/file-' + index + '.txt',
+          name: 'file-' + index + '.txt'
+        }));
+      const first = group('/first');
+      const second = group('/second');
+      mockElectronAPI.analysis.batch.mockImplementation(async (payload) => ({
+        success: true,
+        results: payload.filePaths.map((filePath) => ({
+          filePath,
+          success: true,
+          result: { category: 'documents', suggestedName: 'done' }
+        })),
+        errors: [],
+        total: payload.filePaths.length,
+        successful: payload.filePaths.length
+      }));
+      try {
+        const { result } = renderHook(() =>
+          useAnalysis(createMockOptions({ selectedFiles: [...first, ...second] }))
+        );
+        let firstCall;
+        let secondCall;
+        await act(async () => {
+          firstCall = result.current.analyzeFiles(first);
+          secondCall = result.current.analyzeFiles(second);
+          await jest.advanceTimersByTimeAsync(60 * 1000);
+          await Promise.all([firstCall, secondCall]);
+          await jest.advanceTimersByTimeAsync(60 * 1000);
+        });
+
+        expect(await secondCall).toEqual({ started: false, reason: 'queued' });
+        expect(await firstCall).toEqual({ started: true });
+        const sent = mockElectronAPI.analysis.batch.mock.calls.map((call) => call[0].filePaths[0]);
+        expect(sent).toEqual(['/first/file-0.txt', '/second/file-0.txt']);
+      } finally {
+        mockElectronAPI.analysis.batch.mockReset();
+      }
+    });
+
     test('falls back to per-file analysis when batch route fails', async () => {
       const { result } = renderHook(() => useAnalysis(createMockOptions()));
       const files = Array.from({ length: 40 }, (_, index) => ({
@@ -361,6 +795,61 @@ describe('useAnalysis', () => {
 
       expect(mockElectronAPI.analysis.batch).toHaveBeenCalled();
       expect(mockElectronAPI.files.analyze).toHaveBeenCalled();
+    });
+
+    // Starts a run on the per-file path whose files do not finish until
+    // released.
+    async function startPerFileRun(folder) {
+      const files = Array.from({ length: 40 }, (_, index) => ({
+        path: folder + '/file-' + index + '.txt',
+        name: 'file-' + index + '.txt'
+      }));
+      const releases = [];
+      mockElectronAPI.analysis.batch.mockRejectedValueOnce(new Error('Batch route failed'));
+      mockElectronAPI.files.analyze.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            releases.push(resolve);
+          })
+      );
+      const hook = renderHook(() => useAnalysis(createMockOptions({ selectedFiles: files })));
+      let analyzePromise;
+      await act(async () => {
+        analyzePromise = hook.result.current.analyzeFiles(files);
+        await jest.advanceTimersByTimeAsync(50);
+      });
+      expect(releases.length).toBeGreaterThan(0);
+      const finish = async () => {
+        await act(async () => {
+          releases.forEach((release) => release({ category: 'documents', suggestedName: 'done' }));
+          await jest.advanceTimersByTimeAsync(1000);
+          await analyzePromise;
+        });
+      };
+      return { hook, finish };
+    }
+    const noticeTexts = () => mockAddNotification.mock.calls.map((call) => call[0]);
+
+    test('a per-file run stopped by leaving Discover is not reported as cancelled by the user', async () => {
+      const { hook, finish } = await startPerFileRun('/left');
+
+      hook.unmount();
+      await finish();
+
+      expect(noticeTexts().filter((text) => /cancelled|stopped/i.test(text))).toEqual([]);
+    });
+
+    test('a per-file run the user stops is reported once', async () => {
+      const { hook, finish } = await startPerFileRun('/stopped');
+
+      act(() => {
+        hook.result.current.cancelAnalysis();
+      });
+      await finish();
+
+      expect(noticeTexts().filter((text) => /cancelled|stopped/i.test(text))).toEqual([
+        'Analysis stopped'
+      ]);
     });
 
     test('fallback pool skips files whose results already streamed in [F-154]', async () => {
@@ -690,7 +1179,7 @@ describe('useAnalysis', () => {
         new CustomEvent('operation-progress', {
           detail: {
             type: 'batch_analyze',
-            batchId: 'batch-reset-test',
+            batchId: mockElectronAPI.analysis.batch.mock.calls[0][0].batchId,
             completed,
             total: files.length,
             currentFile
@@ -758,6 +1247,115 @@ describe('useAnalysis', () => {
 
       // Should not throw
       expect(() => unmount()).not.toThrow();
+    });
+  });
+
+  describe('a run left behind by leaving Discover', () => {
+    // Leaving Discover stops the run, but its batch request returns only
+    // when main has let go of the file it was on. Its cleanup runs then.
+    const files = Array.from({ length: 40 }, (_, index) => ({
+      path: '/left-behind/file-' + index + '.txt',
+      name: 'file-' + index + '.txt'
+    }));
+    const stopped = { success: false, cancelled: true, results: [], errors: [], total: 40 };
+    const finishedBatch = {
+      success: true,
+      results: files.map((file) => ({
+        filePath: file.path,
+        success: true,
+        result: { category: 'documents', suggestedName: 'done' }
+      })),
+      errors: [],
+      total: files.length,
+      successful: files.length
+    };
+    let releases;
+
+    beforeEach(() => {
+      releases = [];
+      mockElectronAPI.analysis.batch.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            releases.push(resolve);
+          })
+      );
+    });
+    afterEach(() => {
+      mockElectronAPI.analysis.batch.mockReset();
+    });
+
+    async function startRun(selectedFiles, completed) {
+      const hook = renderHook(() => useAnalysis(createMockOptions({ selectedFiles })));
+      const sentBefore = releases.length;
+      let pending;
+      await act(async () => {
+        pending = hook.result.current.analyzeFiles(files);
+        await jest.advanceTimersByTimeAsync(50);
+      });
+      expect(releases).toHaveLength(sentBefore + 1);
+      if (completed > 0) {
+        const { batchId } = mockElectronAPI.analysis.batch.mock.calls[sentBefore][0];
+        act(() => {
+          window.dispatchEvent(
+            new CustomEvent('operation-progress', {
+              detail: {
+                type: 'batch_analyze',
+                batchId,
+                completed,
+                total: files.length,
+                currentFile: files[completed - 1].path
+              }
+            })
+          );
+        });
+      }
+      const settle = async (index, result) => {
+        await act(async () => {
+          releases[index](result);
+          await jest.advanceTimersByTimeAsync(1000);
+          await pending;
+        });
+      };
+      return { hook, settle };
+    }
+    const idleProgress = { current: 0, total: 0, lastActivity: 0 };
+
+    test.each([
+      ['had reached its last file', 40],
+      ['was part way through', 12]
+    ])(
+      'does not write over the run a returning Discover started when it %s',
+      async (_label, completed) => {
+        const first = await startRun(files, completed);
+        first.hook.unmount();
+        const second = await startRun([], 0);
+        mockSetIsAnalyzing.mockClear();
+        mockSetAnalysisProgress.mockClear();
+        mockSetFileStates.mockClear();
+
+        await first.settle(0, stopped);
+
+        expect(mockSetIsAnalyzing).not.toHaveBeenCalledWith(false);
+        expect(mockSetAnalysisProgress).not.toHaveBeenCalledWith(idleProgress);
+        expect(mockSetFileStates).not.toHaveBeenCalled();
+
+        // The run that owns the state still clears it when it ends.
+        await second.settle(1, finishedBatch);
+        expect(mockSetIsAnalyzing).toHaveBeenCalledWith(false);
+        expect(mockSetAnalysisProgress).toHaveBeenCalledWith(idleProgress);
+        second.hook.unmount();
+      }
+    );
+
+    test('still tidies up when no other run has started', async () => {
+      const first = await startRun(files, 12);
+      first.hook.unmount();
+      mockSetFileStates.mockClear();
+
+      await first.settle(0, stopped);
+
+      // Files it had marked as in progress go back to waiting.
+      expect(mockSetFileStates).toHaveBeenCalledWith(expect.any(Function));
     });
   });
 
@@ -879,7 +1477,7 @@ describe('useAnalysis', () => {
         new CustomEvent('operation-progress', {
           detail: {
             type: 'batch_analyze',
-            batchId: 'batch-cancel-test',
+            batchId: mockElectronAPI.analysis.batch.mock.calls[0][0].batchId,
             completed,
             total: files.length,
             currentFile
@@ -922,6 +1520,75 @@ describe('useAnalysis', () => {
       const lastResults = resultArrayCalls[resultArrayCalls.length - 1];
       expect(lastResults).toHaveLength(3);
       expect(lastResults.map((item) => item.path)).toEqual(files.slice(0, 3).map((f) => f.path));
+    });
+
+    test('progress from another sender does not take the batch over', async () => {
+      // Reanalyze All reported on the same channel with the same type. The
+      // batch adopted the first foreign id it saw: its own progress was then
+      // dropped and Stop asked main to cancel an id it did not know.
+      const files = Array.from({ length: 40 }, (_, index) => ({
+        path: `/own-batch/file-${index}.txt`,
+        name: `file-${index}.txt`
+      }));
+
+      let resolveBatch;
+      const batchPromise = new Promise((resolve) => {
+        resolveBatch = resolve;
+      });
+      mockElectronAPI.settings.get.mockResolvedValueOnce({ maxConcurrentAnalysis: 1 });
+      mockElectronAPI.analysis.batch.mockReturnValueOnce(batchPromise);
+      mockElectronAPI.analysis.cancelBatch = jest.fn().mockResolvedValue({ cancelled: true });
+
+      try {
+        const { result } = renderHook(() =>
+          useAnalysis(createMockOptions({ selectedFiles: files }))
+        );
+
+        let analyzePromise;
+        await act(async () => {
+          analyzePromise = result.current.analyzeFiles(files);
+          jest.advanceTimersByTime(50);
+          await Promise.resolve();
+        });
+
+        const clientBatchId = mockElectronAPI.analysis.batch.mock.calls[0][0].batchId;
+        const progressEvent = (batchId, completed, currentFile) =>
+          new CustomEvent('operation-progress', {
+            detail: { type: 'batch_analyze', batchId, completed, total: 9, currentFile }
+          });
+
+        mockSetCurrentAnalysisFile.mockClear();
+        act(() => {
+          window.dispatchEvent(progressEvent('reanalyze-all-1', 5, '/elsewhere/other.txt'));
+        });
+        expect(mockSetCurrentAnalysisFile).not.toHaveBeenCalledWith('other.txt');
+
+        act(() => {
+          window.dispatchEvent(progressEvent(clientBatchId, 1, files[0].path));
+        });
+        expect(mockSetCurrentAnalysisFile).toHaveBeenCalledWith('file-0.txt');
+
+        act(() => {
+          result.current.cancelAnalysis();
+        });
+        expect(mockElectronAPI.analysis.cancelBatch).toHaveBeenCalledWith(
+          expect.objectContaining({ batchId: clientBatchId })
+        );
+
+        resolveBatch({
+          success: true,
+          cancelled: true,
+          results: [],
+          errors: [],
+          total: files.length,
+          successful: 0
+        });
+        await act(async () => {
+          await analyzePromise;
+        });
+      } finally {
+        delete mockElectronAPI.analysis.cancelBatch;
+      }
     });
 
     test('hydrates completed ready-queue entries immediately when cancelled', async () => {
@@ -1024,6 +1691,21 @@ describe('shouldUseBatchAnalysis', () => {
     expect(shouldUseBatchAnalysis(40, 2, 2)).toBe(true);
     expect(shouldUseBatchAnalysis(40, 3, 2)).toBe(false);
   });
+
+  test('a run with audio or video uses the batch path whatever its size', () => {
+    expect(shouldUseBatchAnalysis(1, 3, 3, true)).toBe(true);
+    expect(shouldUseBatchAnalysis(1, 3, 3, false)).toBe(false);
+    expect(shouldUseBatchAnalysis(0, 3, 3, true)).toBe(false);
+  });
+
+  test('recognizes audio and video by extension', () => {
+    const { isMediaFilePath } = require('../src/renderer/phases/discover/useAnalysis');
+    expect(isMediaFilePath('C:\\Recordings\\Meeting.MP3')).toBe(true);
+    expect(isMediaFilePath('/clips/holiday.mov')).toBe(true);
+    expect(isMediaFilePath('/docs/notes.txt')).toBe(false);
+    expect(isMediaFilePath('/archive.mp4/readme')).toBe(false);
+    expect(isMediaFilePath(undefined)).toBe(false);
+  });
 });
 
 describe('applyAnalysisOutcome naming trust', () => {
@@ -1103,6 +1785,7 @@ describe('useAnalysis — a run aborted during start-up', () => {
   });
 
   afterEach(() => {
+    dropParkedResume();
     jest.useRealTimers();
   });
 
@@ -1146,5 +1829,63 @@ describe('useAnalysis — a run aborted during start-up', () => {
     expect(applied).toEqual(
       expect.arrayContaining([expect.objectContaining({ path: '/batch/file-0.txt' })])
     );
+  });
+
+  describe('under StrictMode, the run that replaces the aborted one', () => {
+    // The resume on the second mount takes the lock over from the run the
+    // simulated unmount aborted. That run was still in its start-up pause,
+    // and went on after it as if nothing had happened.
+    const { TIMEOUTS } = require('../src/shared/performanceConstants');
+    let opts;
+    let finishBatch;
+
+    beforeEach(async () => {
+      mockElectronAPI.analysis.batch.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finishBatch = () => resolve({ success: true, results: [], errors: [] });
+          })
+      );
+      opts = options({
+        isAnalyzing: true,
+        fileStates: Object.fromEntries(files.map((f) => [f.path, { state: 'pending' }]))
+      });
+      renderHook(() => useAnalysis(opts), { wrapper: React.StrictMode });
+      await act(async () => {
+        jest.advanceTimersByTime(500);
+      });
+      expect(mockElectronAPI.analysis.batch).toHaveBeenCalledTimes(1);
+    });
+
+    afterEach(async () => {
+      await act(async () => {
+        finishBatch();
+        await jest.advanceTimersByTimeAsync(1000);
+      });
+    });
+
+    test('is the only one that reports an analysis as started', () => {
+      const started = opts.setters.setIsAnalyzing.mock.calls.filter((call) => call[0] === true);
+
+      expect(started).toEqual([[true, { total: files.length }]]);
+    });
+
+    test('keeps its heartbeat', async () => {
+      // The aborted run started a heartbeat of its own. Its first tick saw
+      // that its run was over and stopped the heartbeat in use, which by
+      // then was the replacing run's; and it kept ticking, so it stopped
+      // the heartbeat of every run after that as well.
+      const batchSentAt = Date.now();
+      for (let i = 0; i < 3; i += 1) {
+        await act(async () => {
+          jest.advanceTimersByTime(TIMEOUTS.HEARTBEAT_INTERVAL);
+        });
+      }
+
+      const beats = opts.setters.setAnalysisProgress.mock.calls
+        .map((call) => call[0])
+        .filter((progress) => progress?.lastActivity >= batchSentAt + TIMEOUTS.HEARTBEAT_INTERVAL);
+      expect(beats.length).toBeGreaterThanOrEqual(2);
+    });
   });
 });

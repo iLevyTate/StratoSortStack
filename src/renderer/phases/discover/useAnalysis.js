@@ -10,7 +10,12 @@
 
 import { useCallback, useRef, useEffect, useState, useMemo, startTransition } from 'react';
 import { useStore } from 'react-redux';
-import { PHASES, FILE_STATES } from '../../../shared/constants';
+import {
+  PHASES,
+  FILE_STATES,
+  SUPPORTED_AUDIO_EXTENSIONS,
+  SUPPORTED_VIDEO_EXTENSIONS
+} from '../../../shared/constants';
 import { TIMEOUTS, CONCURRENCY, RETRY } from '../../../shared/performanceConstants';
 import { createLogger } from '../../../shared/logger';
 import { embeddingsIpc } from '../../services/ipc';
@@ -33,12 +38,17 @@ import { mapErrorToNotification } from '../../utils/errorMapping';
 import { normalizeNamingConventionState } from '../../../shared/namingConventions';
 import { toCanonicalPath } from '../../utils/canonicalPath';
 import { filesNotYetReady, isBatchAlreadyRunning, runBatchPathWhenFree } from './batchBusy';
+import { setAnalysisRunBase, clearAnalysisRunBase } from '../../store/analysisRunBase';
 
 const logger = createLogger('DiscoverPhase:Analysis');
 const BATCH_ANALYSIS_MIN_FILES = 40;
 /** Mixed-modality batch threshold when hardware recommends sequential (low VRAM). */
 const BATCH_ANALYSIS_LOW_VRAM_MIN_FILES = 3;
 const BATCH_ANALYSIS_PROGRESS_EVENT = 'operation-progress';
+const MEDIA_EXTENSIONS = new Set([
+  ...(SUPPORTED_AUDIO_EXTENSIONS || []),
+  ...(SUPPORTED_VIDEO_EXTENSIONS || [])
+]);
 // Auto-advance timeout is now stored in a ref within the hook to prevent
 // cross-component interference when hook unmounts and remounts
 
@@ -105,12 +115,31 @@ async function analyzeWithRetry(
   }
 }
 
+/**
+ * @param {any} filePath
+ * @returns {boolean} an audio or video file, by extension
+ */
+function isMediaFilePath(filePath) {
+  if (typeof filePath !== 'string') return false;
+  const dot = filePath.lastIndexOf('.');
+  if (dot < 0 || /[\\/]/.test(filePath.slice(dot))) return false;
+  return MEDIA_EXTENSIONS.has(filePath.slice(dot).toLowerCase());
+}
+
+/**
+ * A run with audio or video always takes the batch path. One recording is
+ * many minutes of work; the per-file path gives a file 5 minutes, then
+ * analyzes it again from the start, and its Stop does not reach the work
+ * running in main. The batch has neither limit.
+ */
 function shouldUseBatchAnalysis(
   /** @type {any} */ fileCount,
   /** @type {any} */ concurrency,
-  /** @type {any} */ systemRecommended
+  /** @type {any} */ systemRecommended,
+  hasMedia = false
 ) {
   if (!Number.isFinite(fileCount) || fileCount <= 0) return false;
+  if (hasMedia) return true;
   const recommended = Number(systemRecommended);
   if (recommended === 1 && fileCount >= BATCH_ANALYSIS_LOW_VRAM_MIN_FILES) {
     return true;
@@ -304,7 +333,12 @@ function showAnalysisCompletionNotification({
   }
 }
 
-export { shouldUseBatchAnalysis, BATCH_ANALYSIS_MIN_FILES, BATCH_ANALYSIS_LOW_VRAM_MIN_FILES };
+export {
+  shouldUseBatchAnalysis,
+  isMediaFilePath,
+  BATCH_ANALYSIS_MIN_FILES,
+  BATCH_ANALYSIS_LOW_VRAM_MIN_FILES
+};
 
 // Parked resume intent across Discover unmount/remount. Redux `isAnalyzing`
 // drives NavigationBar's isBlockedByOperation, so it MUST be cleared when
@@ -312,6 +346,10 @@ export { shouldUseBatchAnalysis, BATCH_ANALYSIS_MIN_FILES, BATCH_ANALYSIS_LOW_VR
 // Discover — stays blocked with no way to recover). This module flag survives
 // the unmount so the resume effect still knows a run was interrupted.
 let analysisInterruptedByUnmount = false;
+
+// Counts runs across every instance of the hook. Refs cannot: a Discover
+// that is left and opened again is a new instance with refs of its own.
+let analysisRunGeneration = 0;
 
 /**
  * Custom hook for analysis operations
@@ -356,6 +394,7 @@ export function useAnalysis(options = {}) {
   const runStartedRef = useRef(false);
   const hasAttemptedResumeRef = useRef(false);
   const analysisLockRef = useRef(false);
+  const lockTakenAtRef = useRef(0);
   const [globalAnalysisActive, setGlobalAnalysisActive] = useState(false);
   const analyzeFilesRef = useRef(null);
   const heartbeatIntervalRef = useRef(null);
@@ -368,6 +407,7 @@ export function useAnalysis(options = {}) {
   const batchResultsRef = useRef([]);
   const pendingResultsRef = useRef([]);
   const lastResultsFlushRef = useRef(0);
+  const resultsFlushTimerRef = useRef(null);
   const RESULTS_FLUSH_MS = 200;
   const autoAdvanceTimeoutRef = useRef(null);
   const clearCurrentFileTimeoutRef = useRef(null);
@@ -431,33 +471,52 @@ export function useAnalysis(options = {}) {
     [setAnalysisProgress]
   );
 
+  const applyPendingResults = useCallback(() => {
+    if (resultsFlushTimerRef.current) {
+      clearTimeout(resultsFlushTimerRef.current);
+      resultsFlushTimerRef.current = null;
+    }
+    if (!pendingResultsRef.current.length) return;
+    if (!isMountedRef.current) return;
+
+    lastResultsFlushRef.current = Date.now();
+    const pending = pendingResultsRef.current;
+    pendingResultsRef.current = [];
+
+    const mergedResults = dedupeSuggestedNames(
+      mergeAnalysisResults(analysisResultsRef.current, pending)
+    );
+    const mergedStates = mergeFileStates(fileStatesRef.current, pending);
+
+    // Keep refs in sync to avoid stale merges between flushes
+    analysisResultsRef.current = mergedResults;
+    fileStatesRef.current = mergedStates;
+
+    setAnalysisResults(mergedResults);
+    setFileStates(mergedStates);
+  }, [setAnalysisResults, setFileStates]);
+
   const flushPendingResults = useCallback(
     (force = false) => {
       if (!pendingResultsRef.current.length) return;
       if (!isMountedRef.current) return;
 
-      const now = Date.now();
-      if (!force && now - lastResultsFlushRef.current < RESULTS_FLUSH_MS) {
+      const sinceLastFlush = Date.now() - lastResultsFlushRef.current;
+      if (!force && sinceLastFlush >= 0 && sinceLastFlush < RESULTS_FLUSH_MS) {
+        // Held back by the throttle. It is shown when the window closes: the
+        // next file to finish may be a long recording, many minutes away.
+        if (!resultsFlushTimerRef.current) {
+          resultsFlushTimerRef.current = setTimeout(
+            applyPendingResults,
+            RESULTS_FLUSH_MS - sinceLastFlush
+          );
+        }
         return;
       }
 
-      lastResultsFlushRef.current = now;
-      const pending = pendingResultsRef.current;
-      pendingResultsRef.current = [];
-
-      const mergedResults = dedupeSuggestedNames(
-        mergeAnalysisResults(analysisResultsRef.current, pending)
-      );
-      const mergedStates = mergeFileStates(fileStatesRef.current, pending);
-
-      // Keep refs in sync to avoid stale merges between flushes
-      analysisResultsRef.current = mergedResults;
-      fileStatesRef.current = mergedStates;
-
-      setAnalysisResults(mergedResults);
-      setFileStates(mergedStates);
+      applyPendingResults();
     },
-    [setAnalysisResults, setFileStates]
+    [applyPendingResults]
   );
 
   const pruneBatchResultsForPath = useCallback((/** @type {any} */ filePath) => {
@@ -902,6 +961,7 @@ export function useAnalysis(options = {}) {
           return false;
         }
         analysisLockRef.current = true;
+        lockTakenAtRef.current = Date.now();
         return true;
       };
 
@@ -910,7 +970,20 @@ export function useAnalysis(options = {}) {
       if (!lockAcquired) {
         const state = /** @type {any} */ (store.getState());
         const progress = state.analysis.analysisProgress || analysisProgressRef.current;
-        const lastActivity = Number.isFinite(progress?.lastActivity) ? progress.lastActivity : 0;
+        const storeLastActivity = Number.isFinite(progress?.lastActivity)
+          ? progress.lastActivity
+          : 0;
+        // A run that holds the lock and was not aborted is alive from the
+        // moment it took it. Its first progress is written a moment later;
+        // until then the store holds what the run before left, which is no
+        // activity once that run cleared its counts, and no activity read
+        // as a lock gone stale: a second call reset the run that had just
+        // started. An aborted holder (Discover unmounted) is still taken over.
+        const holderAlive =
+          analysisLockRef.current &&
+          abortControllerRef.current &&
+          !abortControllerRef.current.signal.aborted;
+        const lastActivity = Math.max(storeLastActivity, holderAlive ? lockTakenAtRef.current : 0);
         const inactivityMs = lastActivity ? Date.now() - lastActivity : Infinity;
         const staleThreshold = TIMEOUTS.ANALYSIS_LOCK || 5 * 60 * 1000;
 
@@ -947,6 +1020,7 @@ export function useAnalysis(options = {}) {
 
       const runId = ++analysisRunIdRef.current;
       const isActiveRun = () => analysisRunIdRef.current === runId;
+      const runGeneration = ++analysisRunGeneration;
       cancelledBatchSnapshotRef.current = null;
       batchCompletedPathsRef.current.clear();
 
@@ -975,6 +1049,13 @@ export function useAnalysis(options = {}) {
       }
 
       await new Promise((resolve) => setTimeout(resolve, 10));
+
+      // Replaced during the pause (a takeover of the lock after an unmount,
+      // a reset): whoever did it released the lock and cleared the state,
+      // and both are the next run's from here on.
+      if (!isActiveRun()) {
+        return { started: false, reason: 'superseded' };
+      }
 
       // Safety timeout - store in ref for proper cleanup
       const scheduleLockTimeoutCheck = () => {
@@ -1036,10 +1117,11 @@ export function useAnalysis(options = {}) {
 
       // Heartbeat interval - just updates lastActivity to keep analysis alive.
       // Defer setState to avoid blocking the interval handler (Chrome Long Task violations).
-      heartbeatIntervalRef.current = setInterval(() => {
+      const heartbeat = setInterval(() => {
         if (!isActiveRun()) {
-          if (heartbeatIntervalRef.current) {
-            clearInterval(heartbeatIntervalRef.current);
+          // Its own interval only: the ref may hold a later run's by now.
+          clearInterval(heartbeat);
+          if (heartbeatIntervalRef.current === heartbeat) {
             heartbeatIntervalRef.current = null;
           }
           return;
@@ -1070,13 +1152,14 @@ export function useAnalysis(options = {}) {
           }
         }
       }, TIMEOUTS.HEARTBEAT_INTERVAL);
+      heartbeatIntervalRef.current = heartbeat;
 
       // Global analysis watchdog:
       // - inactivity timeout: reset only when there is no progress for GLOBAL_ANALYSIS window
       // - hard cap timeout: absolute upper bound to avoid runaway background loops
       const analysisStartedAt = Date.now();
       const fallbackPerFileMs = 45000;
-      const maxHardCapMs = 6 * 60 * 60 * 1000;
+      const maxHardCapMs = TIMEOUTS.ANALYSIS_RUN_MAX;
       const baselineHardCapMs = Math.max(TIMEOUTS.GLOBAL_ANALYSIS * 6, 60 * 60 * 1000);
       let hardCapMs = baselineHardCapMs;
       let hardCapLabel = `${Math.round(hardCapMs / 60000)} min`;
@@ -1228,7 +1311,12 @@ export function useAnalysis(options = {}) {
       const projectedMs =
         Math.ceil(uniqueFiles.length / Math.max(1, concurrency)) * fallbackPerFileMs +
         15 * 60 * 1000;
-      hardCapMs = Math.min(Math.max(baselineHardCapMs, projectedMs), maxHardCapMs);
+      const hasMedia = uniqueFiles.some((/** @type {any} */ file) => isMediaFilePath(file?.path));
+      // 45 seconds a file says nothing about a recording, which can be hours
+      // long: a run with one gets the longest window.
+      hardCapMs = hasMedia
+        ? maxHardCapMs
+        : Math.min(Math.max(baselineHardCapMs, projectedMs), maxHardCapMs);
       hardCapLabel = `${Math.round(hardCapMs / 60000)} min`;
 
       // O-3: an analysis run is a multi-invoke user action — group all its
@@ -1286,21 +1374,24 @@ export function useAnalysis(options = {}) {
             `analysis_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
           activeBatchIdRef.current = clientBatchId;
           cancelInFlightBatchIdRef.current = null;
-          let resolvedBatchId = clientBatchId;
+          if (alreadyDone > 0) {
+            // Main counts within the files it is sent; the store shows the run.
+            setAnalysisRunBase({
+              batchId: clientBatchId,
+              done: alreadyDone,
+              total: uniqueFiles.length
+            });
+          }
           const onBatchProgress = (/** @type {any} */ event) => {
             if (!isActiveRun() || abortSignal.aborted) return;
             const payload = event?.detail;
             if (!payload || payload.type !== 'batch_analyze') return;
-            if (payload.batchId && payload.batchId !== resolvedBatchId) {
-              // Accept one-time server-side batch id remap for compatibility.
-              if (resolvedBatchId === clientBatchId) {
-                resolvedBatchId = payload.batchId;
-                activeBatchIdRef.current = payload.batchId;
-                cancelInFlightBatchIdRef.current = null;
-              } else {
-                return;
-              }
-            }
+            // Only this batch's events. Main reports under the id the request
+            // carried. Adopting the first other id seen (an old "server-side
+            // remap") let any other sender on this channel take the run over:
+            // its own progress was then dropped and Stop cancelled an id main
+            // did not know.
+            if (payload.batchId && payload.batchId !== clientBatchId) return;
 
             const previousCompleted = Number(completedCountRef.current) || 0;
             const current = Math.min(
@@ -1334,13 +1425,7 @@ export function useAnalysis(options = {}) {
             const item = payload?.item;
             const filePath = item?.filePath;
             if (typeof filePath !== 'string' || !filePath) return;
-            if (
-              payload?.batchId &&
-              payload.batchId !== resolvedBatchId &&
-              payload.batchId !== clientBatchId
-            ) {
-              return;
-            }
+            if (payload?.batchId && payload.batchId !== clientBatchId) return;
             const canon = toCanonicalPath(filePath);
             if (canon && streamedPaths.has(canon)) return;
             if (canon) {
@@ -1390,7 +1475,11 @@ export function useAnalysis(options = {}) {
                   namingSettings
                 }
               }),
-              TIMEOUTS.AI_ANALYSIS_BATCH,
+              // A backstop only: the run's watchdogs (no progress, hard cap)
+              // stop a batch that hangs and cancel it in main. A fixed 30
+              // minutes here ended every longer batch and sent the rest
+              // through the per-file path.
+              hardCapMs + 2 * TIMEOUTS.GLOBAL_ANALYSIS,
               `Batch analysis for ${batchFiles.length} files`
             );
 
@@ -1493,10 +1582,8 @@ export function useAnalysis(options = {}) {
             window.removeEventListener(BATCH_ANALYSIS_PROGRESS_EVENT, onBatchProgress);
             window.removeEventListener('analysis:file-complete', onFileStreamed);
             abortSignal.removeEventListener('abort', abortListener);
-            if (
-              activeBatchIdRef.current === clientBatchId ||
-              activeBatchIdRef.current === resolvedBatchId
-            ) {
+            clearAnalysisRunBase(clientBatchId);
+            if (activeBatchIdRef.current === clientBatchId) {
               activeBatchIdRef.current = null;
             }
           }
@@ -1612,16 +1699,13 @@ export function useAnalysis(options = {}) {
               errors: failedWorkers.map((r) => r.reason?.message || 'Unknown error')
             });
           }
-
-          if (!isActiveRun() || abortSignal.aborted) {
-            addNotification('Analysis cancelled by user', 'info', 2000);
-          }
         };
 
         const useBatchPath = shouldUseBatchAnalysis(
           uniqueFiles.length,
           concurrency,
-          systemRecommended
+          systemRecommended,
+          hasMedia
         );
         if (useBatchPath) {
           try {
@@ -1639,6 +1723,9 @@ export function useAnalysis(options = {}) {
               // only the rest once it is done. The ready queue is durable;
               // the analysis cache keeps results only 30 minutes.
               selectRemaining: async () => {
+                // The refusal just now shows the earlier batch is still
+                // running: this run is waiting, not stuck.
+                lastProgressAtRef.current = Date.now();
                 await hydrateReadyQueueResults();
                 const getReadyQueue = window?.electronAPI?.analysis?.getReadyQueue;
                 if (typeof getReadyQueue !== 'function') return null;
@@ -1713,9 +1800,17 @@ export function useAnalysis(options = {}) {
         analysisResultsRef.current = mergedResults;
         fileStatesRef.current = mergedStates;
 
-        // Show completion notification
-        const successCount = batchResults.filter((r) => r.analysis).length;
-        const failureCount = batchResults.length - successCount;
+        // Show completion notification. Count the run's files in the merged
+        // list, not only what this run recorded: a run that waited for an
+        // earlier batch takes that batch's results from the ready queue.
+        const runPaths = new Set(
+          uniqueFiles.map((/** @type {any} */ file) => toCanonicalPath(file?.path))
+        );
+        const runResults = mergedResults.filter((/** @type {any} */ r) =>
+          runPaths.has(toCanonicalPath(r?.path))
+        );
+        const successCount = runResults.filter((/** @type {any} */ r) => r.analysis).length;
+        const failureCount = runResults.length - successCount;
         showAnalysisCompletionNotification({
           successCount,
           failureCount,
@@ -1752,13 +1847,19 @@ export function useAnalysis(options = {}) {
           const trackedTotal =
             Number.isInteger(progress?.total) && progress.total > 0 ? progress.total : files.length;
           const didComplete = trackedTotal > 0 && completedCountRef.current >= trackedTotal;
-          if (!didComplete) {
+          // Discover was left, and the batch request returned only now that
+          // main has let go of its file. If a returning Discover has started
+          // a run meanwhile, the analysis state in the store is that run's.
+          const handedOver = !isMountedRef.current && analysisRunGeneration !== runGeneration;
+          if (!didComplete && !handedOver) {
             requeueInFlightFileStates();
           }
 
           // If we already completed, clear state even if component unmounted to avoid
           // "analysis continuing in background" banners with 100% progress.
-          if (isMountedRef.current || didComplete) {
+          if (handedOver) {
+            logger.info('Analysis left by navigation ended after a newer run started');
+          } else if (isMountedRef.current || didComplete) {
             isAnalyzingRef.current = false;
             setIsAnalyzing(false);
 
@@ -2036,6 +2137,10 @@ export function useAnalysis(options = {}) {
       if (pendingFilesTimeoutRef.current) {
         clearTimeout(pendingFilesTimeoutRef.current);
         pendingFilesTimeoutRef.current = null;
+      }
+      if (resultsFlushTimerRef.current) {
+        clearTimeout(resultsFlushTimerRef.current);
+        resultsFlushTimerRef.current = null;
       }
     };
   }, [setIsAnalyzing]);
