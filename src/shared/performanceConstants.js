@@ -125,6 +125,14 @@ const TIMEOUTS = {
   ANALYSIS_LOCK: 5 * 60 * 1000, // 5 minutes - forces lock release if analysis hangs
   GLOBAL_ANALYSIS: 10 * 60 * 1000, // 10 minutes - max total analysis time
   HEARTBEAT_INTERVAL: 30000, // 30 seconds - progress heartbeat during analysis
+  // Longest a Discover analysis run may take before it is stopped as runaway.
+  ANALYSIS_RUN_MAX: 6 * 60 * 60 * 1000,
+  // How long a running batch may go without starting or finishing a file and
+  // still be reported as alive. Each is longer than what main allows one
+  // file: text extraction plus the model call for a document or image; a
+  // recording of up to 4 hours, transcribed in one piece, for audio/video.
+  BATCH_FILE_QUIET_MAX: 15 * 60 * 1000,
+  BATCH_MEDIA_QUIET_MAX: 3 * 60 * 60 * 1000,
   STALE_ACTIVITY: 15 * 60 * 1000, // 15 minutes - activity considered stale
   METRICS_BROADCAST: 30000, // 30 seconds - system metrics broadcast to renderer
   EMBEDDING_CHECK: 1000, // Delay before checking embeddings status

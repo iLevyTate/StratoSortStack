@@ -47,6 +47,7 @@ const {
   applyExperienceModeSettings
 } = require('../../shared/experienceMode');
 const { SETTINGS_SCHEMA_VERSION } = require('../../shared/constants');
+const { toLocalCalendarDay } = require('../../shared/contentDateSanity');
 const { validateAiSettingsForSave } = require('../services/ai/aiSettings');
 
 /**
@@ -781,7 +782,7 @@ function registerSettingsIpc(servicesOrParams) {
           // Always show save dialog for security
           const result = await dialog.showSaveDialog({
             title: 'Export Settings',
-            defaultPath: `stratosort-config-${new Date().toISOString().split('T')[0]}.json`,
+            defaultPath: `stratosort-config-${toLocalCalendarDay(Date.now())}.json`,
             filters: [
               { name: 'JSON Files', extensions: ['json'] },
               { name: 'All Files', extensions: ['*'] }

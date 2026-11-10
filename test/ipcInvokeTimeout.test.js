@@ -9,6 +9,8 @@ jest.mock('../src/shared/performanceConstants', () => ({
     DIRECTORY_SCAN: 2000,
     AI_ANALYSIS_LONG: 3000,
     AI_ANALYSIS_BATCH: 9999,
+    ANALYSIS_RUN_MAX: 50000,
+    GLOBAL_ANALYSIS: 1000,
     TRIAGE_SCAN_LONG: 900000,
     USER_DIALOG: 600000
   }
@@ -21,8 +23,28 @@ describe('getIpcInvokeTimeout', () => {
     expect(getIpcInvokeTimeout(IPC_CHANNELS.SUGGESTIONS.GET_BATCH_SUGGESTIONS)).toBe(9999);
   });
 
-  test('maps analysis:analyze-batch to AI_ANALYSIS_BATCH', () => {
-    expect(getIpcInvokeTimeout(IPC_CHANNELS.ANALYSIS.ANALYZE_BATCH)).toBe(9999);
+  // One request carries a whole Discover run. With the 30-minute batch
+  // budget, every longer run was cancelled in main and finished per file.
+  test('gives analysis:analyze-batch the run cap plus a margin, not the batch budget', () => {
+    expect(getIpcInvokeTimeout(IPC_CHANNELS.ANALYSIS.ANALYZE_BATCH)).toBe(50000 + 3 * 1000);
+  });
+
+  test('the batch request outlasts the longest run the renderer allows', () => {
+    jest.isolateModules(() => {
+      jest.doMock('../src/shared/performanceConstants', () =>
+        jest.requireActual('../src/shared/performanceConstants')
+      );
+      const { TIMEOUTS } = require('../src/shared/performanceConstants');
+      const real = require('../src/shared/ipcInvokeTimeout');
+      // useAnalysis gives its own wait the hard cap plus two watchdog windows.
+      const longestRendererWait = TIMEOUTS.ANALYSIS_RUN_MAX + 2 * TIMEOUTS.GLOBAL_ANALYSIS;
+      expect(real.getIpcInvokeTimeout(IPC_CHANNELS.ANALYSIS.ANALYZE_BATCH)).toBeGreaterThan(
+        longestRendererWait
+      );
+      expect(real.getIpcInvokeTimeout(IPC_CHANNELS.SUGGESTIONS.GET_BATCH_SUGGESTIONS)).toBe(
+        TIMEOUTS.AI_ANALYSIS_BATCH
+      );
+    });
   });
 
   test('maps suggestions:get-file to AI_ANALYSIS_LONG', () => {

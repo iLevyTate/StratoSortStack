@@ -356,6 +356,42 @@ describe('SmartFolderWatcher - Migration Tests', () => {
       expect(watcher.analysisQueue[0].mtime).toBe(2000);
     });
 
+    test('a file event does not turn a queued reanalysis into a plain update', () => {
+      watcher._enqueueAnalysisItem({
+        filePath: '/file1.pdf',
+        mtime: 1000,
+        eventType: 'reanalyze',
+        applyNaming: true,
+        bulk: true
+      });
+      watcher._enqueueAnalysisItem({ filePath: '/file1.pdf', mtime: 2000, eventType: 'change' });
+
+      expect(watcher.analysisQueue).toHaveLength(1);
+      expect(watcher.analysisQueue[0]).toEqual(
+        expect.objectContaining({
+          mtime: 2000,
+          eventType: 'reanalyze',
+          applyNaming: true,
+          bulk: true
+        })
+      );
+    });
+
+    test('a reanalysis request replaces a queued file event', () => {
+      watcher._enqueueAnalysisItem({ filePath: '/file1.pdf', mtime: 1000, eventType: 'change' });
+      watcher._enqueueAnalysisItem({
+        filePath: '/file1.pdf',
+        mtime: 1000,
+        eventType: 'reanalyze',
+        applyNaming: false
+      });
+
+      expect(watcher.analysisQueue).toHaveLength(1);
+      expect(watcher.analysisQueue[0]).toEqual(
+        expect.objectContaining({ eventType: 'reanalyze', applyNaming: false })
+      );
+    });
+
     test('drops oldest item when queue is full and increments queueDropped stat', () => {
       const maxQueueSize = 1000; // LIMITS.ANALYSIS_QUEUE_SIZE from mock
       for (let i = 0; i < maxQueueSize; i++) {

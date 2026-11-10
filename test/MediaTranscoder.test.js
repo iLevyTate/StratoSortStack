@@ -407,7 +407,7 @@ describe('transcodeToWhisperPcm — failure modes', () => {
     );
     await expect(
       transcodeToWhisperPcm('/mock/audio.mp3', { maxDurationSeconds: 1 })
-    ).rejects.toMatchObject({ code: ERROR_CODES.INVALID_INPUT });
+    ).rejects.toMatchObject({ code: ERROR_CODES.INVALID_INPUT, maxDurationSeconds: 1 });
   });
 });
 

@@ -6,7 +6,11 @@ const crypto = require('crypto');
 const { getInstance: getLlamaService } = require('../services/LlamaService');
 const { globalDeduplicator } = require('../utils/llmOptimization');
 const { extractAndParseJSON } = require('../utils/jsonRepair');
-const { isPlausibleContentDate } = require('../../shared/contentDateSanity');
+const {
+  isPlausibleContentDate,
+  toLocalCalendarDay,
+  toWrittenCalendarDay
+} = require('../../shared/contentDateSanity');
 const {
   attemptJsonRepairWithLlama,
   attemptProseExtractionWithLlama
@@ -33,6 +37,12 @@ const {
   safeSuggestedName,
   createFallbackAnalysis
 } = require('./fallbackUtils');
+const {
+  createCancellationError,
+  callerCancelled,
+  asCancellationError,
+  rejectFallbackOfCancelledRun
+} = require('./analysisCancellation');
 const FolderMatchingService = require('../services/FolderMatchingService');
 const { analysisQueue } = require('./embeddingQueue/stageQueues');
 const embeddingQueueManager = require('./embeddingQueue/queueManager');
@@ -658,12 +668,12 @@ STRICT OUTPUT REQUIREMENT:
 
         // Validate and structure the date
         if (parsedJson.date) {
-          const dateObj = new Date(parsedJson.date);
-          if (isNaN(dateObj.getTime())) {
+          const writtenDay = toWrittenCalendarDay(parsedJson.date);
+          if (!writtenDay) {
             delete parsedJson.date;
             logger.warn('AI engine returned an invalid date for image, omitting.');
           } else {
-            parsedJson.date = dateObj.toISOString().split('T')[0];
+            parsedJson.date = writtenDay;
             // Same plausibility gate as documentLlm: a hallucinated year
             // would poison the timeline sort and stats-card year range.
             if (!isPlausibleContentDate(parsedJson.date)) {
@@ -1275,11 +1285,24 @@ async function preprocessImageBuffer(imageBuffer, fileExtension, options = {}) {
 // ============================================================================
 
 /**
+ * Analyze an image. Rejects with OPERATION_CANCELLED when the caller
+ * cancelled (abort signal or isCancelled) and no analysis was completed;
+ * every other failure resolves to a filename fallback.
  * @param {any} filePath
  * @param {any[]} [smartFolders]
  * @param {{ bypassCache?: boolean, isCancelled?: () => boolean, abortSignal?: AbortSignal, signal?: AbortSignal, smartFolderId?: string | null, visionModel?: string }} [options]
  */
 async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
+  const result = await runImageAnalysis(filePath, smartFolders, options);
+  return rejectFallbackOfCancelledRun(result, options);
+}
+
+/**
+ * @param {any} filePath
+ * @param {any[]} smartFolders
+ * @param {{ bypassCache?: boolean, isCancelled?: () => boolean, abortSignal?: AbortSignal, signal?: AbortSignal, smartFolderId?: string | null, visionModel?: string }} options
+ */
+async function runImageAnalysis(filePath, smartFolders, options) {
   logger.info(`Analyzing image file`, { path: filePath });
   const bypassCache = Boolean(options?.bypassCache);
   const fileExtension = path.extname(filePath).toLowerCase();
@@ -1428,7 +1451,7 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
       // "By filename and date" means the date too: the file's modification
       // time is in hand from the stat above, and without it the Timeline
       // filed a whole photo library under the day the batch ran.
-      const fileDay = new Date(stats.mtimeMs || Date.now()).toISOString().split('T')[0];
+      const fileDay = toLocalCalendarDay(stats.mtimeMs || Date.now());
       const undecodable = createVisionUnavailableFallback(
         {
           fileName,
@@ -1590,9 +1613,7 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
       logger.debug('[IMAGE] Failed to get naming context', { error: ncError.message });
     }
 
-    const fileDateForText = exifDate
-      ? exifDate
-      : new Date(stats.mtimeMs || Date.now()).toISOString().split('T')[0];
+    const fileDateForText = exifDate ? exifDate : toLocalCalendarDay(stats.mtimeMs || Date.now());
     const attemptTextFallback = async () => {
       let ocrText = extractedText;
       if (!ocrText || ocrText.length < 20) {
@@ -1650,8 +1671,8 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
     };
 
     // Check for cancellation before expensive vision/LLM call
-    if (typeof options.isCancelled === 'function' && options.isCancelled()) {
-      throw new Error('Analysis cancelled');
+    if (callerCancelled(options)) {
+      throw createCancellationError();
     }
 
     /** @type {AnalysisResult | undefined} */
@@ -1819,6 +1840,7 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
           analysis = retriedAnalysis;
         }
       } catch (retryError) {
+        if (retryError?.code === 'OPERATION_CANCELLED') throw retryError;
         logger.warn('[IMAGE] Vision retry failed', {
           filePath,
           error: retryError?.message || String(retryError)
@@ -2286,6 +2308,11 @@ async function analyzeImageFile(filePath, smartFolders = [], options = {}) {
       error instanceof RangeError
     ) {
       throw error;
+    }
+    // A cancellation is not a failed analysis: the caller stops, and no
+    // filename fallback is recorded for a file nobody analyzed.
+    if (error?.code === 'OPERATION_CANCELLED' || callerCancelled(options)) {
+      throw asCancellationError(error);
     }
     logger.error('Error processing image', { filePath, error: error.message });
     const fallback = createFallbackAnalysis({

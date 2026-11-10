@@ -406,6 +406,89 @@ describe('WhisperService — lazy load and transcription', () => {
     expect(r2.text).toBe('shared');
   });
 
+  describe('a caller that joined a transcription in progress', () => {
+    const tick = () => new Promise((r) => setImmediate(r));
+    function makeJoinService() {
+      mockFsStat.mockResolvedValue({ size: 100, mtimeMs: 1, isFile: () => true });
+      const { binding, handles } = makeFakeBinding();
+      const transcoder = jest.fn(async () => ({
+        pcm: Buffer.alloc(32000),
+        sampleRate: 16000,
+        channels: 1,
+        durationSeconds: 1
+      }));
+      const svc = new WhisperService({
+        bindingOverride: binding,
+        gpuMonitor: fakeGpuMonitor(),
+        fsPromisesOverride: fakeFsPromises,
+        transcoderOverride: { transcodeToWhisperPcm: transcoder }
+      });
+      return { svc, handles };
+    }
+
+    test('is not cancelled when the caller that started it is', async () => {
+      // The watcher starts on a recording and Discover asks for the same
+      // file. The watcher yields: Discover must still get its transcript.
+      const { svc, handles } = makeJoinService();
+      const starter = new AbortController();
+      const started = svc.transcribeMedia('/mock/shared.mp3', { signal: starter.signal });
+      const joined = svc.transcribeMedia('/mock/shared.mp3');
+      const third = svc.transcribeMedia('/mock/shared.mp3');
+      await tick();
+      expect(handles).toHaveLength(1);
+
+      starter.abort();
+      await expect(started).rejects.toMatchObject({ code: ERROR_CODES.OPERATION_CANCELLED });
+      await tick();
+      await tick();
+
+      // One new pass, shared by both callers that are still waiting.
+      expect(handles).toHaveLength(2);
+      handles[1]._resolve({ result: 'own pass', segments: [] });
+      await expect(joined).resolves.toMatchObject({ text: 'own pass' });
+      await expect(third).resolves.toMatchObject({ text: 'own pass' });
+      expect(handles).toHaveLength(2);
+    });
+
+    test('stops waiting when it is cancelled itself, and the pass goes on', async () => {
+      const { svc, handles } = makeJoinService();
+      const joiner = new AbortController();
+      const started = svc.transcribeMedia('/mock/shared.mp3');
+      const joined = svc.transcribeMedia('/mock/shared.mp3', { signal: joiner.signal });
+      await tick();
+      expect(handles).toHaveLength(1);
+
+      joiner.abort();
+      const outcome = await Promise.race([
+        joined.then(
+          () => 'resolved',
+          (error) => error.code
+        ),
+        tick()
+          .then(tick)
+          .then(() => 'still waiting')
+      ]);
+      expect(outcome).toBe(ERROR_CODES.OPERATION_CANCELLED);
+      expect(handles[0].stop).not.toHaveBeenCalled();
+
+      handles[0]._resolve({ result: 'finished', segments: [] });
+      await expect(started).resolves.toMatchObject({ text: 'finished' });
+      await joined.catch(() => {});
+    });
+
+    test('still fails with the pass when it failed for another reason', async () => {
+      const { svc, handles } = makeJoinService();
+      const started = svc.transcribeMedia('/mock/shared.mp3');
+      const joined = svc.transcribeMedia('/mock/shared.mp3');
+      await tick();
+
+      handles[0]._reject(new Error('decoder failed'));
+      await expect(started).rejects.toMatchObject({ code: ERROR_CODES.ANALYSIS_FAILED });
+      await expect(joined).rejects.toMatchObject({ code: ERROR_CODES.ANALYSIS_FAILED });
+      expect(handles).toHaveLength(1);
+    });
+  });
+
   test('useCache:false bypasses the dedup join (forced re-analysis must do its own pass)', async () => {
     // A user-forced re-analysis (bypassCache=true upstream → useCache=false
     // here) must NOT join an in-flight call: that would silently return

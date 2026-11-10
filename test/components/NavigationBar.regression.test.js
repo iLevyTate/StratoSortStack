@@ -372,6 +372,61 @@ describe('NavigationBar regression guards', () => {
     ).toBe(false);
   });
 
+  test('the Dashboard toggle waits for a running analysis', () => {
+    // Discover owns the run and unmounts for the dashboard, which would stop it.
+    mockState.analysis.isAnalyzing = true;
+    render(<NavigationBar />);
+
+    const toggleGroup = screen.getByRole('group', { name: /view mode/i });
+    const dashboardButton = within(toggleGroup).getByText('Dashboard').closest('button');
+
+    expect(dashboardButton).toHaveAttribute('aria-disabled', 'true');
+    expect(dashboardButton).toHaveAccessibleName(/analysis is still running/i);
+
+    fireEvent.click(dashboardButton);
+
+    expect(
+      mockDispatch.mock.calls.some(([action]) => action && action.type === 'ui/setViewMode')
+    ).toBe(false);
+  });
+
+  test('the way back to Guided stays open while an analysis runs', () => {
+    mockState.ui.viewMode = 'dashboard';
+    mockState.analysis.isAnalyzing = true;
+    render(<NavigationBar />);
+
+    const toggleGroup = screen.getByRole('group', { name: /view mode/i });
+    const dashboardButton = within(toggleGroup).getByText('Dashboard').closest('button');
+    expect(dashboardButton).toHaveAttribute('aria-disabled', 'false');
+
+    fireEvent.click(within(toggleGroup).getByText('Guided').closest('button'));
+
+    expect(
+      mockDispatch.mock.calls.some(
+        ([action]) => action && action.type === 'ui/setViewMode' && action.payload === 'phased'
+      )
+    ).toBe(true);
+  });
+
+  test('Back to dashboard explains itself instead of leaving a running analysis', () => {
+    mockState.ui.cameFromDashboard = true;
+    mockState.analysis.isAnalyzing = true;
+    render(<NavigationBar />);
+
+    const back = screen.getByRole('button', { name: /back to dashboard/i });
+    expect(back).toHaveAttribute('aria-disabled', 'true');
+
+    fireEvent.click(back);
+
+    expect(
+      mockDispatch.mock.calls.some(([action]) => action && action.type === 'ui/setViewMode')
+    ).toBe(false);
+    expect(mockNotification.showInfo).toHaveBeenCalledWith(
+      expect.stringMatching(/analysis is still running/i),
+      expect.any(Number)
+    );
+  });
+
   test('each view-mode toggle exposes a descriptive accessible name', () => {
     render(<NavigationBar />);
 

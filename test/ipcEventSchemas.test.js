@@ -129,6 +129,16 @@ describe('IPC Event Schemas', () => {
       expect(result.valid).toBe(true);
     });
 
+    test('validates the watcher reanalysis progress type', () => {
+      const result = validateEventPayload('operation-progress', {
+        type: 'reanalyze',
+        completed: 4,
+        total: 9,
+        message: 'Reanalyzing files... 4/9'
+      });
+      expect(result.valid).toBe(true);
+    });
+
     test('validates hint type', () => {
       const result = validateEventPayload('operation-progress', {
         type: 'hint',

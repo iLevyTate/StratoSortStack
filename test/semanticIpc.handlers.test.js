@@ -415,7 +415,7 @@ describe('Semantic IPC (Handlers)', () => {
         mockMainWindow.webContents,
         IPC_EVENTS.OPERATION_PROGRESS,
         expect.objectContaining({
-          type: 'batch_analyze',
+          type: 'reanalyze',
           completed: 5,
           total: 10,
           percent: 50

@@ -165,6 +165,38 @@ describe('VisionService', () => {
       expect(service._isReady).toBe(false);
     });
 
+    test('a spawn error fails the start at once instead of polling a dead port', async () => {
+      const child = createFakeChild();
+      const { spawn } = require('child_process');
+      spawn.mockReturnValue(child);
+      service._ensureBinary = jest.fn().mockResolvedValue('/mock/llama-server');
+      let healthSignal;
+      // Never resolves: without the fix the start waits out the whole
+      // startup timeout.
+      service._waitForHealth = jest.fn((port, timeoutMs, signal) => {
+        healthSignal = signal;
+        return new Promise(() => {});
+      });
+
+      const startPromise = service._startServer({ modelPath: '/m.gguf' });
+      const outcome = Promise.race([
+        startPromise.then(
+          () => 'started',
+          (error) => error
+        ),
+        new Promise((resolve) => setTimeout(() => resolve('still waiting'), 500))
+      ]);
+      await new Promise((resolve) => setImmediate(resolve));
+      child.emit('error', new Error('spawn /mock/llama-server ENOENT'));
+
+      const result = await outcome;
+      expect(result).toBeInstanceOf(Error);
+      expect(result.message).toMatch(/Vision runtime failed to start: spawn .* ENOENT/);
+      expect(healthSignal.aborted).toBe(true);
+      expect(service._process).toBeNull();
+      expect(service._isReady).toBe(false);
+    });
+
     test('a stale exit from an old child does not clobber a newer child state', async () => {
       const childA = createFakeChild();
       const { spawn } = require('child_process');
@@ -266,6 +298,83 @@ describe('VisionService', () => {
       expect(service._memoryRegistration).toEqual({ manager, type: 'vision-runtime' });
     });
 
+    test('the memory is reserved from before the spawn until the start is over', async () => {
+      const order = [];
+      const endReservation = jest.fn(() => order.push('reservation ended'));
+      manager.reserveLoad = jest.fn(() => {
+        order.push('reserved');
+        return endReservation;
+      });
+      manager.registerExternalConsumer.mockImplementation(() => {
+        order.push('registered');
+        return true;
+      });
+      const { spawn } = require('child_process');
+      spawn.mockImplementation(() => {
+        order.push('spawned');
+        return createFakeChild();
+      });
+      service._ensureBinary = jest.fn().mockResolvedValue('/mock/llama-server');
+      service._waitForHealth = jest.fn().mockResolvedValue(undefined);
+
+      await service._startServer({ modelPath: '/models/vision.gguf' });
+
+      expect(manager.reserveLoad).toHaveBeenCalledWith('vision-runtime', 5 * GiB);
+      expect(order).toEqual(['reserved', 'spawned', 'registered', 'reservation ended']);
+    });
+
+    test('memory is not reserved while the runtime binary is found, which can be a download', async () => {
+      const order = [];
+      manager.reserveLoad = jest.fn(() => {
+        order.push('reserved');
+        return jest.fn();
+      });
+      const { spawn } = require('child_process');
+      spawn.mockReturnValue(createFakeChild());
+      service._ensureBinary = jest.fn(async () => {
+        order.push('binary found');
+        return '/mock/llama-server';
+      });
+      service._waitForHealth = jest.fn().mockResolvedValue(undefined);
+
+      await service._startServer({ modelPath: '/models/vision.gguf' });
+
+      expect(order[0]).toBe('binary found');
+      expect(order).toContain('reserved');
+    });
+
+    test('no binary: the start fails and nothing was reserved', async () => {
+      manager.reserveLoad = jest.fn(() => jest.fn());
+      service._ensureBinary = jest.fn().mockRejectedValue(new Error('no runtime for this backend'));
+
+      await expect(service._startServer({ modelPath: '/models/vision.gguf' })).rejects.toThrow(
+        'no runtime for this backend'
+      );
+
+      expect(manager.reserveLoad).not.toHaveBeenCalled();
+    });
+
+    test('a start that fails gives the reservation back', async () => {
+      const endReservation = jest.fn();
+      manager.reserveLoad = jest.fn(() => endReservation);
+      const { spawn } = require('child_process');
+      spawn.mockReturnValue(createFakeChild());
+      service._ensureBinary = jest.fn().mockResolvedValue('/mock/llama-server');
+      service._waitForHealth = jest.fn().mockRejectedValue(new Error('health check failed'));
+
+      await expect(service._startServer({ modelPath: '/models/vision.gguf' })).rejects.toThrow(
+        'health check failed'
+      );
+
+      expect(endReservation).toHaveBeenCalledTimes(1);
+      expect(manager.registerExternalConsumer).not.toHaveBeenCalled();
+    });
+
+    test('a manager without reservations still starts the runtime', async () => {
+      await startReadyServer();
+      expect(service._isReady).toBe(true);
+    });
+
     test('a child exit unregisters; shutdown unregisters', async () => {
       const child = await startReadyServer();
       child.emit('exit', 1, null);
@@ -364,6 +473,127 @@ describe('VisionService', () => {
       } finally {
         requestSpy.mockRestore();
       }
+    });
+    describe('the hold a request takes on the registration', () => {
+      const image = {
+        imageBase64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB',
+        config: { modelPath: '/models/vision.gguf', contextSize: 4096, threads: 4, gpuLayers: -1 }
+      };
+
+      /** A child that exits as soon as shutdown() kills it. */
+      function exitingProcess() {
+        return {
+          kill: jest.fn(),
+          once: jest.fn((event, cb) => {
+            if (event === 'exit') cb(0, null);
+          }),
+          removeListener: jest.fn(),
+          removeAllListeners: jest.fn()
+        };
+      }
+
+      function failingRequest(message) {
+        const http = require('http');
+        return jest.spyOn(http, 'request').mockImplementation(() => {
+          const req = new EventEmitter();
+          req.setTimeout = jest.fn();
+          req.write = jest.fn();
+          req.destroy = jest.fn();
+          req.end = jest.fn(() => process.nextTick(() => req.emit('error', new Error(message))));
+          return req;
+        });
+      }
+
+      test('a request that times out gives its hold back although the runtime was shut down', async () => {
+        await startReadyServer();
+        service._ensureServer = jest.fn().mockResolvedValue(undefined);
+        service._process = exitingProcess();
+        const requestSpy = failingRequest('Vision request timed out');
+
+        try {
+          await expect(service.analyzeImage(image)).rejects.toThrow('timed out');
+        } finally {
+          requestSpy.mockRestore();
+        }
+
+        // The timeout restarts the runtime, which drops the registration
+        // before the request is over.
+        expect(manager.unregisterExternalConsumer).toHaveBeenCalledWith('vision-runtime');
+        expect(manager.acquireRef).toHaveBeenCalledTimes(1);
+        expect(manager.releaseRef).toHaveBeenCalledTimes(1);
+        expect(manager.releaseRef).toHaveBeenCalledWith('vision-runtime');
+        expect(service.hasInFlightRequests()).toBe(false);
+      });
+
+      test('a request that began before the runtime registered is held once and released once', async () => {
+        const end = service._beginRequest();
+        expect(manager.acquireRef).not.toHaveBeenCalled();
+
+        await startReadyServer();
+        expect(manager.acquireRef).toHaveBeenCalledTimes(1);
+
+        end();
+        end();
+        expect(manager.releaseRef).toHaveBeenCalledTimes(1);
+        expect(service.hasInFlightRequests()).toBe(false);
+      });
+
+      test('an image counts as in flight while its runtime is still starting', async () => {
+        let finishStart;
+        service._ensureServer = jest.fn(
+          () =>
+            new Promise((resolve) => {
+              finishStart = resolve;
+            })
+        );
+        const pending = service.analyzeImage(image).catch((error) => error);
+        await new Promise((resolve) => setImmediate(resolve));
+
+        // A text load that looks now must see the image, or it shuts down
+        // the runtime the image is waiting for.
+        expect(service.hasInFlightRequests()).toBe(true);
+
+        finishStart();
+        await pending;
+        expect(service.hasInFlightRequests()).toBe(false);
+      });
+
+      test('a request that never held the registration releases nothing', async () => {
+        const end = service._beginRequest();
+        end();
+        expect(manager.acquireRef).not.toHaveBeenCalled();
+        expect(manager.releaseRef).not.toHaveBeenCalled();
+      });
+
+      test('a shutdown while the runtime size is being measured leaves nothing registered', async () => {
+        let finishEstimate;
+        service.estimateRuntimeMemoryBytes = jest.fn(
+          () =>
+            new Promise((resolve) => {
+              finishEstimate = () => resolve(5 * GiB);
+            })
+        );
+        const child = createFakeChild();
+        const { spawn } = require('child_process');
+        spawn.mockReturnValue(child);
+        service._ensureBinary = jest.fn().mockResolvedValue('/mock/llama-server');
+        service._waitForHealth = jest.fn().mockResolvedValue(undefined);
+        const starting = service
+          ._startServer({ modelPath: '/models/vision.gguf', mmprojPath: '/models/mmproj.gguf' })
+          .catch(() => {});
+        for (let i = 0; i < 20 && !finishEstimate; i += 1) {
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+        expect(typeof finishEstimate).toBe('function');
+
+        // The runtime goes away (crash, or a text load taking its memory).
+        child.emit('exit', 1, null);
+        finishEstimate();
+        await starting;
+
+        expect(manager.registerExternalConsumer).not.toHaveBeenCalled();
+        expect(service._memoryRegistration).toBeNull();
+      });
     });
   });
 
@@ -579,6 +809,274 @@ describe('VisionService', () => {
       } finally {
         requestSpy.mockRestore();
       }
+    });
+
+    describe('a request whose caller has already given up', () => {
+      const config = { modelPath: '/model.gguf', contextSize: 4096, threads: 4, gpuLayers: -1 };
+      const imageBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB';
+      /** Fail with a message instead of hanging until Jest's own timeout. */
+      const settlesSoon = (promise) =>
+        Promise.race([
+          promise,
+          new Promise((_, reject) => {
+            const timer = setTimeout(() => reject(new Error('analyzeImage never settled')), 500);
+            timer.unref?.();
+          })
+        ]);
+      /** A request double that reports a destroy the way Node does: an async 'error'. */
+      const spyOnHttpRequest = () => {
+        const http = require('http');
+        return jest.spyOn(http, 'request').mockImplementation(() => {
+          const req = new EventEmitter();
+          req.setTimeout = jest.fn();
+          req.write = jest.fn();
+          req.end = jest.fn();
+          req.destroy = jest.fn((err) => {
+            process.nextTick(() => req.emit('error', err));
+          });
+          return req;
+        });
+      };
+
+      test('aborted while the runtime was starting: rejects, holds nothing, keeps the runtime', async () => {
+        const controller = new AbortController();
+        service._process = { kill: jest.fn() };
+        service._port = 8080;
+        // The batch is cancelled during the (long) server start.
+        service._ensureServer = jest.fn(async () => controller.abort());
+        service.shutdown = jest.fn().mockResolvedValue(undefined);
+        const scheduleIdle = jest.spyOn(service, 'scheduleIdleShutdown');
+        const requestSpy = spyOnHttpRequest();
+
+        try {
+          await expect(
+            settlesSoon(service.analyzeImage({ imageBase64, signal: controller.signal, config }))
+          ).rejects.toThrow(/aborted/i);
+          expect(requestSpy).not.toHaveBeenCalled();
+          expect(service.hasInFlightRequests()).toBe(false);
+          // The runtime has just become ready and is healthy: the next image
+          // must not pay another start.
+          expect(service.shutdown).not.toHaveBeenCalled();
+          expect(scheduleIdle).toHaveBeenCalled();
+        } finally {
+          requestSpy.mockRestore();
+        }
+      });
+
+      test('aborted before the call: does not start the runtime', async () => {
+        const controller = new AbortController();
+        controller.abort();
+        service._ensureServer = jest.fn().mockResolvedValue(undefined);
+        const requestSpy = spyOnHttpRequest();
+
+        try {
+          await expect(
+            settlesSoon(service.analyzeImage({ imageBase64, signal: controller.signal, config }))
+          ).rejects.toThrow(/aborted/i);
+          expect(service._ensureServer).not.toHaveBeenCalled();
+          expect(requestSpy).not.toHaveBeenCalled();
+        } finally {
+          requestSpy.mockRestore();
+        }
+      });
+
+      test('aborted while the image file is read: the request settles and releases its hold', async () => {
+        const controller = new AbortController();
+        service._process = { kill: jest.fn() };
+        service._port = 8080;
+        service._ensureServer = jest.fn().mockResolvedValue(undefined);
+        service.shutdown = jest.fn().mockResolvedValue(undefined);
+        const readSpy = jest.spyOn(fs.promises, 'readFile').mockImplementation(async () => {
+          controller.abort();
+          return Buffer.from('not-a-real-image');
+        });
+        const requestSpy = spyOnHttpRequest();
+
+        try {
+          await expect(
+            settlesSoon(
+              service.analyzeImage({ imagePath: '/x/photo.png', signal: controller.signal, config })
+            )
+          ).rejects.toThrow(/aborted/i);
+          expect(service.hasInFlightRequests()).toBe(false);
+        } finally {
+          readSpy.mockRestore();
+          requestSpy.mockRestore();
+        }
+      });
+
+      test('a failure after the runtime is up still schedules its idle shutdown', async () => {
+        service._process = { kill: jest.fn() };
+        service._port = 8080;
+        service._ensureServer = jest.fn().mockResolvedValue(undefined);
+        const scheduleIdle = jest.spyOn(service, 'scheduleIdleShutdown');
+        const readSpy = jest
+          .spyOn(fs.promises, 'readFile')
+          .mockRejectedValue(Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' }));
+
+        try {
+          await expect(service.analyzeImage({ imagePath: '/x/gone.png', config })).rejects.toThrow(
+            /ENOENT/
+          );
+          expect(scheduleIdle).toHaveBeenCalled();
+        } finally {
+          readSpy.mockRestore();
+        }
+      });
+    });
+  });
+
+  describe('requestJson', () => {
+    const { _requestJson } = require('../src/main/services/VisionService');
+
+    test('a signal aborted before the call rejects without creating a request', async () => {
+      const http = require('http');
+      const requestSpy = jest.spyOn(http, 'request');
+      const controller = new AbortController();
+      controller.abort();
+      try {
+        await expect(
+          _requestJson({ method: 'GET', port: 1, path: '/health', signal: controller.signal })
+        ).rejects.toMatchObject({ name: 'AbortError', message: 'Vision request aborted' });
+        expect(requestSpy).not.toHaveBeenCalled();
+      } finally {
+        requestSpy.mockRestore();
+      }
+    });
+
+    test('an abort during the request rejects and removes its listener from the signal', async () => {
+      const http = require('http');
+      const requestSpy = jest.spyOn(http, 'request').mockImplementation(() => {
+        const req = new EventEmitter();
+        req.setTimeout = jest.fn();
+        req.write = jest.fn();
+        req.end = jest.fn();
+        req.destroy = jest.fn((err) => process.nextTick(() => req.emit('error', err)));
+        return req;
+      });
+      const controller = new AbortController();
+      const removeSpy = jest.spyOn(controller.signal, 'removeEventListener');
+      try {
+        const pending = _requestJson({
+          method: 'POST',
+          port: 1,
+          path: '/v1/chat/completions',
+          body: { a: 1 },
+          signal: controller.signal
+        });
+        controller.abort();
+        await expect(pending).rejects.toThrow('Vision request aborted');
+        expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function));
+      } finally {
+        requestSpy.mockRestore();
+      }
+    });
+  });
+
+  describe('requestJson against a runtime that stops part way through its answer', () => {
+    const { _requestJson } = require('../src/main/services/VisionService');
+    const http = require('http');
+    let server;
+    let port;
+    let respond;
+
+    beforeEach(async () => {
+      server = http.createServer((req, res) => respond(req, res));
+      await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+      port = server.address().port;
+    });
+    afterEach(async () => {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    });
+
+    const outcomeOf = (pending) =>
+      Promise.race([
+        pending.then(
+          (value) => ({ settled: 'resolved', value }),
+          (error) => ({ settled: 'rejected', message: error.message })
+        ),
+        new Promise((resolve) => setTimeout(() => resolve({ settled: 'never' }), 1500))
+      ]);
+
+    test('rejects when the connection closes before the whole answer arrived', async () => {
+      // The runtime crashed, or was stopped, after its headers went out.
+      respond = (_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': 200 });
+        res.write('{"choices":[');
+        setTimeout(() => res.socket.destroy(), 20);
+      };
+
+      const outcome = await outcomeOf(
+        _requestJson({ method: 'POST', port, path: '/v1/chat/completions', body: { a: 1 } })
+      );
+
+      expect(outcome).toEqual({
+        settled: 'rejected',
+        message: 'Vision response ended before it was complete'
+      });
+    });
+
+    test('still resolves with an answer that arrived whole', async () => {
+      respond = (_req, res) => {
+        const body = JSON.stringify({ choices: [{ message: { content: 'a cat' } }] });
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body)
+        });
+        res.end(body);
+      };
+
+      const outcome = await outcomeOf(
+        _requestJson({ method: 'POST', port, path: '/v1/chat/completions', body: { a: 1 } })
+      );
+
+      expect(outcome).toEqual({
+        settled: 'resolved',
+        value: { status: 200, json: { choices: [{ message: { content: 'a cat' } }] } }
+      });
+    });
+
+    test('keeps the timeout as the reason when that is what ended the request', async () => {
+      respond = (_req, res) => {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': 200 });
+        res.write('{"choices":[');
+      };
+
+      const outcome = await outcomeOf(
+        _requestJson({
+          method: 'POST',
+          port,
+          path: '/v1/chat/completions',
+          body: { a: 1 },
+          timeoutMs: 100
+        })
+      );
+
+      expect(outcome).toEqual({ settled: 'rejected', message: 'Vision request timed out' });
+    });
+  });
+
+  describe('idle shutdown', () => {
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    test('a request still in flight when the idle timer fires keeps the runtime', async () => {
+      jest.useFakeTimers();
+      service._idleKeepAliveMs = 1000;
+      service._process = { kill: jest.fn() };
+      service.shutdown = jest.fn().mockResolvedValue(undefined);
+
+      const endRequest = service._beginRequest();
+      service.scheduleIdleShutdown('test');
+      jest.advanceTimersByTime(1000);
+      expect(service.shutdown).not.toHaveBeenCalled();
+
+      // Once the request is done the re-armed timer shuts the runtime down.
+      endRequest();
+      jest.advanceTimersByTime(1000);
+      expect(service.shutdown).toHaveBeenCalledTimes(1);
     });
   });
 

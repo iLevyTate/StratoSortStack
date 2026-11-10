@@ -135,6 +135,23 @@ class DegradationManager {
     // text so the patterns can match.
     const message = String(error?.message ?? error ?? '').toLowerCase();
 
+    // The memory manager refused the load because the models already resident
+    // are in use. That is a sizing decision it has logged itself and callers
+    // handle; it used to fall through to the unknown-error branch below and
+    // be reported, with a stack, as an unclassified failure.
+    if (
+      /** @type {any} */ (error)?.code === 'MODEL_MEMORY_BUDGET_EXCEEDED' ||
+      message.includes('memory budget exceeded')
+    ) {
+      return {
+        action: 'none',
+        reason: 'memory_budget',
+        message: 'Not enough model memory while another model is in use.',
+        shouldNotifyUser: false,
+        originalError: error
+      };
+    }
+
     // Persistent GPU memory pressure errors should switch to CPU fallback.
     // Use the shared classifier so main and renderer stay aligned on which
     // signatures count as VRAM exhaustion. The legacy substring list below

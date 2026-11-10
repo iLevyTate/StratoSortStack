@@ -195,31 +195,42 @@ describe('ipcMiddleware extended coverage', () => {
       );
     });
 
-    test('does not map non-analysis progress payloads', () => {
+    // The channel carries more than analysis. Written into the analysis
+    // slice, an organize batch's counts replaced a running analysis's
+    // ("Analysis continuing in background: 3/7 files") and Reanalyze All
+    // left counts behind that read as a paused analysis.
+    test.each([
+      ['an organize batch', { type: 'batch_organize', current: 3, total: 7 }],
+      ['a model download', { type: 'model-download', completed: 512, total: 1024 }],
+      ['the watcher reanalysis', { type: 'reanalyze', completed: 4, total: 9 }],
+      ['a setup hint', { type: 'hint', message: 'Use Select Directory' }]
+    ])('progress of %s stays out of the analysis slice', (_name, payload) => {
       ipcMiddleware(mockStore);
       markStoreReady();
 
-      handlers.operationProgress({
-        type: 'model-download',
-        completed: 512,
-        total: 1024
-      });
+      handlers.operationProgress(payload);
+
+      expect(
+        mockDispatch.mock.calls.filter((entry) => entry[0]?.type === 'analysis/updateProgress')
+      ).toEqual([]);
+      // Its own listeners still get it.
+      expect(window.dispatchEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'operation-progress', detail: payload })
+      );
+    });
+
+    test('per-file analysis progress still reaches the analysis slice', () => {
+      ipcMiddleware(mockStore);
+      markStoreReady();
+
+      handlers.operationProgress({ type: 'analyze', completed: 1, total: 2 });
 
       expect(mockDispatch).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'analysis/updateProgress',
-          payload: expect.objectContaining({
-            type: 'model-download',
-            completed: 512,
-            total: 1024
-          })
+          payload: expect.objectContaining({ current: 1, total: 2 })
         })
       );
-
-      const call = mockDispatch.mock.calls.find(
-        (entry) => entry[0]?.type === 'analysis/updateProgress'
-      );
-      expect(call[0].payload.current).toBeUndefined();
     });
   });
 

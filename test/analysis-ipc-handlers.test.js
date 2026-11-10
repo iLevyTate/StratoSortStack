@@ -509,6 +509,202 @@ describe('Analysis IPC Handlers', () => {
 
       expect(mockBatchShutdown).toHaveBeenCalledTimes(1);
     });
+
+    test('a run evicted as stale is stopped, and finishing late leaves its replacement cancellable', async () => {
+      const handler = registeredHandlers[IPC_CHANNELS.ANALYSIS.ANALYZE_BATCH];
+      const cancel = registeredHandlers[IPC_CHANNELS.ANALYSIS.CANCEL_BATCH];
+      const finished = {
+        success: true,
+        results: [],
+        errors: [],
+        total: 1,
+        processed: 1,
+        successful: 1
+      };
+      const resolvers = [];
+      mockBatchAnalyzeFiles.mockImplementation(
+        () => new Promise((resolve) => resolvers.push(resolve))
+      );
+      const now = jest.spyOn(Date, 'now');
+      try {
+        now.mockReturnValue(1_000_000);
+        const first = handler({}, { batchId: 'reused-id', filePaths: ['/path/to/doc.pdf'] });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const firstOptions = mockBatchAnalyzeFiles.mock.calls[0][2];
+        expect(firstOptions.abortSignal.aborted).toBe(false);
+
+        now.mockReturnValue(1_000_000 + 31 * 60 * 1000);
+        const second = handler({}, { batchId: 'reused-id', filePaths: ['/path/to/doc.pdf'] });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(mockBatchAnalyzeFiles).toHaveBeenCalledTimes(2);
+        const secondOptions = mockBatchAnalyzeFiles.mock.calls[1][2];
+
+        expect(firstOptions.abortSignal.aborted).toBe(true);
+        expect(firstOptions.isCancelled()).toBe(true);
+        expect(secondOptions.abortSignal.aborted).toBe(false);
+
+        resolvers[0]({ ...finished, success: false, cancelled: true });
+        await first;
+
+        await expect(cancel({}, { batchId: 'reused-id' })).resolves.toMatchObject({
+          cancelled: true
+        });
+        expect(secondOptions.abortSignal.aborted).toBe(true);
+
+        resolvers[1]({ ...finished, success: false, cancelled: true });
+        await second;
+      } finally {
+        now.mockRestore();
+        mockBatchAnalyzeFiles.mockReset();
+      }
+    });
+
+    describe('while one file takes long', () => {
+      // The service reports when a file starts and when it ends. In between
+      // the renderer heard nothing, and after 5 minutes it reset the analysis
+      // as stuck while main was still transcribing a recording.
+      const { sendOperationProgress } = require('../src/main/ipc/files/batchProgressReporter');
+      const { TIMEOUTS } = require('../src/shared/performanceConstants');
+      const finished = {
+        success: true,
+        results: [],
+        errors: [],
+        total: 1,
+        processed: 1,
+        successful: 1
+      };
+      let finishBatch;
+
+      beforeEach(() => {
+        registerAnalysisIpc({
+          ipcMain: mockIpcMain,
+          IPC_CHANNELS,
+          logger: mockLogger,
+          systemAnalytics: mockSystemAnalytics,
+          analyzeDocumentFile: mockAnalyzeDocumentFile,
+          analyzeImageFile: mockAnalyzeImageFile,
+          getServiceIntegration: mockGetServiceIntegration,
+          getCustomFolders: mockGetCustomFolders,
+          getMainWindow: () => ({})
+        });
+        finishBatch = null;
+        jest.useFakeTimers();
+      });
+
+      afterEach(() => {
+        jest.useRealTimers();
+        mockBatchAnalyzeFiles.mockReset();
+      });
+
+      // Starts a batch whose one file has begun and does not finish. The
+      // request comes back wrapped: returned bare from an async function, it
+      // would be awaited here.
+      async function startBatch(filePath) {
+        mockBatchAnalyzeFiles.mockImplementationOnce((_paths, _folders, batchOptions) => {
+          batchOptions.onProgress({ completed: 0, total: 1, currentFile: filePath });
+          return new Promise((resolve) => {
+            finishBatch = resolve;
+          });
+        });
+        const handler = registeredHandlers[IPC_CHANNELS.ANALYSIS.ANALYZE_BATCH];
+        const pending = handler({}, { batchId: 'long-file', filePaths: [filePath] });
+        for (let i = 0; i < 50 && !finishBatch; i += 1) {
+          await jest.advanceTimersByTimeAsync(0);
+        }
+        expect(finishBatch).toEqual(expect.any(Function));
+        return { pending };
+      }
+
+      test('the last report is repeated until the batch ends', async () => {
+        const { pending } = await startBatch('/recordings/meeting.mp3');
+        expect(sendOperationProgress).toHaveBeenCalledTimes(1);
+        const report = sendOperationProgress.mock.calls[0][1];
+        expect(report).toMatchObject({
+          type: 'batch_analyze',
+          batchId: 'long-file',
+          currentFile: '/recordings/meeting.mp3'
+        });
+
+        await jest.advanceTimersByTimeAsync(TIMEOUTS.ANALYSIS_LOCK);
+        const repeats = sendOperationProgress.mock.calls.slice(1);
+        expect(repeats.length).toBeGreaterThanOrEqual(
+          Math.floor(TIMEOUTS.ANALYSIS_LOCK / TIMEOUTS.HEARTBEAT_INTERVAL) - 1
+        );
+        for (const call of repeats) expect(call[1]).toEqual(report);
+
+        finishBatch(finished);
+        await pending;
+        sendOperationProgress.mockClear();
+        await jest.advanceTimersByTimeAsync(TIMEOUTS.HEARTBEAT_INTERVAL * 3);
+        expect(sendOperationProgress).not.toHaveBeenCalled();
+      });
+
+      test('a cancelled batch reports nothing more', async () => {
+        const { pending } = await startBatch('/recordings/meeting.mp3');
+        const cancel = registeredHandlers[IPC_CHANNELS.ANALYSIS.CANCEL_BATCH];
+        const cancelling = cancel({}, { batchId: 'long-file' });
+        await jest.advanceTimersByTimeAsync(0);
+        sendOperationProgress.mockClear();
+
+        await jest.advanceTimersByTimeAsync(TIMEOUTS.HEARTBEAT_INTERVAL * 3);
+        expect(sendOperationProgress).not.toHaveBeenCalled();
+
+        finishBatch({ ...finished, success: false, cancelled: true });
+        await pending;
+        await cancelling;
+      });
+
+      test('a cancelled batch does not send the reports that follow', async () => {
+        // The service still reports a file that was in flight and its closing
+        // flush. The renderer has cleared its progress by then.
+        let report;
+        mockBatchAnalyzeFiles.mockImplementationOnce((_paths, _folders, batchOptions) => {
+          report = batchOptions.onProgress;
+          return new Promise((resolve) => {
+            finishBatch = resolve;
+          });
+        });
+        const handler = registeredHandlers[IPC_CHANNELS.ANALYSIS.ANALYZE_BATCH];
+        const pending = handler({}, { batchId: 'closing', filePaths: ['/docs/report.pdf'] });
+        for (let i = 0; i < 50 && !finishBatch; i += 1) {
+          await jest.advanceTimersByTimeAsync(0);
+        }
+        sendOperationProgress.mockClear();
+        report({ completed: 0, total: 1, currentFile: '/docs/report.pdf' });
+        expect(sendOperationProgress).toHaveBeenCalledTimes(1);
+
+        const cancel = registeredHandlers[IPC_CHANNELS.ANALYSIS.CANCEL_BATCH];
+        const cancelling = cancel({}, { batchId: 'closing' });
+        await jest.advanceTimersByTimeAsync(0);
+        sendOperationProgress.mockClear();
+
+        report({ phase: 'flushing_embeddings', completed: 0, total: 1 });
+        expect(sendOperationProgress).not.toHaveBeenCalled();
+
+        finishBatch({ ...finished, success: false, cancelled: true });
+        await pending;
+        await cancelling;
+      });
+
+      // Main is not vouched for forever: a file that hangs must still be
+      // noticed. A recording gets the long allowance, a document the short.
+      test.each([
+        ['a document', '/docs/report.pdf', 0],
+        ['a recording', '/recordings/meeting.mp3', 3]
+      ])('after 15 quiet minutes %s is %#: no longer / still reported', async (_n, file, more) => {
+        const { pending } = await startBatch(file);
+        await jest.advanceTimersByTimeAsync(
+          TIMEOUTS.BATCH_FILE_QUIET_MAX + TIMEOUTS.HEARTBEAT_INTERVAL
+        );
+        sendOperationProgress.mockClear();
+
+        await jest.advanceTimersByTimeAsync(TIMEOUTS.HEARTBEAT_INTERVAL * 3);
+        expect(sendOperationProgress).toHaveBeenCalledTimes(more);
+
+        finishBatch(finished);
+        await pending;
+      });
+    });
   });
 
   describe('GET_READY_QUEUE', () => {

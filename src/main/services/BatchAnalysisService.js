@@ -131,16 +131,22 @@ class BatchAnalysisService {
     let concurrency = Math.max(2, Math.floor(cpuCores * 0.75));
 
     // Reduce if memory pressure is high (>85% usage)
-    if (memUsage > 0.85) {
+    const underMemoryPressure = memUsage > 0.85;
+    if (underMemoryPressure) {
       concurrency = Math.max(2, Math.floor(concurrency * 0.5));
+    }
+
+    // Cap at global AI semaphore limit (3) to avoid holding memory while waiting for slots
+    concurrency = Math.min(concurrency, 3);
+
+    // Logged after the cap so the number is the one that applies (it used to
+    // report the pre-cap value, e.g. 6 on a 16-core machine).
+    if (underMemoryPressure) {
       logger.warn('[BATCH-ANALYSIS] High memory usage detected, reducing concurrency', {
         memUsage: `${(memUsage * 100).toFixed(1)}%`,
         reducedConcurrency: concurrency
       });
     }
-
-    // Cap at global AI semaphore limit (3) to avoid holding memory while waiting for slots
-    concurrency = Math.min(concurrency, 3);
 
     logger.debug('[BATCH-ANALYSIS] Calculated optimal concurrency', {
       cpuCores,
@@ -739,8 +745,13 @@ class BatchAnalysisService {
       } catch (error) {
         // User cancellation: treat like the skip path (null result, progress
         // finalized) instead of recording a per-file failure for every file
-        // that was mid-inference when the user hit cancel.
-        if (error?.code === 'OPERATION_CANCELLED') {
+        // that was mid-inference when the user hit cancel. Document analysis
+        // rejects with an AbortError when its signal fires; that is the same
+        // cancel only while this run was asked to stop.
+        if (
+          error?.code === 'OPERATION_CANCELLED' ||
+          (error?.name === 'AbortError' && typeof isCancelled === 'function' && isCancelled())
+        ) {
           logger.info('[BATCH-ANALYSIS] File analysis cancelled', { path: filePath, section });
           return null;
         }

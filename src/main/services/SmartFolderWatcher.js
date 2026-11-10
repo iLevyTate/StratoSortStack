@@ -140,6 +140,21 @@ function analysisRetryDelayMs(retryCount) {
   return Math.min(ANALYSIS_RETRY_MAX_DELAY_MS, ANALYSIS_RETRY_BASE_DELAY_MS * 4 ** exponent);
 }
 
+/**
+ * A reanalysis the user asked for stays one when a newer item for the same
+ * file takes its place. Replaced by a plain file event, it would run as a
+ * content update (original name kept, folder kept) or be skipped as already
+ * analyzed.
+ * @param {any} replaced the item that gives way
+ * @param {any} replacement the item that stays in the queue
+ */
+function keepReanalysisRequest(replaced, replacement) {
+  if (replaced?.eventType !== 'reanalyze' || replacement.eventType === 'reanalyze') return;
+  replacement.eventType = 'reanalyze';
+  replacement.applyNaming = replaced.applyNaming;
+  if (replaced.bulk) replacement.bulk = true;
+}
+
 // CRITICAL: Prevent unbounded memory growth under heavy file activity (e.g., large archive extraction).
 // We bound the analysis queue and apply light deduplication by filePath.
 const MAX_ANALYSIS_QUEUE_SIZE = LIMITS.ANALYSIS_QUEUE_SIZE ?? 1000;
@@ -1440,6 +1455,7 @@ class SmartFolderWatcher {
       (q) => (q.dedupKey || q.filePath) === dedupKey || q.filePath === filePath
     );
     if (existingIndex !== -1) {
+      keepReanalysisRequest(this.analysisQueue[existingIndex], item);
       this.analysisQueue[existingIndex] = item;
       this._scheduleQueuePersist();
       return;
@@ -2388,11 +2404,38 @@ class SmartFolderWatcher {
 
         try {
           await runInBatch(async () => {
-            for (const item of batch) {
+            for (const [index, item] of batch.entries()) {
               // A stop since this pass began ends the batch: the remaining
               // items are in the snapshot stop() flushed. Checked by epoch,
               // not only _isStopping, because stop() may already have returned.
               if (this._isStopping || epoch !== this._stopEpoch) break;
+              // A Discover analysis began during the batch. The hold above is
+              // only looked at before a batch starts, and a batch is up to 20
+              // images: the ones not started go back to the front of the queue.
+              if (hasUserAnalysisInFlight()) {
+                // A file that changed meanwhile has a newer item in the queue
+                // already: that one stays, as enqueueing over it would.
+                const queuedByKey = new Map(
+                  this.analysisQueue.map((queuedItem) => [procKey(queuedItem), queuedItem])
+                );
+                const rest = batch.slice(index);
+                const handedBack = [];
+                for (const waiting of rest) {
+                  const newer = queuedByKey.get(procKey(waiting));
+                  if (newer) keepReanalysisRequest(waiting, newer);
+                  else handedBack.push(waiting);
+                  this._inFlightItems.delete(procKey(waiting));
+                }
+                this.analysisQueue.unshift(...handedBack);
+                this._scheduleQueuePersist();
+                logger.info(
+                  '[SMART-FOLDER-WATCHER] Discover analysis started; image batch paused',
+                  {
+                    returned: rest.length
+                  }
+                );
+                break;
+              }
               try {
                 await this._analyzeWithTimeout(item);
               } catch (error) {
@@ -2710,20 +2753,22 @@ class SmartFolderWatcher {
       // Verify file still exists and capture stats for reuse below
       const fileStats = await fs.stat(filePath);
 
-      // Restored items skipped the _needsAnalysis gate that _handleFileEvent
-      // and the startup scan both apply — they came straight off disk. Between
-      // the crash and this restart the file may well have been analyzed
-      // another way (Discover, a manual run), so re-check now rather than
-      // spending a full LLM pass. Done lazily here, not at restore time, so a
-      // 50k-item backlog doesn't stat and hash every file up front. Explicit
-      // reanalyze requests intentionally bypass the gate.
-      if ((item.restored || item.recheck) && !isReanalyze) {
+      // Ask the history again, now that the file's turn has come. The answer
+      // from when it was queued can be minutes old: the queue is held while a
+      // Discover run is in progress (which may have analyzed this very file),
+      // a change event that arrived during our own analysis of the file was
+      // queued before that analysis was recorded, and restored items came
+      // straight off disk without ever being checked. One history lookup is
+      // cheap next to a model pass, and the file is statted here anyway.
+      // Explicit reanalyze requests bypass the gate, and an embedding retry
+      // already has its analysis in the history.
+      if (!isReanalyze && !item.cachedAnalysis) {
         const stillNeedsAnalysis = await this._needsAnalysis(filePath, item.mtime, fileStats);
         if (!stillNeedsAnalysis) {
-          logger.debug(
-            '[SMART-FOLDER-WATCHER] Restored item already analyzed elsewhere; skipping',
-            { filePath }
-          );
+          logger.debug('[SMART-FOLDER-WATCHER] Already analyzed since it was queued; skipping', {
+            filePath,
+            eventType
+          });
           return;
         }
       }
@@ -3038,7 +3083,12 @@ class SmartFolderWatcher {
               processingTime: Number(result.processingTimeMs || result.processingTime || 0),
               modelType: isImagePath(filePath) ? 'vision' : 'llm',
               analysisHistory: this.analysisHistoryService,
-              logger
+              logger,
+              // The file as it was when this analysis started. Statting again
+              // here would stamp an analysis of the old content with the size
+              // and time of a save made while the model was running, and the
+              // gate above would then skip the file as up to date.
+              fileStats
             });
 
             // This triggers a rebuild on the next search instead of waiting 15 minutes

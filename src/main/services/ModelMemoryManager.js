@@ -47,6 +47,10 @@ class ModelMemoryManager {
     this._gpuInfo = options.gpuInfo || null;
     this._maxMemoryUsage = this._calculateMaxMemory();
     this._currentMemoryUsage = 0;
+    // Loads in progress: memory that is being taken but is not resident yet
+    // (see reserveLoad).
+    /** @type {Map<string, { sizeBytes: number, settled: Promise<void>, settle: () => void }>} */
+    this._pendingLoads = new Map();
     // A pinned text or vision model can stay busy for a whole inference.
     // Queue the next load behind it instead of refusing after a few seconds
     // and turning the file into a stored fallback.
@@ -211,8 +215,87 @@ class ModelMemoryManager {
    */
   canLoadModel(/** @type {any} */ modelType) {
     const estimatedSize = this._modelSizeEstimates[modelType] || 0;
-    const projectedUsage = this._currentMemoryUsage + estimatedSize;
+    const projectedUsage = this._currentMemoryUsage + this._pendingLoadBytes() + estimatedSize;
     return projectedUsage < this._maxMemoryUsage;
+  }
+
+  /**
+   * Count memory that a load in progress is about to take.
+   *
+   * A model used to enter the budget only once it had finished loading, and
+   * the vision runtime only once its health check had passed (about a minute
+   * on a laptop GPU). Whatever asked "does this fit?" in between was told
+   * the memory was free, so a text model and the vision runtime could be
+   * started half a second apart and sit together at twice the budget.
+   *
+   * A reservation cannot be evicted; callers that need its memory wait for
+   * it to end. It ends when the load becomes a resident (ensureModelLoaded,
+   * registerExternalConsumer) or fails.
+   *
+   * @param {string} type
+   * @param {number} sizeBytes
+   * @returns {() => void} ends the reservation; calling it again does nothing
+   */
+  reserveLoad(type, sizeBytes) {
+    /** @type {() => void} */
+    let settle = () => {};
+    /** @type {Promise<void>} */
+    const settled = new Promise((resolve) => {
+      settle = resolve;
+    });
+    const record = { sizeBytes: Math.max(0, Number(sizeBytes) || 0), settled, settle };
+    const replaced = this._pendingLoads.get(type);
+    this._pendingLoads.set(type, record);
+    replaced?.settle();
+    return () => {
+      if (this._pendingLoads.get(type) === record) this._pendingLoads.delete(type);
+      record.settle();
+    };
+  }
+
+  /**
+   * Loads in progress that are not residents yet. A type that is both
+   * reserved and registered (the instant between the two) counts once, as
+   * the resident.
+   * @param {string} [excludeType]
+   * @returns {Array<[string, { sizeBytes: number, settled: Promise<void> }]>}
+   */
+  _pendingLoadEntries(excludeType) {
+    return [...this._pendingLoads].filter(
+      ([type]) => type !== excludeType && !this._loadedModels.has(type)
+    );
+  }
+
+  /**
+   * @param {string} [excludeType]
+   * @returns {number}
+   */
+  _pendingLoadBytes(excludeType) {
+    let total = 0;
+    for (const [, pending] of this._pendingLoadEntries(excludeType)) total += pending.sizeBytes;
+    return total;
+  }
+
+  /**
+   * Wait for the loads in progress to end, for at most the time a load
+   * waits on a pinned resident.
+   * @param {string} [excludeType]
+   * @returns {Promise<boolean>} false when one is still in progress
+   */
+  async _pendingLoadsSettled(excludeType) {
+    const waits = this._pendingLoadEntries(excludeType).map(([, pending]) => pending.settled);
+    if (waits.length === 0) return true;
+    if (!(this._pinnedResidentWaitMs > 0)) return false;
+    /** @type {ReturnType<typeof setTimeout> | undefined} */
+    let timer;
+    const timedOut = new Promise((resolve) => {
+      timer = setTimeout(() => resolve(false), this._pinnedResidentWaitMs);
+    });
+    try {
+      return await Promise.race([Promise.all(waits).then(() => true), timedOut]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**
@@ -221,9 +304,10 @@ class ModelMemoryManager {
    * the budget next to what is resident now. Mirrors ensureModelLoaded's
    * rule: with nothing resident a single oversized estimate is allowed
    * through (the runtime may still manage with mmap or GPU offload); with
-   * residents pinned by in-flight work the answer is honest. `excludeType`
-   * leaves out a registration the caller is about to replace, so a resident
-   * vision runtime is not counted twice.
+   * residents pinned by in-flight work the answer is honest. A load in
+   * progress counts like a resident. `excludeType` leaves out a registration
+   * or reservation the caller is about to replace, so a resident vision
+   * runtime is not counted twice.
    *
    * @param {number} sizeBytes
    * @param {{ excludeType?: string }} [options]
@@ -232,9 +316,13 @@ class ModelMemoryManager {
   canFitExternalLoad(sizeBytes, { excludeType } = {}) {
     this._refreshMemoryBudget();
     const excluded = excludeType ? this._loadedModels.get(excludeType) : null;
-    const residentCount = this._loadedModels.size - (excluded ? 1 : 0);
+    const residentCount =
+      this._loadedModels.size - (excluded ? 1 : 0) + this._pendingLoadEntries(excludeType).length;
     if (residentCount <= 0) return true;
-    const usage = this._currentMemoryUsage - (excluded ? excluded.sizeBytes || 0 : 0);
+    const usage =
+      this._currentMemoryUsage -
+      (excluded ? excluded.sizeBytes || 0 : 0) +
+      this._pendingLoadBytes(excludeType);
     return usage + Math.max(0, Number(sizeBytes) || 0) < this._maxMemoryUsage;
   }
 
@@ -253,6 +341,12 @@ class ModelMemoryManager {
    */
   async makeRoomForExternalLoad(sizeBytes, { excludeType } = {}) {
     while (!this.canFitExternalLoad(sizeBytes, { excludeType })) {
+      // A load in progress cannot be evicted. Wait for it to become a
+      // resident (or fail), then judge it like any other.
+      if (this._pendingLoadEntries(excludeType).length > 0) {
+        if (!(await this._pendingLoadsSettled(excludeType))) return false;
+        continue;
+      }
       const evictable = [...this._loadedModels.entries()]
         .filter(([type]) => type !== excludeType && (this._activeRefs.get(type) || 0) === 0)
         .sort((a, b) => (a[1].lastUsed || 0) - (b[1].lastUsed || 0));
@@ -281,7 +375,10 @@ class ModelMemoryManager {
   canRunOptionalLoad(modelType) {
     this._refreshMemoryBudget();
     if (this._loadedModels.has(modelType)) {
-      const remaining = Math.max(0, this._maxMemoryUsage - this._currentMemoryUsage);
+      const remaining = Math.max(
+        0,
+        this._maxMemoryUsage - this._currentMemoryUsage - this._pendingLoadBytes()
+      );
       return remaining >= OPTIONAL_INFERENCE_HEADROOM_BYTES;
     }
     return this.canLoadModel(modelType);
@@ -289,13 +386,14 @@ class ModelMemoryManager {
 
   /**
    * Ensure model is loaded, unloading others if necessary
+   * @returns {Promise<any>}
    */
   async ensureModelLoaded(/** @type {any} */ modelType, options = {}) {
     // Already loaded? If a dispose is mid-flight for this type, wait for it
     // to settle first: returning the context now would hand the caller a
     // context whose native teardown is in progress (use-after-dispose). If
     // the dispose fails, the entry stays tracked and is safe to return.
-    {
+    for (;;) {
       let entry = this._loadedModels.get(modelType);
       if (entry?.disposing) {
         await entry.disposePromise;
@@ -305,6 +403,12 @@ class ModelMemoryManager {
         entry.lastUsed = Date.now();
         return entry.context;
       }
+      // Another caller is loading this model (the load lock can be dropped
+      // from under a load that waits longer than its timeout). Wait for that
+      // load instead of starting a second copy; if it fails, try here.
+      const inFlight = this._pendingLoads.get(modelType);
+      if (!inFlight) break;
+      await inFlight.settled;
     }
 
     // Refresh budget from current system state before making load decisions
@@ -320,22 +424,34 @@ class ModelMemoryManager {
     // embedding model "did not fit" beside the 6 GB vision runtime and the
     // runtime was shut down and restarted for every image of the batch.
     const besideType = /** @type {any} */ (options)?.besideResident;
-    const besideEntry =
-      typeof besideType === 'string' && /** @type {any} */ (options)?.gpuLayersOverride === 0
-        ? this._loadedModels.get(besideType)
-        : null;
+    const cpuBeside =
+      typeof besideType === 'string' && /** @type {any} */ (options)?.gpuLayersOverride === 0;
     // keepBeside: the caller chose this CPU load so an idle resident (the
     // text model between files) stays; without it only a pinned one does.
-    const besidePinned = Boolean(
-      besideEntry &&
-      ((this._activeRefs.get(besideType) || 0) > 0 ||
-        /** @type {any} */ (options)?.keepBeside === true)
-    );
-    const fits = () =>
-      besidePinned
-        ? this._currentMemoryUsage - (besideEntry?.sizeBytes || 0) + estimatedSize <
-          this._maxMemoryUsage
+    // A resident that is still starting cannot be evicted and is pinned by
+    // the work that started it, so it is left out the same way. Read on
+    // every check: the resident can finish starting during the wait below.
+    const besideBytes = () => {
+      if (!cpuBeside) return 0;
+      const besideEntry = this._loadedModels.get(besideType);
+      if (!besideEntry) return this._pendingLoads.get(besideType)?.sizeBytes || 0;
+      const pinned =
+        (this._activeRefs.get(besideType) || 0) > 0 ||
+        /** @type {any} */ (options)?.keepBeside === true;
+      return pinned ? besideEntry.sizeBytes || 0 : 0;
+    };
+    const fits = () => {
+      // Loaded or being loaded by another caller since this one started
+      // waiting: nothing to make room for, the check before the load joins it.
+      if (this._loadedModels.has(modelType) || this._pendingLoads.has(modelType)) return true;
+      const beside = besideBytes();
+      return beside > 0
+        ? this._currentMemoryUsage + this._pendingLoadBytes() - beside + estimatedSize <
+            this._maxMemoryUsage
         : this.canLoadModel(modelType);
+    };
+    // Residents, or loads in progress that will become residents.
+    const othersHoldMemory = () => this._loadedModels.size > 0 || this._pendingLoads.size > 0;
 
     while (!fits() && this._loadedModels.size > 0) {
       const sizeBefore = this._loadedModels.size;
@@ -354,22 +470,27 @@ class ModelMemoryManager {
     // remaining residents are pinned by in-flight inference. Wait for those
     // refs to drain and retry eviction so a document queued behind a vision
     // batch (or an embedding queued behind a text inference) runs once the
-    // resident releases, instead of stacking a second multi-GB model.
-    if (!fits() && this._loadedModels.size > 0 && this._pinnedResidentWaitMs > 0) {
+    // resident releases, instead of stacking a second multi-GB model. A load
+    // in progress is waited out the same way: it becomes a resident that is
+    // evicted here once it is idle.
+    if (!fits() && othersHoldMemory() && this._pinnedResidentWaitMs > 0) {
       const deadline = Date.now() + this._pinnedResidentWaitMs;
       while (!fits() && Date.now() < deadline) {
         await delay(this._pinnedResidentPollMs);
         this._refreshMemoryBudget();
         while (!fits() && this._loadedModels.size > 0) {
           const sizeBefore = this._loadedModels.size;
-          await this._unloadLeastRecentlyUsed();
+          // Quiet: the pass above already logged that nothing can be
+          // evicted; repeating it every poll wrote a warning every 2 s for
+          // as long as the wait lasted.
+          await this._unloadLeastRecentlyUsed({ quiet: true });
           if (this._loadedModels.size === sizeBefore) break;
         }
       }
     }
 
     if (!fits()) {
-      if (this._loadedModels.size > 0) {
+      if (othersHoldMemory()) {
         // Fail closed under concurrent pressure: stacking another multi-GB
         // model on top of pinned residents risks a native OOM that takes the
         // whole process down. Callers already handle load rejections.
@@ -384,7 +505,8 @@ class ModelMemoryManager {
           estimatedSizeMB: Math.round(estimatedSize / 1024 / 1024),
           maxUsableMB: Math.round(this._maxMemoryUsage / 1024 / 1024),
           currentUsageMB: Math.round(this._currentMemoryUsage / 1024 / 1024),
-          loadedModels: Array.from(this._loadedModels.keys())
+          loadedModels: Array.from(this._loadedModels.keys()),
+          pendingLoads: Array.from(this._pendingLoads.keys())
         });
         throw budgetError;
       }
@@ -400,32 +522,45 @@ class ModelMemoryManager {
       });
     }
 
-    // Load the model via the bound callback
-    const context = await this._loadModelFn(modelType, options);
+    // Another caller loaded this model, or began to, while this one waited
+    // for room: use that load.
+    if (this._loadedModels.has(modelType) || this._pendingLoads.has(modelType)) {
+      return this.ensureModelLoaded(modelType, options);
+    }
 
-    // The load callback may have refined the estimate from the real file
-    // size (updateModelSizeEstimate); record what this model actually
-    // costs so later budget decisions are not held to the fixed guess.
-    const recordedSize = this._modelSizeEstimates[modelType] || estimatedSize;
-    this._loadedModels.set(modelType, {
-      context,
-      lastUsed: Date.now(),
-      sizeBytes: recordedSize
-    });
-    this._currentMemoryUsage += recordedSize;
+    // The memory counts as taken from here, not from when the load finishes.
+    const endReservation = this.reserveLoad(modelType, estimatedSize);
+    try {
+      // Load the model via the bound callback
+      const context = await this._loadModelFn(modelType, options);
 
-    logger.info('[Memory] Model loaded', {
-      type: modelType,
-      currentUsageMB: Math.round(this._currentMemoryUsage / 1024 / 1024)
-    });
+      // The load callback may have refined the estimate from the real file
+      // size (updateModelSizeEstimate); record what this model actually
+      // costs so later budget decisions are not held to the fixed guess.
+      const recordedSize = this._modelSizeEstimates[modelType] || estimatedSize;
+      this._loadedModels.set(modelType, {
+        context,
+        lastUsed: Date.now(),
+        sizeBytes: recordedSize
+      });
+      this._currentMemoryUsage += recordedSize;
 
-    return context;
+      logger.info('[Memory] Model loaded', {
+        type: modelType,
+        currentUsageMB: Math.round(this._currentMemoryUsage / 1024 / 1024)
+      });
+
+      return context;
+    } finally {
+      endReservation();
+    }
   }
 
   /**
    * Unload least recently used model, skipping models with active references.
+   * @param {{ quiet?: boolean }} [options] quiet: no warning when nothing can be evicted
    */
-  async _unloadLeastRecentlyUsed() {
+  async _unloadLeastRecentlyUsed({ quiet = false } = {}) {
     let oldest = null;
     let oldestTime = Infinity;
 
@@ -441,7 +576,7 @@ class ModelMemoryManager {
 
     if (oldest) {
       await this.unloadModel(oldest);
-    } else {
+    } else if (!quiet) {
       logger.warn('[Memory] Cannot evict any model -- all loaded models are in active use');
     }
   }
@@ -607,6 +742,7 @@ class ModelMemoryManager {
       maxMemoryMB: Math.round(this._maxMemoryUsage / 1024 / 1024),
       currentUsageMB: Math.round(this._currentMemoryUsage / 1024 / 1024),
       loadedModels: Array.from(this._loadedModels.keys()),
+      pendingLoads: Array.from(this._pendingLoads.keys()),
       systemFreeMemoryMB: Math.round(os.freemem() / 1024 / 1024)
     };
   }

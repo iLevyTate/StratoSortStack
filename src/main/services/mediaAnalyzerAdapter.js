@@ -52,6 +52,34 @@ function buildSkipResult(filePath) {
   };
 }
 
+/**
+ * A file longer than the transcoder accepts. Recorded as a format the build
+ * cannot read: nothing about it changes on a retry, and each attempt decodes
+ * the audio up to the limit before failing.
+ * @param {string} filePath
+ * @param {number} maxDurationSeconds
+ * @returns {any}
+ */
+function buildTooLongResult(filePath, maxDurationSeconds) {
+  const kind = classifyMediaFile(filePath) || 'audio';
+  const hours = Math.round((maxDurationSeconds / 3600) * 10) / 10;
+  const limit = hours >= 1 ? `${hours} hours` : `${Math.round(maxDurationSeconds)} seconds`;
+  return {
+    ...buildSkipResult(filePath),
+    keywords: [kind, 'too-long'],
+    extractionMethod: 'format_unsupported',
+    purpose: `Media is longer than the supported ${limit}; not transcribed.`
+  };
+}
+
+function isTooLongError(/** @type {any} */ err) {
+  return (
+    Boolean(err) &&
+    err.code === ERROR_CODES.INVALID_INPUT &&
+    Number.isFinite(err.maxDurationSeconds)
+  );
+}
+
 function isWhisperMissingError(/** @type {any} */ err) {
   if (!err) return false;
   if (err.code === ERROR_CODES.LLAMA_MODEL_NOT_FOUND) return true;
@@ -135,6 +163,10 @@ function combineSignals(sources) {
  * "skipped" result so downstream code (recordAnalysisResult, embedding
  * queue, vector store) flows unchanged. `SERVICE_UNAVAILABLE` from
  * in-flight shutdown still propagates.
+ *
+ * A file longer than the transcoder's duration limit gets a
+ * `format_unsupported` result the same way, so it is recorded once and not
+ * retried.
  */
 /**
  * Whether to caption video keyframes for this analysis. The same switch
@@ -206,6 +238,13 @@ function createMediaAnalyzerAdapter({ whisperService, captionKeyframes } = {}) {
           error: err.message
         });
         return buildSkipResult(filePath);
+      }
+      if (isTooLongError(err)) {
+        logger.warn('[MediaAdapter] Media longer than the transcription limit; not transcribed', {
+          file: path.basename(filePath || ''),
+          maxDurationSeconds: err.maxDurationSeconds
+        });
+        return buildTooLongResult(filePath, err.maxDurationSeconds);
       }
       throw err;
     } finally {

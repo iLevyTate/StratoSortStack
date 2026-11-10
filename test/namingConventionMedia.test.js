@@ -35,7 +35,7 @@ describe('media naming convention regressions', () => {
         dateFormat: 'YYYY-MM-DD',
         caseConvention: 'kebab-case'
       },
-      fileTimestamps: { modified: new Date('2026-06-01T00:00:00Z') }
+      fileTimestamps: { modified: new Date(2026, 5, 1, 12) }
     });
     expect(name).toBe('my-podcast-2026-06-01.mp3');
   });
@@ -64,7 +64,7 @@ describe('media naming convention regressions', () => {
         category: 'audio'
       },
       settings: namingSettings,
-      fileTimestamps: { modified: new Date('2026-06-01T00:00:00Z') }
+      fileTimestamps: { modified: new Date(2026, 5, 1, 12) }
     });
     expect(name).toBe('timeline-1-2026-06-01.ogg');
   });
@@ -104,7 +104,7 @@ describe('media naming convention regressions', () => {
         {
           path: 'C:\\media\\clip.mp4',
           name: 'clip.mp4',
-          modified: '2026-06-01T00:00:00.000Z',
+          modified: new Date(2026, 5, 1, 12).toISOString(),
           analysis: {
             category: 'video',
             suggestedName: 'clip',

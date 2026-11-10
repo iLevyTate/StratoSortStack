@@ -20,7 +20,8 @@ jest.mock('../src/shared/logger', () => {
 // Mock store hooks
 jest.mock('../src/renderer/store/hooks', () => ({
   useAppSelector: jest.fn(),
-  useAppDispatch: jest.fn(() => jest.fn())
+  useAppDispatch: jest.fn(() => jest.fn()),
+  useAppStore: jest.fn()
 }));
 
 // Mock slices
@@ -102,6 +103,9 @@ describe('useOrganizeState', () => {
         return selector(defaultState);
       }
       return selector;
+    });
+    require('../src/renderer/store/hooks').useAppStore.mockReturnValue({
+      getState: () => defaultState
     });
 
     const module = require('../src/renderer/phases/organize/useOrganizeState');

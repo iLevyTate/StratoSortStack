@@ -9,7 +9,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { useAppSelector, useAppDispatch } from '../../store/hooks';
+import { useAppSelector, useAppDispatch, useAppStore } from '../../store/hooks';
 import {
   setSelectedFiles as setSelectedFilesAction,
   addSelectedFiles as addSelectedFilesAction,
@@ -39,6 +39,7 @@ const logger = createLogger('DiscoverPhase:State');
  */
 export function useDiscoverState() {
   const dispatch = useAppDispatch();
+  const store = useAppStore();
 
   // Selectors
   const selectedFiles = useAppSelector((/** @type {any} */ state) => state.files.selectedFiles);
@@ -78,14 +79,12 @@ export function useDiscoverState() {
   // This eliminates 5 effect scheduling/cleanup cycles per state change.
   const selectedFilesRef = useRef(selectedFiles);
   const analysisResultsRef = useRef(analysisResults);
-  const fileStatesRef = useRef(fileStates);
   const analysisProgressRef = useRef(analysisProgress);
   const currentPhaseRef = useRef(currentPhase);
 
   // Sync refs during render (safe for refs, avoids useEffect overhead)
   selectedFilesRef.current = selectedFiles;
   analysisResultsRef.current = analysisResults;
-  fileStatesRef.current = fileStates;
   analysisProgressRef.current = analysisProgress;
   currentPhaseRef.current = currentPhase;
 
@@ -207,7 +206,11 @@ export function useDiscoverState() {
   const setFileStates = useCallback(
     (/** @type {any} */ val) => {
       if (typeof val === 'function') {
-        const resolved = val(fileStatesRef.current);
+        // From the store, not from the last render: this replaces the whole
+        // map, so an updater given an older one puts it back over every
+        // change made since (another write in the same tick, or anything
+        // written after Discover was left, where a run ends late).
+        const resolved = val(/** @type {any} */ (store.getState()).files.fileStates);
         if (!resolved || typeof resolved !== 'object') {
           logger.warn('[useDiscoverState] setFileStates updater returned invalid value', {
             type: typeof resolved
@@ -231,7 +234,7 @@ export function useDiscoverState() {
         dispatch(setFileStatesAction(serialized));
       }
     },
-    [dispatch]
+    [dispatch, store]
   );
 
   const updateFileState = useCallback(

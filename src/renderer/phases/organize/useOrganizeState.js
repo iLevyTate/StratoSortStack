@@ -9,7 +9,7 @@
  */
 
 import { useCallback, useMemo, useEffect, useRef } from 'react';
-import { useAppSelector, useAppDispatch } from '../../store/hooks';
+import { useAppSelector, useAppDispatch, useAppStore } from '../../store/hooks';
 import {
   setSmartFolders as setSmartFoldersAction,
   setOrganizedFiles as setOrganizedFilesAction,
@@ -31,6 +31,7 @@ const logger = createLogger('OrganizePhase-State');
  */
 export function useOrganizeState() {
   const dispatch = useAppDispatch();
+  const store = useAppStore();
 
   // Selectors
   const organizedFiles = useAppSelector((/** @type {any} */ state) => state.files.organizedFiles);
@@ -106,21 +107,19 @@ export function useOrganizeState() {
     [dispatch]
   );
 
-  // Ref for avoiding stale closures in functional updates
-  const fileStatesRef = useRef(fileStates);
-  useEffect(() => {
-    fileStatesRef.current = fileStates;
-  }, [fileStates]);
-
   const setFileStates = useCallback(
     (/** @type {any} */ states) => {
       if (typeof states === 'function') {
-        dispatch(setFileStatesAction(states(fileStatesRef.current)));
+        // From the store, not from the last render: this replaces the whole
+        // map, so an updater given an older one puts it back over every
+        // change made since.
+        const current = /** @type {any} */ (store.getState()).files.fileStates;
+        dispatch(setFileStatesAction(states(current)));
       } else {
         dispatch(setFileStatesAction(states));
       }
     },
-    [dispatch]
+    [dispatch, store]
   );
 
   const setSmartFolders = useCallback(

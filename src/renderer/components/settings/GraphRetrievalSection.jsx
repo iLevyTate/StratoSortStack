@@ -181,7 +181,8 @@ function GraphRetrievalSection({ settings, setSettings, lockedBySimpleMode = fal
 
     const handleOperationProgress = (event) => {
       const payload = event?.detail;
-      if (!payload || payload.type !== 'batch_analyze') return;
+      // A Discover batch or the watcher's reanalysis: both add embeddings.
+      if (!payload || (payload.type !== 'batch_analyze' && payload.type !== 'reanalyze')) return;
       refreshIfIdle(false);
 
       const completed = Number(payload.completed);

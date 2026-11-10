@@ -729,7 +729,7 @@ describe('SmartFolderWatcher queue persistence (K-07)', () => {
     expect(watcher._inFlightItems.size).toBe(0);
   });
 
-  test('a restored item re-checks _needsAnalysis; a live event does not', async () => {
+  test('a restored item re-checks _needsAnalysis, and so does a live event', async () => {
     const queueStore = makeStore([
       { filePath: 'C:\\w\\restored.txt', mtime: 1, eventType: 'add', queuedAt: 1 }
     ]);
@@ -746,13 +746,16 @@ describe('SmartFolderWatcher queue persistence (K-07)', () => {
     expect(watcher._needsAnalysis).toHaveBeenCalledTimes(1);
     expect(baseOptions.analyzeDocumentFile).not.toHaveBeenCalled();
 
-    // A live fs event was already gated by _handleFileEvent, so it must not
-    // pay for a second history lookup — it goes straight to the analyzer.
+    // A live fs event was gated by _handleFileEvent when it was queued, but
+    // that answer can be minutes old by now (the queue is held during a
+    // Discover run), so it is asked again; a file that still needs analysis
+    // goes on to the analyzer.
+    watcher._needsAnalysis.mockResolvedValue(true);
     baseOptions.analyzeDocumentFile.mockRejectedValueOnce(new Error('reached analyzer'));
     await expect(
       watcher._analyzeFile({ filePath: 'C:\\w\\live.txt', mtime: 1, eventType: 'add' })
     ).rejects.toThrow('reached analyzer');
-    expect(watcher._needsAnalysis).toHaveBeenCalledTimes(1);
+    expect(watcher._needsAnalysis).toHaveBeenCalledTimes(2);
   });
 
   test('in-flight work stays in the persisted snapshot', async () => {

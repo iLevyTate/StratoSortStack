@@ -15,7 +15,7 @@
  */
 
 const path = require('path');
-const { isPlausibleContentDate } = require('../../shared/contentDateSanity');
+const { isPlausibleContentDate, toWrittenCalendarDay } = require('../../shared/contentDateSanity');
 const { sanitizeSuggestedBaseName } = require('../../shared/pathSanitization');
 const FolderMatchingService = require('../services/FolderMatchingService');
 
@@ -46,11 +46,11 @@ function buildAnalysisFromModelJson(parsedJson, context) {
   // Validate and sanitize date field
   if (parsedJson.date) {
     try {
-      const dateObj = new Date(parsedJson.date);
-      if (isNaN(dateObj.getTime())) {
+      const writtenDay = toWrittenCalendarDay(parsedJson.date);
+      if (!writtenDay) {
         delete parsedJson.date;
       } else {
-        parsedJson.date = dateObj.toISOString().split('T')[0];
+        parsedJson.date = writtenDay;
         // A parseable-but-implausible year (hallucinated "2103",
         // OCR-misread "0201") would pin the timeline sort and poison
         // the stats card's year range — drop to the fileDate fallback.
