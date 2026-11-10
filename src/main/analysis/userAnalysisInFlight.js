@@ -68,6 +68,15 @@ function isUserAnalysisInFlight(filePath) {
 }
 
 /**
+ * Whether any user-started analysis is running. The smart-folder watcher
+ * holds its own queue meanwhile so the user's run gets the GPU.
+ * @returns {boolean}
+ */
+function hasUserAnalysisInFlight() {
+  return counts.size > 0;
+}
+
+/**
  * Wrap one analysis call so its file is marked for the call's duration.
  * @template T
  * @param {string} filePath
@@ -91,6 +100,7 @@ function _resetUserAnalysisInFlight() {
 module.exports = {
   claimUserAnalysis,
   isUserAnalysisInFlight,
+  hasUserAnalysisInFlight,
   withUserAnalysis,
   _resetUserAnalysisInFlight
 };

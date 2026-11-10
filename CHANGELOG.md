@@ -203,6 +203,16 @@ Changes you will notice:
 
 ### Fixed
 
+- **Analyzed files show up again after Discover remounts mid-start.** A run that Discover's unmount
+  (or React StrictMode in development) aborted during its first moments still sent its batch, then
+  ignored every result: the list stayed on "0 ready" with loading placeholders, and five minutes
+  later the inactivity check cancelled the batch, turning the image in progress into a filename-only
+  "Limited analysis". An aborted run now sends nothing, reports no completion, and hands its files
+  to the run that replaces it.
+- **The smart-folder watcher pauses while you analyze in Discover.** Its catch-up of files already
+  in your smart folders (for example the first launch over a library another app sorted) took turns
+  with the Discover run on the one GPU, halving its speed. The watcher now holds its queue until the
+  Discover run ends and then resumes on its own.
 - **Files are no longer analyzed two or three times at once.** Leaving Discover and coming back
   while a batch ran started a new run that the window's still-running batch refused; the new run
   then analyzed the same files again file by file, in parallel, and restarted itself when it ended.
