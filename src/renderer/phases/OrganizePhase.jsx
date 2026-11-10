@@ -145,27 +145,30 @@ function OrganizePhase() {
     return getFilteredFiles(filesWithAnalysis);
   }, [getFilteredFiles, filesWithAnalysis]);
 
+  // Shared by single-card edits and the bulk category change.
+  const persistFileEdit = useCallback(
+    (filePath, field, value) => {
+      if (!filePath) return;
+      if (field === 'category') {
+        // userCategory marks the choice as the user's, so it still wins
+        // over the engine's ranking after Organize remounts and the card
+        // edit state is gone.
+        dispatch(
+          updateAnalysisResult({
+            path: filePath,
+            changes: { category: value, userCategory: value }
+          })
+        );
+      }
+      if (field === 'suggestedName') {
+        dispatch(updateAnalysisResult({ path: filePath, changes: { suggestedName: value } }));
+      }
+    },
+    [dispatch]
+  );
+
   const { editingFiles, setEditingFiles, handleEditFile, getFileWithEdits } = useFileEditing({
-    onEditChange: useCallback(
-      (filePath, field, value) => {
-        if (!filePath) return;
-        if (field === 'category') {
-          // userCategory marks the choice as the user's, so it still wins
-          // over the engine's ranking after Organize remounts and the card
-          // edit state is gone.
-          dispatch(
-            updateAnalysisResult({
-              path: filePath,
-              changes: { category: value, userCategory: value }
-            })
-          );
-        }
-        if (field === 'suggestedName') {
-          dispatch(updateAnalysisResult({ path: filePath, changes: { suggestedName: value } }));
-        }
-      },
-      [dispatch]
-    )
+    onEditChange: persistFileEdit
   });
 
   const findSmartFolderForCategory = useSmartFolderMatcher(safeSmartFolders);
@@ -260,7 +263,8 @@ function OrganizePhase() {
       editingFiles,
       setEditingFiles,
       setSelectedFiles,
-      addNotification
+      addNotification,
+      onEditChange: persistFileEdit
     });
 
   // Drop edits for files that left the queue so a filtered grid cannot write
@@ -779,6 +783,7 @@ function OrganizePhase() {
                   pausedSummary={pausedSummary}
                   onResume={resumeOrganize}
                   onDismissPaused={dismissPausedBatch}
+                  organizedCount={lastOrganizeSummary?.count}
                 />
               </div>
             )}

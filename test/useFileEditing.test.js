@@ -248,6 +248,58 @@ describe('useFileEditing hooks', () => {
     });
   });
 
+  describe('useBulkOperations', () => {
+    const renderBulk = (overrides = {}) => {
+      const props = {
+        selectedFiles: new Set(['/a.txt', '/b.txt']),
+        editingFiles: { '/a.txt': { suggestedName: 'A.txt' } },
+        setEditingFiles: jest.fn(),
+        setSelectedFiles: jest.fn(),
+        addNotification: jest.fn(),
+        ...overrides
+      };
+      const { result } = renderHook(() => hooks.useBulkOperations(props));
+      return { result, props };
+    };
+
+    const applyCategory = (result, category) => {
+      act(() => {
+        result.current.setBulkCategory(category);
+      });
+      act(() => {
+        result.current.applyBulkCategoryChange();
+      });
+    };
+
+    test('saves the bulk category as each selected file’s own choice', () => {
+      const onEditChange = jest.fn();
+      const { result, props } = renderBulk({ onEditChange });
+
+      applyCategory(result, 'Finance');
+
+      expect(onEditChange.mock.calls).toEqual([
+        ['/a.txt', 'category', 'Finance'],
+        ['/b.txt', 'category', 'Finance']
+      ]);
+      const update = props.setEditingFiles.mock.calls[0][0];
+      expect(update({})).toEqual({
+        '/a.txt': { suggestedName: 'A.txt', category: 'Finance' },
+        '/b.txt': { category: 'Finance' }
+      });
+    });
+
+    test('says "1 file" when one file is selected', () => {
+      const { result, props } = renderBulk({ selectedFiles: new Set(['/a.txt']) });
+
+      applyCategory(result, 'Finance');
+
+      expect(props.addNotification).toHaveBeenCalledWith(
+        'Applied category "Finance" to 1 file',
+        'success'
+      );
+    });
+  });
+
   describe('useProcessedFiles', () => {
     test('initializes with empty processedFileIds', () => {
       const { result } = renderHook(() => hooks.useProcessedFiles([]));

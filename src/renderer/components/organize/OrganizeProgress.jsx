@@ -19,6 +19,7 @@ function OrganizeProgress({
   isPaused = false,
   pausedSummary = null,
   onResume,
+  organizedCount,
   onDismissPaused
 }) {
   // PERF: Use memoized selector instead of inline Boolean coercion
@@ -216,6 +217,11 @@ function OrganizeProgress({
   // keeps the bar at 100% and the count at "N of N" while we hold the frame.
   const flashSnapshot = completedFlash ? lastProgressRef.current : null;
   const displayCurrent = flashSnapshot ? flashSnapshot.current : Number(batchProgress.current);
+  // The bar counts every file the run got through, including ones that could
+  // not be moved. Only say "Organized" for the number that actually moved.
+  const completedText = Number.isFinite(organizedCount)
+    ? `Organized ${organizedCount} ${organizedCount === 1 ? 'file' : 'files'}.`
+    : `Processed ${displayCurrent} ${displayCurrent === 1 ? 'file' : 'files'}.`;
   const displayTotal = flashSnapshot ? flashSnapshot.total : Number(batchProgress.total);
   const displayHasTotals = displayTotal > 0;
   const percentToShow = completedFlash
@@ -252,9 +258,7 @@ function OrganizeProgress({
             {completedFlash ? 'Done!' : 'Organizing files...'}
           </Heading>
           <Text variant="small" className="text-system-gray-600">
-            {completedFlash
-              ? `Organized ${displayCurrent} ${displayCurrent === 1 ? 'file' : 'files'}.`
-              : 'Do not close the app until completion'}
+            {completedFlash ? completedText : 'Do not close the app until completion'}
           </Text>
         </div>
       </div>
@@ -358,8 +362,14 @@ function OrganizeProgress({
           </div>
           <div className="max-h-48 overflow-y-auto p-2 space-y-1 custom-scrollbar">
             {preview.slice(0, 6).map((op, idx) => {
+              // Progress names the file by its original name; fileName here is
+              // the name it will have after the move.
+              const sourceName =
+                typeof op.sourcePath === 'string' && op.sourcePath
+                  ? op.sourcePath.split(/[\\/]/).pop()
+                  : op.fileName;
               const isCurrentFile =
-                batchProgress.currentFile && op.fileName === batchProgress.currentFile;
+                Boolean(batchProgress.currentFile) && sourceName === batchProgress.currentFile;
               const isProcessed = hasTotals && idx < batchProgress.current;
 
               return (
@@ -420,6 +430,7 @@ OrganizeProgress.propTypes = {
   preview: PropTypes.arrayOf(
     PropTypes.shape({
       fileName: PropTypes.string,
+      sourcePath: PropTypes.string,
       destination: PropTypes.string
     })
   ),
@@ -433,7 +444,8 @@ OrganizeProgress.propTypes = {
     remaining: PropTypes.number
   }),
   onResume: PropTypes.func,
-  onDismissPaused: PropTypes.func
+  onDismissPaused: PropTypes.func,
+  organizedCount: PropTypes.number
 };
 
 export default OrganizeProgress;

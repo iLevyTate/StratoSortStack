@@ -93,6 +93,93 @@ describe('OrganizeProgress pause/resume (UX-4)', () => {
     expect(screen.queryByText(/done!/i)).toBeNull();
   });
 
+  describe('completion flash', () => {
+    const finishRun = (lastProgress, extraProps = {}) => {
+      const { rerender } = render(
+        <OrganizeProgress isOrganizing batchProgress={{ ...lastProgress, currentFile: '' }} />
+      );
+      rerender(
+        <OrganizeProgress
+          isOrganizing={false}
+          batchProgress={{ current: 0, total: 0, currentFile: '' }}
+          {...extraProps}
+        />
+      );
+    };
+
+    test('counts the files that were organized, not every file the run touched', () => {
+      finishRun({ current: 10, total: 10 }, { organizedCount: 7 });
+
+      expect(screen.getByText('Done!')).toBeTruthy();
+      expect(screen.getByText('Organized 7 files.')).toBeTruthy();
+      expect(screen.queryByText(/Organized 10 files/)).toBeNull();
+    });
+
+    test('without an organized count it only claims the files were processed', () => {
+      finishRun({ current: 10, total: 10 });
+
+      expect(screen.getByText('Processed 10 files.')).toBeTruthy();
+      expect(screen.queryByText(/Organized 10 files/)).toBeNull();
+    });
+
+    test('a run that stopped short of the total shows no "Done!"', () => {
+      finishRun({ current: 4, total: 10 }, { organizedCount: 4 });
+
+      expect(screen.queryByText(/done!/i)).toBeNull();
+    });
+  });
+
+  describe('planned operations list', () => {
+    // The name can also appear in the "now moving" line above the list.
+    const rowFor = (name) =>
+      screen
+        .getAllByText(name)
+        .map((el) => el.closest('.rounded-lg'))
+        .find(Boolean);
+
+    test('highlights the row being moved when the file is renamed on the way', () => {
+      render(
+        <OrganizeProgress
+          isOrganizing
+          batchProgress={{ current: 0, total: 2, currentFile: 'scan001.pdf' }}
+          preview={[
+            {
+              fileName: 'Invoice 2026.pdf',
+              sourcePath: 'C:\\in\\scan001.pdf',
+              destination: 'C:\\Docs\\Finance\\Invoice 2026.pdf'
+            },
+            {
+              fileName: 'Notes.txt',
+              sourcePath: '/in/scan002.txt',
+              destination: '/Docs/Notes/Notes.txt'
+            }
+          ]}
+        />
+      );
+
+      expect(rowFor('Invoice 2026.pdf').className).toContain('bg-stratosort-blue/10');
+      expect(rowFor('Notes.txt').className).not.toContain('bg-stratosort-blue/10');
+    });
+
+    test('does not highlight a row whose new name equals another file’s original name', () => {
+      render(
+        <OrganizeProgress
+          isOrganizing
+          batchProgress={{ current: 0, total: 2, currentFile: 'report.pdf' }}
+          preview={[
+            {
+              fileName: 'report.pdf',
+              sourcePath: '/in/draft.pdf',
+              destination: '/Docs/A/report.pdf'
+            }
+          ]}
+        />
+      );
+
+      expect(rowFor('report.pdf').className).not.toContain('bg-stratosort-blue/10');
+    });
+  });
+
   test('renders nothing when neither organizing nor paused', () => {
     const { container } = render(
       <OrganizeProgress

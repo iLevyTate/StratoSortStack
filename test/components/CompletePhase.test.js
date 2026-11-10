@@ -176,4 +176,69 @@ describe('CompletePhase premium finish', () => {
 
     expect(mockCancelPendingPersistence).toHaveBeenCalled();
   });
+
+  describe('counts in the summary', () => {
+    const { useAppSelector } = require('../../src/renderer/store/hooks');
+    const { selectOrganizedCount } = require('../../src/renderer/store/selectors');
+    const defaultSelector = useAppSelector.getMockImplementation();
+
+    const renderWithOrganized = (organizedFiles) => {
+      selectRedactPaths.mockReturnValue(false);
+      selectOrganizedCount.mockReturnValue(organizedFiles.length);
+      useAppSelector.mockImplementation((selector) =>
+        selector({
+          files: { organizedFiles, organizedPathIndex: [] },
+          analysis: { results: [] }
+        })
+      );
+      render(<CompletePhase />);
+    };
+
+    afterEach(() => {
+      useAppSelector.mockImplementation(defaultSelector);
+      selectOrganizedCount.mockReturnValue(2);
+    });
+
+    test('counts destination folders, not one destination per file', () => {
+      renderWithOrganized([
+        { originalName: 'a.pdf', path: 'C:\\Docs\\Finance\\a.pdf', smartFolder: 'Finance' },
+        { originalName: 'b.pdf', path: 'c:/docs/finance/b.pdf', smartFolder: 'Finance' },
+        { originalName: 'c.txt', path: 'C:\\Docs\\Notes\\c.txt', smartFolder: 'Notes' }
+      ]);
+
+      expect(screen.getByText('3 files moved into 2 destinations.')).toBeInTheDocument();
+      expect(screen.getByText('2 destinations')).toBeInTheDocument();
+    });
+
+    test('files in one folder are one destination, with no destinations badge', () => {
+      renderWithOrganized([
+        { originalName: 'a.pdf', path: '/dest/finance/a.pdf', smartFolder: 'finance' },
+        { originalName: 'b.pdf', path: '/dest/finance/b.pdf', smartFolder: 'finance' }
+      ]);
+
+      expect(screen.getByText('2 files moved into 1 destination.')).toBeInTheDocument();
+      expect(screen.queryByText(/\d+ destinations$/)).not.toBeInTheDocument();
+    });
+
+    test('a single organized file reads "1 file is now in place"', () => {
+      renderWithOrganized([
+        { originalName: 'a.pdf', path: '/dest/finance/a.pdf', smartFolder: 'finance' }
+      ]);
+
+      expect(
+        screen.getByText('Your reviewed batch is complete. 1 file is now in place.')
+      ).toBeInTheDocument();
+    });
+
+    test('several organized files read "are now in place"', () => {
+      renderWithOrganized([
+        { originalName: 'a.pdf', path: '/dest/finance/a.pdf', smartFolder: 'finance' },
+        { originalName: 'b.pdf', path: '/dest/finance/b.pdf', smartFolder: 'finance' }
+      ]);
+
+      expect(
+        screen.getByText('Your reviewed batch is complete. 2 files are now in place.')
+      ).toBeInTheDocument();
+    });
+  });
 });
