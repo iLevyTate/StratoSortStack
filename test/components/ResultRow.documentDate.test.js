@@ -11,6 +11,13 @@ import { render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom';
 
 import ResultRow from '../../src/renderer/components/search/ResultRow';
+import { toLocalCalendarMs } from '../../src/shared/contentDateSanity';
+
+// The real function, wrapped so a test can see the row use it.
+jest.mock('../../src/shared/contentDateSanity', () => {
+  const actual = jest.requireActual('../../src/shared/contentDateSanity');
+  return { ...actual, toLocalCalendarMs: jest.fn(actual.toLocalCalendarMs) };
+});
 
 const noop = () => {};
 
@@ -39,6 +46,19 @@ describe('the date on a search result', () => {
     renderRow({ documentDate: '2024-05-05' });
 
     expect(screen.getByText(new Date(2024, 4, 5).toLocaleDateString())).toBeInTheDocument();
+  });
+
+  // The test above cannot tell new Date('2024-05-05') from the day it
+  // names where the zone is UTC, as on CI. This one can, in any zone: no
+  // parse of the stored value gives the instant the helper is made to return.
+  test('the day comes from the calendar-day helper, in every time zone', () => {
+    const elsewhere = new Date(2031, 0, 15, 12);
+    toLocalCalendarMs.mockReturnValueOnce(elsewhere.getTime());
+
+    renderRow({ documentDate: '2024-05-05' });
+
+    expect(toLocalCalendarMs).toHaveBeenCalledWith('2024-05-05');
+    expect(screen.getByText(elsewhere.toLocaleDateString())).toBeInTheDocument();
   });
 
   test('the legacy date field is read the same way', () => {
