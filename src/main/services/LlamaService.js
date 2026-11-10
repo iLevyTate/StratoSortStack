@@ -320,6 +320,11 @@ class LlamaService extends EventEmitter {
     // starts from a fresh signal (some consumers cache the signal across
     // operations).
     this._shutdownAbort = new AbortController();
+    // How long an image in a batch waits for a text request to let go of
+    // the text model (_releaseMemoryForBatchVisionRespawn). Well inside the
+    // 300 s an image analysis is allowed, with the runtime start to come.
+    this._batchTextDrainWaitMs = 45000;
+    this._batchTextDrainSliceMs = 2500;
 
     // Vision batch mode — keeps vision server alive across multiple images
     this._visionBatchMode = false;
@@ -2144,6 +2149,40 @@ class LlamaService extends EventEmitter {
       embeddingUnloaded
     });
     throw budgetError;
+  }
+
+  /**
+   * Make room for the vision runtime an image in a batch has to respawn
+   * (see _textResidentWhileVisionDown).
+   *
+   * The text model there belongs to a request that is still running: its
+   * load ended with the request's pin on it, so the first attempt is
+   * refused. One image then lost its vision analysis for a text request
+   * that ends seconds later. The request gets a bounded time to end, in
+   * slices so a cancelled or shut-down call stops waiting, and the attempt
+   * is made once more. The wait is here and not in
+   * _releaseMemoryForVisionRuntime: entering batch mode calls that under
+   * the batch-mode lock, which leaving batch mode needs.
+   * @param {AbortSignal} [signal]
+   * @throws {Error & { code: 'MODEL_MEMORY_BUDGET_EXCEEDED' }} the first
+   *   refusal, when the text model is still in use after the wait
+   */
+  async _releaseMemoryForBatchVisionRespawn(signal) {
+    try {
+      await this._releaseMemoryForVisionRuntime('batch');
+      return;
+    } catch (error) {
+      if (/** @type {any} */ (error)?.code !== 'MODEL_MEMORY_BUDGET_EXCEEDED') throw error;
+      const manager = this._modelMemoryManager;
+      const stopped = () => Boolean(signal?.aborted || this._shutdownAbort?.signal?.aborted);
+      const deadline = Date.now() + this._batchTextDrainWaitMs;
+      let drained = false;
+      while (!drained && !stopped() && Date.now() < deadline) {
+        drained = await manager.unloadModel('text', { waitMs: this._batchTextDrainSliceMs });
+      }
+      if (!drained) throw error;
+    }
+    await this._releaseMemoryForVisionRuntime('batch');
   }
 
   async _waitForIdleOperations(
@@ -4222,8 +4261,8 @@ class LlamaService extends EventEmitter {
   /**
    * True during a vision batch when the runtime is gone and the text model
    * sits in memory instead, or is still being loaded: a text load from
-   * inside the batch evicted the runtime. The next image must wait for that
-   * load and free its memory before respawning the runtime.
+   * inside the batch evicted the runtime. The next image frees that memory
+   * before it respawns the runtime (_releaseMemoryForBatchVisionRespawn).
    * @returns {boolean}
    * @private
    */
@@ -4407,7 +4446,7 @@ class LlamaService extends EventEmitter {
                 if (!this._visionBatchMode && this._modelMemoryManager) {
                   await this._releaseMemoryForVisionRuntime('single');
                 } else if (this._textResidentWhileVisionDown()) {
-                  await this._releaseMemoryForVisionRuntime('batch');
+                  await this._releaseMemoryForBatchVisionRespawn(signal);
                 }
 
                 const visionService = getVisionService();
