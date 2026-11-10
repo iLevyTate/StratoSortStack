@@ -148,22 +148,41 @@ function analysisRetryDelayMs(retryCount) {
  * it would run as a content update (original name kept, folder kept) or be
  * skipped as already analyzed.
  *
- * A model pass that was still to come stays to come. An embedding retry
- * carries the result of the pass before it (`cachedAnalysis`) and only
- * embeds that again: left on the item, the file was never read again.
+ * An embedding still owed stays owed (see embedFallbackOf).
  * @param {any} replaced the item that gives way
  * @param {any} replacement the item that stays in the queue
  */
 function keepAnalysisRequest(replaced, replacement) {
   if (!replaced) return;
-  if (!replaced.cachedAnalysis && replacement.cachedAnalysis) {
-    delete replacement.cachedAnalysis;
-    delete replacement._lastAnalysis;
+  if (!replacement.cachedAnalysis && !replacement.embedFallback) {
+    const owed = embedFallbackOf(replaced);
+    if (owed) replacement.embedFallback = owed;
   }
   if (replaced.eventType !== 'reanalyze' || replacement.eventType === 'reanalyze') return;
   replacement.eventType = 'reanalyze';
   replacement.applyNaming = replaced.applyNaming;
   if (replaced.bulk) replacement.bulk = true;
+}
+
+/**
+ * The embedding an item still owes its file, in the form another item for
+ * the file can carry (`embedFallback`).
+ *
+ * An embedding retry carries the result of a pass that is over
+ * (`cachedAnalysis`) and only embeds it. It gives way to an item that asks
+ * for a new pass, but that item is skipped when its turn comes and the
+ * history already has the file, and then nothing embedded the file at all.
+ * The item that stays carries the result along and embeds it in that case.
+ * @param {any} item
+ * @returns {{ analysis: any, passStats: any, retryCount: number } | undefined}
+ */
+function embedFallbackOf(item) {
+  if (!item.cachedAnalysis) return item.embedFallback;
+  return {
+    analysis: item.cachedAnalysis,
+    passStats: item._passStats,
+    retryCount: item.retryCount || 0
+  };
 }
 
 // CRITICAL: Prevent unbounded memory growth under heavy file activity (e.g., large archive extraction).
@@ -344,8 +363,9 @@ class SmartFolderWatcher {
     /** @type {Promise<void> | null} */
     this._queuePersistPromise = null;
     // Items spliced out of analysisQueue and handed to _analyzeFile. They are
-    // in no queue for up to the 10-minute analysis timeout, so without this
-    // they'd be absent from the durable record for that whole window.
+    // in no queue for as long as the analysis may take (_analysisTimeoutMs:
+    // ten minutes, three hours for a recording), so without this they'd be
+    // absent from the durable record for that whole window.
     /** @type {Map<string, any>} */
     this._inFlightItems = new Map();
     /** @type {'image' | 'media' | 'document' | null} */
@@ -1504,7 +1524,9 @@ class SmartFolderWatcher {
       // queued item asks for a new pass (a newer file event, or a reanalysis
       // the user asked for) and embeds what that pass finds: it stays. The
       // retry used to take its place, and the file was not read again.
+      // The queued item carries the result along in case it is skipped.
       if (item.cachedAnalysis && !existing.cachedAnalysis) {
+        existing.embedFallback = embedFallbackOf(item);
         return;
       }
       keepAnalysisRequest(existing, item);
@@ -2180,7 +2202,7 @@ class SmartFolderWatcher {
   }
 
   /**
-   * Run one analysis under the global timeout AND abort the work when the
+   * Run one analysis under its timeout (_analysisTimeoutMs) AND abort the work when the
    * timeout fires. Before this the timed-out promise kept running (pinning a
    * worker for the full OCR/LLM call) while the item was re-queued behind it
    * (F-196 / K-07).
@@ -2534,8 +2556,17 @@ class SmartFolderWatcher {
                 const handedBack = [];
                 for (const waiting of rest) {
                   const newer = queuedByKey.get(procKey(waiting));
-                  if (newer) keepAnalysisRequest(waiting, newer);
-                  else handedBack.push(waiting);
+                  if (!newer) {
+                    handedBack.push(waiting);
+                  } else if (newer.cachedAnalysis && !waiting.cachedAnalysis) {
+                    // An embedding retry gives way to a pass still to come,
+                    // as in _enqueueAnalysisItem: the waiting item takes its
+                    // place in the queue.
+                    waiting.embedFallback = embedFallbackOf(newer);
+                    this.analysisQueue[this.analysisQueue.indexOf(newer)] = waiting;
+                  } else {
+                    keepAnalysisRequest(waiting, newer);
+                  }
                   this._inFlightItems.delete(procKey(waiting));
                 }
                 this.analysisQueue.unshift(...handedBack);
@@ -2892,10 +2923,14 @@ class SmartFolderWatcher {
 
       // Verify file still exists and capture stats for reuse below
       const fileStats = await fs.stat(filePath);
-      this._analysisStartStats.set(processingKey, {
-        mtimeMs: fileStats.mtimeMs,
-        size: fileStats.size
-      });
+      // Only a pass that reads the file: an embedding retry reads nothing,
+      // so no change event during it is its own echo, and the result it
+      // carries belongs to the file as its own pass found it.
+      if (!item.cachedAnalysis) {
+        const passStats = { mtimeMs: fileStats.mtimeMs, size: fileStats.size };
+        this._analysisStartStats.set(processingKey, passStats);
+        item._passStats = passStats;
+      }
 
       // Ask the history again, now that the file's turn has come. The answer
       // from when it was queued can be minutes old: the queue is held while a
@@ -2908,14 +2943,23 @@ class SmartFolderWatcher {
       // already has its analysis in the history.
       if (!isReanalyze && !item.cachedAnalysis) {
         const stillNeedsAnalysis = await this._needsAnalysis(filePath, item.mtime, fileStats);
-        if (!stillNeedsAnalysis) {
+        if (!stillNeedsAnalysis && !item.embedFallback) {
           logger.debug('[SMART-FOLDER-WATCHER] Already analyzed since it was queued; skipping', {
             filePath,
             eventType
           });
           return;
         }
+        if (!stillNeedsAnalysis) {
+          // No pass to run, but an embedding retry gave way to this item
+          // (embedFallbackOf): it becomes that retry.
+          item.cachedAnalysis = item.embedFallback.analysis;
+          item._passStats = item.embedFallback.passStats;
+          item.retryCount = item.embedFallback.retryCount;
+        }
       }
+      // A pass of this item's own embeds what it finds.
+      delete item.embedFallback;
 
       logger.info('[SMART-FOLDER-WATCHER] Analyzing file:', filePath, {
         applyNaming: applyNaming !== false,
@@ -3015,6 +3059,19 @@ class SmartFolderWatcher {
         // notification, learning feedback) since they already ran on the original pass.
         // Only re-attempt the embedding.
         if (isEmbeddingRetry) {
+          // The file changed since the pass this result is from: embedded
+          // now, it would replace what the pass for the new content stored
+          // (or will store) with the old content's vector and chunks.
+          const passStats = item._passStats;
+          if (
+            passStats &&
+            (passStats.mtimeMs !== fileStats.mtimeMs || passStats.size !== fileStats.size)
+          ) {
+            logger.debug('[SMART-FOLDER-WATCHER] File changed since its analysis; retry dropped', {
+              filePath
+            });
+            return;
+          }
           try {
             // Embedding retry should only retry embedding and then stop.
             // Do not run analysis side effects or stats updates.

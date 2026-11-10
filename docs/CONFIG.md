@@ -274,8 +274,8 @@ organized into categories:
 | `AI_ANALYSIS_MEDIUM`           | 60,000    | Medium AI analysis timeout                                                                                              |
 | `AI_ANALYSIS_LONG`             | 300,000   | Long AI analysis timeout (5 min; CPU vision)                                                                            |
 | `AI_ANALYSIS_BATCH`            | 1,800,000 | Batch analysis timeout (30 min)                                                                                         |
-| `ANALYSIS_LOCK`                | 300,000   | Max lock duration before force release                                                                                  |
-| `GLOBAL_ANALYSIS`              | 600,000   | Max total analysis time (10 min)                                                                                        |
+| `ANALYSIS_LOCK`                | 300,000   | A Discover run with no progress for this long is stopped and its lock released (5 min)                                  |
+| `GLOBAL_ANALYSIS`              | 600,000   | Watcher limit for one document or image (10 min); base of the Discover run cap (6x, at least 60 min)                    |
 | `WINDOW_SHOW_FALLBACK`         | 4,000     | Show the main window if `ready-to-show` has not fired                                                                   |
 | `FIRST_PAINT_GATE`             | 5,100     | Longest wait for the first paint before AI bring-up starts; outlasts `WINDOW_SHOW_FALLBACK` plus the ~100 ms show delay |
 | `COORDINATED_STARTUP_SOFT`     | 45,000    | After this, coordinated startup is reported as degraded ("still starting" warning) but keeps running                    |

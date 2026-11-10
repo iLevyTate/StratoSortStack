@@ -116,6 +116,27 @@ describe('SmartFolderWatcher and change events from its own read', () => {
     ]);
   });
 
+  // An embedding retry reads nothing, so no event during it is its echo.
+  // The edit here was saved before the retry began: the retry stats the file
+  // as edited, and the event for the edit arrives while it embeds.
+  test('a change event during an embedding retry is judged by the history', async () => {
+    const watcher = makeWatcher(async () => {});
+    watcher._embedAnalyzedFile = jest.fn(() => changeEvent(watcher));
+
+    await watcher._analyzeFile({
+      filePath: file,
+      eventType: 'add',
+      mtime: Date.now(),
+      retryCount: 1,
+      cachedAnalysis: { analysis: { category: 'Finance' } }
+    });
+
+    expect(watcher._embedAnalyzedFile).toHaveBeenCalledTimes(1);
+    expect(watcher.analysisQueue).toEqual([
+      expect.objectContaining({ filePath: file, eventType: 'change' })
+    ]);
+  });
+
   test('a change event after the analysis ended is judged by the history as before', async () => {
     const watcher = makeWatcher(async () => {});
 

@@ -109,9 +109,21 @@ describe('SmartFolderWatcher and a file that vanishes during its analysis', () =
     expectNothingRecorded(watcher);
   });
 
-  test('an embedding retry for a file that is gone does nothing', async () => {
+  test('an embedding retry for a file that goes during it embeds nothing', async () => {
     const watcher = makeWatcher(async () => {});
-    fs.rmSync(file);
+    // Gone after the retry found the file, before it embeds: the folder
+    // lookup is the one step in between.
+    const linkCheck = watcher._linkEscapeReason.bind(watcher);
+    let found = false;
+    watcher._linkEscapeReason = async (filePath) => {
+      const reason = await linkCheck(filePath);
+      found = true;
+      return reason;
+    };
+    watcher.getSmartFolders = () => {
+      if (found) fs.rmSync(file, { force: true });
+      return [{ id: 'f1', name: 'Finance', path: root }];
+    };
 
     await watcher._analyzeFile({
       filePath: file,
@@ -120,6 +132,7 @@ describe('SmartFolderWatcher and a file that vanishes during its analysis', () =
       cachedAnalysis: RESULT
     });
 
+    expect(fs.existsSync(file)).toBe(false);
     expect(watcher._embedAnalyzedFile).not.toHaveBeenCalled();
     expect(watcher.analysisQueue).toEqual([]);
   });

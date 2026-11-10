@@ -186,8 +186,14 @@ describe('an image batch handed back when a Discover analysis starts', () => {
 
     expect(watcher._analyzeFile).toHaveBeenCalledTimes(1);
     expect(watcher.analysisQueue).toHaveLength(1);
-    expect(watcher.analysisQueue[0].filePath).toBe(second);
-    expect(watcher.analysisQueue[0].cachedAnalysis).toBeUndefined();
+    const [queued] = watcher.analysisQueue;
+    // The waiting item itself, not the retry with its result taken off: that
+    // one ran as the 'add' of the pass before, with a retry already spent.
+    expect(queued).toEqual(
+      expect.objectContaining({ filePath: second, eventType: 'change', mtime: 2000 })
+    );
+    expect(queued.cachedAnalysis).toBeUndefined();
+    expect(queued.retryCount).toBeUndefined();
   });
 });
 
