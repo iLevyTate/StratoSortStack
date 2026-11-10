@@ -521,6 +521,49 @@ Changes you will notice:
   nothing else is left to unload.
 - **Whisper runs on the CPU while the text model is still being loaded** onto a GPU that cannot hold
   both.
+- **A slow move in Organize is no longer reported as failed while it still finishes.** A move to
+  another drive that took longer than 30 seconds was marked failed, but the file moved anyway, with
+  no undo entry and stale search paths. The move now runs to its end, and Stop cancels a cross-drive
+  move before the copy is published.
+- **An undo that can never work no longer blocks the ones before it.** When the file was deleted or
+  moved outside the app (or the backup of a deleted file is gone), the entry is removed from history
+  and the message says so. A file on a drive that is unplugged or ejected keeps its entry. Undo and
+  redo errors now carry their reason to the screen.
+- **Feedback notes no longer raise Organize confidence on their own.** With any note saved, a 69%
+  match could be shown and auto-organized as 76%, because the ranking score was written into the
+  confidence. A note now changes confidence only for the folders it is about.
+- **A file moved onto a path that an earlier, deleted file used keeps its own search entry** instead
+  of answering with the old file's content.
+- **Organize: smaller fixes.** Clicking an Organize notification focuses the file again; a bulk
+  category change is saved; "Done! Organized N" and the Complete screen count the files and folders
+  that were really used; the progress highlight follows a renamed file; counts of one read "1 file",
+  not "1 files".
+- **Smart folders on a network share (`\\server\share\…`) can be organized.** The paths were refused
+  before they reached the mover. Device paths and administrative shares (`C$`) stay refused.
+- **A question, search or description that mentions a Windows path is no longer blanked** before it
+  is sent (for example "What is in D:\Docs?").
+- **Graph preferences survive a session that expired**, and the "session expired" notice shows on
+  whichever screen opens first.
+- **Several recordings analyzed one by one no longer fail with "busy";** they wait their turn.
+- **Model downloads.** A download whose connection closes early fails and resumes instead of
+  hanging. A vision model whose image projector did not download is reported with a warning, not as
+  installed. When "Change & rebuild now" fails, Settings goes back to the previous embedding model,
+  as the app already had.
+- **A timed-out image no longer restarts the vision runtime under another image** that is being
+  analyzed at the same time; images go to the runtime one at a time.
+- **Analysis results.** The filename fallback no longer picks a folder because its description
+  contains the extension's letters inside a word ("ai" in "email"). Changing the organization
+  instructions re-analyzes files instead of returning the cached answer. Archives that cannot be
+  listed get keywords, and `.tgz` and `.bz2` count as archives. A document confidence the model gave
+  as a fraction (0.9) is stored as 90%, not 1%.
+- **Smart-folder watcher.** A file the app itself moved out of a watched folder keeps its analysis
+  history. A file renamed in Explorer keeps its analysis instead of being analyzed again. Turning
+  the watcher back on while it is still stopping leaves it on.
+- **Quitting twice, or closing the window during shutdown, no longer ends the app before cleanup is
+  done.**
+- **"Update ready" stays after a later update check fails.**
+- **Search window.** The Timeline list fills the window instead of staying 400 px tall, and the
+  hidden Atlas tab is no longer reachable with the Tab key.
 
 ## [5.1.2] - 2026-11-01
 
