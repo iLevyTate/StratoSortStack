@@ -588,6 +588,10 @@ Changes you will notice:
   only new files are added.
 - **Recordings queued behind one that timed out now really wait their turn.** The earlier fix did
   not take effect in the packaged app.
+- **A setting changed a moment ago no longer reads back as its old value.** While the app was busy
+  (most often just after launch), a change such as a newly chosen model could show the previous
+  value for a couple of seconds, and a second change made in that time could save the old value
+  back.
 
 ## [5.1.2] - 2026-11-01
 

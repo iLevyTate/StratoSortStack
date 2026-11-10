@@ -96,6 +96,39 @@ describe('SettingsService.save (mutex/backups/retries)', () => {
     await flushMicrotasks();
   };
 
+  test('a read that started before a save does not put the old file back in the cache', async () => {
+    const SettingsService = loadService();
+    const fsPromises = require('fs').promises;
+    const service = new SettingsService();
+    service._migrationChecked = true;
+    service.createBackup = jest.fn().mockResolvedValue({ success: true, path: 'C:\b.json' });
+
+    let onDisk = JSON.stringify({ textModel: 'old.gguf' });
+    getBackupAndReplace().mockImplementation(async (_path, content) => {
+      onDisk = content;
+      return { success: true };
+    });
+    // The first read picks up the file as it is now and is held open, the way
+    // a slow disk read is, until the save below has finished.
+    let releaseSlowRead;
+    fsPromises.readFile.mockImplementationOnce(() => {
+      const stale = onDisk;
+      return new Promise((resolve) => {
+        releaseSlowRead = () => resolve(stale);
+      });
+    });
+    fsPromises.readFile.mockImplementation(async () => onDisk);
+
+    const slowRead = service.load();
+    while (!releaseSlowRead) await flushMicrotasks();
+
+    await service.save({ textModel: 'new.gguf' });
+    releaseSlowRead();
+    await slowRead;
+
+    expect((await service.load()).textModel).toBe('new.gguf');
+  });
+
   test('save creates backup, writes settings, and updates cache', async () => {
     const SettingsService = loadService();
     const service = new SettingsService();

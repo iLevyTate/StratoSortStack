@@ -67,6 +67,10 @@ class SettingsService {
     this.defaults = this._buildRuntimeDefaults();
     this._cache = null;
     this._cacheTimestamp = 0;
+    // Counts cache replacements made by a write (save, restore, recovery).
+    // _loadRaw compares it across its disk read: a read that started before
+    // a write finished holds the old file and must not replace the new cache.
+    this._cacheWrites = 0;
     // Cache objects that are only the defaults standing in for settings that
     // could not be read (missing or unrecoverable settings.json). Tracked by
     // identity so save()'s cache rollback keeps the mark. Auto-recovery must
@@ -361,7 +365,15 @@ class SettingsService {
       if (this._cache && now - this._cacheTimestamp < this._cacheTtlMs) {
         return this._cache;
       }
+      const cacheWritesBeforeRead = this._cacheWrites;
       const raw = await fs.readFile(this.settingsPath, 'utf-8');
+      if (this._cacheWrites !== cacheWritesBeforeRead && this._cache) {
+        // A save landed while this read was in flight. What was read is the
+        // file from before it; caching that handed the next settings read
+        // the old values (a model chosen a moment ago read back as the
+        // previous one) until the short cache TTL ran out.
+        return this._cache;
+      }
 
       let parsed;
       try {
@@ -709,6 +721,7 @@ class SettingsService {
         // If disk write fails, we rollback to previous state
         this._cache = merged;
         this._cacheTimestamp = Date.now();
+        this._cacheWrites++;
 
         // Bug #42: Retry logic for file lock handling with exponential backoff
         const maxSaveRetries = RETRY.MAX_ATTEMPTS_HIGH;
@@ -1136,6 +1149,7 @@ class SettingsService {
           // Update cache
           this._cache = merged;
           this._cacheTimestamp = Date.now();
+          this._cacheWrites++;
         } finally {
           if (this._internalChangeTimer) {
             clearTimeout(this._internalChangeTimer);
