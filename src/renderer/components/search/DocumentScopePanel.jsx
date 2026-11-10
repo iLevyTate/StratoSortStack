@@ -4,6 +4,7 @@ import { X, FileText, Folder, Plus, FolderInput, ChevronRight } from 'lucide-rea
 import { Button, IconButton } from '../ui';
 import { Text } from '../ui/Typography';
 import { formatDisplayPath } from '../../utils/pathDisplay';
+import { resolveDroppedFilePath } from '../../utils/dragAndDrop';
 import { useSelector } from 'react-redux';
 import { selectRedactPaths } from '../../store/selectors';
 
@@ -81,10 +82,22 @@ export default function DocumentScopePanel({
 
       const droppedFiles = e.dataTransfer?.files;
       if (droppedFiles && droppedFiles.length > 0) {
-        const files = Array.from(droppedFiles).map((f) => ({
-          path: f.path,
+        // File-kind items line up with dataTransfer.files; their entries are
+        // the only synchronous way to tell a dropped folder from a file.
+        const entries = Array.from(e.dataTransfer?.items || [])
+          .filter((item) => item?.kind === 'file')
+          .map((item) => {
+            try {
+              return item.webkitGetAsEntry?.() || null;
+            } catch {
+              return null;
+            }
+          });
+        const files = Array.from(droppedFiles).map((f, index) => ({
+          // File.path is gone in modern Electron; the preload bridge resolves it.
+          path: resolveDroppedFilePath(f),
           name: f.name,
-          type: 'file'
+          type: entries[index]?.isDirectory ? 'folder' : 'file'
         }));
         onAddToScope(files);
       }

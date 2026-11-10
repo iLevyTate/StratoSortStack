@@ -124,7 +124,15 @@ describe('ChatService session management', () => {
   test('_saveMemoryTurn skips the user row on regenerate (skipUserMessage)', async () => {
     const store = {
       initialize: jest.fn().mockResolvedValue(undefined),
-      getConversation: jest.fn(() => ({ id: 'regen', title: 'Existing' })),
+      // The skip applies only when the question row is really stored.
+      getConversation: jest.fn(() => ({
+        id: 'regen',
+        title: 'Existing',
+        messages: [
+          { role: 'user', text: 'same question again' },
+          { role: 'assistant', text: 'first answer' }
+        ]
+      })),
       createConversation: jest.fn(),
       addMessage: jest.fn()
     };

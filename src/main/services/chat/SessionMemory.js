@@ -128,7 +128,9 @@ class SessionMemory {
     if (this.chatHistoryStore && memory?.sessionId) {
       try {
         const conv = this.chatHistoryStore.getConversation(memory.sessionId);
-        if (!conv) return '';
+        // No stored conversation: a turn that could not be persisted lives in
+        // the in-memory buffer, so follow-ups still read their history there.
+        if (!conv) return this._getInMemoryHistoryText(memory);
         const messages = conv.messages.slice(-(this.memoryWindow * 2));
         return messages
           .map((/** @type {any} */ m) => {
@@ -169,6 +171,11 @@ class SessionMemory {
       }
     }
 
+    return this._getInMemoryHistoryText(memory);
+  }
+
+  /** @private */
+  async _getInMemoryHistoryText(/** @type {any} */ memory) {
     try {
       const vars = await memory.loadMemoryVariables({});
       return typeof vars?.history === 'string' ? vars.history : '';
@@ -208,10 +215,13 @@ class SessionMemory {
 
         // Persist user turn — unless this is a regenerate, where the original
         // user row already exists and re-inserting duplicates it on reload.
-        if (!skipUserMessage) {
+        // Retry after a failed request sends the same flag although nothing
+        // was saved, so the skip is honoured only when the row is really there.
+        const userText = typeof input === 'string' ? input : '';
+        if (!skipUserMessage || !this._isLastUserMessage(conv, userText)) {
           this.chatHistoryStore.addMessage(memory.sessionId, {
             role: 'user',
-            text: typeof input === 'string' ? input : ''
+            text: userText
           });
         }
 
@@ -258,6 +268,22 @@ class SessionMemory {
         logger.debug('[ChatSessionMemory] Failed to save memory:', error.message);
       }
     }
+  }
+
+  /**
+   * Whether the conversation's most recent user row is this question.
+   * @private
+   * @param {any} conv Stored conversation, or null when none exists yet.
+   * @param {string} userText
+   * @returns {boolean}
+   */
+  _isLastUserMessage(conv, userText) {
+    const messages = Array.isArray(conv?.messages) ? conv.messages : [];
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (messages[i]?.role !== 'user') continue;
+      return String(messages[i].text ?? '').trim() === userText.trim();
+    }
+    return false;
   }
 
   /**

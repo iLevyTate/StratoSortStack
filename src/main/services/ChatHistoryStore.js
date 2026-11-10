@@ -45,7 +45,10 @@ const SEARCH_DECRYPT_SCAN_CAP = 500;
  */
 const MAX_CONVERSATION_TITLE = 512;
 const MAX_MESSAGE_TEXT = 64_000;
-const MAX_DOCUMENT_SCOPE_ITEMS = 200;
+// Matches chatQuerySchema.documentScopeItems (validationSchemas.js). A lower
+// limit here made the first save of an accepted request throw, so the whole
+// conversation was never stored.
+const MAX_DOCUMENT_SCOPE_ITEMS = 1_000;
 const MAX_DOCUMENT_SCOPE_ITEM_BYTES = 16_384;
 const MAX_MESSAGE_SOURCES_ITEMS = 1_000;
 const MAX_MESSAGE_FOLLOWUPS_ITEMS = 50;

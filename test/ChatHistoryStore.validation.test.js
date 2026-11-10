@@ -46,7 +46,7 @@ describe('ChatHistoryStore — input size validation', () => {
     test('exposes finite numeric limits', () => {
       expect(CHAT_HISTORY_LIMITS.MAX_CONVERSATION_TITLE).toBe(512);
       expect(CHAT_HISTORY_LIMITS.MAX_MESSAGE_TEXT).toBe(64_000);
-      expect(CHAT_HISTORY_LIMITS.MAX_DOCUMENT_SCOPE_ITEMS).toBe(200);
+      expect(CHAT_HISTORY_LIMITS.MAX_DOCUMENT_SCOPE_ITEMS).toBe(1000);
       expect(CHAT_HISTORY_LIMITS.MAX_MESSAGE_PAYLOAD_BYTES).toBe(256_000);
     });
 
@@ -60,6 +60,21 @@ describe('ChatHistoryStore — input size validation', () => {
       const { store, stmt } = buildStore();
       const result = store.createConversation('My chat', [{ id: 'a', path: '/foo' }]);
       expect(result.title).toBe('My chat');
+      expect(stmt.run).toHaveBeenCalled();
+    });
+
+    test('accepts the largest document scope a chat request may carry', () => {
+      // chatQuerySchema (validationSchemas.js) allows 1000 documentScopeItems.
+      // A lower limit here made the first save of such a chat throw, so the
+      // conversation was never stored.
+      const { store, stmt } = buildStore();
+      const scope = Array.from({ length: 1000 }, (_, i) => ({
+        id: `file:${i}`,
+        path: `/synthetic/docs/${i}.pdf`,
+        name: `${i}.pdf`,
+        type: 'file'
+      }));
+      expect(() => store.createConversation('Big scope', scope, 'big')).not.toThrow();
       expect(stmt.run).toHaveBeenCalled();
     });
 

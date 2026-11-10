@@ -95,6 +95,94 @@ describe('SessionMemory', () => {
     expect(history).not.toContain('[doc-1]');
   });
 
+  /** In-memory stand-in for ChatHistoryStore: conversations keyed by id. */
+  function createFakeStore({ failCreate = false } = {}) {
+    /** @type {Map<string, { id: string, title: string, documentScope: any[], messages: any[] }>} */
+    const conversations = new Map();
+    return {
+      conversations,
+      getConversation: jest.fn((id) => conversations.get(id) || null),
+      createConversation: jest.fn((title, documentScope, id) => {
+        if (failCreate) throw new Error('Document scope exceeds limit');
+        conversations.set(id, { id, title, documentScope, messages: [] });
+      }),
+      addMessage: jest.fn((id, message) => {
+        conversations.get(id).messages.push(message);
+      })
+    };
+  }
+
+  test('retry after a failed first attempt saves the question with the answer', async () => {
+    // The failed attempt persisted nothing, so there is no user row to reuse.
+    const store = createFakeStore();
+    const memory = new SessionMemory({ chatHistoryStore: store });
+    const session = await memory.getSessionMemory('retry-new');
+
+    await memory.saveMemoryTurn(
+      session,
+      'What is in the report?',
+      { text: 'A summary.' },
+      { skipUserMessage: true }
+    );
+
+    expect(store.conversations.get('retry-new').messages.map((m) => [m.role, m.text])).toEqual([
+      ['user', 'What is in the report?'],
+      ['assistant', 'A summary.']
+    ]);
+  });
+
+  test('retry of a failed follow-up saves the follow-up question', async () => {
+    const store = createFakeStore();
+    const memory = new SessionMemory({ chatHistoryStore: store });
+    const session = await memory.getSessionMemory('retry-followup');
+    await memory.saveMemoryTurn(session, 'First question', { text: 'First answer' });
+
+    await memory.saveMemoryTurn(
+      session,
+      'And the second one?',
+      { text: 'Second answer' },
+      { skipUserMessage: true }
+    );
+
+    const rows = store.conversations.get('retry-followup').messages.map((m) => [m.role, m.text]);
+    expect(rows).toEqual([
+      ['user', 'First question'],
+      ['assistant', 'First answer'],
+      ['user', 'And the second one?'],
+      ['assistant', 'Second answer']
+    ]);
+    expect(await memory.getHistoryText(session)).toContain('User: And the second one?');
+  });
+
+  test('regenerate does not duplicate a question that is already saved', async () => {
+    const store = createFakeStore();
+    const memory = new SessionMemory({ chatHistoryStore: store });
+    const session = await memory.getSessionMemory('regen');
+    await memory.saveMemoryTurn(session, 'Same question', { text: 'First answer' });
+
+    await memory.saveMemoryTurn(
+      session,
+      'Same question',
+      { text: 'Regenerated answer' },
+      { skipUserMessage: true }
+    );
+
+    const roles = store.conversations.get('regen').messages.map((m) => m.role);
+    expect(roles).toEqual(['user', 'assistant', 'assistant']);
+  });
+
+  test('follow-ups keep their history when a turn could not be saved', async () => {
+    const store = createFakeStore({ failCreate: true });
+    const memory = new SessionMemory({ chatHistoryStore: store });
+    const session = await memory.getSessionMemory('unsaved');
+
+    await memory.saveMemoryTurn(session, 'First question', { text: 'First answer' });
+
+    const history = await memory.getHistoryText(session);
+    expect(history).toContain('User: First question');
+    expect(history).toContain('Assistant: First answer');
+  });
+
   test('delete removes the session from the LRU', async () => {
     const memory = new SessionMemory();
     await memory.getSessionMemory('gone');
