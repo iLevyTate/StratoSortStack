@@ -18,6 +18,8 @@ let _lastProgressSendMs = 0;
 let _pendingGetMainWindow = null;
 /** @type {*} */
 let _pendingProgressPayload = null;
+/** @type {(() => boolean)|null} */
+let _pendingStillWanted = null;
 /** @type {ReturnType<typeof setTimeout>|null} */
 let _pendingProgressTimer = null;
 
@@ -35,10 +37,18 @@ function _doSend(getMainWindow, payload) {
 /**
  * Throttled progress sender.  Emits at most once per THROTTLE_MS.
  * The final update in a batch is always delivered (via trailing flush).
+ *
+ * The trailing flush runs up to THROTTLE_MS after the call, and the operation
+ * can have ended or been stopped by then. A caller whose report must not
+ * arrive after that passes stillWanted: it is asked when the window closes,
+ * and the held report is dropped when it answers false. A Discover analysis
+ * that was stopped got its counts sent again this way, after the renderer had
+ * cleared them, and counts without a running analysis read as a paused one.
  * @param {GetMainWindowFn} getMainWindow
  * @param {*} payload
+ * @param {{ stillWanted?: () => boolean }} [options]
  */
-function sendOperationProgress(getMainWindow, payload) {
+function sendOperationProgress(getMainWindow, payload, { stillWanted } = {}) {
   const now = Date.now();
   const elapsed = now - _lastProgressSendMs;
 
@@ -49,22 +59,29 @@ function sendOperationProgress(getMainWindow, payload) {
     }
     _pendingGetMainWindow = null;
     _pendingProgressPayload = null;
+    _pendingStillWanted = null;
     _lastProgressSendMs = now;
     _doSend(getMainWindow, payload);
     return;
   }
 
-  // Trailing edge: buffer the latest payload and window getter for flush
+  // Trailing edge: buffer the latest payload and window getter for flush.
+  // The check belongs to the held payload: a later caller without one is not
+  // held back by the check of the caller before it.
   _pendingGetMainWindow = getMainWindow;
   _pendingProgressPayload = payload;
+  _pendingStillWanted = typeof stillWanted === 'function' ? stillWanted : null;
   if (!_pendingProgressTimer) {
     _pendingProgressTimer = setTimeout(() => {
       _pendingProgressTimer = null;
       if (_pendingProgressPayload && _pendingGetMainWindow) {
-        _lastProgressSendMs = Date.now();
-        _doSend(_pendingGetMainWindow, _pendingProgressPayload);
+        if (!_pendingStillWanted || _pendingStillWanted()) {
+          _lastProgressSendMs = Date.now();
+          _doSend(_pendingGetMainWindow, _pendingProgressPayload);
+        }
         _pendingGetMainWindow = null;
         _pendingProgressPayload = null;
+        _pendingStillWanted = null;
       }
     }, THROTTLE_MS - elapsed);
   }
