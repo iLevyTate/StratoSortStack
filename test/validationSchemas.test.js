@@ -454,15 +454,6 @@ describe('validationSchemas (Zod path)', () => {
           expect(result.success).toBe(false);
         });
 
-        test('rejects UNC source', () => {
-          const result = schemas.fileOperation.safeParse({
-            type: 'move',
-            source: '\\\\server\\share\\file.txt',
-            destination: '/b/file.txt'
-          });
-          expect(result.success).toBe(false);
-        });
-
         test('rejects relative source', () => {
           const result = schemas.fileOperation.safeParse({
             type: 'move',
@@ -543,14 +534,6 @@ describe('validationSchemas (Zod path)', () => {
           expect(result.success).toBe(false);
         });
 
-        test('rejects UNC operations[].destination', () => {
-          const result = schemas.fileOperation.safeParse({
-            type: 'batch_organize',
-            operations: [{ source: '/in/a.pdf', destination: '\\\\server\\share\\a.pdf' }]
-          });
-          expect(result.success).toBe(false);
-        });
-
         test('rejects relative operations[].source', () => {
           const result = schemas.fileOperation.safeParse({
             type: 'batch_organize',
@@ -571,6 +554,104 @@ describe('validationSchemas (Zod path)', () => {
     });
   });
 
+  // Smart folders may live on a network share, and the destination policy
+  // allows a UNC destination inside one. The schema used to refuse every UNC
+  // path, so that branch could never be reached from the renderer.
+  describe('file operation paths on a network share', () => {
+    const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+    const setPlatform = (value) =>
+      Object.defineProperty(process, 'platform', { ...realPlatform, value });
+    const organizeInto = (destination) =>
+      schemas.fileOperation.safeParse({
+        type: 'batch_organize',
+        operations: [{ source: 'C:\\Users\\kim\\Downloads\\a.pdf', destination }]
+      });
+
+    afterEach(() => {
+      Object.defineProperty(process, 'platform', realPlatform);
+    });
+
+    describe('on Windows', () => {
+      beforeEach(() => setPlatform('win32'));
+
+      test('accepts a UNC destination in batch_organize', () => {
+        expect(organizeInto('\\\\NAS\\Docs\\Invoices\\a.pdf').success).toBe(true);
+      });
+
+      test('accepts a UNC destination in the batchOrganize schema', () => {
+        const result = schemas.batchOrganize.safeParse({
+          operations: [
+            { source: 'C:\\Users\\kim\\Downloads\\a.pdf', destination: '\\\\NAS\\Docs\\a.pdf' }
+          ]
+        });
+        expect(result.success).toBe(true);
+      });
+
+      test('accepts a UNC source in a move', () => {
+        const result = schemas.fileOperation.safeParse({
+          type: 'move',
+          source: '\\\\NAS\\Docs\\Inbox\\a.pdf',
+          destination: 'C:\\Users\\kim\\Documents\\a.pdf'
+        });
+        expect(result.success).toBe(true);
+      });
+
+      test.each([
+        ['a device namespace path', '\\\\?\\C:\\Users\\kim\\a.pdf'],
+        ['a long-path UNC device form', '\\\\?\\UNC\\NAS\\Docs\\a.pdf'],
+        ['a named pipe', '\\\\.\\pipe\\a'],
+        ['a server with no share', '\\\\NAS'],
+        ['a server with an empty share', '\\\\NAS\\'],
+        ['a forward-slash UNC', '//NAS/Docs/a.pdf'],
+        ['a mixed-slash UNC', '\\\\NAS/Docs/a.pdf'],
+        ['an administrative share', '\\\\localhost\\C$\\Windows\\System32\\a.dll'],
+        ['traversal out of the share', '\\\\NAS\\Docs\\..\\..\\Other\\a.pdf'],
+        ['an alternate data stream', '\\\\NAS\\Docs\\a.pdf:hidden'],
+        ['a NUL byte', '\\\\NAS\\Docs\\a.pdf\0.exe']
+      ])('still rejects %s', (_label, destination) => {
+        expect(organizeInto(destination).success).toBe(false);
+      });
+    });
+
+    describe('off Windows', () => {
+      beforeEach(() => setPlatform('linux'));
+
+      test('rejects a UNC source', () => {
+        const result = schemas.fileOperation.safeParse({
+          type: 'move',
+          source: '\\\\server\\share\\file.txt',
+          destination: '/b/file.txt'
+        });
+        expect(result.success).toBe(false);
+      });
+
+      test('rejects a UNC operations[].destination', () => {
+        const result = schemas.fileOperation.safeParse({
+          type: 'batch_organize',
+          operations: [{ source: '/in/a.pdf', destination: '\\\\server\\share\\a.pdf' }]
+        });
+        expect(result.success).toBe(false);
+      });
+
+      test('rejects a UNC operations[].destination in the batchOrganize schema', () => {
+        const result = schemas.batchOrganize.safeParse({
+          operations: [{ source: '/in/a.pdf', destination: '\\\\server\\share\\a.pdf' }]
+        });
+        expect(result.success).toBe(false);
+      });
+    });
+
+    test('trash and triage schemas keep refusing UNC on Windows', () => {
+      setPlatform('win32');
+      expect(schemas.trashDuplicates.safeParse({ paths: ['\\\\NAS\\Docs\\a.pdf'] }).success).toBe(
+        false
+      );
+      expect(schemas.downloadsTriageStart.safeParse({ folderPath: '\\\\NAS\\Docs' }).success).toBe(
+        false
+      );
+    });
+  });
+
   describe('batchOrganize schema — IPC-gate path hardening (audit item #1)', () => {
     test('rejects traversal in operations[].source', () => {
       const result = schemas.batchOrganize.safeParse({
@@ -582,13 +663,6 @@ describe('validationSchemas (Zod path)', () => {
     test('rejects URL-like operations[].source', () => {
       const result = schemas.batchOrganize.safeParse({
         operations: [{ source: 'file:///etc/passwd', destination: '/out/a.pdf' }]
-      });
-      expect(result.success).toBe(false);
-    });
-
-    test('rejects UNC operations[].destination', () => {
-      const result = schemas.batchOrganize.safeParse({
-        operations: [{ source: '/in/a.pdf', destination: '\\\\server\\share\\a.pdf' }]
       });
       expect(result.success).toBe(false);
     });
