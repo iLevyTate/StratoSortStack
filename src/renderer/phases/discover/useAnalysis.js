@@ -126,6 +126,10 @@ function isMediaFilePath(filePath) {
   return MEDIA_EXTENSIONS.has(filePath.slice(dot).toLowerCase());
 }
 
+// What one file gets on the per-file path: under the time a run may go
+// without progress, so the file is what fails, not the run.
+const PER_FILE_LIMIT_MS = Math.min(TIMEOUTS.AI_ANALYSIS_LONG, TIMEOUTS.ANALYSIS_LOCK - 5000);
+
 /**
  * A run with audio or video always takes the batch path. One recording is
  * many minutes of work; the per-file path gives a file 5 minutes, then
@@ -1086,7 +1090,7 @@ export function useAnalysis(options = {}) {
           resetAnalysisState('Analysis lock timeout');
           lockTimeoutRef.current = null;
           addNotification(
-            `Analysis was stopped after no progress for ${Math.round(thresholdMs / 60000)} min. Unfinished files are ready to analyze again.`,
+            'Analysis was stopped because it stopped making progress. Unfinished files are ready to analyze again.',
             'warning',
             5000,
             'analysis-timeout'
@@ -1615,10 +1619,14 @@ export function useAnalysis(options = {}) {
             modified: file.modified
           };
 
+          // Counted from here, with a limit just under the run's own, a slow
+          // file fails first and the run goes on to the next.
+          lastProgressAtRef.current = Date.now();
+
           try {
             const analysis = await withTimeout(
               analyzeWithRetry(file.path, 1, abortSignal, namingSettings),
-              TIMEOUTS.AI_ANALYSIS_LONG,
+              PER_FILE_LIMIT_MS,
               `Analysis for ${fileName}`
             );
 

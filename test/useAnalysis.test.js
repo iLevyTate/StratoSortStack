@@ -852,6 +852,28 @@ describe('useAnalysis', () => {
       ]);
     });
 
+    test('a slow file on the per-file path fails alone; the run goes on', async () => {
+      // A file gets 5 minutes, the same as the no-progress limit, and the
+      // run's clock started a moment before the file's. The run was stopped
+      // just before the file would have failed and made room for the next.
+      const { hook, finish } = await startPerFileRun('/slow');
+
+      for (let minute = 0; minute < 6; minute += 1) {
+        await act(async () => {
+          await jest.advanceTimersByTimeAsync(60 * 1000);
+        });
+      }
+
+      expect(
+        mockAddNotification.mock.calls.filter((call) => call[3] === 'analysis-timeout')
+      ).toEqual([]);
+
+      act(() => {
+        hook.result.current.cancelAnalysis();
+      });
+      await finish();
+    });
+
     test('fallback pool skips files whose results already streamed in [F-154]', async () => {
       const { result } = renderHook(() => useAnalysis(createMockOptions()));
       const files = Array.from({ length: 40 }, (_, index) => ({
@@ -937,7 +959,11 @@ describe('useAnalysis', () => {
         expect(mockSetIsAnalyzing).toHaveBeenLastCalledWith(false);
         expect(timeoutNotices()).toHaveLength(1);
         const [message, severity] = timeoutNotices()[0];
-        expect(message).toMatch(/stopped after no progress for 5 min/);
+        // No duration: the check runs every 5 minutes, so the wait is
+        // anywhere between 5 and 10.
+        expect(message).toBe(
+          'Analysis was stopped because it stopped making progress. Unfinished files are ready to analyze again.'
+        );
         expect(severity).toBe('warning');
       });
 

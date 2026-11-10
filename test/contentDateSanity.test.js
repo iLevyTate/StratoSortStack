@@ -3,6 +3,7 @@
  */
 const {
   isPlausibleContentDate,
+  toWrittenCalendarDay,
   CONTENT_DATE_MIN_YEAR
 } = require('../src/shared/contentDateSanity');
 
@@ -33,6 +34,15 @@ describe('isPlausibleContentDate (F-158)', () => {
     expect(isPlausibleContentDate('2024', now)).toBe(true);
     expect(isPlausibleContentDate('2024-05', now)).toBe(true);
     expect(isPlausibleContentDate('2024-05-05T10:00:00.000Z', now)).toBe(true);
+  });
+
+  test('a number from the model is a year or nothing, never milliseconds', () => {
+    // {"date": 2024} was read as 2024 ms after 1970 and kept as the date.
+    expect(toWrittenCalendarDay(2024)).toBe('2024-01-01');
+    expect(toWrittenCalendarDay(20240505)).toBeNull();
+    expect(toWrittenCalendarDay(1714867200)).toBeNull();
+    expect(toWrittenCalendarDay(2024.5)).toBeNull();
+    expect(toWrittenCalendarDay(0)).toBeNull();
   });
 
   test('rejects non-strings and short/garbage input', () => {

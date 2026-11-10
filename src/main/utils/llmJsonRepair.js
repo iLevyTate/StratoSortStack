@@ -106,7 +106,7 @@ ${trimmed}`;
           signal: abortController.signal
         }),
       JSON_REPAIR_TIMEOUT_MS,
-      `JSON repair timed out after ${JSON_REPAIR_TIMEOUT_MS}ms`
+      'JSON repair'
     );
 
     if (result?.response) {
@@ -187,7 +187,7 @@ Rules:
           signal: abortController.signal
         }),
       PROSE_EXTRACTION_TIMEOUT_MS,
-      `Prose extraction timed out after ${PROSE_EXTRACTION_TIMEOUT_MS}ms`
+      'Prose extraction'
     );
 
     if (result?.response) {

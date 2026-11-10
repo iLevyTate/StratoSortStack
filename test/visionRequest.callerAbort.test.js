@@ -102,9 +102,7 @@ describe('a vision request that is aborted while the runtime works on it', () =>
   }
 
   async function runOutOfTime() {
-    const arrived = nextArrival();
     const run = analyze({ timeoutMs: 150 });
-    await arrived;
     await expect(run.outcome).rejects.toThrow(/timed out after 150ms/);
     return run.guarded();
   }
@@ -118,6 +116,27 @@ describe('a vision request that is aborted while the runtime works on it', () =>
     // The next image is sent to the runtime.
     await stopDuringInference();
     expect(sendRequest).toHaveBeenCalledTimes(6);
+  });
+
+  // The renderer's own limit on the invoke: main aborts the handler's signal
+  // with this reason. The runtime did not answer in time, as above.
+  async function invokeTimesOut() {
+    const caller = new AbortController();
+    const arrived = nextArrival();
+    const run = analyze({ callerSignal: caller.signal });
+    await arrived;
+    caller.abort('ipc-timeout');
+    await expect(run.outcome).rejects.toMatchObject({ code: 'OPERATION_CANCELLED' });
+    return run.guarded();
+  }
+
+  test('five invokes that timed out in the renderer open it too', async () => {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const error = await invokeTimesOut();
+      expect(error.originalError || error).toMatchObject({ name: 'Error' });
+    }
+
+    expect(_getCircuitBreaker('vision').getState()).toBe('OPEN');
   });
 
   test('a Stop rejects the request as an abort', async () => {

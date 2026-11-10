@@ -112,6 +112,11 @@ function toWrittenCalendarDay(value) {
   if (typeof value !== 'string' && typeof value !== 'number' && !(value instanceof Date)) {
     return null;
   }
+  // A model that answers {"date": 2024} wrote a year. new Date(2024) is 2024
+  // milliseconds after 1970.
+  if (typeof value === 'number') {
+    return Number.isInteger(value) && value >= 1000 && value <= 9999 ? `${value}-01-01` : null;
+  }
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return null;
   const written =
