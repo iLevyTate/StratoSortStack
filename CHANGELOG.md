@@ -12,6 +12,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [5.2.0] - 2026-11-10
+
 Cloud analysis now covers audio and video, and video frames are sent only with your consent and the
 "Describe video keyframes" setting. When the disk fills up, the app says so and stops analyzing
 until it can save again. Exact duplicates are found without a manual step, and Find Duplicates can
@@ -1397,7 +1399,8 @@ notes.
 Note: versions before 5.0.0 were released from predecessor repositories whose tags are not part of
 this repository's history, so they are listed without links.
 
-[Unreleased]: https://github.com/iLevyTate/StratoSortStack/compare/v5.1.2...HEAD
+[Unreleased]: https://github.com/iLevyTate/StratoSortStack/compare/v5.2.0...HEAD
+[5.2.0]: https://github.com/iLevyTate/StratoSortStack/compare/v5.1.2...v5.2.0
 [5.1.2]: https://github.com/iLevyTate/StratoSortStack/compare/v5.1.1...v5.1.2
 [5.1.1]: https://github.com/iLevyTate/StratoSortStack/compare/v5.1.0...v5.1.1
 [5.1.0]: https://github.com/iLevyTate/StratoSortStack/compare/v5.0.0...v5.1.0
