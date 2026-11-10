@@ -515,10 +515,15 @@ test.describe('Search Modal - Graph Visualization', () => {
 
   test('should switch to Relate tab (graph)', async () => {
     await pressOpenSearchShortcut(window);
-    await safeWaitForTimeout(window, 500);
 
-    // Click on "Relate" tab (graph view in KnowledgeOS)
+    // Click on "Relate" tab (graph view in KnowledgeOS). Wait for it: on a
+    // slow launch the dialog is not up after a fixed 500 ms, and counting the
+    // tab then skipped a test that would have run.
     const graphTab = window.locator('button:has-text("Relate")');
+    await graphTab
+      .first()
+      .waitFor({ state: 'visible', timeout: 15000 })
+      .catch(() => {});
     if ((await graphTab.count()) === 0) {
       test.skip(true, 'Graph/Relate tab not shown (STRATOSORT_GRAPH_ENABLED may be false)');
     }
