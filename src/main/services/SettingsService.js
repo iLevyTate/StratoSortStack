@@ -135,7 +135,9 @@ class SettingsService {
     // Start file watching
     this._startFileWatcher();
     this._migrationChecked = false;
-    this._migrationInProgress = false;
+    // Marks the async context of the migration run itself.
+    /** @type {AsyncLocalStorage<boolean>} */
+    this._migrationScope = new AsyncLocalStorage();
     this._migrationAttempts = 0;
     /** @type {Promise<void>|null} */
     this._migrationPromise = null;
@@ -295,11 +297,6 @@ class SettingsService {
       return this._cache || { ...this.defaults };
     }
 
-    if (this._migrationInProgress) {
-      logger.debug('[SettingsService] Migration in progress - loading raw settings');
-      return this._loadRaw();
-    }
-
     await this._ensureMigrated();
     return this._loadRaw();
   }
@@ -313,8 +310,14 @@ class SettingsService {
    * current schema version by mergeWithDefaults) clobbers the migrated file
    * and permanently hides the legacy values from future migrations.
    *
-   * Concurrent callers share one in-flight run. The migrator's own nested
-   * save() sees _migrationInProgress and skips (see save()).
+   * Concurrent callers share one in-flight run and wait for it. Only the
+   * migrator's own nested load() and save() pass straight through, and they
+   * are recognised by their async context (_migrationScope), not by a flag:
+   * a flag also let through a save made by anyone else while the migration
+   * ran, and the migrator then wrote its older snapshot over that save.
+   *
+   * The run holds the save mutex from its first read to its write, so a save
+   * that was already under way cannot land in between either.
    * @private
    * @returns {Promise<void>}
    */
@@ -322,22 +325,32 @@ class SettingsService {
     if (this._migrationChecked || this._migrationAttempts >= this._maxMigrationAttempts) {
       return;
     }
+    if (this._migrationScope.getStore()) {
+      return;
+    }
     if (this._migrationPromise) {
+      // A caller that holds the mutex cannot wait for a run queued behind it.
+      if (this._mutexScope.getStore()) return;
       await this._migrationPromise;
       return;
     }
-    this._migrationInProgress = true;
     this._migrationPromise = (async () => {
       try {
-        await this.migrateLegacyConfig();
-        const { createInstance: createSettingsMigrator } = require('./migration/SettingsMigrator');
-        const migrator = createSettingsMigrator(this);
-        if (await migrator.needsMigration()) {
-          const result = await migrator.migrate();
-          if (!result?.success) {
-            throw new Error(result?.errors?.[0] || 'Settings migration failed');
-          }
-        }
+        await this._withMutex(() =>
+          this._migrationScope.run(true, async () => {
+            await this.migrateLegacyConfig();
+            const {
+              createInstance: createSettingsMigrator
+            } = require('./migration/SettingsMigrator');
+            const migrator = createSettingsMigrator(this);
+            if (await migrator.needsMigration()) {
+              const result = await migrator.migrate();
+              if (!result?.success) {
+                throw new Error(result?.errors?.[0] || 'Settings migration failed');
+              }
+            }
+          })
+        );
         this._migrationChecked = true; // Only mark checked after successful completion
       } catch (err) {
         this._migrationAttempts++;
@@ -352,7 +365,6 @@ class SettingsService {
           );
         }
       } finally {
-        this._migrationInProgress = false;
         this._migrationPromise = null;
       }
     })();
@@ -581,11 +593,9 @@ class SettingsService {
     }
 
     // Migrate before reading current state so the write below cannot clobber
-    // a migration triggered mid-save. The migrator's own save() arrives with
-    // _migrationInProgress set and must not wait on itself.
-    if (!this._migrationInProgress) {
-      await this._ensureMigrated();
-    }
+    // a migration triggered mid-save. The migrator's own save() does not wait
+    // on itself (see _ensureMigrated).
+    await this._ensureMigrated();
 
     // Fixed: Use mutex to prevent race conditions from concurrent saves
     return this._withMutex(async (/** @type {any} */ cancellation) => {

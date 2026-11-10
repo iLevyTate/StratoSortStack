@@ -594,6 +594,9 @@ Changes you will notice:
   (most often just after launch), a change such as a newly chosen model could show the previous
   value for a couple of seconds, and a second change made in that time could save the old value
   back.
+- **A setting changed in the first moments after an update is kept.** On the first launch after an
+  update the app brings the settings file up to date; a change made while that was still running
+  could be overwritten by it and go back to the old value.
 
 ## [5.1.2] - 2026-11-01
 
