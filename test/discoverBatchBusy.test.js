@@ -114,3 +114,79 @@ describe('runBatchPathWhenFree', () => {
     await expect(pending).resolves.toBe('superseded');
   });
 });
+
+describe('runBatchPathWhenFree — only what the earlier batch left', () => {
+  const noSleep = jest.fn(async () => {});
+
+  test('after waiting, the retry sends only the remaining files', async () => {
+    const runBatchPath = jest.fn().mockRejectedValueOnce(busy()).mockResolvedValueOnce(undefined);
+    const remaining = [{ path: '/b.pdf' }];
+    await expect(
+      runBatchPathWhenFree({
+        runBatchPath,
+        isActiveRun: () => true,
+        selectRemaining: async () => remaining,
+        sleep: noSleep
+      })
+    ).resolves.toBe('ran');
+    expect(runBatchPath.mock.calls[0][0]).toBeUndefined();
+    expect(runBatchPath.mock.calls[1][0]).toBe(remaining);
+  });
+
+  test('nothing left: the run ends without another batch', async () => {
+    const runBatchPath = jest.fn().mockRejectedValueOnce(busy());
+    await expect(
+      runBatchPathWhenFree({
+        runBatchPath,
+        isActiveRun: () => true,
+        selectRemaining: async () => [],
+        sleep: noSleep
+      })
+    ).resolves.toBe('finished-elsewhere');
+    expect(runBatchPath).toHaveBeenCalledTimes(1);
+  });
+
+  test('an unreadable ready queue keeps the full list', async () => {
+    const runBatchPath = jest.fn().mockRejectedValueOnce(busy()).mockResolvedValueOnce(undefined);
+    await runBatchPathWhenFree({
+      runBatchPath,
+      isActiveRun: () => true,
+      selectRemaining: async () => null,
+      sleep: noSleep
+    });
+    expect(runBatchPath.mock.calls[1][0]).toBeUndefined();
+  });
+});
+
+describe('filesNotYetReady', () => {
+  const { filesNotYetReady } = require('../src/renderer/phases/discover/batchBusy');
+  const canonical = (p) => String(p).toLowerCase();
+  const t1 = '2026-11-09T10:00:00.000Z';
+  const t2 = '2026-11-09T11:00:00.000Z';
+
+  test('drops files with a current ready result, keeps the rest', () => {
+    const files = [
+      { path: '/A.pdf', modified: t1 },
+      { path: '/b.pdf', modified: t1 }
+    ];
+    const ready = [{ path: '/a.pdf', modified: t1, analysis: { category: 'Work' } }];
+    expect(filesNotYetReady(files, ready, canonical)).toEqual([{ path: '/b.pdf', modified: t1 }]);
+  });
+
+  test('a file changed since its ready result is analyzed again', () => {
+    const files = [{ path: '/a.pdf', modified: t2 }];
+    const ready = [{ path: '/a.pdf', modified: t1, analysis: {} }];
+    expect(filesNotYetReady(files, ready, canonical)).toEqual(files);
+  });
+
+  test('entries without an analysis do not count', () => {
+    const files = [{ path: '/a.pdf' }];
+    expect(filesNotYetReady(files, [{ path: '/a.pdf' }], canonical)).toEqual(files);
+  });
+
+  test('without modified times on both sides a ready result counts as current', () => {
+    expect(
+      filesNotYetReady([{ path: '/a.pdf' }], [{ path: '/a.pdf', analysis: {} }], canonical)
+    ).toEqual([]);
+  });
+});

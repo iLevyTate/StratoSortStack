@@ -208,7 +208,8 @@ Changes you will notice:
   then analyzed the same files again file by file, in parallel, and restarted itself when it ended.
   That doubled GPU work, showed each "analyzed" notification more than once, kept the progress count
   low, and could leave no room for the vision model, so an image fell back to OCR. A new run now
-  waits for the earlier batch and reuses its cached results.
+  waits for the earlier batch, shows what it finished, and then analyzes only the files it did not
+  finish.
 - **An image whose vision step failed is no longer cached with its OCR-only result.** The next
   analysis of that image (within the 30-minute cache window) tries the vision model again.
 - **The smart-folder watcher waits for files you are analyzing in Discover** instead of analyzing
