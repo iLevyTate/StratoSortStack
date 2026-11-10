@@ -1280,6 +1280,22 @@ async function preprocessImageBuffer(imageBuffer, fileExtension, options = {}) {
   }
 }
 
+/**
+ * Whether these are bytes the vision runtime and Tesseract decode without
+ * our preprocessing: PNG, JPEG, GIF or BMP by their signature.
+ * @param {Buffer | null | undefined} buffer
+ * @returns {boolean}
+ */
+function decodesWithoutPreprocessing(buffer) {
+  if (!buffer || buffer.length < 4) return false;
+  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) {
+    return true;
+  }
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return true;
+  const head = buffer.toString('latin1', 0, 4);
+  return head === 'GIF8' || head.startsWith('BM');
+}
+
 // ============================================================================
 // Main Analysis Function
 // ============================================================================
@@ -1474,6 +1490,8 @@ async function runImageAnalysis(filePath, smartFolders, options) {
     // Handle TOCTOU race condition - file could be deleted between stat() and readFile()
     let imageBuffer;
     let imageBufferPreprocessed = false;
+    /** @type {string | null} why the image cannot go to the vision model */
+    let undecodableReason = null;
     try {
       imageBuffer = predecodedBuffer || (await fs.readFile(filePath));
     } catch (readError) {
@@ -1515,10 +1533,21 @@ async function runImageAnalysis(filePath, smartFolders, options) {
       imageBuffer = await preprocessImageBuffer(imageBuffer, effectiveExtension);
       imageBufferPreprocessed = true;
     } catch (preErr) {
-      logger.warn('[IMAGE] Preprocessing failed, continuing with original buffer', {
-        path: filePath,
-        error: preErr.message
-      });
+      if (decodesWithoutPreprocessing(imageBuffer)) {
+        logger.warn('[IMAGE] Preprocessing failed, continuing with original buffer', {
+          path: filePath,
+          error: preErr.message
+        });
+      } else {
+        // SVG markup, a TIFF, a damaged WebP: the runtime was sent these
+        // labelled image/png and rejected each one, and every rejection
+        // counted toward shutting vision off for the images after it.
+        undecodableReason = String(preErr?.message || 'unknown error').slice(0, 120);
+        logger.warn('[IMAGE] Preprocessing failed; not sending these bytes to the vision model', {
+          path: filePath,
+          error: preErr.message
+        });
+      }
     }
 
     // Validate buffer is not empty
@@ -1689,10 +1718,13 @@ async function runImageAnalysis(filePath, smartFolders, options) {
         visionSupported = false;
       }
 
-      if (!visionSupported) {
-        logger.warn('[IMAGE] Vision input unsupported, falling back to OCR/text', {
-          filePath
-        });
+      if (undecodableReason || !visionSupported) {
+        logger.warn(
+          undecodableReason
+            ? '[IMAGE] Image could not be decoded, falling back to its text'
+            : '[IMAGE] Vision input unsupported, falling back to OCR/text',
+          { filePath }
+        );
         const fallbackAnalysis = await tryTextFallback();
         if (fallbackAnalysis) {
           analysis = fallbackAnalysis;
@@ -1701,7 +1733,11 @@ async function runImageAnalysis(filePath, smartFolders, options) {
             {
               fileName,
               fileExtension,
-              reason: `Vision model '${visionModelName}' not loaded`,
+              // The file's own fault is said as such: "vision analysis
+              // unavailable" sent people looking for a model problem.
+              reason: undecodableReason
+                ? `Image could not be decoded (${undecodableReason})`
+                : `Vision model '${visionModelName}' not loaded`,
               smartFolders,
               confidence: 55,
               type: 'image'
@@ -2376,6 +2412,13 @@ async function extractTextFromImage(filePath, options = {}) {
           maxDimension: OCR_MAX_DIMENSION
         });
       } catch (preprocessError) {
+        if (!decodesWithoutPreprocessing(imageBuffer)) {
+          logger.warn('[IMAGE-OCR] Preprocessing failed; no OCR on bytes that were not decoded', {
+            filePath,
+            error: preprocessError.message
+          });
+          return null;
+        }
         logger.warn('[IMAGE-OCR] Preprocessing failed, continuing OCR with original buffer', {
           filePath,
           error: preprocessError.message

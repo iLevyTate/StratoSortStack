@@ -2207,8 +2207,19 @@ class VisionService {
 
       if (response?.json?.error) {
         const baseMessage = response.json.error.message || 'Vision runtime error';
+        // The stderr excerpt rides beside the message, never in it: see
+        // isVisionRuntimeDecodePressure.
+        const runtimeError = /** @type {Error & { visionRuntimeHint?: string }} */ (
+          new Error(baseMessage)
+        );
         const decodePressureHint = this._extractDecodePressureHint();
-        throw new Error(`${baseMessage}${decodePressureHint}`);
+        if (decodePressureHint) {
+          runtimeError.visionRuntimeHint = decodePressureHint;
+          logger.debug('[VisionService] Runtime stderr when the request failed', {
+            hint: decodePressureHint
+          });
+        }
+        throw runtimeError;
       }
 
       const content = response?.json?.choices?.[0]?.message?.content;

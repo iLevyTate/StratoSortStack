@@ -27,6 +27,7 @@ jest.mock('fs', () => ({
 jest.mock('sharp', () => {
   const mockSharp = jest.fn(() => ({
     metadata: jest.fn().mockResolvedValue({ width: 800, height: 600, format: 'png' }),
+    rotate: jest.fn().mockReturnThis(),
     resize: jest.fn().mockReturnThis(),
     png: jest.fn().mockReturnThis(),
     toBuffer: jest.fn().mockResolvedValue(Buffer.from('processed-image-data'))

@@ -343,6 +343,89 @@ describe('Image Analysis Behavior', () => {
     expect(result.category).toBe('Finance');
   });
 
+  describe('an image whose preprocessing fails', () => {
+    const sharp = require('sharp');
+    let workingSharp;
+
+    beforeEach(() => {
+      workingSharp = sharp.getMockImplementation();
+      sharp.mockImplementation(() => ({
+        metadata: jest.fn().mockRejectedValue(new Error('XML parse error')),
+        rotate: jest.fn().mockReturnThis(),
+        resize: jest.fn().mockReturnThis(),
+        png: jest.fn().mockReturnThis(),
+        toBuffer: jest.fn().mockRejectedValue(new Error('XML parse error'))
+      }));
+    });
+
+    afterEach(() => {
+      sharp.mockImplementation(workingSharp);
+    });
+
+    // The vision runtime was sent the markup labelled image/png, twice, and
+    // each rejection counted against the vision breaker.
+    test('is not sent to the vision model when its bytes are not ones the runtime decodes', async () => {
+      fs.readFile.mockResolvedValue(Buffer.from('<svg><text>Tom & Jerry</text></svg>'));
+
+      const result = await analyzeImageFile('/diagrams/broken.svg');
+
+      expect(mockLlamaService.analyzeImage).not.toHaveBeenCalled();
+      expect(
+        require('../src/main/utils/tesseractUtils').recognizeIfAvailable
+      ).not.toHaveBeenCalled();
+      expect(result.isFallback).toBe(true);
+      expect(result.extractionMethod).toBe('filename_fallback');
+      // The mocked builder hands its `reason` back as it got it.
+      expect(result.reason).toMatch(/could not be decoded/i);
+      expect(result.reason).not.toMatch(/vision|unavailable|not loaded/i);
+    });
+
+    test('is still analyzed from the text its markup carries', async () => {
+      const svgText = 'Quarterly revenue by region\nNorth 42%\nSouth 31%';
+      require('../src/main/analysis/extractors/svgText').extractTextFromSvg.mockReturnValueOnce(
+        svgText
+      );
+      fs.readFile.mockResolvedValue(Buffer.from('<svg><text>Revenue & costs</text></svg>'));
+
+      const result = await analyzeImageFile('/diagrams/revenue.svg');
+
+      expect(mockLlamaService.analyzeImage).not.toHaveBeenCalled();
+      expect(require('../src/main/analysis/documentLlm').analyzeTextWithLlama).toHaveBeenCalledWith(
+        svgText,
+        'revenue.svg',
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({ forceLocal: true })
+      );
+      expect(result.isFallback).toBeFalsy();
+      expect(result.category).toBe('General');
+    });
+
+    test('still goes to the vision model when the bytes are a PNG', async () => {
+      fs.readFile.mockResolvedValue(
+        Buffer.concat([
+          Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+          Buffer.alloc(32)
+        ])
+      );
+      mockLlamaService.analyzeImage.mockResolvedValue({
+        response: JSON.stringify({
+          category: 'Photos',
+          keywords: ['beach'],
+          confidence: 85,
+          suggestedName: 'beach_day',
+          has_text: false
+        })
+      });
+
+      const result = await analyzeImageFile('/photos/beach.png');
+
+      expect(mockLlamaService.analyzeImage).toHaveBeenCalledTimes(1);
+      expect(result.category).toBe('Photos');
+    });
+  });
+
   test('analyzes image successfully with AI', async () => {
     // Mock successful AI response
     const aiResponse = {
@@ -702,6 +785,12 @@ describe('Image Analysis Behavior', () => {
   });
 
   test('continues OCR/text fallback when OCR preprocessing fails', async () => {
+    // Bytes Tesseract reads as they are: a PNG by its signature.
+    const pngBytes = Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      Buffer.from('image-data')
+    ]);
+    fs.readFile.mockResolvedValue(pngBytes);
     const sharp = require('sharp');
     sharp
       .mockImplementationOnce(() => ({
@@ -742,7 +831,7 @@ describe('Image Analysis Behavior', () => {
     const result = await analyzeImageFile('/path/to/image.png');
 
     expect(recognizeIfAvailable).toHaveBeenCalled();
-    expect(recognizeIfAvailable.mock.calls[0][1]).toEqual(Buffer.from('image-data'));
+    expect(recognizeIfAvailable.mock.calls[0][1]).toEqual(pngBytes);
     expect(result.error).toBeUndefined();
     expect(result.category).toBe('Work');
   });

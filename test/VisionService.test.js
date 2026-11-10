@@ -474,6 +474,48 @@ describe('VisionService', () => {
         requestSpy.mockRestore();
       }
     });
+    // The stderr tail is whatever the runtime last wrote: its load banner
+    // names the GPU backend, and "cuda" in the message made a rejected image
+    // a retryable error.
+    test('an error the runtime answers with keeps stderr text out of its message', async () => {
+      const http = require('http');
+      await startReadyServer();
+      service._ensureServer = jest.fn().mockResolvedValue(undefined);
+      service._recentStderr =
+        'clip_ctx: CLIP using CUDA0 backend\nload_hparams: projector: mlp\ndecode: failed to find a memory slot for batch of size 1024';
+      const requestSpy = jest.spyOn(http, 'request').mockImplementation((options, callback) => {
+        const req = new EventEmitter();
+        req.setTimeout = jest.fn();
+        req.write = jest.fn();
+        req.destroy = jest.fn();
+        req.end = jest.fn(() => {
+          const res = new EventEmitter();
+          res.statusCode = 400;
+          callback(res);
+          res.emit(
+            'data',
+            JSON.stringify({ error: { message: 'Failed to load image or audio file' } })
+          );
+          res.emit('end');
+        });
+        return req;
+      });
+
+      try {
+        const error = await service
+          .analyzeImage({
+            imageBase64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB',
+            config: { modelPath: '/models/vision.gguf', contextSize: 4096, threads: 4 }
+          })
+          .catch((e) => e);
+
+        expect(error.message).toBe('Failed to load image or audio file');
+        expect(error.visionRuntimeHint).toMatch(/CUDA0/);
+      } finally {
+        requestSpy.mockRestore();
+      }
+    });
+
     describe('the hold a request takes on the registration', () => {
       const image = {
         imageBase64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB',

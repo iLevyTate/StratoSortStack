@@ -20,7 +20,7 @@ const { createSingletonHelpers } = require('../../shared/singletonFactory');
 const { AI_DEFAULTS, DEFAULT_AI_MODELS } = require('../../shared/constants');
 const { getModel } = require('../../shared/modelRegistry');
 const { resolveEmbeddingDimension } = require('../../shared/embeddingDimensions');
-const { isVisionDecodePressureError } = require('./visionErrorClassification');
+const { isVisionRuntimeDecodePressure } = require('./visionErrorClassification');
 const { ERROR_CODES } = require('../../shared/errorCodes');
 const { attachErrorCode } = require('../../shared/errorHandlingUtils');
 const { looksLikeCpuIncompatibility } = require('../../shared/llamaErrorClassifier');
@@ -707,7 +707,7 @@ class LlamaService extends EventEmitter {
   }
 
   _isVisionDecodePressureError(/** @type {any} */ errorLike) {
-    return isVisionDecodePressureError(errorLike);
+    return isVisionRuntimeDecodePressure(errorLike);
   }
 
   _getContextSequences(type = 'text') {
