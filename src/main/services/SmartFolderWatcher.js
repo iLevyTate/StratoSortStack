@@ -141,15 +141,26 @@ function analysisRetryDelayMs(retryCount) {
 }
 
 /**
- * A reanalysis the user asked for stays one when a newer item for the same
- * file takes its place. Replaced by a plain file event, it would run as a
- * content update (original name kept, folder kept) or be skipped as already
- * analyzed.
+ * What the item that gives way asked for stays asked for when another item
+ * for the same file takes its place.
+ *
+ * A reanalysis the user asked for stays one. Replaced by a plain file event,
+ * it would run as a content update (original name kept, folder kept) or be
+ * skipped as already analyzed.
+ *
+ * A model pass that was still to come stays to come. An embedding retry
+ * carries the result of the pass before it (`cachedAnalysis`) and only
+ * embeds that again: left on the item, the file was never read again.
  * @param {any} replaced the item that gives way
  * @param {any} replacement the item that stays in the queue
  */
-function keepReanalysisRequest(replaced, replacement) {
-  if (replaced?.eventType !== 'reanalyze' || replacement.eventType === 'reanalyze') return;
+function keepAnalysisRequest(replaced, replacement) {
+  if (!replaced) return;
+  if (!replaced.cachedAnalysis && replacement.cachedAnalysis) {
+    delete replacement.cachedAnalysis;
+    delete replacement._lastAnalysis;
+  }
+  if (replaced.eventType !== 'reanalyze' || replacement.eventType === 'reanalyze') return;
   replacement.eventType = 'reanalyze';
   replacement.applyNaming = replaced.applyNaming;
   if (replaced.bulk) replacement.bulk = true;
@@ -1488,7 +1499,15 @@ class SmartFolderWatcher {
       (q) => (q.dedupKey || q.filePath) === dedupKey || q.filePath === filePath
     );
     if (existingIndex !== -1) {
-      keepReanalysisRequest(this.analysisQueue[existingIndex], item);
+      const existing = this.analysisQueue[existingIndex];
+      // An embedding retry carries the result of a pass that is over. The
+      // queued item asks for a new pass (a newer file event, or a reanalysis
+      // the user asked for) and embeds what that pass finds: it stays. The
+      // retry used to take its place, and the file was not read again.
+      if (item.cachedAnalysis && !existing.cachedAnalysis) {
+        return;
+      }
+      keepAnalysisRequest(existing, item);
       this.analysisQueue[existingIndex] = item;
       this._scheduleQueuePersist();
       return;
@@ -2175,7 +2194,7 @@ class SmartFolderWatcher {
     try {
       return await withTimeout(
         this._analyzeFile(item, controller.signal),
-        TIMEOUTS.GLOBAL_ANALYSIS || 10 * 60 * 1000,
+        this._analysisTimeoutMs(item?.filePath),
         `SmartFolderWatcher analyze ${item?.filePath}`
       );
     } catch (error) {
@@ -2183,6 +2202,44 @@ class SmartFolderWatcher {
       throw error;
     } finally {
       this._inFlightControllers.delete(controller);
+    }
+  }
+
+  /**
+   * The longest the analysis of one file may take. A recording is
+   * transcribed in one piece, and on the CPU while the text model has the
+   * GPU: an hour of audio outlasts the ten minutes a document or an image
+   * gets. It was aborted at ten minutes, retried from the start and given up
+   * on. A recording gets what a Discover run allows one.
+   * @private
+   * @param {string} [filePath]
+   * @returns {number}
+   */
+  _analysisTimeoutMs(filePath) {
+    const toMediaAnalyzer =
+      typeof filePath === 'string' &&
+      chooseAnalyzerForFile(filePath, {
+        hasMediaAnalyzer: typeof this.analyzeMediaFile === 'function'
+      }) === 'media';
+    return toMediaAnalyzer
+      ? TIMEOUTS.BATCH_MEDIA_QUIET_MAX || 3 * 60 * 60 * 1000
+      : TIMEOUTS.GLOBAL_ANALYSIS || 10 * 60 * 1000;
+  }
+
+  /**
+   * Whether a path has gone from the disk. Only a definite "not found" says
+   * so: any other failure to stat it (a share that dropped, access denied)
+   * is left to the code that works with the file.
+   * @private
+   * @param {string} filePath
+   * @returns {Promise<boolean>}
+   */
+  async _goneFromDisk(filePath) {
+    try {
+      await fs.stat(filePath);
+      return false;
+    } catch (error) {
+      return isNotFoundError(error);
     }
   }
 
@@ -2354,9 +2411,11 @@ class SmartFolderWatcher {
 
     try {
       // Find the first available item that is NOT currently being processed
-      // and is not waiting out a retry delay. Compare by canonical dedupKey so
-      // case-variant duplicates are caught.
-      const procKey = (/** @type {any} */ item) => item.dedupKey || item.filePath;
+      // and is not waiting out a retry delay. Compare by the canonical queue
+      // key so case-variant duplicates are caught. Items pushed straight onto
+      // the queue (Reanalyze all) carry no dedupKey; the key is derived from
+      // the path then, as _enqueueAnalysisItem and _analyzeFile derive it.
+      const procKey = (/** @type {any} */ item) => this._queueItemKey(item);
       const isRunnable = this._makeRunnableCheck();
       let firstAvailableIndex = this.analysisQueue.findIndex(isRunnable);
 
@@ -2469,7 +2528,7 @@ class SmartFolderWatcher {
                 const handedBack = [];
                 for (const waiting of rest) {
                   const newer = queuedByKey.get(procKey(waiting));
-                  if (newer) keepReanalysisRequest(waiting, newer);
+                  if (newer) keepAnalysisRequest(waiting, newer);
                   else handedBack.push(waiting);
                   this._inFlightItems.delete(procKey(waiting));
                 }
@@ -2627,8 +2686,7 @@ class SmartFolderWatcher {
    */
   _makeRunnableCheck() {
     const now = Date.now();
-    return (item) =>
-      !this.processingFiles.has(item.dedupKey || item.filePath) && !(item.notBefore > now);
+    return (item) => !this.processingFiles.has(this._queueItemKey(item)) && !(item.notBefore > now);
   }
 
   /**
@@ -2920,6 +2978,19 @@ class SmartFolderWatcher {
       }
 
       if (this._isStopping) return;
+
+      // Nothing holds the file open during the model pass, so it can be
+      // renamed, moved or deleted meanwhile. The result then describes a path
+      // that is gone. Recorded with the size and date read before the pass,
+      // it left a history entry, a notification and learning feedback for a
+      // file that is not there. A renamed file arrives as a new one and is
+      // analyzed under its new name.
+      if (result && (await this._goneFromDisk(filePath))) {
+        logger.info('[SMART-FOLDER-WATCHER] File gone during its analysis; result dropped', {
+          filePath
+        });
+        return;
+      }
 
       if (result) {
         const analysis = result.analysis || result;
