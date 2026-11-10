@@ -1413,6 +1413,156 @@ describe('Batch Organize Handler', () => {
     expect(batchLockManager.renewBatchLock).toHaveBeenCalledWith(result.batchId);
   });
 
+  // A cross-volume move copies and checksums the whole file, which takes
+  // longer than any fixed limit for a large one. The handler used to race the
+  // move against a 30 s timer that cancelled nothing: the row came back
+  // failed while the copy went on to publish and delete the source.
+  describe('a move that outlasts 30 s', () => {
+    const { crossDeviceMove } = require('../src/shared/atomicFileOperations');
+    const promiseUtils = require('../src/shared/promiseUtils');
+    const flush = () => new Promise((resolve) => setImmediate(resolve));
+    const exdev = () => Object.assign(new Error('EXDEV: cross-device link'), { code: 'EXDEV' });
+    const abortError = () => Object.assign(new Error('Move aborted'), { name: 'AbortError' });
+
+    /** A crossDeviceMove that copies until `finishCopy()` and honors its signal like the real one. */
+    function stubSlowCrossDeviceMove() {
+      /** @type {string[]} */
+      const moved = [];
+      /** @type {() => void} */
+      let finishCopy = () => {};
+      const copying = new Promise((resolve) => {
+        finishCopy = () => resolve(undefined);
+      });
+      crossDeviceMove.mockImplementation(async (source, _dest, options) => {
+        await copying;
+        if (options?.signal?.aborted) throw abortError();
+        moved.push(source);
+      });
+      return { moved, finishCopy };
+    }
+
+    async function waitForCopyToStart() {
+      for (let i = 0; i < 50 && crossDeviceMove.mock.calls.length === 0; i++) await flush();
+      expect(crossDeviceMove).toHaveBeenCalledTimes(1);
+    }
+
+    beforeEach(() => {
+      fs.rename.mockImplementation(async (source) => {
+        if (source === '/src/doc1.pdf') throw exdev();
+      });
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+      fs.rename.mockReset().mockResolvedValue();
+      crossDeviceMove.mockReset();
+      promiseUtils.withTimeout.mockReset().mockImplementation((promise) => promise);
+    });
+
+    test('is reported as moved, with its undo entry, and keeps the batch lock renewed meanwhile', async () => {
+      jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick', 'queueMicrotask'] });
+      // The real race, so the 30 s limit is in force wherever the handler still uses it.
+      promiseUtils.withTimeout.mockImplementation(
+        jest.requireActual('../src/shared/promiseUtils').withTimeout
+      );
+      const svc = makeStableSvc();
+      const { moved, finishCopy } = stubSlowCrossDeviceMove();
+
+      const pending = handleBatchOrganize({
+        ...params,
+        getServiceIntegration: jest.fn(() => svc),
+        operation: {
+          operations: [{ source: '/src/doc1.pdf', destination: '/dest/doc1.pdf', type: 'move' }]
+        }
+      });
+      await waitForCopyToStart();
+
+      await jest.advanceTimersByTimeAsync(95 * 1000);
+      await flush();
+      const renewalsDuringCopy = batchLockManager.renewBatchLock.mock.calls.length;
+      finishCopy();
+      const result = await pending;
+
+      expect(moved).toEqual(['/src/doc1.pdf']);
+      expect(result.results).toEqual([
+        expect.objectContaining({
+          source: '/src/doc1.pdf',
+          destination: '/dest/doc1.pdf',
+          success: true
+        })
+      ]);
+      expect(result.failCount).toBe(0);
+      expect(result.completedOperations).toBe(1);
+      expect(svc.undoRedo.recordAction).toHaveBeenCalledTimes(1);
+      expect(svc.undoRedo.recordAction.mock.calls[0][1].operations).toEqual([
+        { type: 'move', originalPath: '/src/doc1.pdf', newPath: '/dest/doc1.pdf' }
+      ]);
+      expect(svc.processingState.markOrganizeOpError).not.toHaveBeenCalled();
+      expect(renewalsDuringCopy).toBeGreaterThanOrEqual(3);
+      expect(batchLockManager.renewBatchLock).toHaveBeenCalledWith(result.batchId);
+      // The renewal stops with the move.
+      expect(jest.getTimerCount()).toBe(0);
+    });
+
+    test('strict mode: a move still copying when another file fails is stopped, not finished after the rollback', async () => {
+      fs.rename.mockImplementation(async (source) => {
+        if (source === '/src/doc1.pdf') throw exdev();
+        throw Object.assign(new Error('EINVAL: invalid argument'), { code: 'EINVAL' });
+      });
+      const { moved, finishCopy } = stubSlowCrossDeviceMove();
+
+      const pending = handleBatchOrganize({
+        ...params,
+        operation: { ...params.operation, strict: true }
+      });
+      await waitForCopyToStart();
+      for (let i = 0; i < 20; i++) await flush();
+      finishCopy();
+      const result = await pending;
+
+      expect(moved).toEqual([]);
+      expect(crossDeviceMove.mock.calls[0][2].signal.aborted).toBe(true);
+      expect(result.success).toBe(false);
+      expect(result.results.filter((row) => row.success)).toEqual([]);
+      expect(result.results).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ source: '/src/doc2.pdf', strictModeTriggered: true })
+        ])
+      );
+      // Nothing moved, so there is nothing to roll back or undo.
+      const { executeRollback } = require('../src/main/ipc/files/batchRollback');
+      expect(executeRollback).not.toHaveBeenCalled();
+    });
+
+    test('user cancel during the copy leaves the file where it was and reports it cancelled', async () => {
+      const controller = new AbortController();
+      const svc = makeStableSvc();
+      const { moved, finishCopy } = stubSlowCrossDeviceMove();
+
+      const pending = handleBatchOrganize({
+        ...params,
+        abortSignal: controller.signal,
+        getServiceIntegration: jest.fn(() => svc),
+        operation: {
+          operations: [{ source: '/src/doc1.pdf', destination: '/dest/doc1.pdf', type: 'move' }]
+        }
+      });
+      await waitForCopyToStart();
+      controller.abort('user-cancel-organize');
+      finishCopy();
+      const result = await pending;
+
+      expect(moved).toEqual([]);
+      expect(result.cancelled).toBe(true);
+      expect(result.cancelledCount).toBe(1);
+      expect(result.failCount).toBe(0);
+      expect(result.results).toEqual([
+        expect.objectContaining({ source: '/src/doc1.pdf', success: false, cancelled: true })
+      ]);
+      expect(svc.processingState.markOrganizeOpError).not.toHaveBeenCalled();
+    });
+  });
+
   // Overlap detection folds case wherever the default filesystem does. On
   // darwin (APFS/HFS+ are case-insensitive by default) two destinations that
   // differ only by case are the SAME file: run in parallel, both

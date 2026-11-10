@@ -89,6 +89,10 @@ const VERIFY_MAX_ATTEMPTS = RETRY?.FILE_OPERATION?.maxAttempts ?? RETRY?.MAX_ATT
 const VERIFY_BACKOFF_STEP_MS =
   RETRY?.FILE_OPERATION?.initialDelay ?? TIMEOUTS?.DELAY_TINY ?? MOVE_LOCK_BACKOFF_STEP_MS;
 const VERIFY_MAX_DELAY_MS = RETRY?.FILE_OPERATION?.maxDelay ?? 5000;
+// How often a move still in flight renews the batch lock. A cross-volume move
+// of a large file (copy plus a checksum of both sides) has no upper bound, so
+// the lease is kept fresh for as long as the move runs.
+const MOVE_LOCK_RENEW_INTERVAL_MS = 30 * 1000;
 
 const MAX_RESULTS_PER_CHUNK = 100; // Max results per IPC message chunk
 const YIELD_EVERY_N_OPS = 10; // Yield to event loop every N operations
@@ -762,16 +766,27 @@ async function handleBatchOrganize(params) {
 
             // Handle file move with collision handling
             // TOCTOU fix: removed verifySourceFile pre-check, handle ENOENT from move directly
-            // Use timeout for file operations to prevent hangs
-            const moveWithTimeout = () =>
-              withTimeout(
-                performFileMove(op, log, computeFileChecksum, abortController.signal),
-                TIMEOUTS.FILE_COPY,
-                `File move ${path.basename(op.source)}`
+            // The move is awaited to its end, never raced against a timer: a
+            // timer cannot stop a copy, so the row would say "failed" while
+            // the file went on to move with no undo entry or path update.
+            // The batch lock is renewed while it runs, and the abort signal
+            // is what stops a cross-volume move before it publishes.
+            const moveToCompletion = async () => {
+              const lockRenewal = setInterval(
+                () => renewBatchLock(batchId),
+                MOVE_LOCK_RENEW_INTERVAL_MS
               );
+              lockRenewal.unref?.();
+              try {
+                return await performFileMove(op, log, computeFileChecksum, abortController.signal);
+              } finally {
+                clearInterval(lockRenewal);
+              }
+            };
+            /** @type {any} */
             let moveResult;
             try {
-              moveResult = await moveWithTimeout();
+              moveResult = await moveToCompletion();
             } catch (firstMoveError) {
               let moveError = firstMoveError;
               // A rename ENOENT is either a missing source or a destination
@@ -793,7 +808,7 @@ async function handleBatchOrganize(params) {
                 }
                 try {
                   await fs.mkdir(destDir, { recursive: true });
-                  moveResult = await moveWithTimeout();
+                  moveResult = await moveToCompletion();
                   moveError = null;
                 } catch (retryError) {
                   moveError = retryError;
@@ -829,8 +844,9 @@ async function handleBatchOrganize(params) {
             }
 
             if (moveResult && moveResult.cancelled) {
-              // performFileMove bailed before any rename (user abort landed
-              // between the gate above and the first rename attempt).
+              // performFileMove bailed with the source untouched: the abort
+              // landed between the gate above and the first rename attempt,
+              // or during a cross-volume copy that was then never published.
               recordCancelledOp(op);
               return;
             }
@@ -1651,9 +1667,11 @@ async function performFileMove(op, log, checksumFn, abortSignal = null) {
         // runs; the no-replace publish then refuses and the walk moves on to
         // the next suffix, exactly like a same-device EEXIST.
         try {
-          await performCrossDeviceMove(op.source, uniqueDestination, log, checksumFn);
+          await performCrossDeviceMove(op.source, uniqueDestination, log, checksumFn, abortSignal);
           operationComplete = true;
         } catch (crossDeviceError) {
+          // Stopped by the abort before anything was published: nothing moved.
+          if (isMoveAbortedError(crossDeviceError, abortSignal)) return { cancelled: true };
           if (!isNameTakenError(crossDeviceError)) throw crossDeviceError;
           advanceToNextCandidate();
         }
@@ -1665,10 +1683,33 @@ async function performFileMove(op, log, checksumFn, abortSignal = null) {
 
   // UUID fallback if numeric exhausted
   if (!operationComplete) {
-    uniqueDestination = await performUUIDFallback(op, baseName, ext, log, checksumFn);
+    try {
+      uniqueDestination = await performUUIDFallback(
+        op,
+        baseName,
+        ext,
+        log,
+        checksumFn,
+        abortSignal
+      );
+    } catch (fallbackError) {
+      if (isMoveAbortedError(fallbackError, abortSignal)) return { cancelled: true };
+      throw fallbackError;
+    }
   }
 
   return { destination: uniqueDestination };
+}
+
+/**
+ * Whether a cross-device move stopped because the batch's signal aborted. It
+ * rejects that way only with the source left in place, so nothing moved.
+ * @param {any} error
+ * @param {AbortSignal|null} [abortSignal]
+ * @returns {boolean}
+ */
+function isMoveAbortedError(error, abortSignal) {
+  return Boolean(abortSignal?.aborted) && error?.name === 'AbortError';
 }
 
 /**
@@ -1729,11 +1770,13 @@ async function renameWithRetry(source, destination, log) {
  * @param {string} destination
  * @param {LoggerLike} log
  * @param {typeof computeFileChecksum} checksumFn
+ * @param {AbortSignal|null} [abortSignal] - Stops the move before it publishes
  */
-async function performCrossDeviceMove(source, destination, log, checksumFn) {
+async function performCrossDeviceMove(source, destination, log, checksumFn, abortSignal = null) {
   await crossDeviceMove(source, destination, {
     verify: true,
-    checksumFn
+    checksumFn,
+    signal: abortSignal
   });
 }
 
@@ -1744,8 +1787,9 @@ async function performCrossDeviceMove(source, destination, log, checksumFn) {
  * @param {string} ext
  * @param {LoggerLike} log
  * @param {typeof computeFileChecksum} checksumFn
+ * @param {AbortSignal|null} [abortSignal]
  */
-async function performUUIDFallback(op, baseName, ext, log, checksumFn) {
+async function performUUIDFallback(op, baseName, ext, log, checksumFn, abortSignal = null) {
   log.warn(`[FILE-OPS] Falling back to UUID for ${path.basename(op.source)}`);
 
   const maxPathLength = getEffectiveMaxPathLength();
@@ -1771,7 +1815,7 @@ async function performUUIDFallback(op, baseName, ext, log, checksumFn) {
       if (error.code === 'EEXIST') continue;
       if (error.code === 'EXDEV') {
         try {
-          await performCrossDeviceMove(op.source, uniqueDestination, log, checksumFn);
+          await performCrossDeviceMove(op.source, uniqueDestination, log, checksumFn, abortSignal);
           return uniqueDestination;
         } catch (crossDeviceError) {
           if (isNameTakenError(crossDeviceError)) continue;

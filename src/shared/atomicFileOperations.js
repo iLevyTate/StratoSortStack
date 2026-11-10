@@ -1800,13 +1800,23 @@ AtomicFileOperations.prototype.safeWriteFile = function safeWriteFile(filePath, 
  * @param {Object} [options={}] - Options
  * @param {boolean} [options.verify=true] - Verify copy by comparing file sizes
  * @param {Function} [options.checksumFn] - Optional checksum function for additional verification
+ * @param {AbortSignal|null} [options.signal] - Caller's abort signal. A copy or
+ *   checksum already running is not interrupted, but once the signal aborts
+ *   nothing more is published or deleted: the source stays, the staging copy
+ *   is removed and the call rejects with an AbortError.
  * @returns {Promise<void>} Resolves when move is complete
  * @throws {Error} If copy fails or verification fails
  */
 async function crossDeviceMove(source, dest, options = {}) {
   const normalizedSource = resolveFsPath(source);
   const normalizedDest = resolveFsPath(dest);
-  const { verify = true, checksumFn } = options;
+  const { verify = true, checksumFn, signal = null } = options;
+  const throwIfMoveAborted = () => {
+    if (!signal?.aborted) return;
+    const abortError = new Error(`Move aborted: ${normalizedSource}`);
+    abortError.name = 'AbortError';
+    throw abortError;
+  };
 
   // Stage the copy under a temp name IN THE DESTINATION DIRECTORY, then
   // rename into place. Copying straight to the canonical destination meant a
@@ -1832,8 +1842,10 @@ async function crossDeviceMove(source, dest, options = {}) {
     await fs.mkdir(destinationDir, { recursive: true });
 
     try {
+      throwIfMoveAborted();
       // Copy to the staging name — never the canonical destination.
       await fs.copyFile(normalizedSource, stagingPath, fsConstants.COPYFILE_EXCL);
+      throwIfMoveAborted();
 
       // Verify the staged copy before it can be published under the real name.
       if (verify) {
@@ -1869,6 +1881,7 @@ async function crossDeviceMove(source, dest, options = {}) {
       // this rename is atomic. renameNoReplace preserves the no-overwrite
       // contract the old direct COPYFILE_EXCL copy provided — an occupied
       // destination surfaces as EEXIST instead of clobbering the occupant.
+      throwIfMoveAborted();
       await renameNoReplace(stagingPath, normalizedDest);
     } catch (stagingError) {
       // Nothing was ever written at the canonical destination — only the
@@ -1884,6 +1897,19 @@ async function crossDeviceMove(source, dest, options = {}) {
         }
       });
       throw stagingError;
+    }
+
+    // An abort that landed with the publish: the source is still whole, so
+    // withdraw the copy just published instead of finishing a move the caller
+    // has already given up on (and may already have reported as not done).
+    if (signal?.aborted) {
+      await fs.unlink(normalizedDest).catch((withdrawError) => {
+        logger.error('[ATOMIC-OPS] Failed to withdraw published copy after abort', {
+          destination: normalizedDest,
+          error: withdrawError.message
+        });
+      });
+      throwIfMoveAborted();
     }
 
     // Delete the source file — LAST, only after the verified copy is live at
@@ -1926,7 +1952,7 @@ async function crossDeviceMove(source, dest, options = {}) {
       destination: normalizedDest
     });
   } catch (error) {
-    if (error.isFileSystemError) {
+    if (error.isFileSystemError || error?.name === 'AbortError') {
       throw error;
     }
     // EEXIST can only come from the publish onto the destination name, so
