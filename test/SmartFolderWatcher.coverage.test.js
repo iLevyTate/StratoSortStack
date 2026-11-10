@@ -191,6 +191,8 @@ const fs = require('fs').promises;
 const chokidar = require('chokidar');
 const SmartFolderWatcher = require('../src/main/services/SmartFolderWatcher');
 const { recordAnalysisResult } = require('../src/main/ipc/analysisUtils');
+const { getInstance: getFileOperationTracker } = require('../src/shared/fileOperationTracker');
+const { deferGhostCleanup, resumeGhostCleanup } = require('../src/shared/ghostCleanupGuard');
 
 describe('SmartFolderWatcher', () => {
   let watcher;
@@ -443,6 +445,177 @@ describe('SmartFolderWatcher', () => {
 
       expect(watcher._watchToggleWork).toBeUndefined();
       expect(watcher.isRunning).toBe(true);
+    });
+
+    describe('re-enabling while stop() is still running', () => {
+      /** Holds the next stop() on its queue flush until the returned function is called. */
+      const holdStop = () => {
+        let release;
+        watcher._flushQueuePersist = jest
+          .fn()
+          .mockResolvedValue(undefined)
+          .mockImplementationOnce(
+            () =>
+              new Promise((resolve) => {
+                release = resolve;
+              })
+          );
+        return () => release();
+      };
+
+      test('the watcher is running again once the stop has finished', async () => {
+        await watcher.start();
+        const releaseStop = holdStop();
+
+        watcher.applySettings({ smartFolderWatchEnabled: false });
+        const stopWork = watcher._watchToggleWork;
+        expect(watcher._isStopping).toBe(true);
+
+        watcher.applySettings({ smartFolderWatchEnabled: true });
+        const startWork = watcher._watchToggleWork;
+
+        releaseStop();
+        await stopWork;
+        await startWork;
+
+        expect(watcher.isRunning).toBe(true);
+        expect(watcher.watcher).not.toBeNull();
+      });
+
+      test('start() waits for the stop instead of reporting the dying watcher as running', async () => {
+        await watcher.start();
+        const dyingWatcher = watcher.watcher;
+        const releaseStop = holdStop();
+
+        const stopWork = watcher.stop();
+        const startWork = watcher.start();
+
+        releaseStop();
+        await stopWork;
+        await expect(startWork).resolves.toBe(true);
+
+        expect(watcher.isRunning).toBe(true);
+        expect(watcher.watcher).not.toBeNull();
+        expect(watcher.watcher).not.toBe(dyingWatcher);
+      });
+
+      test('a disable saved after the re-enable still wins', async () => {
+        await watcher.start();
+        const releaseStop = holdStop();
+
+        watcher.applySettings({ smartFolderWatchEnabled: false });
+        const stopWork = watcher._watchToggleWork;
+        watcher.applySettings({ smartFolderWatchEnabled: true });
+        const startWork = watcher._watchToggleWork;
+        // The user turns it off again before the stop has finished.
+        mockDeps.settingsService.load.mockResolvedValue({ smartFolderWatchEnabled: false });
+
+        releaseStop();
+        await stopWork;
+        await startWork;
+
+        expect(watcher.isRunning).toBe(false);
+        expect(watcher.watcher).toBeNull();
+      });
+    });
+  });
+
+  describe('_handleFileDeletion: a move made by the app is not a deletion', () => {
+    const movedOut = '/docs/moved-by-app.pdf';
+
+    beforeEach(() => {
+      mockDeps.analysisHistoryService.getAnalysisByPath = jest
+        .fn()
+        .mockResolvedValue({ fileSize: 100, lastModified: 1000 });
+      mockDeps.analysisHistoryService.removeEntriesByPath = jest.fn().mockResolvedValue();
+    });
+
+    test('an unlink of a path the app just moved keeps its history and vectors', async () => {
+      getFileOperationTracker.mockReturnValueOnce({
+        wasRecentlyOperated: jest.fn((p) => p === movedOut),
+        recordOperation: jest.fn()
+      });
+      const finalize = jest.spyOn(watcher, '_finalizeDeletion');
+
+      await watcher._handleFileDeletion(movedOut);
+
+      expect(watcher._pendingMoveCandidates.size).toBe(0);
+      expect(finalize).not.toHaveBeenCalled();
+      expect(mockDeps.analysisHistoryService.removeEntriesByPath).not.toHaveBeenCalled();
+    });
+
+    test('an unlink during a batch organize keeps its history and vectors', async () => {
+      const finalize = jest.spyOn(watcher, '_finalizeDeletion');
+
+      deferGhostCleanup();
+      try {
+        await watcher._handleFileDeletion(movedOut);
+      } finally {
+        resumeGhostCleanup();
+      }
+
+      expect(watcher._pendingMoveCandidates.size).toBe(0);
+      expect(finalize).not.toHaveBeenCalled();
+      expect(mockDeps.analysisHistoryService.removeEntriesByPath).not.toHaveBeenCalled();
+    });
+
+    test('a deletion made outside the app is still cleaned up', async () => {
+      // No history entry to match a move against, so cleanup runs at once.
+      mockDeps.analysisHistoryService.getAnalysisByPath.mockResolvedValue(null);
+
+      await watcher._handleFileDeletion('/docs/deleted-in-explorer.pdf');
+
+      expect(mockDeps.analysisHistoryService.removeEntriesByPath).toHaveBeenCalledWith(
+        '/docs/deleted-in-explorer.pdf'
+      );
+    });
+  });
+
+  describe('move detection window', () => {
+    test('outlasts the wait before the matching add is looked at', () => {
+      // chokidar holds an add for stabilityThreshold; the watcher then
+      // debounces it before it looks for a pending deletion to pair it with.
+      expect(watcher._moveDetectionWindowMs).toBeGreaterThan(
+        watcher.stabilityThreshold + watcher.debounceDelay
+      );
+    });
+
+    test('a rename in Explorer moves the analysis instead of deleting it', async () => {
+      const oldPath = '/docs/report.pdf';
+      const newPath = '/docs/report-final.pdf';
+      mockDeps.analysisHistoryService.getAnalysisByPath = jest
+        .fn()
+        .mockResolvedValue({ fileSize: 100, lastModified: 1000 });
+      mockDeps.analysisHistoryService.removeEntriesByPath = jest.fn().mockResolvedValue();
+      const atomicPathUpdate = jest.fn().mockResolvedValue({ success: true });
+      watcher.filePathCoordinator = { atomicPathUpdate };
+      fs.access.mockResolvedValue(undefined);
+
+      jest.useFakeTimers({ doNotFake: ['nextTick'] });
+      try {
+        // chokidar publishes the unlink at once...
+        await watcher._handleFileDeletion(oldPath);
+        expect(watcher._pendingMoveCandidates.size).toBe(1);
+
+        // ...and the add only after the file was stable for stabilityThreshold
+        // (checked on a 200 ms poll).
+        await jest.advanceTimersByTimeAsync(watcher.stabilityThreshold + 200);
+        watcher._handleFileEvent('add', newPath, {
+          size: 100,
+          mtimeMs: 1000,
+          mtime: new Date(1000)
+        });
+        await jest.advanceTimersByTimeAsync(watcher.debounceDelay);
+        for (let i = 0; i < 5; i++) {
+          await jest.advanceTimersByTimeAsync(0);
+        }
+
+        expect(atomicPathUpdate).toHaveBeenCalledWith(oldPath, newPath, { type: 'move' });
+        expect(mockDeps.analysisHistoryService.removeEntriesByPath).not.toHaveBeenCalled();
+        expect(watcher._pendingMoveCandidates.size).toBe(0);
+      } finally {
+        jest.useRealTimers();
+      }
     });
   });
 

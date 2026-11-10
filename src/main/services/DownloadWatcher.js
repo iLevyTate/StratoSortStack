@@ -129,6 +129,8 @@ class DownloadWatcher {
     this.downloadsPath = null;
     this.isStarting = false;
     this._startPromise = null; // Mutex: concurrent start() callers await the same promise
+    /** @type {Promise<void> | null} the teardown in flight, awaited by start() */
+    this._teardownPromise = null;
     this.restartAttempts = 0;
     this.maxRestartAttempts = RETRY.MAX_ATTEMPTS_MEDIUM;
     this.restartDelay = DEBOUNCE.WATCHER_RESTART_BASE;
@@ -202,6 +204,16 @@ class DownloadWatcher {
   }
 
   async start() {
+    // A teardown keeps this.watcher set until it has drained the downloads in
+    // flight. Wait for it, or this call reports the dying watcher as running
+    // and nothing is watched afterwards.
+    if (this._teardownPromise) {
+      while (this._teardownPromise) {
+        await this._teardownPromise.catch(/** @returns {void} */ () => undefined);
+      }
+      // That teardown was the app shutting down: stay stopped.
+      if (this._shutdownRequested) return;
+    }
     if (this.watcher) {
       logger.debug('[DOWNLOAD-WATCHER] Watcher already running');
       return;
@@ -534,6 +546,19 @@ class DownloadWatcher {
    * @private
    */
   async _teardown() {
+    const tearingDown = this._doTeardown();
+    this._teardownPromise = tearingDown;
+    try {
+      await tearingDown;
+    } finally {
+      if (this._teardownPromise === tearingDown) this._teardownPromise = null;
+    }
+  }
+
+  /**
+   * @private
+   */
+  async _doTeardown() {
     this._stopped = true;
 
     // A start() still in flight either sees _stopped and aborts, or lands its

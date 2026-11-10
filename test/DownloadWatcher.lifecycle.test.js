@@ -253,6 +253,32 @@ describe('DownloadWatcher lifecycle', () => {
       expect(watcher.watcher).toBeNull();
       expect(watcher._stopped).toBe(false);
     });
+
+    test('start() during a pending stop() leaves a live watcher', async () => {
+      const watcher = makeWatcher();
+      await startAndSettle(watcher);
+
+      // stop() drains the download being processed before it closes chokidar.
+      let releasePipeline;
+      const pipeline = new Promise((resolve) => {
+        releasePipeline = resolve;
+      });
+      watcher._inFlightHandles.add(pipeline);
+
+      const stopping = watcher.stop();
+      await flushMicrotasks();
+      // Auto-organize is turned on again before the stop has finished.
+      const starting = watcher.start();
+      await flushMicrotasks();
+
+      watcher._inFlightHandles.delete(pipeline);
+      releasePipeline();
+      await flushMicrotasks();
+      await Promise.all([stopping, starting]);
+
+      expect(chokidar.watch).toHaveBeenCalledTimes(2);
+      expect(watcher.watcher).toBe(mockWatchers[1]);
+    });
   });
 
   describe('_handleFileDeletion gates', () => {
