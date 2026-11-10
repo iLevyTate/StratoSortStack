@@ -590,6 +590,36 @@ describe('ClusteringService', () => {
       expect(graphData[0].memberMeta).toHaveLength(2);
     });
 
+    test('a document date is a day: the range starts and ends at local midnight', () => {
+      // Parsed as UTC midnight, the range of a cluster dated May 5 to June 1
+      // was labelled "May 4 – May 31" west of Greenwich.
+      service.clusters = [
+        {
+          id: 0,
+          members: [
+            {
+              id: 'file:first',
+              embedding: [1, 0],
+              metadata: { filePath: 'C:\\Docs\\first.pdf', documentDate: '2024-05-05' }
+            },
+            {
+              id: 'file:last',
+              embedding: [1, 0.02],
+              metadata: { filePath: 'C:\\Docs\\last.pdf', documentDate: '2024-06-01' }
+            }
+          ]
+        }
+      ];
+      service.centroids = [[1, 0]];
+
+      const { timeRange } = service.getClustersForGraph()[0];
+
+      expect(timeRange.startMs).toBe(new Date(2024, 4, 5).getTime());
+      expect(timeRange.endMs).toBe(new Date(2024, 5, 1).getTime());
+      expect(new Date(timeRange.start).getDate()).toBe(5);
+      expect(new Date(timeRange.end).getDate()).toBe(1);
+    });
+
     test('derives member path and folder from metadata.filePath fallback', () => {
       service.clusters = [
         {

@@ -242,7 +242,9 @@ describe('Image Analysis Behavior', () => {
   });
 
   test('the HEIC filename fallback carries the file date it says it organizes by', async () => {
-    fs.stat.mockResolvedValue({ size: 1024, mtimeMs: Date.UTC(2024, 6, 4, 12, 0, 0) });
+    // Noon local time: the fallback names the local day, and noon UTC is
+    // already the 5th at UTC+12 and beyond.
+    fs.stat.mockResolvedValue({ size: 1024, mtimeMs: new Date(2024, 6, 4, 12).getTime() });
 
     const result = await analyzeImageFile('/photos/IMG_0042.heic', [{ name: 'Photos' }]);
 

@@ -22,6 +22,7 @@ const { withAbortableTimeout } = require('../../shared/promiseUtils');
 const { getTextModel } = require('../llamaUtils');
 const { AI_DEFAULTS } = require('../../shared/constants');
 const { isInteractiveTextRequestActive } = require('./textModelActivity');
+const { toLocalCalendarMs } = require('../../shared/contentDateSanity');
 const { FILE_TYPE_CATEGORIES, getFileTypeSingular } = require('./autoOrganize/fileTypeUtils');
 const {
   deriveClusterDisplayLabel,
@@ -1542,11 +1543,10 @@ Examples of good names: "Q4 Financial Reports", "Employee Onboarding Materials",
     }
     const totalDocs = memberSignals.size;
 
-    const parseDateCandidateMs = (/** @type {any} */ value) => {
-      if (!value) return null;
-      const ms = Date.parse(String(value));
-      return Number.isFinite(ms) ? ms : null;
-    };
+    // A document date is a day ("2024-05-05"): local midnight, so the
+    // range labels the renderer formats in local time name that day.
+    const parseDateCandidateMs = (/** @type {any} */ value) =>
+      value ? toLocalCalendarMs(value) : null;
 
     const getMemberPath = (/** @type {any} */ member) =>
       coerceIndexedPath(member?.metadata || {}, member?.id || '');

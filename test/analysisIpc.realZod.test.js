@@ -269,10 +269,12 @@ describe('registerAnalysisIpc (real Zod)', () => {
   describe('single-file analyze payload with namingSettings', () => {
     test('ANALYZE_DOCUMENT accepts object payload and applies naming override', async () => {
       const fsPromises = require('fs').promises;
+      // Noon local time: the name carries the local day, and noon UTC is
+      // already the 2nd at UTC+12 and beyond.
       fsPromises.stat.mockResolvedValueOnce({
         size: 1024,
-        birthtime: new Date('2026-06-01T12:00:00Z'),
-        mtime: new Date('2026-06-01T12:00:00Z')
+        birthtime: new Date(2026, 5, 1, 12),
+        mtime: new Date(2026, 5, 1, 12)
       });
 
       mockAnalyzeDocumentFile.mockResolvedValueOnce({

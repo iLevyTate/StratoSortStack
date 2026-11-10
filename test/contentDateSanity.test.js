@@ -26,6 +26,15 @@ describe('isPlausibleContentDate (F-158)', () => {
     expect(isPlausibleContentDate(String(CONTENT_DATE_MIN_YEAR - 1) + '-12-31', now)).toBe(false);
   });
 
+  test('a year is four digits, not the first four of a longer number', () => {
+    expect(isPlausibleContentDate('20255-01-01', now)).toBe(false);
+    expect(isPlausibleContentDate('19999', now)).toBe(false);
+    expect(isPlausibleContentDate('20240505', now)).toBe(false);
+    expect(isPlausibleContentDate('2024', now)).toBe(true);
+    expect(isPlausibleContentDate('2024-05', now)).toBe(true);
+    expect(isPlausibleContentDate('2024-05-05T10:00:00.000Z', now)).toBe(true);
+  });
+
   test('rejects non-strings and short/garbage input', () => {
     expect(isPlausibleContentDate(null, now)).toBe(false);
     expect(isPlausibleContentDate(undefined, now)).toBe(false);

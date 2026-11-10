@@ -19,6 +19,9 @@
 const CONTENT_DATE_MIN_YEAR = 1900;
 const CONTENT_DATE_FUTURE_SLACK_YEARS = 1;
 
+// A year is exactly four digits: "20255-01-01" is the year 20255, not 2025.
+const LEADING_YEAR_RE = /^(\d{4})(?!\d)/;
+
 /**
  * Whether an ISO-leading date string ("YYYY-MM-DD...") carries a plausible
  * content year. Purely lexical on the year — calendar validity is the ISO
@@ -28,9 +31,10 @@ const CONTENT_DATE_FUTURE_SLACK_YEARS = 1;
  * @returns {boolean}
  */
 function isPlausibleContentDate(iso, now = new Date()) {
-  if (typeof iso !== 'string' || iso.length < 4) return false;
-  const year = Number(iso.slice(0, 4));
-  if (!Number.isInteger(year)) return false;
+  if (typeof iso !== 'string') return false;
+  const leading = iso.match(LEADING_YEAR_RE);
+  if (!leading) return false;
+  const year = Number(leading[1]);
   return (
     year >= CONTENT_DATE_MIN_YEAR && year <= now.getUTCFullYear() + CONTENT_DATE_FUTURE_SLACK_YEARS
   );
@@ -65,13 +69,42 @@ function toLocalCalendarDay(ms) {
 }
 
 /**
+ * Epoch ms of a stored date, for the local calendar: the local date
+ * formatters, and comparison with file times. A date-only value names a
+ * calendar day and is read as local midnight of that day. Date.parse reads
+ * it as UTC midnight, which is the evening before west of Greenwich, so a
+ * document dated "2024-05-05" was shown as May 4.
+ * @param {any} value
+ * @returns {number|null}
+ */
+function toLocalCalendarMs(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const text = String(value).trim();
+  const dayOnly = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (dayOnly) {
+    const year = Number(dayOnly[1]);
+    const local = new Date(year, Number(dayOnly[2]) - 1, Number(dayOnly[3]));
+    // The constructor reads the years 0-99 as 1900-1999.
+    if (year < 100) local.setFullYear(year);
+    const localMs = local.getTime();
+    return Number.isFinite(localMs) ? localMs : null;
+  }
+  const ms = Date.parse(text);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
  * The calendar day a written date names (model output such as "2024-05-05"
  * or "May 5, 2024"), as YYYY-MM-DD, or null when it does not parse.
  *
  * A leading YYYY-MM-DD is kept as written, whatever time and offset follow
- * it, and so is a value that is only YYYY or YYYY-MM. Anything else ("May 5,
- * 2024", "2024 May 5") is parsed by V8 as LOCAL time, so its local day is
- * the day written; toISOString moved it back a day east of Greenwich.
+ * it, and so is a value that is only YYYY or YYYY-MM, with or without a "Z"
+ * after it. Anything else ("May 5, 2024", "2024 May 5") is parsed by V8 as
+ * LOCAL time, so its local day is the day written; toISOString moved it back
+ * a day east of Greenwich.
+ *
+ * A year outside 0000-9999 is not a day anyone wrote ("20255-01-01" parses
+ * as the year 20255) and gives null.
  * @param {any} value
  * @returns {string|null}
  */
@@ -81,13 +114,19 @@ function toWrittenCalendarDay(value) {
   }
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return null;
-  if (typeof value !== 'string') return toLocalCalendarDay(parsed.getTime());
-  const written = value.trim().match(/^(\d{4})(?:-(\d{2})(?:-(\d{2})(?:[T\s].*)?)?)?$/);
-  if (!written) return toLocalCalendarDay(parsed.getTime());
-  // Through Date.UTC so "2024-02-31" rolls over the way Date itself reads it.
-  const day = new Date(
-    Date.UTC(Number(written[1]), Number(written[2] || 1) - 1, Number(written[3] || 1))
-  );
+  const written =
+    typeof value === 'string'
+      ? value.trim().match(/^(\d{4})(?:-(\d{2})(?:-(\d{2})(?:[T\s].*)?)?)?Z?$/i)
+      : null;
+  if (!written) {
+    const year = parsed.getFullYear();
+    return year >= 0 && year <= 9999 ? toLocalCalendarDay(parsed.getTime()) : null;
+  }
+  // Through the UTC setter so "2024-02-31" rolls over the way Date itself
+  // reads it. Not Date.UTC, which reads the years 0-99 as 1900-1999 and
+  // would turn a misread "0024-05-05" into a plausible 1924.
+  const day = new Date(0);
+  day.setUTCFullYear(Number(written[1]), Number(written[2] || 1) - 1, Number(written[3] || 1));
   return Number.isNaN(day.getTime()) ? null : day.toISOString().split('T')[0];
 }
 
@@ -97,5 +136,6 @@ module.exports = {
   isPlausibleContentDate,
   isIsoDateOnly,
   toLocalCalendarDay,
+  toLocalCalendarMs,
   toWrittenCalendarDay
 };

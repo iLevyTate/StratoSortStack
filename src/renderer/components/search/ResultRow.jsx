@@ -7,6 +7,7 @@ import { Text } from '../ui/Typography';
 import normalizeList from '../../utils/normalizeList';
 import { normalizeConfidence } from '../../utils/scoreUtils';
 import { getMetadataPath, getMetadataName } from './utils';
+import { toLocalCalendarMs } from '../../../shared/contentDateSanity';
 
 const ResultRow = memo(function ResultRow({
   result,
@@ -29,9 +30,10 @@ const ResultRow = memo(function ResultRow({
   // Format date and confidence
   // The vector DB stores the date under 'documentDate'; 'date' is a legacy alias
   const rawDate = result?.metadata?.documentDate || result?.metadata?.date;
-  const parsedDate = rawDate ? new Date(rawDate) : null;
-  const dateStr =
-    parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate.toLocaleDateString() : '';
+  // A document date is a day ("2024-05-05"); new Date() reads that as UTC
+  // midnight and the row showed the day before west of Greenwich.
+  const dateMs = toLocalCalendarMs(rawDate);
+  const dateStr = dateMs === null ? '' : new Date(dateMs).toLocaleDateString();
 
   const confidence = result?.metadata?.confidence || 0;
 
