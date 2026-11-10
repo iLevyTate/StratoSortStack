@@ -10,6 +10,12 @@
  *
  * Jest gives each test file a copy of process.env, so setting TZ here does not
  * reach the runtime. Each zone runs in a child process that sets it first.
+ *
+ * The child is plain Node, without the module mapping of jest.config.js. One
+ * of the modules it loads requires 'electron', and the entry point of that
+ * package downloads the Electron binary when it is not on disk yet (a fresh
+ * CI runner) and says so on stdout. The probe puts an empty module in its
+ * place first, as the mapping does here.
  */
 
 const { execFileSync } = require('child_process');
@@ -19,6 +25,7 @@ const repoRoot = path.resolve(__dirname, '..');
 
 const PROBE = `
 process.env.TZ = process.argv[1];
+require.cache[require.resolve('electron')] = { exports: {}, loaded: true };
 const { generateSuggestedNameFromAnalysis, formatDate } = require('./src/shared/namingConventions');
 const { toWrittenCalendarDay } = require('./src/shared/contentDateSanity');
 const { buildAnalysisFromModelJson } = require('./src/main/analysis/modelAnalysisResult');
