@@ -2,7 +2,7 @@
  * @jest-environment jsdom
  */
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
 
 let mockState = {};
@@ -187,7 +187,14 @@ jest.mock('../../src/renderer/components/settings/ModelSelectionSection', () => 
 jest.mock('../../src/renderer/components/settings/ChatPersonaSection', () => () => (
   <div>Chat persona settings</div>
 ));
-jest.mock('../../src/renderer/components/settings/ModelManagementSection', () => () => null);
+jest.mock('../../src/renderer/components/settings/ModelManagementSection', () => ({
+  __esModule: true,
+  default: ({ onAddModel }) => (
+    <button type="button" data-testid="add-vision-model" onClick={() => onAddModel('vision.gguf')}>
+      Add vision model
+    </button>
+  )
+}));
 jest.mock('../../src/renderer/components/settings/EmbeddingRebuildSection', () => () => null);
 jest.mock('../../src/renderer/components/settings/EmbeddingBehaviorSection', () => () => (
   <div>Embedding Behavior Section</div>
@@ -597,6 +604,41 @@ describe('SettingsPanel regression guards', () => {
     expect(screen.getByText('Processing Limits Section')).toBeInTheDocument();
     expect(screen.getByText('Graph Retrieval Section')).toBeInTheDocument();
     expect(screen.getByText('Diagnostics Logs Section')).toBeInTheDocument();
+  });
+
+  test('warns instead of reporting success when a vision model installs without its projector', async () => {
+    const { eventsIpc } = require('../../src/renderer/services/ipc');
+    let emitProgress = null;
+    eventsIpc.onOperationProgress.mockImplementationOnce((callback) => {
+      emitProgress = callback;
+      return () => {};
+    });
+
+    render(<SettingsPanel />);
+    await screen.findByText('Local AI Engine Section');
+    fireEvent.click(screen.getByRole('button', { name: 'Advanced' }));
+    fireEvent.click(await screen.findByTestId('add-vision-model'));
+    await waitFor(() => expect(emitProgress).toBeInstanceOf(Function));
+    mockAddNotification.mockClear();
+
+    act(() => {
+      emitProgress({
+        type: 'model-download-complete',
+        model: 'vision.gguf',
+        success: false,
+        degraded: true,
+        progress: {
+          percent: 100,
+          companion: { name: 'mmproj-vision.gguf', success: false, error: 'Download timeout' }
+        }
+      });
+    });
+
+    expect(mockAddNotification).toHaveBeenCalledWith(
+      expect.stringContaining('mmproj-vision.gguf'),
+      'warning'
+    );
+    expect(mockAddNotification).not.toHaveBeenCalledWith(expect.anything(), 'success');
   });
 
   // Note: The previous "surfaces backend save error details when saving

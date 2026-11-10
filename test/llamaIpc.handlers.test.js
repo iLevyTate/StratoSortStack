@@ -550,6 +550,92 @@ describe('llama IPC – extended handlers', () => {
         })
       );
     });
+
+    describe('completion event', () => {
+      const registerWithWindow = () => {
+        mockHandlers.clear();
+        const win = { isDestroyed: () => false, webContents: {} };
+        registerLlamaIpc({
+          ipcMain: {},
+          IPC_CHANNELS: {
+            LLAMA: {
+              GET_MODELS: 'llama:get-models',
+              GET_CONFIG: 'llama:get-config',
+              UPDATE_CONFIG: 'llama:update-config',
+              TEST_CONNECTION: 'llama:test-connection',
+              DOWNLOAD_MODEL: 'llama:download-model',
+              DELETE_MODEL: 'llama:delete-model',
+              GET_DOWNLOAD_STATUS: 'llama:get-download-status',
+              CANCEL_DOWNLOAD: 'llama:cancel-download',
+              WARM: 'llama:warm'
+            }
+          },
+          logger: mockLogger,
+          systemAnalytics: {},
+          getMainWindow: () => win
+        });
+        return win;
+      };
+      const completionEvents = () =>
+        safeSend.mock.calls
+          .filter(
+            ([, channel, payload]) =>
+              channel === IPC_EVENTS.OPERATION_PROGRESS &&
+              payload?.type === 'model-download-complete'
+          )
+          .map(([, , payload]) => payload);
+      const flushDownloadPromise = async () => {
+        for (let i = 0; i < 5; i += 1) await Promise.resolve();
+      };
+
+      test('reports a vision model whose projector failed to download as degraded', async () => {
+        registerWithWindow();
+        const companionDownload = {
+          name: 'mmproj-vision.gguf',
+          success: false,
+          alreadyPresent: false,
+          error: 'Download timeout',
+          downloadedBytes: 0,
+          totalBytes: 1024
+        };
+        mockDownloadManager.downloadModel.mockResolvedValueOnce({
+          success: true,
+          degraded: true,
+          companionDownload
+        });
+
+        const result = await getHandler('download-model')({}, 'vision.gguf');
+        await flushDownloadPromise();
+
+        expect(result).toEqual({ success: true, started: true });
+        expect(completionEvents()).toEqual([
+          expect.objectContaining({
+            model: 'vision.gguf',
+            success: false,
+            degraded: true,
+            progress: expect.objectContaining({ percent: 100, companion: companionDownload })
+          })
+        ]);
+      });
+
+      test('reports a complete download as a plain success', async () => {
+        registerWithWindow();
+        mockDownloadManager.downloadModel.mockResolvedValueOnce({
+          success: true,
+          degraded: false,
+          companionDownload: null
+        });
+
+        await getHandler('download-model')({}, 'text.gguf');
+        await flushDownloadPromise();
+
+        const events = completionEvents();
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({ model: 'text.gguf', success: true });
+        expect(events[0].degraded).toBeUndefined();
+        expect(events[0].progress.companion).toBeUndefined();
+      });
+    });
   });
 
   describe('DELETE_MODEL', () => {

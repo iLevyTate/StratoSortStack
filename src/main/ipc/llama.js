@@ -625,9 +625,16 @@ function registerLlamaIpc(servicesOrParams) {
           manager
             .downloadModel(normalizedName, { onProgress })
             .then(
-              /** @type {() => void} */ (
-                () => {
-                  logger.info('[IPC:Llama] Model download completed', { model: normalizedName });
+              /** @type {(result: any) => void} */ (
+                (result) => {
+                  // A vision model whose projector (mmproj) failed to download
+                  // resolves as degraded: the GGUF is installed, but images
+                  // cannot be analyzed. Report it like backgroundSetup does.
+                  const degraded = Boolean(result?.degraded);
+                  logger.info('[IPC:Llama] Model download completed', {
+                    model: normalizedName,
+                    degraded
+                  });
                   if (win && !win.isDestroyed()) {
                     const latestRequestedProgress =
                       latestProgressByModel.get(normalizedName) || null;
@@ -643,7 +650,8 @@ function registerLlamaIpc(servicesOrParams) {
                     safeSend(win.webContents, IPC_EVENTS.OPERATION_PROGRESS, {
                       type: 'model-download-complete',
                       model: normalizedName,
-                      success: true,
+                      success: !degraded,
+                      ...(degraded ? { degraded: true } : {}),
                       progress: {
                         model: normalizedName,
                         filename: normalizedName,
@@ -651,7 +659,8 @@ function registerLlamaIpc(servicesOrParams) {
                         downloadedBytes,
                         totalBytes,
                         speedBps: 0,
-                        etaSeconds: 0
+                        etaSeconds: 0,
+                        ...(degraded ? { companion: result?.companionDownload || null } : {})
                       }
                     });
                   }

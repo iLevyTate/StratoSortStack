@@ -138,6 +138,17 @@ const EXPERIENCE_MODE_COPY = {
 };
 
 /**
+ * Text for a vision model that installed but whose projector (mmproj) failed
+ * to download: the model is listed, yet it cannot analyze images.
+ */
+function projectorMissingMessage(modelName, evt) {
+  const projector = evt?.progress?.companion?.name;
+  return `Model "${modelName}" installed, but its image projector${
+    projector ? ` (${projector})` : ''
+  } did not download. Image analysis will not work until it does.`;
+}
+
+/**
  * Format a "saved <relative>" string without registering a tick interval.
  * The chip re-renders whenever lastSavedAt updates (next save, next
  * keystroke that triggers auto-save), which is the relevant cadence; if a
@@ -1058,7 +1069,11 @@ const SettingsPanel = React.memo(function SettingsPanel() {
             });
           } else if (evt.type === 'model-download-complete') {
             setPullProgress({ modelName: requested, filename: evt.model, percent: 100 });
-            addNotification(`Model "${requested}" installed`, 'success');
+            if (evt.degraded) {
+              addNotification(projectorMissingMessage(requested, evt), 'warning');
+            } else {
+              addNotification(`Model "${requested}" installed`, 'success');
+            }
             setNewModel('');
             // Refresh on completion — not on IPC ack — so the list reflects
             // the file actually being on disk.
@@ -1185,7 +1200,11 @@ const SettingsPanel = React.memo(function SettingsPanel() {
           });
         } else if (evt?.type === 'model-download-complete' && pendingModels.has(evt.model)) {
           pendingModels.delete(evt.model);
-          addNotification(`Model "${evt.model}" downloaded successfully`, 'success');
+          if (evt.degraded) {
+            addNotification(projectorMissingMessage(evt.model, evt), 'warning');
+          } else {
+            addNotification(`Model "${evt.model}" downloaded successfully`, 'success');
+          }
           loadModels();
           if (pendingModels.size === 0) {
             finishAll();
