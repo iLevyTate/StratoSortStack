@@ -34,7 +34,7 @@ describe('ModelMemoryManager', () => {
     expect(manager.canRunOptionalLoad('embedding')).toBe(false);
   });
 
-  test('canRunOptionalLoad allows resident optional call only with inference headroom', () => {
+  test('canRunOptionalLoad allows a resident beside another model only with inference headroom', () => {
     const llamaService = { _models: {}, _contexts: {}, _loadModel: jest.fn() };
     const manager = new ModelMemoryManager(llamaService);
     jest.spyOn(manager, '_refreshMemoryBudget').mockImplementation(() => {});
@@ -46,6 +46,8 @@ describe('ModelMemoryManager', () => {
       lastUsed: Date.now(),
       sizeBytes: 10 * GB
     });
+    // Alone in memory it may always be used; the headroom is for a neighbour.
+    manager._loadedModels.set('embedding', { context: {}, lastUsed: Date.now(), sizeBytes: GB });
 
     manager._currentMemoryUsage = manager._maxMemoryUsage - Math.floor(headroom384 / 2);
     expect(manager.canRunOptionalLoad('text')).toBe(false);

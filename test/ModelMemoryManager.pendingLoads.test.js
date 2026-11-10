@@ -266,3 +266,61 @@ describe('reserveLoad — an external load in progress (the vision runtime start
     expect(manager.canRunOptionalLoad('text')).toBe(false);
   });
 });
+
+describe('a model whose own estimate is larger than the budget', () => {
+  // A 7B model on a 6 GB card: 5.8 GiB against a 4.8 GiB budget. No amount
+  // of eviction makes it fit, so it loads once nothing else holds memory.
+  function oversized() {
+    const made = makeManager({ budgetBytes: 4.8 * GiB });
+    made.manager._modelSizeEstimates.text = 5.8 * GiB;
+    made.manager._modelSizeEstimates.embedding = 0.2 * GiB;
+    return made;
+  }
+
+  test('loads as soon as the model that was in use is gone, not when the wait runs out', async () => {
+    const { manager, llamaService } = oversized();
+    manager._pinnedResidentWaitMs = 5000;
+    await manager.ensureModelLoaded('embedding');
+    manager.acquireRef('embedding');
+
+    const startedAt = Date.now();
+    const loading = manager.ensureModelLoaded('text');
+    await tick(30);
+    manager.releaseRef('embedding');
+    await loading;
+
+    expect(Date.now() - startedAt).toBeLessThan(2000);
+    expect(manager._loadedModels.has('embedding')).toBe(false);
+    expect(llamaService._loadModel).toHaveBeenCalledWith('text', expect.anything());
+  });
+
+  test('optional work may use it once it is the only thing in memory', async () => {
+    const { manager } = oversized();
+    await manager.ensureModelLoaded('text');
+
+    expect(manager.canRunOptionalLoad('text')).toBe(true);
+
+    manager.reserveLoad('vision-runtime', 5 * GiB);
+    expect(manager.canRunOptionalLoad('text')).toBe(false);
+  });
+
+  test('a load in progress is counted at the size found in the model file', async () => {
+    const { manager, llamaService } = makeManager({ budgetBytes: 4.8 * GiB });
+    manager._modelSizeEstimates.embedding = 0.2 * GiB;
+    const gate = deferred();
+    llamaService._loadModel.mockImplementation(async () => {
+      // LlamaService._loadModel does this right after it stats the file.
+      manager.updateModelSizeEstimate('text', (5.8 * GiB) / 1.3);
+      await gate.promise;
+      return {};
+    });
+
+    const loading = manager.ensureModelLoaded('text');
+    await tick();
+    // 4 GiB (the default) + 0.2 would have fitted in 4.8.
+    expect(manager.canLoadModel('embedding')).toBe(false);
+
+    gate.resolve();
+    await loading;
+  });
+});
