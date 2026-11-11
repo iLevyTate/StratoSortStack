@@ -35,6 +35,7 @@ import {
 import { setSmartFolders as setSmartFoldersAction } from '../store/slices/filesSlice';
 import { UndoRedoToolbar, useUndoRedo } from '../components/UndoRedoSystem';
 import Modal from '../components/ui/Modal';
+import OrganizePreviewModal from '../components/organize/OrganizePreviewModal';
 import AnalysisDetails from '../components/AnalysisDetails';
 import { useOrganizeState, useLoadInitialData } from './organize/useOrganizeState';
 import {
@@ -83,6 +84,7 @@ function OrganizePhase() {
   const [showStatusModal, setShowStatusModal] = React.useState(false);
   const [showHistoryModal, setShowHistoryModal] = React.useState(false);
   const [focusFileIndex, setFocusFileIndex] = React.useState(null);
+  const [previewPlan, setPreviewPlan] = React.useState(null);
   const { revealFile } = useFileActions();
 
   const {
@@ -828,22 +830,9 @@ function OrganizePhase() {
                         addNotification('Nothing to preview.', 'info', 4000, 'organize-preview');
                         return;
                       }
-                      const movedSummary =
-                        plan.wouldMove.length === 1 ? '1 file' : `${plan.wouldMove.length} files`;
-                      const conflictSummary =
-                        plan.conflicts > 0 ? `, ${plan.conflicts} renamed to avoid collisions` : '';
-                      const folderSummary =
-                        plan.wouldCreateFolders.length > 0
-                          ? `, ${plan.wouldCreateFolders.length} new folder${plan.wouldCreateFolders.length !== 1 ? 's' : ''}`
-                          : '';
-                      const skippedSummary =
-                        plan.skipped.length > 0 ? ` (${plan.skipped.length} skipped)` : '';
-                      addNotification(
-                        `Preview: would move ${movedSummary}${conflictSummary}${folderSummary}${skippedSummary}. Click Move to commit.`,
-                        'info',
-                        8000,
-                        'organize-preview'
-                      );
+                      // Show each file's destination folder and new name — a
+                      // count-only toast did not say where anything would go.
+                      setPreviewPlan(plan);
                     }}
                     variant="secondary"
                     size="md"
@@ -958,6 +947,18 @@ function OrganizePhase() {
           </Stack>
         )}
       </SidePanel>
+
+      <OrganizePreviewModal
+        isOpen={Boolean(previewPlan)}
+        plan={previewPlan}
+        onClose={() => setPreviewPlan(null)}
+        onConfirm={() => {
+          setPreviewPlan(null);
+          handleOrganizeClick();
+        }}
+        redactPaths={Boolean(redactPaths)}
+        isOrganizing={isOrganizing}
+      />
 
       {/* Smart Folders Modal */}
       <Modal

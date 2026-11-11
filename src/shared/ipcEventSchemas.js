@@ -322,10 +322,12 @@ const schemas = z
 
       /**
        * Undo/Redo State Changed Event
-       * Emitted after undo/redo operations to notify UI of state changes
+       * Emitted after undo/redo operations to notify UI of state changes, and by
+       * UndoRedoService._notifyStateChanged whenever history changes for another
+       * reason (an action recorded, removed, or the history cleared).
        */
       const undoRedoStateChangedSchema = z.object({
-        action: z.enum(['undo', 'redo']),
+        action: z.enum(['undo', 'redo', 'record', 'remove', 'clear']),
         result: z
           .object({
             success: z.boolean(),

@@ -150,7 +150,7 @@ test.describe('Full Pipeline — Analysis to Organize', () => {
     await expect(window.getByRole('heading', { name: /Organization Complete/i })).toBeVisible();
     await expect(window.getByText('Session summary').first()).toBeVisible();
     await expect(window.getByLabel('Organized file 1')).toContainText('pipeline-invoice.txt');
-    await expect(window.getByRole('button', { name: /Start over/i })).toBeVisible();
+    await expect(window.getByRole('button', { name: /Analyze more files/i })).toBeVisible();
   });
 
   test('should maintain file count when navigating between phases', async () => {

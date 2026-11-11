@@ -1,7 +1,7 @@
 import React, { memo, useCallback, useMemo } from 'react';
 import PropTypes from 'prop-types';
 import { motion, useReducedMotion } from 'framer-motion';
-import { CheckCircle2, Check, ArrowLeft, FolderOpen, RotateCcw } from 'lucide-react';
+import { CheckCircle2, Check, ArrowLeft, FolderOpen, FilePlus } from 'lucide-react';
 import { PHASES } from '../../shared/constants';
 import { useAppSelector, useAppDispatch } from '../store/hooks';
 import { setPhase, resetUi } from '../store/slices/uiSlice';
@@ -19,6 +19,7 @@ import { filesIpc } from '../services/ipc';
 import { logger } from '../../shared/logger';
 import { toCanonicalPath } from '../utils/canonicalPath';
 import { collectOrganizedPathKeys, mergeOrganizedPathIndex } from '../utils/organizedPathIndex';
+import { useFileActions } from '../hooks/useFileActions';
 
 /**
  * Pick a folder path safe to hand to shell.openPath — prefers `newLocation`
@@ -37,25 +38,39 @@ function pickOpenableFolder(file) {
   return null;
 }
 
-const FileRow = memo(function FileRow({ file, index, redactPaths }) {
+/** Last segment of a file or folder path ("C:\Docs\Finance" -> "Finance"). */
+function baseName(p) {
+  if (typeof p !== 'string' || !p) return '';
+  const trimmed = p.replace(/[\\/]+$/, '');
+  return trimmed.slice(Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\')) + 1);
+}
+
+const FileRow = memo(function FileRow({ file, index, redactPaths, onReveal }) {
   if (!file || typeof file !== 'object') {
     return null;
   }
   const originalName = file.originalName || file.name || `File ${index + 1}`;
-  const fullPath = file.path || file.newLocation || file.destination || '';
+  const filePath = file.path || '';
+  const newName = file.newName || baseName(filePath);
+  const renamed = Boolean(newName) && newName !== originalName;
+  const folder = pickOpenableFolder(file);
   const displayName = formatDisplayFileName(originalName, { redact: redactPaths });
-  const displayPath = redactPaths
+  const displayFolder = redactPaths
     ? 'Destination hidden'
-    : fullPath
-      ? formatDisplayPath(fullPath, { redact: false, segments: 2 })
+    : folder
+      ? formatDisplayPath(folder, { redact: false, segments: 2 })
       : 'Organized';
+  // Say where the file went and, when the move renamed it, what it is called
+  // now — the original name alone does not tell the user what to look for.
+  const destinationLine =
+    renamed && !redactPaths ? `Renamed to ${newName} · in ${displayFolder}` : displayFolder;
   const rowTitle = redactPaths
-    ? `${displayName} -> ${displayPath}`
-    : `${originalName} → ${displayPath}`;
+    ? `${displayName} -> ${displayFolder}`
+    : `${originalName} → ${filePath || displayFolder}`;
 
   return (
     <div
-      className="flex items-center py-2.5 px-4 gap-cozy border-b border-border-soft/30 last:border-0"
+      className="group flex items-center py-2.5 px-4 gap-cozy border-b border-border-soft/30 last:border-0"
       aria-label={`Organized file ${index + 1}`}
     >
       <Check className="w-4 h-4 text-stratosort-success flex-shrink-0" />
@@ -64,9 +79,21 @@ const FileRow = memo(function FileRow({ file, index, redactPaths }) {
           {displayName}
         </Text>
         <Text variant="tiny" className="text-system-gray-500 truncate">
-          {displayPath}
+          {destinationLine}
         </Text>
       </div>
+      {filePath && onReveal && (
+        <Button
+          onClick={() => onReveal(filePath)}
+          variant="ghost"
+          size="sm"
+          className="flex-shrink-0"
+          aria-label={`Show ${displayName} in its folder`}
+          title="Show this file in its folder"
+        >
+          <FolderOpen className="w-4 h-4" />
+        </Button>
+      )}
     </div>
   );
 });
@@ -157,11 +184,14 @@ function CompletePhase() {
   const actions = useMemo(
     () => ({
       advancePhase: (phase) => dispatch(setPhase(phase)),
-      resetWorkflow: () => {
+      // Clear this finished batch and go straight to Discover for the next
+      // one. Landing on Welcome made the user find Discover in the phase bar.
+      analyzeMoreFiles: () => {
         // React 18+ batches state updates automatically
         dispatch(resetUi());
         dispatch(resetFilesState());
         dispatch(resetAnalysisState());
+        dispatch(setPhase(PHASES?.DISCOVER ?? 'discover'));
         // Kill any save still pending in the debounce window before we clear
         // storage — otherwise that writer fires ~1s later and re-persists the
         // key we are about to remove. Synchronous, so no timer survives.
@@ -180,7 +210,11 @@ function CompletePhase() {
   const handleOpenFolder = useCallback(async () => {
     if (!primaryDestination) return;
     try {
-      await filesIpc.openFolder(primaryDestination);
+      const result = await filesIpc.openFolder(primaryDestination);
+      // The handler reports failure in the result rather than throwing.
+      if (result && result.success === false) {
+        throw new Error(result.error || 'openFolder failed');
+      }
     } catch (error) {
       logger.warn('[CompletePhase] Failed to open organized folder', {
         error: error?.message || String(error)
@@ -189,7 +223,17 @@ function CompletePhase() {
     }
   }, [primaryDestination, showError]);
 
+  const { revealFile } = useFileActions(showError);
+
   const canOpenFolder = Boolean(primaryDestination) && totalFiles > 0;
+  // Name the folder on the button: "Open organized folder" did not say which
+  // one, and with several destinations it opens only the busiest of them.
+  const primaryFolderName = redactPaths ? '' : baseName(primaryDestination);
+  const openFolderLabel = primaryFolderName ? `Open ${primaryFolderName}` : 'Open folder';
+  const openFolderHint =
+    destinationCount > 1
+      ? `Opens ${redactPaths ? 'the folder' : primaryDestination} — it received the most files. Use the folder button on a row to see any other file.`
+      : `Opens ${redactPaths ? 'the folder these files were moved to' : primaryDestination}`;
 
   const showCelebration = totalFiles > 0 && !shouldReduceMotion;
 
@@ -350,6 +394,7 @@ function CompletePhase() {
                     file={file}
                     index={index}
                     redactPaths={redactPaths}
+                    onReveal={revealFile}
                   />
                 ))}
                 {overflowCount > 0 && (
@@ -372,10 +417,9 @@ function CompletePhase() {
         </Card>
       </Stack>
 
-      {/* Footer Navigation — primary success-path action on the right, with
-          "Start over" as a ghost secondary. The "Review organized files"
-          back-affordance lives on the left as a tertiary because most users
-          finish here; only those who want to verify need to step backward. */}
+      {/* Footer Navigation — the primary action continues the workflow with
+          the next batch (Discover). Opening the destination is a named
+          secondary; "Review organized files" steps back to Organize. */}
       <ActionBar className="mt-auto pt-4">
         <Button
           onClick={() => actions.advancePhase(PHASES?.ORGANIZE ?? 'organize')}
@@ -386,32 +430,28 @@ function CompletePhase() {
           <ArrowLeft className="w-4 h-4 mr-2" />
           Review organized files
         </Button>
+        {canOpenFolder && (
+          <Button
+            onClick={handleOpenFolder}
+            variant="secondary"
+            size="md"
+            className="w-full sm:w-auto min-w-[160px]"
+            title={openFolderHint}
+            aria-label={openFolderHint}
+          >
+            <FolderOpen className="w-4 h-4 mr-2" />
+            <span className="truncate max-w-[220px]">{openFolderLabel}</span>
+          </Button>
+        )}
         <Button
-          onClick={() => actions.resetWorkflow()}
-          variant="ghost"
-          size="md"
-          className="w-full sm:w-auto min-w-[160px]"
-        >
-          <RotateCcw className="w-4 h-4 mr-2" />
-          Start over
-        </Button>
-        <Button
-          onClick={
-            canOpenFolder
-              ? handleOpenFolder
-              : () => actions.advancePhase(PHASES?.ORGANIZE ?? 'organize')
-          }
+          onClick={() => actions.analyzeMoreFiles()}
           variant="primary"
           size="md"
           className="w-full sm:w-auto min-w-[200px]"
-          aria-label={
-            canOpenFolder
-              ? 'Open the folder where organized files were moved'
-              : 'Review organized files'
-          }
+          title="Clear this finished batch and pick the next files to analyze"
         >
-          <FolderOpen className="w-4 h-4 mr-2" />
-          {canOpenFolder ? 'Open organized folder' : 'Review organized files'}
+          <FilePlus className="w-4 h-4 mr-2" />
+          Analyze more files
         </Button>
       </ActionBar>
     </div>
@@ -423,11 +463,13 @@ FileRow.propTypes = {
     originalName: PropTypes.string,
     name: PropTypes.string,
     path: PropTypes.string,
+    newName: PropTypes.string,
     newLocation: PropTypes.string,
     destination: PropTypes.string
   }),
   index: PropTypes.number.isRequired,
-  redactPaths: PropTypes.bool
+  redactPaths: PropTypes.bool,
+  onReveal: PropTypes.func
 };
 
 export default memo(CompletePhase);
