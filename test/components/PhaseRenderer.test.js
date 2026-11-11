@@ -53,6 +53,12 @@ jest.mock('../../src/renderer/components/ui/LoadingSkeleton', () => ({
   ModalLoadingOverlay: ({ message }) => <div>{message}</div>
 }));
 
+// The analysis run's provider wraps every phase; its own behavior is covered
+// by the AnalysisRunProvider tests.
+jest.mock('../../src/renderer/phases/discover/AnalysisRunProvider', () => ({
+  AnalysisRunProvider: ({ children }) => <div data-testid="analysis-run-provider">{children}</div>
+}));
+
 jest.mock('../../src/renderer/phases/WelcomePhase', () => ({
   __esModule: true,
   default: () => <div>WELCOME_PHASE</div>

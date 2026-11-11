@@ -16,12 +16,7 @@ import {
   setViewMode,
   setCameFromDashboard
 } from '../store/slices/uiSlice';
-import {
-  selectFileStats,
-  selectIsAnalyzing,
-  selectOrganizedCount,
-  selectSmartFolders
-} from '../store/selectors';
+import { selectFileStats, selectOrganizedCount, selectSmartFolders } from '../store/selectors';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { hasDestinationFolder } from './smartFolderDestinations';
 
@@ -47,19 +42,18 @@ export const selectPhaseNavigationContext = createSelector(
 );
 
 /**
- * Work in flight that pauses every phase move: file moves, loading and
- * analysis (NavigationBar's isBlockedByOperation). Undo/redo is the other
- * half; it lives in UndoRedoProvider state, so callers inside that provider
- * add useUndoRedo().isExecuting.
+ * Work in flight that pauses every phase move: file moves and loading
+ * (NavigationBar's isBlockedByOperation). Undo/redo is the other half; it
+ * lives in UndoRedoProvider state, so callers inside that provider add
+ * useUndoRedo().isExecuting. A running analysis does not pause phase moves:
+ * the run lives in AnalysisRunProvider above the phases and keeps going.
+ * Leaving the phased view for the dashboard still waits for it
+ * (selectIsAnalyzing), since the dashboard replaces that provider.
  * @param {any} state
  * @returns {boolean}
  */
 export function selectIsNavigationPaused(state) {
-  return (
-    Boolean(state?.ui?.isOrganizing) ||
-    Boolean(state?.ui?.isLoading) ||
-    Boolean(selectIsAnalyzing(state))
-  );
+  return Boolean(state?.ui?.isOrganizing) || Boolean(state?.ui?.isLoading);
 }
 
 /**

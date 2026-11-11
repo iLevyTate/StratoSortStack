@@ -195,10 +195,11 @@ describe('navigation pause', () => {
     );
   });
 
-  test('selectIsNavigationPaused reads moves, loading and analysis in flight', () => {
+  test('selectIsNavigationPaused reads moves and loading; a running analysis does not pause', () => {
     expect(selectIsNavigationPaused({ ui: {}, analysis: {} })).toBe(false);
     expect(selectIsNavigationPaused({ ui: { isOrganizing: true }, analysis: {} })).toBe(true);
     expect(selectIsNavigationPaused({ ui: { isLoading: true }, analysis: {} })).toBe(true);
-    expect(selectIsNavigationPaused({ ui: {}, analysis: { isAnalyzing: true } })).toBe(true);
+    // The run lives in AnalysisRunProvider above the phases and keeps going.
+    expect(selectIsNavigationPaused({ ui: {}, analysis: { isAnalyzing: true } })).toBe(false);
   });
 });

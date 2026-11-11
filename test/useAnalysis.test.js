@@ -193,6 +193,64 @@ describe('useAnalysis', () => {
     jest.useRealTimers();
   });
 
+  // A run that ends moves to Organize two seconds later. Files added during
+  // the run start as the next run right after it; the jump used to fire
+  // anyway, unmounting Discover and cancelling that run (logged as
+  // "Analysis interrupted by navigation" 1.5 s into a 70-file run).
+  describe('auto-advance after a run', () => {
+    const { useStore } = require('react-redux');
+    let storeState;
+
+    beforeEach(() => {
+      storeState = { analysis: { isAnalyzing: false } };
+      useStore.mockReturnValue({ getState: () => storeState });
+    });
+
+    afterEach(() => {
+      useStore.mockReset();
+      useStore.mockImplementation(() => ({
+        getState: jest.fn(() => ({ analysis: { isAnalyzing: false, progress: null } }))
+      }));
+    });
+
+    const finishOneFileRun = async (result) => {
+      await act(async () => {
+        const promise = result.current.analyzeFiles([{ path: '/test.txt', name: 'test.txt' }]);
+        await jest.advanceTimersByTimeAsync(500);
+        await promise;
+      });
+    };
+
+    test('moves to Organize when nothing else is running', async () => {
+      const { result } = renderHook(() =>
+        useAnalysis(createMockOptions({ getCurrentPhase: () => 'discover' }))
+      );
+      await finishOneFileRun(result);
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(2500);
+      });
+
+      expect(mockActions.advancePhase).toHaveBeenCalledWith('organize');
+    });
+
+    test('stays on Discover when the next run has started', async () => {
+      const { result } = renderHook(() =>
+        useAnalysis(createMockOptions({ getCurrentPhase: () => 'discover' }))
+      );
+      await finishOneFileRun(result);
+      expect(mockActions.advancePhase).not.toHaveBeenCalled();
+
+      // The queued files started as a new run before the jump fired.
+      storeState.analysis.isAnalyzing = true;
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(2500);
+      });
+
+      expect(mockActions.advancePhase).not.toHaveBeenCalled();
+    });
+  });
+
   describe('initialization', () => {
     test('returns analyzeFiles function', () => {
       const { result } = renderHook(() => useAnalysis(createMockOptions()));

@@ -112,8 +112,18 @@ describe('usePhaseJump', () => {
     expect(notify).toHaveBeenCalledWith(PHASE_PREREQUISITE_REASONS.needsAnalyzedFile, 5200);
   });
 
+  // The analysis run lives in AnalysisRunProvider above the phases, so it
+  // does not pause phase moves; the tabs follow the same rule.
+  test('a running analysis does not pause the jump', () => {
+    mockState = buildState({ phase: 'organize', isAnalyzing: true });
+    const { reached, notify } = jump('discover');
+
+    expect(reached).toBe(true);
+    expect(setPhaseDispatches()).toEqual(['discover']);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
   test.each([
-    ['analysis', { isAnalyzing: true }],
     ['a file move', { isOrganizing: true }],
     ['loading', { isLoading: true }]
   ])('pauses while %s runs: no move, no view switch, and says why', (_label, busy) => {

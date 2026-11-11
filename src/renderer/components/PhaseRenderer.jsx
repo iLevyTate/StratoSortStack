@@ -6,6 +6,7 @@ import { LazyLoadingSpinner } from './ui/LoadingSkeleton';
 import { logger } from '../../shared/logger';
 import { PHASES, PHASE_METADATA } from '../../shared/constants';
 import perfMarks from '../../shared/perfMarks';
+import { AnalysisRunProvider } from '../phases/discover/AnalysisRunProvider';
 
 // The settings overlay and useKeyboardShortcuts are deliberately NOT here:
 // they live in App.js so they stay active on the dashboard surface, which
@@ -222,8 +223,10 @@ function PhaseRenderer() {
     }
   };
 
+  // AnalysisRunProvider wraps every phase so an analysis run outlives the
+  // Discover screen: the user can organize finished files mid-run.
   return (
-    <>
+    <AnalysisRunProvider>
       <PhaseEnterAnnouncement currentPhase={currentPhase} />
       <div className="flex flex-col w-full h-full">
         <Suspense fallback={<LazyLoadingSpinner message={getPhaseLoadingMessage(currentPhase)} />}>
@@ -242,7 +245,7 @@ function PhaseRenderer() {
           </AnimatePresence>
         </Suspense>
       </div>
-    </>
+    </AnalysisRunProvider>
   );
 }
 

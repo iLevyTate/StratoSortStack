@@ -201,7 +201,10 @@ describe('Alt+Arrow phase navigation follows the phase-tab rule', () => {
     expect(setPhaseDispatches()).toEqual(['complete']);
   });
 
-  test('Alt+Arrow is paused while analysis runs, like the phase tabs', () => {
+  // The analysis run lives above the phases (AnalysisRunProvider), so a
+  // running analysis no longer pauses phase moves: analyzed files can be
+  // organized while the rest keep analyzing.
+  test('Alt+Arrow still moves while analysis runs, like the phase tabs', () => {
     const state = buildState({
       phase: 'discover',
       selectedFiles: [{ path: '/docs/a.pdf', name: 'a.pdf' }],
@@ -212,10 +215,9 @@ describe('Alt+Arrow phase navigation follows the phase-tab rule', () => {
     renderHook(() => useKeyboardShortcuts());
 
     pressAlt('ArrowRight');
-    pressAlt('ArrowLeft');
 
-    expect(setPhaseDispatches()).toEqual([]);
-    expect(mockNotification.showInfo).toHaveBeenCalledWith(
+    expect(setPhaseDispatches()).toEqual(['organize']);
+    expect(mockNotification.showInfo).not.toHaveBeenCalledWith(
       'Navigation is paused until the current operation finishes.',
       5200
     );
