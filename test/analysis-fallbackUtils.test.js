@@ -376,3 +376,56 @@ describe('Analysis Fallback Utils', () => {
     });
   });
 });
+
+// Folder words are matched against the name's whole words. Substring
+// matching filed "network" under a "Work" folder and "barcode" under "code".
+describe('getIntelligentCategory — whole-word folder matching', () => {
+  const { getIntelligentCategory } = require('../src/main/analysis/fallbackUtils');
+  const work = { name: 'Work', description: 'Project management, resumes and task lists.' };
+  const dev = { name: 'Development', description: 'Source code and scripts.' };
+
+  test('a folder word inside a longer word is not a match', () => {
+    expect(getIntelligentCategory('network-diagram.vsdx', '.vsdx', [work])).not.toBe('Work');
+    expect(getIntelligentCategory('barcode-labels.pdf', '.pdf', [dev])).not.toBe('Development');
+  });
+
+  test('the folder word on its own still matches', () => {
+    expect(getIntelligentCategory('work-plan-2026.docx', '.docx', [work])).toBe('Work');
+  });
+
+  test('a plural in the file name still matches a singular folder word', () => {
+    const invoices = { name: 'Invoice', description: '' };
+    expect(getIntelligentCategory('invoices-march.pdf', '.pdf', [invoices])).toBe('Invoice');
+  });
+
+  test('a multi-word folder name matches as a phrase', () => {
+    const prints = { name: '3D print', description: '' };
+    expect(getIntelligentCategory('my_3d_print_parts.txt', '.txt', [prints])).toBe('3D print');
+  });
+});
+
+describe('createFallbackAnalysis — a filename guess is not reported as confident', () => {
+  const {
+    createFallbackAnalysis,
+    FILENAME_ONLY_CONFIDENCE
+  } = require('../src/main/analysis/fallbackUtils');
+
+  test('the confidence is capped at FILENAME_ONLY_CONFIDENCE whatever the caller asks', () => {
+    const result = createFallbackAnalysis({
+      fileName: 'report.pdf',
+      fileExtension: '.pdf',
+      confidence: 75
+    });
+    expect(result.confidence).toBe(FILENAME_ONLY_CONFIDENCE);
+    expect(FILENAME_ONLY_CONFIDENCE).toBe(50);
+  });
+
+  test('a lower requested confidence is kept', () => {
+    const result = createFallbackAnalysis({
+      fileName: 'report.pdf',
+      fileExtension: '.pdf',
+      confidence: 40
+    });
+    expect(result.confidence).toBe(40);
+  });
+});

@@ -276,7 +276,13 @@ const THRESHOLDS = {
     NARROW_SPREAD_THRESHOLD: 0.07,
     NARROW_SPREAD_CAP: 75,
     MODERATE_SPREAD_THRESHOLD: 0.12,
-    MODERATE_SPREAD_CAP: 85
+    MODERATE_SPREAD_CAP: 85,
+    // The LLM's folder and the embedding's best folder differ and the LLM's
+    // pick was kept. Two signals that disagree are not a settled decision;
+    // below the auto-organize default (75) so it is not moved unreviewed.
+    // (A banner filed under Research at 90% while the vectors pointed
+    // elsewhere.)
+    DISAGREEMENT_CAP: 65
   },
   QUEUE_HIGH_WATERMARK: 0.75,
   QUEUE_CRITICAL_WATERMARK: 0.9,

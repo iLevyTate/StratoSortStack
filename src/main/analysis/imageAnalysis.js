@@ -29,7 +29,7 @@ const {
   formatOrganizationGuidanceBlock
 } = require('./organizationGuidance');
 const { recognizeIfAvailable } = require('../utils/tesseractUtils');
-const { normalizeAnalysisResult } = require('./utils');
+const { normalizeAnalysisResult, dropPromptEchoes } = require('./utils');
 const { normalizeExtractedTextForStorage } = require('./analysisTextUtils');
 const {
   getIntelligentCategory: getIntelligentImageCategory,
@@ -2268,7 +2268,7 @@ async function runImageAnalysis(filePath, smartFolders, options) {
       const normalizedCategory = categoryMatch.folder;
       const normalized = normalizeAnalysisResult(
         {
-          ...analysis,
+          ...dropPromptEchoes(analysis, smartFolders),
           category: normalizedCategory || analysis.category,
           suggestedNewFolder:
             categoryMatch.suggestedNewFolder || analysis.suggestedNewFolder || undefined,
