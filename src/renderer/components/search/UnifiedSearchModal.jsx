@@ -242,7 +242,7 @@ export default function UnifiedSearchModal({
 
   // Chat tab state + logic live in hooks/useChatTab (§I Phase 4). The
   // graph bridge (handleUseSourcesInGraph) stays below — it writes graph state.
-  const chatTab = useChatTab({ isOpen, searchResults, defaultTopK, openFile, setError });
+  const chatTab = useChatTab({ isOpen, searchResults, defaultTopK, openFile });
   const {
     chatMessages,
     setChatMessages,
@@ -1104,6 +1104,27 @@ export default function UnifiedSearchModal({
         onClose?.();
       }
 
+      // Tab switching: Ctrl + 1 search, 2 relate, 3 atlas, 4 chat, 5 timeline
+      // (F-212: Chat and Timeline had no hotkey). Handled before the
+      // editable-target guard so it works while a text field has focus.
+      // AltGr reports Ctrl+Alt on Windows and types a character, so Alt is
+      // excluded.
+      if (e.ctrlKey && !e.altKey) {
+        const tabForKey = {
+          1: 'search',
+          2: graphViewEnabled ? 'graph' : null,
+          3: graphViewEnabled ? 'atlas' : null,
+          4: 'chat',
+          5: 'timeline'
+        }[e.key];
+        if (tabForKey) {
+          e.preventDefault();
+          pendingInitialGraphTabRef.current = false;
+          setActiveTab(tabForKey);
+          return;
+        }
+      }
+
       if (isEditableTarget(e.target)) {
         return;
       }
@@ -1155,34 +1176,6 @@ export default function UnifiedSearchModal({
         if (activeTab === 'graph' && nodes.length === 0) {
           loadClustersRef.current?.();
         }
-      }
-
-      // Tab switching: Ctrl + 1 search, 2 relate, 3 atlas, 4 chat, 5 timeline
-      if (e.ctrlKey && e.key === '1') {
-        e.preventDefault();
-        pendingInitialGraphTabRef.current = false;
-        setActiveTab('search');
-      }
-      if (e.ctrlKey && e.key === '2' && graphViewEnabled) {
-        e.preventDefault();
-        pendingInitialGraphTabRef.current = false;
-        setActiveTab('graph');
-      }
-      if (e.ctrlKey && e.key === '3' && graphViewEnabled) {
-        e.preventDefault();
-        pendingInitialGraphTabRef.current = false;
-        setActiveTab('atlas');
-      }
-      // F-212: Chat and Timeline had no hotkey (mouse only).
-      if (e.ctrlKey && e.key === '4') {
-        e.preventDefault();
-        pendingInitialGraphTabRef.current = false;
-        setActiveTab('chat');
-      }
-      if (e.ctrlKey && e.key === '5') {
-        e.preventDefault();
-        pendingInitialGraphTabRef.current = false;
-        setActiveTab('timeline');
       }
 
       // Graph keyboard shortcuts — only when the graph tab is active so we
@@ -1369,8 +1362,11 @@ export default function UnifiedSearchModal({
     };
 
     const handleFolderAction = async (event) => {
-      const { action, folderId, folderPath } = event.detail || {};
+      // folderPath is the smart folder's path on disk ('' when the suggested
+      // name matches no smart folder); folderName is only for messages.
+      const { action, folderId, folderName, folderPath } = event.detail || {};
       if (!folderId) return;
+      const folderLabel = folderName || folderPath || 'this folder';
       if (action === 'moveFilesHere') {
         // Find all file nodes connected to this folder node via organize edges
         const currentEdges = edgesRef.current || [];
@@ -1389,21 +1385,34 @@ export default function UnifiedSearchModal({
           return;
         }
         setGraphStatus(
-          `Moving ${filePaths.length} file${filePaths.length === 1 ? '' : 's'} to "${folderPath}"...`
+          `Moving ${filePaths.length} file${filePaths.length === 1 ? '' : 's'} to "${folderLabel}"...`
         );
+        let outcome = null;
         try {
-          await handleMoveAllToFolderRef.current?.(
-            { id: folderId, label: folderPath, memberIds: fileIds },
-            folderPath
+          // With no known path the move asks the user for a destination.
+          outcome = await handleMoveAllToFolderRef.current?.(
+            { id: folderId, label: folderLabel, memberIds: fileIds },
+            folderPath || undefined
           );
         } catch {
-          setGraphStatus('Failed to move files.');
+          showError('Failed to move files.');
+        } finally {
+          // A successful move sets its own status; otherwise (cancelled or
+          // failed, which the move reports itself) clear "Moving...".
+          if (!outcome?.moved) setGraphStatus('');
         }
       } else if (action === 'reveal') {
+        if (!folderPath) {
+          showError(`"${folderLabel}" is not one of your smart folders, so it cannot be revealed.`);
+          return;
+        }
         try {
-          await window.electronAPI?.files?.reveal?.(folderPath);
+          const result = await window.electronAPI?.files?.reveal?.(folderPath);
+          if (!result || result.success === false) {
+            showError(`Could not reveal "${folderLabel}": ${result?.error || 'folder not found'}`);
+          }
         } catch {
-          setGraphStatus(`Could not reveal "${folderPath}" in Explorer.`);
+          showError(`Could not reveal "${folderLabel}".`);
         }
       }
     };
@@ -1437,7 +1446,8 @@ export default function UnifiedSearchModal({
     reactFlowInstance,
     setFocusDepth,
     setFocusNodeId,
-    setGraphStatus
+    setGraphStatus,
+    showError
   ]); // handleMoveAllToFolder accessed via ref to avoid TDZ
 
   // Prevent wheel events on the graph container from scrolling the parent modal.
@@ -1555,15 +1565,21 @@ export default function UnifiedSearchModal({
     // Don't re-fetch if we already have details for this path
     if (lastFetchedDetailsPathRef.current === path) return undefined;
 
+    // A different file is selected: drop the previous file's details so the
+    // preview never shows them under the new selection while this loads, or
+    // when the new file has no analysis history.
+    lastFetchedDetailsPathRef.current = null;
+    setSelectedDocumentDetails(null);
+
     let cancelled = false;
     const requestId = (detailsRequestCounterRef.current += 1);
     const fetchDetails = async () => {
       setIsLoadingDocumentDetails(true);
       try {
         const history = await window.electronAPI?.analysisHistory?.getFileHistory?.(path);
-        if (!cancelled && detailsRequestCounterRef.current === requestId && history) {
+        if (!cancelled && detailsRequestCounterRef.current === requestId) {
           lastFetchedDetailsPathRef.current = path;
-          setSelectedDocumentDetails(history);
+          setSelectedDocumentDetails(history || null);
         }
       } catch (err) {
         logger.warn('Failed to fetch document details', err);
@@ -1924,9 +1940,8 @@ export default function UnifiedSearchModal({
                 <button
                   className="dropdown-menu-item dropdown-menu-item--default flex w-full items-center gap-compact text-left"
                   onClick={() => {
-                    if (contextMenu.data?.path) {
-                      window.electronAPI?.files?.open?.(contextMenu.data.path);
-                    }
+                    // The shared actions report a missing path or a failed open.
+                    openFile(contextMenu.data?.path);
                     closeContextMenu();
                   }}
                 >
@@ -1935,9 +1950,7 @@ export default function UnifiedSearchModal({
                 <button
                   className="dropdown-menu-item dropdown-menu-item--default flex w-full items-center gap-compact text-left"
                   onClick={() => {
-                    if (contextMenu.data?.path) {
-                      window.electronAPI?.files?.reveal?.(contextMenu.data.path);
-                    }
+                    revealFile(contextMenu.data?.path);
                     closeContextMenu();
                   }}
                 >

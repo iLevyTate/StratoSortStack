@@ -17,7 +17,11 @@ semantically.
 
 - **React Flow Integration**: Smooth, zoomable canvas interface.
 - **Auto-Layout**: Uses ELK algorithms to organize nodes intelligently.
-- **Context Menus**: Right-click on any node for quick actions (Open, Reveal in Explorer, Organize).
+- **Context Menus**: Right-click a file node for Open File, Reveal in Folder, Find Similar, Focus on
+  Node and Show Related Documents. Right-click a cluster for Expand/Collapse cluster, Tag Cluster,
+  Create Smart Folder, Move All to Folder and Export File List. Other nodes (the query node,
+  suggested-folder nodes, duplicate groups) have no context menu; a suggested-folder node has its
+  own toolbar for moving its connected files there or revealing the folder.
 
 ### Semantic Clustering
 
@@ -31,10 +35,16 @@ The graph doesn't just show files; it shows _meaning_.
 
 ### Exploration Tools
 
-- **Focus Mode**: Double-click any node to center the graph on it and reveal its specific
-  connections.
+- **Double-click**: Double-clicking a cluster expands it into its member files. Double-clicking a
+  file selects it and adds its similar files to the graph (as many hops as the hop setting allows).
+  Double-clicking other nodes does nothing.
+- **Focus Mode**: "Focus on Node" (file context menu, or the Focus button in the details panel)
+  centers the graph on one node and its nearby connections.
 - **Expansion**: Dynamically load more connections as you explore "hops" away from your starting
   point.
+- **Find similar**: The context-menu **Find Similar** adds similar files to the graph. The details
+  panel's **Find similar** button is different: it switches to the Search tab with a
+  `similar to: <file name>` query.
 - **Filtering**: Use the legend to toggle visibility of clusters, file types, or confidence levels.
 
 ## Technical Implementation
@@ -63,9 +73,11 @@ The graph doesn't just show files; it shows _meaning_.
     visualized.
 3.  **Explore**:
     - **Click** a node to select it.
-    - **Double-click** to focus and expand.
+    - **Double-click** a cluster to expand it, or a file to add its similar files.
     - **Drag** nodes to rearrange your view.
-4.  **Action**: Right-click to open files or apply organization suggestions.
+4.  **Action**: Right-click a file to open or reveal it, or a cluster to tag, move or export its
+    files. To act on an organization suggestion, select the suggested-folder node and use its
+    toolbar.
 
 ## Other Knowledge OS views
 

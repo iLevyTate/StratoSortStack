@@ -155,3 +155,102 @@ export function buildRecommendationGraph(/** @type {any[]} */ fileNodes = []) {
     edges
   };
 }
+
+/**
+ * Folder nodes are keyed by smart-folder NAME (see buildRecommendationGraph);
+ * file operations need the folder's real path. Returns '' when unknown.
+ *
+ * @param {any[]} smartFolders - `{ name, path }` entries from the store
+ * @param {string} folderName
+ * @returns {string}
+ */
+export function resolveSmartFolderPath(smartFolders, folderName) {
+  const wanted = typeof folderName === 'string' ? folderName.trim() : '';
+  if (!wanted) return '';
+  // Already an absolute path (older recommendation payloads).
+  if (/^([a-zA-Z]:[\\/]|[\\/])/.test(wanted)) return wanted;
+  const key = wanted.toLowerCase();
+  const match = (Array.isArray(smartFolders) ? smartFolders : []).find(
+    (folder) =>
+      typeof folder?.name === 'string' &&
+      folder.name.trim().toLowerCase() === key &&
+      typeof folder?.path === 'string' &&
+      folder.path.trim().length > 0
+  );
+  return match ? match.path : '';
+}
+
+export const REL_CLUSTER_EDGE_PREFIX = 'rel-cluster:';
+
+/**
+ * Knowledge edges between clusters are fetched once per cluster load and
+ * added after the first render. A re-render (mode/filter change, background
+ * refresh) rebuilds the edge list, so carry over the ones whose two clusters
+ * are still on screen.
+ *
+ * @param {any[]} previousEdges - edges currently in the graph
+ * @param {any[]} nextNodes - nodes about to be rendered
+ * @param {any[]} nextEdges - edges about to be rendered
+ * @returns {any[]}
+ */
+export function carryOverRelClusterEdges(previousEdges, nextNodes, nextEdges) {
+  const next = Array.isArray(nextEdges) ? nextEdges : [];
+  const nodeIds = new Set((Array.isArray(nextNodes) ? nextNodes : []).map((n) => n?.id));
+  const taken = new Set(next.map((e) => e?.id));
+  const kept = (Array.isArray(previousEdges) ? previousEdges : []).filter(
+    (edge) =>
+      typeof edge?.id === 'string' &&
+      edge.id.startsWith(REL_CLUSTER_EDGE_PREFIX) &&
+      !taken.has(edge.id) &&
+      nodeIds.has(edge.source) &&
+      nodeIds.has(edge.target)
+  );
+  return kept.length > 0 ? [...next, ...kept] : next;
+}
+
+/**
+ * Fingerprint of a freshly drawn cluster overview: which nodes, and where.
+ *
+ * @param {any[]} nodes
+ * @returns {string}
+ */
+export function buildClusterOverviewSignature(nodes) {
+  return (Array.isArray(nodes) ? nodes : [])
+    .map((n) => `${n?.id}@${Math.round(n?.position?.x ?? 0)},${Math.round(n?.position?.y ?? 0)}`)
+    .sort()
+    .join('|');
+}
+
+/**
+ * True while the graph is still exactly the overview that was drawn: no node
+ * added, removed, expanded or dragged since. The delayed background refresh
+ * redraws the whole graph, so it may only run while this holds.
+ *
+ * @param {string|null} signature - from buildClusterOverviewSignature at draw time
+ * @param {any[]} currentNodes
+ * @returns {boolean}
+ */
+export function isClusterOverviewUntouched(signature, currentNodes) {
+  if (typeof signature !== 'string' || signature.length === 0) return false;
+  const nodes = Array.isArray(currentNodes) ? currentNodes : [];
+  if (nodes.some((n) => n?.data?.expanded || n?.dragging)) return false;
+  return buildClusterOverviewSignature(nodes) === signature;
+}
+
+/**
+ * What a cluster payload would draw. Two payloads with the same key render
+ * the same overview, so a refresh that returns one can be skipped.
+ *
+ * @param {any[]} clusters
+ * @param {any[]} crossClusterEdges
+ * @returns {string}
+ */
+export function getClusterPayloadKey(clusters, crossClusterEdges) {
+  const clusterPart = (Array.isArray(clusters) ? clusters : [])
+    .map((c) => `${c?.id}:${c?.label}:${c?.memberCount}:${c?.confidence}`)
+    .join('|');
+  const edgePart = (Array.isArray(crossClusterEdges) ? crossClusterEdges : [])
+    .map((e) => `${e?.source}>${e?.target}:${e?.similarity}`)
+    .join('|');
+  return `${clusterPart}#${edgePart}`;
+}

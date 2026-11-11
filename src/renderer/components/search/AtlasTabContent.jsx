@@ -15,6 +15,7 @@ import { useAppSelector } from '../../store/hooks';
 import { joinPath } from '../../utils/platform';
 import { useMoveFilesToFolder } from './hooks/useMoveFilesToFolder';
 import { useAtlasRebuildPoll } from './hooks/useAtlasRebuildPoll';
+import { FILE_METADATA_BATCH_LIMIT, chunkArray, addTagsChunked } from './utils/ipcBatchUtils';
 import {
   pickNextPointInDirection,
   ARROW_DIRECTIONS,
@@ -38,7 +39,6 @@ import { buildEmbeddingData, nearestPointIndex, indicesInLasso } from './atlasEm
  */
 
 const PAGE_LIMIT = 5000;
-const META_BATCH_LIMIT = 100;
 const SIMILAR_TOP_K = 10;
 const MAX_FOLDER_LABELS = 10;
 const MIN_LABEL_MEMBERS = 3;
@@ -157,8 +157,7 @@ function AtlasTabContent({ isActive, openFile, revealFile, setError, simpleMode 
     }
     const api = /** @type {any} */ (window).electronAPI?.embeddings;
     if (!api?.getFileMetadata || missing.length === 0) return out;
-    for (let i = 0; i < missing.length; i += META_BATCH_LIMIT) {
-      const chunk = missing.slice(i, i + META_BATCH_LIMIT);
+    for (const chunk of chunkArray(missing, FILE_METADATA_BATCH_LIMIT)) {
       try {
         const res = await api.getFileMetadata(chunk);
         for (const id of chunk) {
@@ -858,14 +857,20 @@ function AtlasTabContent({ isActive, openFile, revealFile, setError, simpleMode 
       setIsBulkWorking(true);
       setBulkStatus(`Tagging ${selectedFileIds.length} file(s)…`);
       try {
-        const api = /** @type {any} */ (window).electronAPI?.files;
-        const res = await api?.addTags?.(selectedFileIds, tags);
-        if (!res?.success) {
-          throw new Error(atlasIpcFailureMessage(res?.errors?.[0]?.error || res, 'Tags'));
+        // One call takes at most 1000 ids and may tag only some of them, so
+        // send the selection in chunks and report what was really tagged.
+        const res = await addTagsChunked(selectedFileIds, tags);
+        if (!res.success) {
+          throw new Error(atlasIpcFailureMessage(res.error || res, 'Tags'));
         }
-        setBulkStatus(`Tagged ${selectedFileIds.length} file(s).`);
-        setTagDraft(null);
         metaCacheRef.current.clear();
+        if (res.failed > 0) {
+          setBulkStatus(`Tagged ${res.updated} of ${res.total} file(s).`);
+          setBothErrors(`Could not tag ${res.failed} of ${res.total} file(s).`);
+        } else {
+          setBulkStatus(`Tagged ${res.updated} file(s).`);
+          setTagDraft(null);
+        }
       } catch (err) {
         setBothErrors(atlasIpcFailureMessage(err, 'Tags'));
       } finally {

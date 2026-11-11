@@ -30,6 +30,7 @@ import UnifiedSearchModal, {
   getGraphMiniMapNodeColor
 } from '../../src/renderer/components/search/UnifiedSearchModal';
 import { embeddingsIpc } from '../../src/renderer/services/ipc/embeddingsIpc';
+import * as chatIpc from '../../src/renderer/services/ipc/chatIpc';
 
 describe('UnifiedSearchModal', () => {
   beforeEach(() => {
@@ -163,6 +164,27 @@ describe('UnifiedSearchModal', () => {
 
         fireEvent.keyDown(document, { key: '1', ctrlKey: true });
         expect(tab('Search')).toHaveAttribute('aria-pressed', 'true');
+      } finally {
+        unregisterOverlay('knowledge-os-modal');
+      }
+    });
+
+    test('Ctrl+digit switches tabs while the search field has focus, AltGr+digit does not', () => {
+      const {
+        registerOverlay,
+        unregisterOverlay
+      } = require('../../src/renderer/utils/overlayStack');
+      registerOverlay('knowledge-os-modal');
+      try {
+        renderWithRedux(<UnifiedSearchModal isOpen={true} onClose={jest.fn()} />);
+        const searchInput = screen.getByLabelText(/search query/i);
+
+        // AltGr reports Ctrl+Alt on Windows and types a character.
+        fireEvent.keyDown(searchInput, { key: '4', ctrlKey: true, altKey: true });
+        expect(screen.queryByTestId('chat-panel')).not.toBeInTheDocument();
+
+        fireEvent.keyDown(searchInput, { key: '4', ctrlKey: true });
+        expect(screen.getByTestId('chat-panel')).toBeInTheDocument();
       } finally {
         unregisterOverlay('knowledge-os-modal');
       }
@@ -462,6 +484,88 @@ describe('UnifiedSearchModal', () => {
         const resultRows = container.querySelectorAll('[data-result-item]');
         expect(resultRows[0]?.className).toContain('border-stratosort-blue/35');
       });
+    });
+
+    const searchForTwoResults = async () => {
+      mockElectronAPI.embeddings.search.mockResolvedValue({
+        success: true,
+        results: [
+          { id: 'doc-a', metadata: { name: 'alpha.pdf', path: '/path/alpha.pdf' }, score: 0.9 },
+          { id: 'doc-b', metadata: { name: 'beta.pdf', path: '/path/beta.pdf' }, score: 0.8 }
+        ],
+        mode: 'hybrid'
+      });
+      const view = renderWithRedux(<UnifiedSearchModal isOpen={true} onClose={jest.fn()} />);
+      fireEvent.change(screen.getByLabelText(/search query/i), { target: { value: 'report' } });
+      await act(async () => {
+        jest.advanceTimersByTime(400);
+      });
+      await waitFor(() => {
+        expect(view.container.querySelectorAll('[data-result-item]')).toHaveLength(2);
+      });
+      return view;
+    };
+
+    test('the preview never shows the previous file’s details under a new selection', async () => {
+      let resolveBeta;
+      mockElectronAPI.analysisHistory.getFileHistory = jest.fn((filePath) =>
+        filePath === '/path/alpha.pdf'
+          ? Promise.resolve({ analysis: { extractedText: 'ALPHA EXTRACTED TEXT' } })
+          : new Promise((resolve) => {
+              resolveBeta = resolve;
+            })
+      );
+      // jsdom has no scrollIntoView; selecting a row scrolls it into view.
+      const originalScrollIntoView = Element.prototype.scrollIntoView;
+      Element.prototype.scrollIntoView = jest.fn();
+      try {
+        await searchForTwoResults();
+
+        fireEvent.click(screen.getAllByText('alpha.pdf')[0]);
+        await waitFor(() => {
+          expect(screen.getByText('ALPHA EXTRACTED TEXT')).toBeInTheDocument();
+        });
+
+        // While the second file's details load.
+        fireEvent.click(screen.getAllByText('beta.pdf')[0]);
+        await waitFor(() => {
+          expect(mockElectronAPI.analysisHistory.getFileHistory).toHaveBeenCalledWith(
+            '/path/beta.pdf'
+          );
+        });
+        expect(screen.queryByText('ALPHA EXTRACTED TEXT')).not.toBeInTheDocument();
+
+        // And when it turns out to have no analysis history.
+        await act(async () => {
+          resolveBeta(null);
+        });
+        expect(screen.queryByText('ALPHA EXTRACTED TEXT')).not.toBeInTheDocument();
+      } finally {
+        Element.prototype.scrollIntoView = originalScrollIntoView;
+        delete mockElectronAPI.analysisHistory.getFileHistory;
+      }
+    });
+
+    test('Ask AI scopes the question to the results on screen', async () => {
+      const queryStreamSpy = jest
+        .spyOn(chatIpc, 'queryStream')
+        .mockReturnValue({ on: jest.fn(), begin: jest.fn(), cancel: jest.fn() });
+      try {
+        await searchForTwoResults();
+
+        fireEvent.click(screen.getByRole('button', { name: /ask ai assistant/i }));
+
+        await waitFor(() => {
+          expect(queryStreamSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+              query: 'Tell me about "report" based on these results',
+              contextFileIds: ['doc-a', 'doc-b']
+            })
+          );
+        });
+      } finally {
+        queryStreamSpy.mockRestore();
+      }
     });
   });
 

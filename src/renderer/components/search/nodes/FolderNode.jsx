@@ -3,21 +3,28 @@ import PropTypes from 'prop-types';
 import { Handle, Position, NodeToolbar } from '@xyflow/react';
 import { Folder, FolderInput, FolderOpen } from 'lucide-react';
 import { IconButton } from '../../ui';
+import { useAppSelector } from '../../../store/hooks';
+import { selectSmartFolders } from '../../../store/selectors';
+import { resolveSmartFolderPath } from '../utils/graphLayoutUtils';
 
 const FolderNode = memo(({ data, selected }) => {
   const label = data?.label || 'Suggested folder';
   const memberCount = data?.memberCount || 0;
   const folderId = data?.id;
+  // The node only knows the smart folder's name; moving and revealing need
+  // its path on disk. Empty when the name matches no configured smart folder.
+  const smartFolders = useAppSelector(selectSmartFolders);
+  const folderPath = resolveSmartFolderPath(smartFolders, data?.label);
 
   const dispatchFolderAction = useCallback(
     (action) => {
       window.dispatchEvent(
         new CustomEvent('graph:folderAction', {
-          detail: { action, folderId, folderPath: label }
+          detail: { action, folderId, folderName: label, folderPath }
         })
       );
     },
-    [folderId, label]
+    [folderId, label, folderPath]
   );
 
   const handleMoveFilesHere = useCallback(

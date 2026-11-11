@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { configureStore } from '@reduxjs/toolkit';
 
@@ -293,6 +293,35 @@ describe('ChatPanel', () => {
     const personaSelect = screen.getByTitle('Choose chat persona');
     expect(personaSelect).toHaveValue('custom:test-p');
     expect(screen.getByRole('option', { name: 'Test Custom' })).toBeInTheDocument();
+  });
+});
+
+describe('ChatPanel composer', () => {
+  const typeAndSend = (text) => {
+    const box = screen.getByRole('textbox');
+    fireEvent.change(box, { target: { value: text } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    return box;
+  };
+
+  test('keeps the typed text when the send is refused', async () => {
+    const onSend = jest.fn().mockResolvedValue(false);
+    renderWithRedux(<ChatPanel {...createBaseProps({ onSend })} />);
+
+    const box = typeAndSend('What changed last quarter?');
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('What changed last quarter?'));
+    await Promise.resolve();
+    expect(box).toHaveValue('What changed last quarter?');
+  });
+
+  test('clears the text once the send is accepted', async () => {
+    const onSend = jest.fn().mockResolvedValue(true);
+    renderWithRedux(<ChatPanel {...createBaseProps({ onSend })} />);
+
+    const box = typeAndSend('What changed last quarter?');
+
+    await waitFor(() => expect(box).toHaveValue(''));
   });
 });
 

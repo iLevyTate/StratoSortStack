@@ -144,7 +144,16 @@ export default function SearchTabContent({
                 setActiveTab('chat');
                 // If there is a query, ask about it
                 if (debouncedQuery) {
-                  handleChatSend(`Tell me about "${debouncedQuery}" based on these results`);
+                  // "These results" are the ones on screen: send their ids so
+                  // the answer is drawn from them, not the whole library.
+                  const resultIds = searchResults
+                    .map((result) => result?.id)
+                    .filter((id) => typeof id === 'string' && id.length > 0)
+                    .slice(0, 200);
+                  handleChatSend(
+                    `Tell me about "${debouncedQuery}" based on these results`,
+                    resultIds
+                  );
                 }
               }}
               title="Ask AI assistant about these results"

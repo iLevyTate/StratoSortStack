@@ -874,8 +874,10 @@ function ChatPanel({
     const trimmed = input.trim();
     if (!trimmed || isSending) return;
     try {
-      await onSend(trimmed);
-      setInput('');
+      // onSend resolves false when the send was refused (e.g. strict scope
+      // with no documents); keep the text so it is not lost.
+      const accepted = await onSend(trimmed);
+      if (accepted !== false) setInput('');
     } catch {
       // Keep the input so the user can retry on failure
     }

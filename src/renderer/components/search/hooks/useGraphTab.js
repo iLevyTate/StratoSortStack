@@ -61,7 +61,15 @@ import {
   getConnectionReason,
   rankCrossClusterConnections,
   sortClustersForInsight,
-  pickSurpriseConnections
+  pickSurpriseConnections,
+  parseSemanticClusterId,
+  carryOverRelClusterEdges,
+  REL_CLUSTER_EDGE_PREFIX,
+  buildClusterOverviewSignature,
+  isClusterOverviewUntouched,
+  getClusterPayloadKey,
+  fetchFileMetadataChunked,
+  addTagsChunked
 } from '../utils';
 
 const logger = createLogger('useGraphTab');
@@ -453,6 +461,15 @@ export function useGraphTab(
   const reactFlowInstance = useRef(null);
   const clusterRefreshTimeoutRef = useRef(null);
   const userHasExpandedRef = useRef(false);
+  // Fingerprint of the cluster overview as last drawn; the delayed refresh
+  // only redraws while the graph still matches it.
+  const clusterOverviewSignatureRef = useRef(/** @type {string|null} */ (null));
+  // Cluster node id -> name the user gave it this session.
+  const clusterLabelOverridesRef = useRef(/** @type {Map<string, string>} */ (new Map()));
+  // Knowledge edges between clusters for the current cluster load. Kept apart
+  // from the graph so they survive redraws and a round trip through another
+  // "cluster by" mode, where their endpoints are not on screen.
+  const relClusterEdgesRef = useRef(/** @type {any[]} */ ([]));
   const freshMetadataRequestCounterRef = useRef(0);
   const graphSearchRequestCounterRef = useRef(0);
   const graphDropRequestCounterRef = useRef(0);
@@ -549,33 +566,40 @@ export function useGraphTab(
    * Core move flow shared by every "Group into folder" affordance:
    * prompts the user for a destination folder, resolves paths for the
    * given file IDs, and moves them in batches via the existing
-   * `files.performOperation` IPC. Returns nothing — surfaces success and
-   * failure through the existing `setGraphStatus` / `setError` channels.
+   * `files.performOperation` IPC. Surfaces success and failure through the
+   * existing `setGraphStatus` / `setError` channels, and resolves with the
+   * outcome so a caller that showed its own progress text can clear it.
    *
    * @param {string[]} fileIds - File IDs (Orama doc IDs) to move.
-   * @param {{ source?: string }} [opts] - Telemetry tag for logger.
+   * @param {{ source?: string, destFolder?: string }} [opts] - Telemetry tag for
+   *   logger; `destFolder` moves straight there instead of asking.
+   * @returns {Promise<{ moved: number, failed: number, cancelled: boolean }>}
    */
   const moveFilesToChosenFolder = useCallback(async (/** @type {any} */ fileIds, opts = {}) => {
     const ids = Array.isArray(fileIds) ? fileIds.filter(Boolean) : [];
     if (ids.length === 0) {
       if (isMountedRef.current) setError('No files selected to move.');
-      return;
+      return { moved: 0, failed: 0, cancelled: false };
     }
     const source = /** @type {any} */ (opts).source || 'graph_group_action';
+    const knownDest = /** @type {any} */ (opts).destFolder;
 
     try {
-      const dirResult = await window.electronAPI?.files?.selectDirectory?.({
-        purpose: 'destination'
-      });
-      if (!dirResult?.success || !dirResult?.path) {
-        return; // User cancelled the folder picker.
+      let destFolder = typeof knownDest === 'string' ? knownDest.trim() : '';
+      if (!destFolder) {
+        const dirResult = await window.electronAPI?.files?.selectDirectory?.({
+          purpose: 'destination'
+        });
+        if (!dirResult?.success || !dirResult?.path) {
+          return { moved: 0, failed: 0, cancelled: true }; // User cancelled the folder picker.
+        }
+        destFolder = dirResult.path;
       }
-      const destFolder = dirResult.path;
 
-      const metadataResult = await window.electronAPI?.embeddings?.getFileMetadata?.(ids);
-      if (!metadataResult?.success) {
+      const metadataResult = await fetchFileMetadataChunked(ids);
+      if (!metadataResult.success) {
         if (isMountedRef.current) setError('Failed to retrieve file metadata');
-        return;
+        return { moved: 0, failed: ids.length, cancelled: false };
       }
       const metadata = metadataResult.metadata || {};
       let successCount = 0;
@@ -625,17 +649,24 @@ export function useGraphTab(
           setError(`Failed to move ${failCount} file(s)`);
         }
       }
+      return { moved: successCount, failed: failCount, cancelled: false };
     } catch (e) {
       logger.error('[Graph] Move files failed', { error: e?.message, source });
       if (isMountedRef.current) setError(`Move failed: ${e?.message || 'Unknown error'}`);
+      return { moved: 0, failed: ids.length, cancelled: false };
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Cluster path (existing entry point used by cluster cards + selection menu).
+  // A folder node passes its real path as `destFolder`; cluster cards pass
+  // nothing and the user picks the folder.
   const handleMoveAllToFolder = useCallback(
-    (/** @type {any} */ clusterData) =>
-      moveFilesToChosenFolder(clusterData?.memberIds || [], { source: 'cluster' }),
+    (/** @type {any} */ clusterData, /** @type {any} */ destFolder) =>
+      moveFilesToChosenFolder(clusterData?.memberIds || [], {
+        source: 'cluster',
+        destFolder: typeof destFolder === 'string' ? destFolder : undefined
+      }),
     [moveFilesToChosenFolder]
   );
   handleMoveAllToFolderRef.current = handleMoveAllToFolder;
@@ -669,9 +700,9 @@ export function useGraphTab(
         return;
       }
 
-      // Get file metadata for all members in one call
-      const metadataResult = await window.electronAPI?.embeddings?.getFileMetadata?.(memberIds);
-      if (!metadataResult?.success) {
+      // The metadata call takes at most 100 ids; fetch large clusters in chunks.
+      const metadataResult = await fetchFileMetadataChunked(memberIds);
+      if (!metadataResult.success) {
         if (isMountedRef.current) setError('Failed to retrieve file metadata');
         return;
       }
@@ -832,11 +863,11 @@ export function useGraphTab(
         setGraphStatus(`Applying ${tags.length} tags to ${memberIds.length} files...`);
 
       try {
-        // Call backend to add tags
-        const result = await window.electronAPI.files.addTags(memberIds, tags);
+        // The handler takes at most 1000 ids per call and can tag only some of them.
+        const result = await addTagsChunked(memberIds, tags);
 
-        if (!result?.success) {
-          throw new Error(getErrorMessage(result?.errors?.[0]?.error || result?.error, 'Tags'));
+        if (!result.success) {
+          throw new Error(getErrorMessage(result.error, 'Tags'));
         }
 
         if (isMountedRef.current) {
@@ -861,7 +892,12 @@ export function useGraphTab(
             })
           );
 
-          setGraphStatus(`Applied tags to cluster: ${selectedClusterForTagging.label}`);
+          if (result.failed > 0) {
+            setGraphStatus(`Tagged ${result.updated} of ${result.total} files`);
+            setError(`Could not tag ${result.failed} of ${result.total} files`);
+          } else {
+            setGraphStatus(`Applied tags to cluster: ${selectedClusterForTagging.label}`);
+          }
         }
       } catch (error) {
         logger.error('Failed to apply tags', {
@@ -882,32 +918,47 @@ export function useGraphTab(
 
       if (!clusterId || !newLabel) return;
 
-      // Optimistic UI update
-      graphActions.setNodes((/** @type {any} */ prev) =>
-        prev.map((/** @type {any} */ n) =>
-          n.id === clusterId
-            ? {
-                ...n,
-                data: {
-                  ...n.data,
-                  label: newLabel,
-                  isAutoGenerated: false
-                }
-              }
-            : n
-        )
-      );
+      const previous = (nodesRef.current || []).find((/** @type {any} */ n) => n.id === clusterId);
+      const previousOverride = clusterLabelOverridesRef.current.get(clusterId);
+      const applyLabel = (/** @type {any} */ label, /** @type {any} */ isAutoGenerated) =>
+        graphActions.setNodes((/** @type {any} */ prev) =>
+          prev.map((/** @type {any} */ n) =>
+            n.id === clusterId ? { ...n, data: { ...n.data, label, isAutoGenerated } } : n
+          )
+        );
+
+      // Optimistic UI update. The override keeps the name across re-renders
+      // (mode/filter changes, background refresh) for the rest of the session.
+      clusterLabelOverridesRef.current.set(clusterId, newLabel);
+      applyLabel(newLabel, false);
+
+      // Only semantic clusters exist in the backend. A regrouped or duplicate
+      // group has no stored label to update, so its name lasts for this session.
+      if (parseSemanticClusterId(clusterId) === null) {
+        setGraphStatus(`Group renamed to "${newLabel}" for this session`);
+        return;
+      }
 
       setGraphStatus(`Cluster renamed to "${newLabel}"`);
 
       // Persist to backend so the label survives graph reloads and app restarts
       try {
-        await window.electronAPI?.embeddings?.renameCluster?.(clusterId, newLabel);
+        const result = await window.electronAPI?.embeddings?.renameCluster?.(clusterId, newLabel);
+        if (result?.success === false) {
+          throw new Error(getErrorMessage(result.error, 'Rename'));
+        }
       } catch (e) {
         logger.warn('[Graph] Failed to persist cluster rename:', e?.message);
+        if (!isMountedRef.current) return;
+        // Put the old name back rather than show one that will not survive a reload.
+        if (previousOverride === undefined) clusterLabelOverridesRef.current.delete(clusterId);
+        else clusterLabelOverridesRef.current.set(clusterId, previousOverride);
+        if (previous) applyLabel(previous.data?.label, previous.data?.isAutoGenerated);
+        setGraphStatus('');
+        setError(`Could not rename the cluster: ${e?.message || 'Unknown error'}`);
       }
     },
-    [graphActions]
+    [graphActions, setError]
   );
 
   // Ref-based node lookup: always holds the latest nodes map but does NOT
@@ -1248,13 +1299,20 @@ export function useGraphTab(
     handleClusterExpand
   ]);
 
+  const findDuplicatesInFlightRef = useRef(false);
+
   /**
    * Find near-duplicate files across the collection
    * Displays them as special clusters in the graph
    */
   const handleFindDuplicates = useCallback(async () => {
+    // Several entry points start this scan and each replaces the graph; a
+    // second click while one is running must not start a competing scan.
+    if (findDuplicatesInFlightRef.current) return;
+    findDuplicatesInFlightRef.current = true;
     setError('');
     setDuplicateGroups([]);
+    setGraphStatus('Looking for duplicate files...');
 
     try {
       const result = await window.electronAPI?.embeddings?.findDuplicates?.({
@@ -1264,6 +1322,7 @@ export function useGraphTab(
 
       if (!result?.success) {
         setError(getErrorMessage(result?.error, 'Duplicate detection'));
+        setGraphStatus('');
         return;
       }
 
@@ -1370,6 +1429,9 @@ export function useGraphTab(
     } catch (e) {
       logger.error('[Graph] Find duplicates failed', e);
       setError(`Find duplicates failed: ${e?.message || 'Unknown error'}`);
+      setGraphStatus('');
+    } finally {
+      findDuplicatesInFlightRef.current = false;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -1656,14 +1718,18 @@ export function useGraphTab(
 
     let cancelled = false;
     const requestId = (freshMetadataRequestCounterRef.current += 1);
+    // Drop the previous node's metadata now; otherwise the panel shows (and
+    // acts on) the old file's path until this node's fetch returns, or for
+    // good if it fails.
+    setFreshMetadata(null);
 
     // Debounce 150ms to avoid IPC flood on rapid node selection
     const debounceTimer = setTimeout(async () => {
       setIsLoadingMetadata(true);
       try {
         const resp = await window.electronAPI?.embeddings?.getFileMetadata?.([nodeId]);
-        if (!cancelled && freshMetadataRequestCounterRef.current === requestId && resp?.success) {
-          const meta = resp.metadata?.[nodeId] || null;
+        if (!cancelled && freshMetadataRequestCounterRef.current === requestId) {
+          const meta = (resp?.success && resp.metadata?.[nodeId]) || null;
           setFreshMetadata(meta);
           // Cache for later re-selection (cap at 50 entries)
           if (meta) {
@@ -2076,7 +2142,8 @@ export function useGraphTab(
           kind: 'cluster',
           id: cluster.id,
           clusterId: cluster.clusterId,
-          label: getClusterDisplayLabel(cluster),
+          label:
+            clusterLabelOverridesRef.current.get(cluster.id) || getClusterDisplayLabel(cluster),
           memberCount: cluster.memberCount,
           memberIds: cluster.memberIds,
           expanded: false,
@@ -2088,7 +2155,7 @@ export function useGraphTab(
           dominantFolderName: cluster.dominantFolderName || '',
           commonTags: sanitizeGraphMetadataTerms(cluster.commonTags, { maxTerms: 10 }),
           timeRange: cluster.timeRange || null,
-          isAutoGenerated: true,
+          isAutoGenerated: !clusterLabelOverridesRef.current.has(cluster.id),
           onCreateSmartFolder: handleCreateSmartFolderFromCluster,
           onMoveAllToFolder: handleMoveAllToFolder,
           onExportFileList: handleExportFileList,
@@ -2241,7 +2308,15 @@ export function useGraphTab(
         };
       });
 
-      graphActions.setGraph(clusterNodes, clusterEdges);
+      // Knowledge edges are fetched once per load and added after the first
+      // draw; a redraw must not drop the ones that still connect two groups.
+      const edgesToRender = carryOverRelClusterEdges(
+        relClusterEdgesRef.current,
+        clusterNodes,
+        clusterEdges
+      );
+      graphActions.setGraph(clusterNodes, edgesToRender);
+      clusterOverviewSignatureRef.current = buildClusterOverviewSignature(clusterNodes);
       setShowClusters(true);
 
       setGraphStatus(`Found ${presentationClusters.length} groups (cluster by: ${mode})`);
@@ -2261,6 +2336,7 @@ export function useGraphTab(
             radius: dynamicRadius
           });
           graphActions.setNodes(layoutedNodes);
+          clusterOverviewSignatureRef.current = buildClusterOverviewSignature(layoutedNodes);
         } catch (layoutError) {
           logger.warn('[Graph] Cluster layout failed:', layoutError);
         }
@@ -2296,6 +2372,10 @@ export function useGraphTab(
     setError('');
     // Reset expansion flag so the background refresh is allowed again on a fresh load
     userHasExpandedRef.current = false;
+    // Cluster ids are reassigned by a recompute, so earlier knowledge edges and
+    // session names no longer describe these clusters.
+    relClusterEdgesRef.current = [];
+    clusterLabelOverridesRef.current.clear();
 
     try {
       // Prefer using cached clusters when available; recompute only if stale.
@@ -2427,6 +2507,10 @@ export function useGraphTab(
                     });
                   }
                 }
+                relClusterEdgesRef.current = next.filter(
+                  (/** @type {any} */ e) =>
+                    typeof e?.id === 'string' && e.id.startsWith(REL_CLUSTER_EDGE_PREFIX)
+                );
                 return next;
               });
               return undefined;
@@ -2449,17 +2533,30 @@ export function useGraphTab(
         try {
           if (!isMountedRef.current) return;
           const refreshed = await window.electronAPI?.embeddings?.getClusters?.();
+          // The redraw replaces the whole graph, so it may only land on the
+          // overview this load drew: not on a newer load, an expanded cluster,
+          // dragged nodes, or a graph since replaced by a search or duplicates.
+          if (
+            !isMountedRef.current ||
+            !isCurrentRequest(clustersRequestCounterRef, requestId) ||
+            userHasExpandedRef.current ||
+            !isClusterOverviewUntouched(clusterOverviewSignatureRef.current, nodesRef.current)
+          ) {
+            return;
+          }
           if (
             refreshed?.success &&
             Array.isArray(refreshed.clusters) &&
             refreshed.clusters.length > 0
           ) {
+            const refreshedEdges = refreshed.crossClusterEdges || crossClusterEdges;
+            const unchanged =
+              getClusterPayloadKey(refreshed.clusters, refreshedEdges) ===
+              getClusterPayloadKey(lastClustersRef.current, lastCrossClusterEdgesRef.current);
             lastClustersRef.current = refreshed.clusters;
-            lastCrossClusterEdgesRef.current = refreshed.crossClusterEdges || crossClusterEdges;
-            renderClustersToGraph(
-              refreshed.clusters,
-              refreshed.crossClusterEdges || crossClusterEdges
-            );
+            lastCrossClusterEdgesRef.current = refreshedEdges;
+            // Nothing new to show: leave the user's viewport and selection alone.
+            if (!unchanged) renderClustersToGraph(refreshed.clusters, refreshedEdges);
           }
         } catch {
           // Label refresh is best-effort; failures are non-critical.
@@ -2500,22 +2597,20 @@ export function useGraphTab(
   const lastVectorDbStatusRef = useRef(null);
   useEffect(() => {
     if (!isOpen) return undefined;
-    const offFn = /** @type {any} */ (window)?.api?.vectorDb?.onStatusChanged?.(
-      (/** @type {any} */ payload) => {
-        const status = payload?.status;
-        if (!status) return;
-        const prev = lastVectorDbStatusRef.current;
-        lastVectorDbStatusRef.current = status;
-        // Only refresh on the transition INTO `connected`/`online` from a
-        // degraded state; ignore steady-state ticks to avoid refresh loops.
-        const becameHealthy =
-          (status === 'connected' || status === 'online') &&
-          (prev === 'hydrating' || prev === 'recovering' || prev === 'connecting');
-        if (becameHealthy && graphViewEnabled && activeTab === 'graph') {
-          loadClustersRef.current?.();
-        }
+    const offFn = window.electronAPI?.vectorDb?.onStatusChanged?.((/** @type {any} */ payload) => {
+      const status = payload?.status;
+      if (!status) return;
+      const prev = lastVectorDbStatusRef.current;
+      lastVectorDbStatusRef.current = status;
+      // Only refresh on the transition INTO `connected`/`online` from a
+      // degraded state; ignore steady-state ticks to avoid refresh loops.
+      const becameHealthy =
+        (status === 'connected' || status === 'online') &&
+        (prev === 'hydrating' || prev === 'recovering' || prev === 'connecting');
+      if (becameHealthy && graphViewEnabled && activeTab === 'graph') {
+        loadClustersRef.current?.();
       }
-    );
+    });
     return typeof offFn === 'function' ? offFn : undefined;
   }, [isOpen, graphViewEnabled, activeTab]);
 
@@ -2641,6 +2736,28 @@ export function useGraphTab(
   }, [graphActions]);
 
   /**
+   * Members of a cluster node as `{ id, metadata }` rows. Only semantic
+   * clusters (`cluster:<n>`) exist in the backend; a regrouped or duplicate
+   * group is described by the node's own memberIds, so look those up directly.
+   */
+  const fetchClusterMemberRows = useCallback(
+    async (/** @type {any} */ clusterNodeId, /** @type {any} */ memberIds) => {
+      const numericClusterId = parseSemanticClusterId(clusterNodeId);
+      if (numericClusterId !== null) {
+        const memberResp =
+          await window.electronAPI?.embeddings?.getClusterMembers?.(numericClusterId);
+        return memberResp?.success && Array.isArray(memberResp.members) ? memberResp.members : [];
+      }
+      const ids = Array.isArray(memberIds) ? memberIds.filter(Boolean) : [];
+      const { metadata } = await fetchFileMetadataChunked(ids);
+      return ids
+        .filter((/** @type {any} */ id) => metadata[id])
+        .map((/** @type {any} */ id) => ({ id, metadata: metadata[id] }));
+    },
+    []
+  );
+
+  /**
    * Expand a cluster to show its members with current file names
    */
   const expandCluster = useCallback(
@@ -2682,14 +2799,7 @@ export function useGraphTab(
         // Fetch actual file metadata to get current names (not original names)
         let membersWithMetadata = [];
         try {
-          // Extract numeric cluster ID from the string ID (e.g., "cluster:0" -> 0)
-          const numericClusterId = parseInt(clusterId.replace('cluster:', ''), 10);
-          const memberResp =
-            await window.electronAPI?.embeddings?.getClusterMembers?.(numericClusterId);
-
-          if (memberResp?.success && Array.isArray(memberResp.members)) {
-            membersWithMetadata = memberResp.members;
-          }
+          membersWithMetadata = await fetchClusterMemberRows(clusterId, memberIds);
         } catch (fetchErr) {
           logger.warn('[Graph] Failed to fetch cluster members metadata:', fetchErr);
         }
@@ -3866,6 +3976,13 @@ export function useGraphTab(
     event.preventDefault();
     event.stopPropagation();
     if (!node?.id) return;
+    // The menu only has items for files and clusters; for anything else
+    // (folder, query, duplicate group) it would open as an empty box.
+    const menuKind = node.data?.kind || node.type || 'file';
+    if (menuKind !== 'file' && menuKind !== 'cluster') {
+      setContextMenu(null);
+      return;
+    }
 
     // Estimated menu dimensions for viewport clamping
     const menuW = 180;
@@ -4176,7 +4293,13 @@ export function useGraphTab(
     hasLoadedStats && stats && typeof stats.files === 'number' && stats.files === 0 && !error;
   // Use fresh metadata from the vector DB when available (for current file paths after moves)
   const selectedPath = freshMetadata?.path || selectedNode?.data?.path || '';
-  const selectedLabel = freshMetadata?.name || selectedNode?.data?.label || selectedNode?.id || '';
+  // The metadata handler returns `fileName`; `name` is kept for older payloads.
+  const selectedLabel =
+    /** @type {any} */ (freshMetadata)?.fileName ||
+    /** @type {any} */ (freshMetadata)?.name ||
+    selectedNode?.data?.label ||
+    selectedNode?.id ||
+    '';
   const selectedKind = selectedNode?.data?.kind || '';
   const nodeLabelById = useMemo(() => {
     const map = new Map();
@@ -4295,13 +4418,30 @@ export function useGraphTab(
         }));
 
         const result = await window.electronAPI.files.organize(operations);
-        if (result.success) {
+        const rows = Array.isArray(result?.results) ? result.results : [];
+        const failedSources = new Set(
+          rows
+            .filter((/** @type {any} */ row) => row?.success === false)
+            .map((/** @type {any} */ row) => row.source)
+        );
+        if (result?.success) {
           refreshStats();
-          // Remove moved files from triage list
+          // Remove moved files from triage list (a failed row stays listed)
           setTriageFiles((prev) =>
             prev.filter(
-              (f) => !files.find((/** @type {any} */ mf) => (mf.path || mf.id) === (f.path || f.id))
+              (f) =>
+                failedSources.has(f.path || f.id) ||
+                !files.find((/** @type {any} */ mf) => (mf.path || mf.id) === (f.path || f.id))
             )
+          );
+        }
+        if (!result?.success || failedSources.size > 0) {
+          const failedCount = result?.success ? failedSources.size : files.length;
+          const detail =
+            rows.find((/** @type {any} */ row) => row?.success === false)?.error || result?.error;
+          throw new Error(
+            `Could not move ${failedCount} of ${files.length} file(s)` +
+              (typeof detail === 'string' && detail ? `: ${detail}` : '')
           );
         }
       } catch (error) {
@@ -4315,6 +4455,9 @@ export function useGraphTab(
         // sanitized for known error shapes.
         const { message } = mapErrorToNotification({ error, operationType: 'Move files' });
         setError(message);
+        // Rethrow so the triage dialog shows the failure instead of closing
+        // as though the move had worked.
+        throw new Error(message, { cause: error });
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -4405,24 +4548,19 @@ export function useGraphTab(
     try {
       const allFiles = [];
       for (const cluster of scatteredClusters) {
-        const clusterId = parseInt(cluster.id.replace('cluster:', ''), 10);
-        if (isNaN(clusterId)) continue;
-
-        const result = await window.electronAPI.embeddings.getClusterMembers(clusterId);
-        if (result.success && result.members) {
-          allFiles.push(
-            ...result.members.map((/** @type {any} */ m) => ({
-              id: m.id,
-              path: getMetadataPath(m?.metadata || {}, m.id) || m.id,
-              name: getMetadataName(
-                m?.metadata || {},
-                getMetadataPath(m?.metadata || {}, m.id),
-                m.id
-              ),
-              size: m.metadata?.size
-            }))
-          );
-        }
+        const members = await fetchClusterMemberRows(cluster.id, cluster.data?.memberIds);
+        allFiles.push(
+          ...members.map((/** @type {any} */ m) => ({
+            id: m.id,
+            path: getMetadataPath(m?.metadata || {}, m.id) || m.id,
+            name: getMetadataName(
+              m?.metadata || {},
+              getMetadataPath(m?.metadata || {}, m.id),
+              m.id
+            ),
+            size: m.metadata?.size
+          }))
+        );
       }
 
       // Deduplicate by path
@@ -4438,7 +4576,13 @@ export function useGraphTab(
       });
       setGraphStatus('Failed to load scattered files');
     }
-  }, [clusterInsights.clusterNodes, setGraphStatus, setIsTriageModalOpen, setTriageFiles]);
+  }, [
+    clusterInsights.clusterNodes,
+    fetchClusterMemberRows,
+    setGraphStatus,
+    setIsTriageModalOpen,
+    setTriageFiles
+  ]);
 
   const handleOrgFindingClick = useCallback(
     (/** @type {any} */ findingKey) => {
