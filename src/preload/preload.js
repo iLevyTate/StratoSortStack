@@ -139,7 +139,8 @@ const IPC_CHANNELS = {
     CLEAR: 'analysis-history:clear',
     EXPORT: 'analysis-history:export',
     EXPORT_TRANSCRIPT: 'analysis-history:export-transcript',
-    GET_TIMELINE: 'analysis-history:get-timeline'
+    GET_TIMELINE: 'analysis-history:get-timeline',
+    GET_UNCATEGORIZED: 'analysis-history:get-uncategorized'
   },
 
   // EMBEDDINGS
@@ -1914,7 +1915,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
         format
       }),
     getTimeline: (/** @type {any} */ options) =>
-      secureIPC.safeInvoke(IPC_CHANNELS.ANALYSIS_HISTORY.GET_TIMELINE, options || {})
+      secureIPC.safeInvoke(IPC_CHANNELS.ANALYSIS_HISTORY.GET_TIMELINE, options || {}),
+    getUncategorized: (/** @type {any} */ options) =>
+      secureIPC.safeInvoke(IPC_CHANNELS.ANALYSIS_HISTORY.GET_UNCATEGORIZED, options || {})
   },
 
   // AI Provider Configuration

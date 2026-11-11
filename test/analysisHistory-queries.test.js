@@ -24,6 +24,53 @@ describe('queries', () => {
     queries = require('../src/main/services/analysisHistory/queries');
   });
 
+  describe('buildUncategorizedItems', () => {
+    const entry = (fileName, timestamp, analysis, extra = {}) => ({
+      fileName,
+      fileExtension: 'pdf',
+      originalPath: `/in/${fileName}`,
+      timestamp,
+      analysis,
+      ...extra
+    });
+    const history = {
+      entries: {
+        a: entry('old.pdf', '2026-01-01T00:00:00Z', {
+          category: 'uncategorized',
+          tags: ['acme'],
+          entity: 'Acme'
+        }),
+        b: entry('filed.pdf', '2026-02-01T00:00:00Z', { category: 'Finance', tags: ['acme'] }),
+        c: entry(
+          'new.pdf',
+          '2026-03-01T00:00:00Z',
+          { category: 'Uncategorized', tags: ['acme'], summary: 'long text' },
+          { organization: { actual: '/Library/Uncategorized/new.pdf' } }
+        )
+      }
+    };
+
+    test('keeps only uncategorized entries, newest first, at their current path', () => {
+      const items = queries.buildUncategorizedItems(history);
+      expect(items.map((i) => i.name)).toEqual(['new.pdf', 'old.pdf']);
+      expect(items[0].path).toBe('/Library/Uncategorized/new.pdf');
+      expect(items[1].path).toBe('/in/old.pdf');
+      expect(items[1].analysis).toEqual({
+        category: 'uncategorized',
+        tags: ['acme'],
+        entity: 'Acme'
+      });
+      // Only what theme detection reads crosses the IPC boundary.
+      expect(items[0].analysis.summary).toBeUndefined();
+    });
+
+    test('honours the limit and tolerates an empty history', () => {
+      expect(queries.buildUncategorizedItems(history, { limit: 1 })).toHaveLength(1);
+      expect(queries.buildUncategorizedItems({})).toEqual([]);
+      expect(queries.buildUncategorizedItems(null)).toEqual([]);
+    });
+  });
+
   describe('sortEntries', () => {
     const entries = [
       {

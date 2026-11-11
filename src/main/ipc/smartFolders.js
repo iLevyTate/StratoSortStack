@@ -1413,6 +1413,35 @@ async function remapKnowledgeUnderRenamedFolder({
 }
 
 /**
+ * Tell the suggestion service what a folder is now for, so later files follow
+ * the new wording and Settings can show the change. Never fails the edit.
+ * @param {{ logger: LoggerLike, getServiceIntegration?: () => any, folder: Record<string, any>, previous: Record<string, any> }} params
+ */
+async function rememberFolderDescriptionChange({
+  logger,
+  getServiceIntegration,
+  folder,
+  previous
+}) {
+  try {
+    const service =
+      typeof getServiceIntegration === 'function'
+        ? getServiceIntegration()?.suggestionService
+        : null;
+    if (typeof service?.recordFolderDescriptionChange !== 'function') return;
+    await service.recordFolderDescriptionChange({
+      folderId: folder.id,
+      name: folder.name,
+      previousName: previous.name,
+      description: folder.description,
+      previousDescription: previous.description
+    });
+  } catch (error) {
+    logger.warn('[SMART-FOLDERS] Could not record the description change:', error?.message);
+  }
+}
+
+/**
  * @param {SmartFoldersHandlerContext} ctx
  * @param {IpcMainInvokeEvent} event
  * @param {string} folderId
@@ -1643,9 +1672,17 @@ async function handleSmartFoldersEdit(
         };
       }
     }
+    const descriptionChanged =
+      typeof updatedFolder.description === 'string' &&
+      updatedFolder.description.trim() !== String(originalFolder.description || '').trim();
     try {
       customFolders[folderIndex] = {
         ...customFolders[folderIndex],
+        // Keywords were derived from the old description. Once the user says
+        // what the folder is for, their wording alone shapes its matching.
+        ...(descriptionChanged && !Array.isArray(updatedFolder.keywords)
+          ? { keywords: [], semanticTags: [] }
+          : {}),
         ...updatedFolder,
         updatedAt: new Date().toISOString()
       };
@@ -1669,6 +1706,12 @@ async function handleSmartFoldersEdit(
         folders: customFolders,
         scanPaths: pathChanged ? [customFolders[folderIndex].path] : [],
         getSmartFolderWatcher
+      });
+      await rememberFolderDescriptionChange({
+        logger,
+        getServiceIntegration,
+        folder: customFolders[folderIndex],
+        previous: originalFolder
       });
       logger.info('[SMART-FOLDERS] Edited Smart Folder:', folderId);
       return {

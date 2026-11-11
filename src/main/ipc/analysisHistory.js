@@ -556,6 +556,30 @@ function registerAnalysisHistoryIpc(servicesOrParams) {
       }
     })
   );
+
+  // Lean list of every analyzed file still filed as Uncategorized, so the
+  // Organize screen can spot themes across past runs, not just the open one.
+  safeHandle(
+    ipcMain,
+    IPC_CHANNELS.ANALYSIS_HISTORY.GET_UNCATEGORIZED,
+    createHandler({
+      logger,
+      context,
+      schema: schemas?.uncategorizedOptions,
+      serviceName: 'analysisHistory',
+      getService: getHistoryService,
+      fallbackResponse: { items: [] },
+      handler: async (event, options = {}, service) => {
+        try {
+          const items = await service.getUncategorizedItems(options || {});
+          return { items: Array.isArray(items) ? items : [] };
+        } catch (error) {
+          logger.error('Failed to get uncategorized analysis entries:', error);
+          return { items: [] };
+        }
+      }
+    })
+  );
 }
 
 module.exports = registerAnalysisHistoryIpc;
