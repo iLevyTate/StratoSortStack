@@ -228,7 +228,7 @@
     "mammoth": "^1.13.0",
     "minimatch": "^11.0.5",
     "node-llama-cpp": "^3.22.3",
-    "officeparser": "^8.6.0",
+    "officeparser": "^8.7.0",
     "p-queue": "^10.0.0",
     "pdfjs-dist": "6.5.438",
     "pino": "^10.4.0",
