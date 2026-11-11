@@ -31,6 +31,8 @@ const { processItemsInParallel } = require('./parallelProcessor');
 const { createProgressTracker } = require('./progress');
 
 const logger = createLogger('EmbeddingQueue');
+// Shortest wait before the failed-item retry timer fires.
+const FAILED_RETRY_MIN_DELAY_MS = 1000;
 class EmbeddingQueue {
   /**
    * @param {{ persistenceFileName?: string, batchSize?: number, flushDelayMs?: number, parallelFlushConcurrency?: number, failedItemsPath?: string, deadLetterPath?: string }} [options]
@@ -162,6 +164,11 @@ class EmbeddingQueue {
 
     // Track retry timers so they can be cleared on shutdown
     this._retryTimers = new Set();
+
+    // Wakes the queue when the next failed item's backoff ends (see
+    // _scheduleFailedRetry). Cleared on shutdown.
+    /** @type {ReturnType<typeof setTimeout>|null} */
+    this._failedRetryTimer = null;
 
     // Mutex for flush operation to prevent double-flush race conditions
     this._flushMutex = Promise.resolve();
@@ -417,9 +424,12 @@ class EmbeddingQueue {
         // latch if a previous initialize() attempt failed and reset() reran us).
         this._persistBlocked = false;
 
-        if (this.queue.length > 0 || this._failedItemHandler.failedItems.size > 0) {
+        if (this.queue.length > 0) {
           this.scheduleFlush();
         }
+        // Restored failed items are re-queued by their own timer: a flush
+        // with an empty queue returns before it reaches them.
+        this._scheduleFailedRetry();
       } catch (error) {
         logger.error('[EmbeddingQueue] Initialization error:', error);
         // The in-memory state is empty/partial while the on-disk state may
@@ -467,6 +477,7 @@ class EmbeddingQueue {
         length: item.vector?.length
       });
       this._failedItemHandler.trackFailedItem(item, 'invalid_vector_format');
+      this._scheduleFailedRetry();
       return { success: false, reason: 'invalid_vector_format' };
     }
 
@@ -499,6 +510,7 @@ class EmbeddingQueue {
           corruptionPercent: Math.round(corruptionRatio * 100)
         });
         this._failedItemHandler.trackFailedItem(item, 'invalid_vector_values');
+        this._scheduleFailedRetry();
         return { success: false, reason: 'invalid_vector_values' };
       }
       item.vector = sanitizedVector;
@@ -570,6 +582,7 @@ class EmbeddingQueue {
       // failed-items entry is written by the debounced persist. (This used to
       // rewrite the whole full queue once per overflowing item.)
       this._failedItemHandler.trackFailedItem(item, 'queue_overflow');
+      this._scheduleFailedRetry();
       result.success = false;
       result.reason = 'queue_overflow';
       result.warnings.push('queue_overflow');
@@ -684,6 +697,53 @@ class EmbeddingQueue {
     }, backoffDelay);
     this._retryTimers.add(retryTimer);
     if (retryTimer.unref) retryTimer.unref();
+  }
+
+  /**
+   * Arm a timer for the moment the next failed item's backoff ends, then put
+   * the due items back on the queue and flush them. Without it a failed item
+   * was only retried from inside a later flush, and a flush with an empty
+   * queue returns early — so a failure in the last batch (or a database-offline
+   * give-up) waited, across restarts, until some other file was enqueued.
+   * Retry limits and backoff stay with the failed-item handler.
+   */
+  _scheduleFailedRetry() {
+    if (this._isShuttingDown) return;
+    if (this._failedRetryTimer) {
+      clearTimeout(this._failedRetryTimer);
+      this._failedRetryTimer = null;
+    }
+    const delay = this._failedItemHandler.getNextRetryDelay(this.queue);
+    if (delay === null) return;
+
+    this._failedRetryTimer = setTimeout(
+      () => {
+        this._failedRetryTimer = null;
+        if (this._isShuttingDown) return;
+        // A running flush re-arms this timer when it ends.
+        if (this.isFlushing) return;
+        this._failedItemHandler
+          .retryFailedItems(this.queue, () => this._schedulePersist({ queue: true }))
+          .then(
+            /** @returns {undefined} */ () => {
+              if (this.queue.length > 0) this.scheduleFlush();
+              // Items whose backoff has not ended yet.
+              this._scheduleFailedRetry();
+              return undefined;
+            }
+          )
+          .catch((/** @type {any} */ err) =>
+            logger.warn('[EmbeddingQueue] Failed-item retry failed:', err?.message)
+          );
+      },
+      // The floor keeps a wake-up that re-queues nothing from spinning; the cap
+      // keeps a bad persisted timestamp from parking the retry for good.
+      Math.min(Math.max(delay, FAILED_RETRY_MIN_DELAY_MS), RETRY.BACKOFF_MAX_MS)
+    );
+    // Never keep the process alive for a retry; the items are on disk.
+    if (typeof this._failedRetryTimer.unref === 'function') {
+      this._failedRetryTimer.unref();
+    }
   }
 
   /**
@@ -1020,6 +1080,10 @@ class EmbeddingQueue {
         // forceFlush's `isFlushing && _activeFlush` read never sees a torn pair.
         if (resolveActiveFlush) resolveActiveFlush();
         this._activeFlush = null;
+        // Whatever this flush left in the failed-items map (per-item failures,
+        // an offline give-up) is retried when its backoff ends, even if the
+        // queue is now empty and nothing else is ever enqueued.
+        this._scheduleFailedRetry();
       }
     } finally {
       // Always release the mutex
@@ -1558,6 +1622,11 @@ class EmbeddingQueue {
         clearTimeout(timer);
       }
       this._retryTimers.clear();
+    }
+
+    if (this._failedRetryTimer) {
+      clearTimeout(this._failedRetryTimer);
+      this._failedRetryTimer = null;
     }
 
     if (this._progressTracker?.clear) {

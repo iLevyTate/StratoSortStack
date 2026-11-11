@@ -2,6 +2,8 @@
  * @live-llm — Chat RAG streaming against real local models.
  *
  * Run: npm run test:e2e:live-llm -- test/e2e/live-llm-chat.spec.js
+ * with STRATOSORT_E2E_MODELS_DIR set to a folder of .gguf models; without it
+ * the isolated profile has no models and the spec skips.
  */
 
 const { test, expect } = require('@playwright/test');
@@ -95,7 +97,7 @@ test.describe('@live-llm Chat RAG streaming', () => {
   let filePath;
 
   test.beforeAll(async () => {
-    const result = await launchApp();
+    const result = await launchApp({ localModels: true });
     app = result.app;
     window = result.window;
     await waitForAppReady(window);
@@ -115,7 +117,10 @@ test.describe('@live-llm Chat RAG streaming', () => {
 
     const modelReady = await waitForLoadedTextModel(window);
     if (!modelReady) {
-      test.skip(true, 'No text LLM loaded; @live-llm chat requires a ready model backend.');
+      test.skip(
+        true,
+        'No text model in the profile: set STRATOSORT_E2E_MODELS_DIR to a folder of .gguf models.'
+      );
     }
 
     const analyzed = await window.evaluate(async (p) => {

@@ -528,6 +528,8 @@ export function useChatTab({ isOpen, searchResults, defaultTopK, openFile, setEr
       const itemPath = typeof item?.path === 'string' ? item.path.trim() : '';
       const isFolder = item?.type === 'folder';
       if (isFolder) {
+        // A folder whose path could not be resolved cannot be scanned.
+        if (!/[\\/]/.test(itemPath)) continue;
         try {
           const result = await window.electronAPI.files.getDirectoryContents(itemPath);
           if (result.success && result.files) {
@@ -550,8 +552,14 @@ export function useChatTab({ isOpen, searchResults, defaultTopK, openFile, setEr
     }
 
     try {
-      const result = await window.electronAPI.embeddings.findFilesByPaths(allPaths);
-      const directMatches = result?.success && result.results ? result.results : [];
+      const result =
+        allPaths.length > 0
+          ? await window.electronAPI.embeddings.findFilesByPaths(allPaths)
+          : { success: true, results: [] };
+      if (result?.success === false) {
+        throw new Error(result.error || 'Index lookup failed');
+      }
+      const directMatches = result?.results ? result.results : [];
       const nameMatches = [];
 
       for (const unresolvedName of unresolvedNames) {
@@ -576,36 +584,40 @@ export function useChatTab({ isOpen, searchResults, defaultTopK, openFile, setEr
       }
 
       const combined = [...directMatches, ...nameMatches];
-      if (combined.length > 0) {
-        const newItems = combined
-          .map((r) => ({
-            id: r.id,
-            path: r.path || getMetadataPath(r, r?.id) || '',
-            name: r.name || getMetadataName(r, r.path || getMetadataPath(r, r?.id), r?.id) || '',
-            type: r.type || r?.metadata?.type || 'file'
-          }))
-          .filter((item) => item.id && item.path);
-        const dedupedNewItems = Array.from(
-          new Map(newItems.map((item) => [item.id, item])).values()
-        );
+      const newItems = combined
+        .map((r) => ({
+          id: r.id,
+          path: r.path || getMetadataPath(r, r?.id) || '',
+          name: r.name || getMetadataName(r, r.path || getMetadataPath(r, r?.id), r?.id) || '',
+          type: r.type || r?.metadata?.type || 'file'
+        }))
+        .filter((item) => item.id && item.path);
+      const dedupedNewItems = Array.from(new Map(newItems.map((item) => [item.id, item])).values());
 
-        const resolvedPaths = new Set(dedupedNewItems.map((i) => i.path));
-        const droppedPaths = allPaths.filter((p) => !resolvedPaths.has(p));
-        const unresolvedFoundByName = new Set(
-          dedupedNewItems.map((item) => item.name?.toLowerCase()).filter(Boolean)
+      const resolvedPaths = new Set(dedupedNewItems.map((i) => i.path));
+      const droppedPaths = allPaths.filter((p) => !resolvedPaths.has(p));
+      const unresolvedFoundByName = new Set(
+        dedupedNewItems.map((item) => item.name?.toLowerCase()).filter(Boolean)
+      );
+      const droppedNames = unresolvedNames.filter(
+        (name) => !unresolvedFoundByName.has(name.toLowerCase())
+      );
+      const droppedEntries = [...droppedPaths, ...droppedNames];
+      // Warn even when nothing resolved, so adding to the scope is never a
+      // silent no-op.
+      if (droppedEntries.length > 0) {
+        const visibleNames = droppedEntries.map((p) => p.split(/[/\\]/).pop()).slice(0, 5);
+        const suffix = droppedEntries.length > 5 ? ` and ${droppedEntries.length - 5} more` : '';
+        setChatWarning(
+          `${droppedEntries.length} file(s) not in index: ${visibleNames.join(', ')}${suffix}. Index these files first.`
         );
-        const droppedNames = unresolvedNames.filter(
-          (name) => !unresolvedFoundByName.has(name.toLowerCase())
+      } else if (dedupedNewItems.length === 0 && items.length > 0) {
+        setChatWarning(
+          'No files were added to the document scope. The items could not be read, or the folder has no files.'
         );
-        const droppedEntries = [...droppedPaths, ...droppedNames];
-        if (droppedEntries.length > 0) {
-          const visibleNames = droppedEntries.map((p) => p.split(/[/\\]/).pop()).slice(0, 5);
-          const suffix = droppedEntries.length > 5 ? ` and ${droppedEntries.length - 5} more` : '';
-          setChatWarning(
-            `${droppedEntries.length} file(s) not in index: ${visibleNames.join(', ')}${suffix}. Index these files first.`
-          );
-        }
+      }
 
+      if (dedupedNewItems.length > 0) {
         setDocumentScope((prev) => {
           const existingIds = new Set(prev.map((i) => i.id));
           const uniqueNew = dedupedNewItems.filter((i) => !existingIds.has(i.id));
@@ -614,6 +626,7 @@ export function useChatTab({ isOpen, searchResults, defaultTopK, openFile, setEr
       }
     } catch (e) {
       logger.error('Failed to resolve scope files', e);
+      setChatWarning('Could not check those files against the index. Please try again.');
     }
   }, []);
 

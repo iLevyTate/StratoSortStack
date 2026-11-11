@@ -44,6 +44,18 @@ const normalizeCategoryToSmartFolders =
       };
 
 /**
+ * Whether a folder description names the extension as a word of its own
+ * (".stl", "stl files"), not as letters inside a longer word ("ai" in "email").
+ * @param {string} descLower - Lowercased folder description
+ * @param {string} extNoDot - Lowercased extension without its dot
+ * @returns {boolean}
+ */
+function descriptionListsExtension(descLower, extNoDot) {
+  const escaped = extNoDot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, 'u').test(descLower);
+}
+
+/**
  * @param {string} fileName
  * @param {string} extension
  * @param {any[]} [smartFolders]
@@ -98,7 +110,7 @@ function getIntelligentCategory(fileName, extension, smartFolders = []) {
         // This allows folder descriptions like "3D printing files: .stl, .obj, .3mf" to match
         if (extNoDot && extNoDot.length >= 2) {
           // Match extension with or without dot (e.g., ".stl" or "stl")
-          if (descLower.includes(lowerExtension) || descLower.includes(extNoDot)) {
+          if (descriptionListsExtension(descLower, extNoDot)) {
             score += 15; // High score for explicit extension match in description
           }
         }
@@ -394,7 +406,9 @@ function getIntelligentCategory(fileName, extension, smartFolders = []) {
     '.rar': 'Archives',
     '.7z': 'Archives',
     '.tar': 'Archives',
+    '.tgz': 'Archives',
     '.gz': 'Archives',
+    '.bz2': 'Archives',
     '.mp3': 'Music',
     '.wav': 'Music',
     '.flac': 'Music',

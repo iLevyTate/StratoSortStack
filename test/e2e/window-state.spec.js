@@ -8,7 +8,7 @@
  */
 
 const { test, expect } = require('@playwright/test');
-const { launchApp, closeApp, waitForAppReady } = require('./helpers/electronApp');
+const { launchApp, launchesHeadless, closeApp, waitForAppReady } = require('./helpers/electronApp');
 
 /**
  * DevTools helpers for the main renderer webContents.
@@ -158,58 +158,26 @@ test.describe('Window State', () => {
   // });
 
   test('should maximize and restore', async () => {
-    // Maximize the window
+    // A headless launch has no window manager, so the window never changes
+    // state there (see launchesHeadless). Run with `npm run test:e2e:headed`.
+    test.skip(launchesHeadless(), 'Needs a real window: run with --headed');
+
+    const isMaximized = () =>
+      app.evaluate(({ BrowserWindow }) => {
+        const win = BrowserWindow.getAllWindows()[0];
+        return win ? win.isMaximized() : null;
+      });
+
     await app.evaluate(({ BrowserWindow }) => {
-      const win = BrowserWindow.getAllWindows()[0];
-      if (win) win.maximize();
+      BrowserWindow.getAllWindows()[0].maximize();
     });
-
-    await window.waitForTimeout(500);
-
-    const isMaximized = await app.evaluate(({ BrowserWindow }) => {
-      const win = BrowserWindow.getAllWindows()[0];
-      return win ? win.isMaximized() : false;
-    });
-
-    console.log('[Test] Window maximized:', isMaximized);
-    if (!isMaximized) {
-      test.skip(
-        true,
-        'BrowserWindow.isMaximized() did not report true after maximize() (headless / platform quirk)'
-      );
-      return;
-    }
+    await expect.poll(isMaximized, { timeout: 10000 }).toBe(true);
 
     // Restore to original state
     await app.evaluate(({ BrowserWindow }) => {
-      const win = BrowserWindow.getAllWindows()[0];
-      if (win) win.unmaximize();
+      BrowserWindow.getAllWindows()[0].unmaximize();
     });
-
-    await window.waitForTimeout(800);
-
-    try {
-      const isUnmaximized = await app.evaluate(({ BrowserWindow }) => {
-        const win = BrowserWindow.getAllWindows()[0];
-        return win ? !win.isMaximized() : false;
-      });
-      if (!isUnmaximized) {
-        test.skip(
-          true,
-          'Window stayed maximized after unmaximize() (Windows/headless quirk; not an app regression)'
-        );
-        return;
-      }
-      expect(isUnmaximized).toBe(true);
-    } catch (err) {
-      if (
-        /Execution context was destroyed|Target page.*closed/i.test(String(err?.message || err))
-      ) {
-        test.skip(true, 'Window context recycled during maximize/restore (environment flake)');
-        return;
-      }
-      throw err;
-    }
+    await expect.poll(isMaximized, { timeout: 10000 }).toBe(false);
   });
 });
 
@@ -236,8 +204,10 @@ test.describe('Window State - Persistence', () => {
     });
 
     console.log('[Test] Window resized to:', bounds);
-    expect(bounds.width).toBe(1200);
-    expect(bounds.height).toBe(800);
+    // On a real display with fractional scaling the size comes back a pixel
+    // off: it is rounded to device pixels and back.
+    expect(Math.abs(bounds.width - 1200)).toBeLessThanOrEqual(1);
+    expect(Math.abs(bounds.height - 800)).toBeLessThanOrEqual(1);
 
     // Close app
     await closeApp(app);

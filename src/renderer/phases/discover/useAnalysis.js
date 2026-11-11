@@ -37,7 +37,12 @@ import {
 import { mapErrorToNotification } from '../../utils/errorMapping';
 import { normalizeNamingConventionState } from '../../../shared/namingConventions';
 import { toCanonicalPath } from '../../utils/canonicalPath';
-import { filesNotYetReady, isBatchAlreadyRunning, runBatchPathWhenFree } from './batchBusy';
+import {
+  BATCH_BUSY_RETRY_MS,
+  filesNotYetReady,
+  isBatchAlreadyRunning,
+  runBatchPathWhenFree
+} from './batchBusy';
 import { setAnalysisRunBase, clearAnalysisRunBase } from '../../store/analysisRunBase';
 
 const logger = createLogger('DiscoverPhase:Analysis');
@@ -45,6 +50,10 @@ const BATCH_ANALYSIS_MIN_FILES = 40;
 /** Mixed-modality batch threshold when hardware recommends sequential (low VRAM). */
 const BATCH_ANALYSIS_LOW_VRAM_MIN_FILES = 3;
 const BATCH_ANALYSIS_PROGRESS_EVENT = 'operation-progress';
+// How long a recording waits for the media request of an earlier one to end.
+// The preload gives that request 330 s and the per-file path 295 s, so a
+// request can outlive its file by 35 s.
+const MEDIA_BUSY_MAX_WAIT_MS = 42 * 1000;
 const MEDIA_EXTENSIONS = new Set([
   ...(SUPPORTED_AUDIO_EXTENSIONS || []),
   ...(SUPPORTED_VIDEO_EXTENSIONS || [])
@@ -69,13 +78,17 @@ function clearAutoAdvanceTimeoutRef(autoAdvanceTimeoutRef) {
  *
  * @param {string} filePath - Path to the file to analyze
  * @param {number} attempt - Current attempt number (1-based)
+ * @param {any} [abortSignal]
+ * @param {any} [namingSettings]
+ * @param {number} [mediaBusyWaitedMs] - time already spent waiting for an earlier media request
  * @returns {Promise<Object>} Analysis result
  */
 async function analyzeWithRetry(
   filePath,
   attempt = 1,
-  /** @type {any} */ abortSignal = null,
-  /** @type {any} */ namingSettings = null
+  abortSignal = null,
+  namingSettings = null,
+  mediaBusyWaitedMs = 0
 ) {
   // Ensure electronAPI is available before attempting analysis
   if (!window.electronAPI?.files?.analyze) {
@@ -96,6 +109,32 @@ async function analyzeWithRetry(
     // service-restart that surfaces as an abort is retried instead of being
     // bubbled up as a hard failure.
     const message = String(error?.message || '');
+
+    // The preload runs one media request per window. A recording that hit
+    // its limit here still holds that request until the preload's own,
+    // slightly longer timeout, so the next recording is refused for a short
+    // while. Wait for it; this is not a failed analysis and uses no attempt.
+    if (
+      isMediaRequestBusy(error) &&
+      isMediaFilePath(filePath) &&
+      mediaBusyWaitedMs < MEDIA_BUSY_MAX_WAIT_MS
+    ) {
+      if (abortSignal?.aborted) {
+        throw new Error('Analysis cancelled by user', { cause: error });
+      }
+      await new Promise((r) => setTimeout(r, BATCH_BUSY_RETRY_MS));
+      if (abortSignal?.aborted) {
+        throw new Error('Analysis cancelled by user', { cause: error });
+      }
+      return analyzeWithRetry(
+        filePath,
+        attempt,
+        abortSignal,
+        namingSettings,
+        mediaBusyWaitedMs + BATCH_BUSY_RETRY_MS
+      );
+    }
+
     const isTransient = message.includes('timeout') || message.includes('aborted');
 
     if (attempt < RETRY.MAX_ATTEMPTS_MEDIUM && isTransient) {
@@ -109,10 +148,28 @@ async function analyzeWithRetry(
       if (abortSignal?.aborted) {
         throw new Error('Analysis cancelled by user', { cause: error });
       }
-      return analyzeWithRetry(filePath, attempt + 1, abortSignal, namingSettings);
+      return analyzeWithRetry(
+        filePath,
+        attempt + 1,
+        abortSignal,
+        namingSettings,
+        mediaBusyWaitedMs
+      );
     }
     throw error;
   }
+}
+
+/**
+ * The preload's refusal reaches this code through contextBridge, which copies
+ * an Error's message but not its `code`. The message is what identifies it.
+ * @param {any} error
+ * @returns {boolean} the media request was refused because one is still pending
+ */
+function isMediaRequestBusy(error) {
+  if (!error) return false;
+  if (error.code === 'CONCURRENCY_LIMIT') return true;
+  return /Operation already in progress: analysis:analyze-media/.test(String(error.message || ''));
 }
 
 /**
@@ -1584,11 +1641,46 @@ export function useAnalysis(options = {}) {
           }
         };
 
+        // The preload runs one analysis:analyze-media request per window and
+        // refuses a second ("Operation already in progress"), so that speech
+        // recognition is never loaded twice. Workers here run in parallel:
+        // recordings take turns, documents and images do not wait.
+        /** @type {Promise<void>} */
+        let mediaTurn = Promise.resolve();
+        /** @returns {Promise<() => void>} resolves with the call that ends the turn */
+        const takeMediaTurn = () => {
+          const earlier = mediaTurn;
+          /** @type {() => void} */
+          let endTurn = () => {};
+          mediaTurn = new Promise((resolve) => {
+            endTurn = () => resolve();
+          });
+          return earlier.then(() => endTurn);
+        };
+
         const processFile = async (/** @type {any} */ file) => {
           if (!isActiveRun() || abortSignal.aborted) return;
           if (processedFiles.has(file.path)) return;
           // Result already applied by a streamed batch event — nothing left
           // to do for this file (see appliedResultPaths above).
+          if (appliedResultPaths.has(toCanonicalPath(file.path))) return;
+          if (!isMediaFilePath(file.path)) {
+            await analyzeOneFile(file);
+            return;
+          }
+          // Taken before the file is marked as analyzing and before its time
+          // limit starts: waiting for a turn is not time spent on the file.
+          const endTurn = await takeMediaTurn();
+          try {
+            await analyzeOneFile(file);
+          } finally {
+            endTurn();
+          }
+        };
+
+        const analyzeOneFile = async (/** @type {any} */ file) => {
+          if (!isActiveRun() || abortSignal.aborted) return;
+          if (processedFiles.has(file.path)) return;
           if (appliedResultPaths.has(toCanonicalPath(file.path))) return;
 
           const fileName = file.name || file.path.split(/[\\/]/).pop();
@@ -1623,12 +1715,26 @@ export function useAnalysis(options = {}) {
           // file fails first and the run goes on to the next.
           lastProgressAtRef.current = Date.now();
 
+          // The limit below ends the wait, not the request. Once it has
+          // passed, the request must not be sent again when it times out in
+          // the preload: for a recording that would hold the one media
+          // request for minutes more and refuse every recording after it.
+          let gaveUp = false;
+          const fileSignal = {
+            get aborted() {
+              return gaveUp || abortSignal.aborted;
+            }
+          };
+
           try {
             const analysis = await withTimeout(
-              analyzeWithRetry(file.path, 1, abortSignal, namingSettings),
+              analyzeWithRetry(file.path, 1, fileSignal, namingSettings),
               PER_FILE_LIMIT_MS,
               `Analysis for ${fileName}`
-            );
+            ).catch((/** @type {any} */ error) => {
+              gaveUp = true;
+              throw error;
+            });
 
             // This prevents state updates if the user cancelled while analysis was in flight
             if (!isActiveRun() || abortSignal.aborted) return;

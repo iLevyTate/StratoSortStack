@@ -17,7 +17,7 @@ const { logger: baseLogger, createLogger } = require('../../../shared/logger');
 const { crossDeviceMove, renameNoReplace } = require('../../../shared/atomicFileOperations');
 const { validateFileOperationPath } = require('../../../shared/pathSanitization');
 const { getEffectiveMaxPathLength } = require('../../../shared/securityConfig');
-const { withTimeout, delay, Semaphore } = require('../../../shared/promiseUtils');
+const { withTimeout, delay } = require('../../../shared/promiseUtils');
 const { withCorrelationId } = require('../../../shared/correlationId');
 const { ERROR_CODES } = require('../../../shared/errorHandlingUtils');
 const { deferGhostCleanup, resumeGhostCleanup } = require('../../../shared/ghostCleanupGuard');
@@ -79,7 +79,10 @@ if (typeof createLogger !== 'function' && logger?.setContext) {
   logger.setContext('IPC:Files:BatchOrganize');
 }
 
-// Resource limits from centralized constants (prevents config drift)
+// Resource limits from centralized constants (prevents config drift).
+// MAX_TOTAL_BATCH_TIME is no longer a limit on a running batch (a batch that
+// is still moving files is never cut off for taking long); it is only
+// re-exported, and sizes the batch lock's lease in batchLockManager.
 const MAX_TOTAL_BATCH_TIME = PROCESSING_LIMITS.MAX_TOTAL_BATCH_TIME;
 const { MAX_NUMERIC_RETRIES } = LIMITS;
 const FILE_LOCK_ERROR_CODES = new Set(['EBUSY', 'EPERM', 'EACCES']);
@@ -89,6 +92,14 @@ const VERIFY_MAX_ATTEMPTS = RETRY?.FILE_OPERATION?.maxAttempts ?? RETRY?.MAX_ATT
 const VERIFY_BACKOFF_STEP_MS =
   RETRY?.FILE_OPERATION?.initialDelay ?? TIMEOUTS?.DELAY_TINY ?? MOVE_LOCK_BACKOFF_STEP_MS;
 const VERIFY_MAX_DELAY_MS = RETRY?.FILE_OPERATION?.maxDelay ?? 5000;
+// How often a move still in flight renews the batch lock. A cross-volume move
+// of a large file (copy plus a checksum of both sides) has no upper bound, so
+// the lease is kept fresh for as long as the move runs.
+const MOVE_LOCK_RENEW_INTERVAL_MS = 30 * 1000;
+// How long a move that is still in flight gets after the batch is stopped
+// before the batch ends without it.
+const STUCK_MOVE_ABORT_GRACE_MS = 15 * 1000;
+const MOVE_ABANDONED = Symbol('move-abandoned');
 
 const MAX_RESULTS_PER_CHUNK = 100; // Max results per IPC message chunk
 const YIELD_EVERY_N_OPS = 10; // Yield to event loop every N operations
@@ -217,28 +228,39 @@ function _detectPathOverlap(ops) {
 }
 
 /**
- * Concurrency limiter built on the shared Semaphore (p-limit pattern).
- * Returns a function `limit(fn)` that queues `fn` behind `concurrency` slots.
+ * Concurrency limiter (p-limit pattern). Returns a function `limit(fn)` that
+ * queues `fn` behind `concurrency` slots.
  *
- * The queue must be sized for the whole batch: every operation acquires
- * up-front, and the Semaphore DEFAULTS (100-entry queue that throws
- * QUEUE_FULL, 60s waiter timeout) instantly rejected ops 106+ of a large
- * batch — which the unexpected-rejection safety net then escalated into a
- * full batch rollback.
+ * Deliberately not the shared Semaphore: every operation of the batch queues
+ * up-front, and the Semaphore's queue cap and waiter timeout rejected the
+ * ones still waiting (ops 106+ of a large batch; every queued op once slow
+ * cross-volume moves had held the slots for 5 minutes). The
+ * unexpected-rejection safety net then rolled back every completed move. A
+ * queued operation here waits for as long as the moves ahead of it take;
+ * the abort signal is what ends a batch early.
  *
  * @param {number} concurrency - Max concurrent tasks
- * @param {number} maxQueue - Max waiters (size for the full batch)
- * @param {number} queueTimeoutMs - Waiter timeout (align with the batch time budget)
  * @returns {<T>(fn: () => Promise<T>) => Promise<T>}
  */
-const pLimit = (concurrency, maxQueue, queueTimeoutMs) => {
-  const sem = new Semaphore(concurrency, maxQueue, queueTimeoutMs);
+const pLimit = (concurrency) => {
+  let active = 0;
+  /** @type {Array<() => void>} */
+  const waiting = [];
   return async (fn) => {
-    await sem.acquire();
+    if (active < concurrency) {
+      active++;
+    } else {
+      // The finishing task hands its slot over, so `active` stays as it is.
+      await new Promise((resolve) => {
+        waiting.push(() => resolve(undefined));
+      });
+    }
     try {
       return await fn();
     } finally {
-      sem.release();
+      const next = waiting.shift();
+      if (next) next();
+      else active--;
     }
   };
 };
@@ -488,7 +510,6 @@ async function handleBatchOrganize(params) {
       // by OrganizeResumeService at next launch.
       let interruptedCount = 0;
       // batchId already defined above for lock acquisition
-      const batchStartTime = Date.now();
       let shouldRollback = false;
       let rollbackReason = null;
       // Permission failures since the last successful move; a run of them
@@ -564,9 +585,7 @@ async function handleBatchOrganize(params) {
           );
         }
         const batchOperationTotal = batch.operations.length;
-        // Queue sized for the whole batch; waiter timeout aligned with the
-        // batch's own time budget (processOperation aborts past it anyway).
-        const limit = pLimit(effectiveConcurrency, batchOperationTotal + 1, MAX_TOTAL_BATCH_TIME);
+        const limit = pLimit(effectiveConcurrency);
 
         // Abort reasons the USER deliberately triggered (renderer buttons).
         // Anything else on the signal — 'ipc-timeout', 'shutdown' (abortAll),
@@ -609,13 +628,9 @@ async function handleBatchOrganize(params) {
             }
           }
 
-          if (Date.now() - batchStartTime > MAX_TOTAL_BATCH_TIME) {
-            log.error(`[FILE-OPS] Batch ${batchId} exceeded maximum time limit`);
-            shouldRollback = true;
-            rollbackReason = `Batch exceeded maximum time limit of ${MAX_TOTAL_BATCH_TIME}ms`;
-            abortController.abort();
-            return;
-          }
+          // No elapsed-time limit: a batch of large files going to another
+          // drive takes as long as the copies take. It used to be rolled back
+          // when an operation started more than 5 minutes in.
 
           if (i > 0 && i % YIELD_EVERY_N_OPS === 0) {
             await new Promise((resolve) => setImmediate(resolve));
@@ -762,16 +777,73 @@ async function handleBatchOrganize(params) {
 
             // Handle file move with collision handling
             // TOCTOU fix: removed verifySourceFile pre-check, handle ENOENT from move directly
-            // Use timeout for file operations to prevent hangs
-            const moveWithTimeout = () =>
-              withTimeout(
-                performFileMove(op, log, computeFileChecksum, abortController.signal),
-                TIMEOUTS.FILE_COPY,
-                `File move ${path.basename(op.source)}`
-              );
+            // The move is awaited to its end, never raced against a timer: a
+            // timer cannot stop a copy, so the row would say "failed" while
+            // the file went on to move with no undo entry or path update.
+            // The batch lock is renewed while it runs, and the abort signal
+            // is what stops a cross-volume move before it publishes.
+            const moveToCompletion = async () => {
+              const moveStartedAt = Date.now();
+              const lockRenewal = setInterval(() => {
+                renewBatchLock(batchId);
+                // File name only (see the skipped-file line below for why).
+                log.warn('[FILE-OPS] Move still running; the drive is slow or not answering', {
+                  batchId,
+                  index: i,
+                  source: path.basename(op.source),
+                  elapsedMs: Date.now() - moveStartedAt
+                });
+              }, MOVE_LOCK_RENEW_INTERVAL_MS);
+              lockRenewal.unref?.();
+              // A move on a drive that stopped answering can neither finish
+              // nor be interrupted. Once the batch is stopped (Stop, shutdown,
+              // rollback) it is given a short grace and then left behind, so
+              // the batch can end; settleAbandonedMove deals with it if the
+              // drive answers later.
+              /** @type {ReturnType<typeof setTimeout> | undefined} */
+              let graceTimer;
+              /** @type {(value: typeof MOVE_ABANDONED) => void} */
+              let abandon = () => {};
+              const abandoned = new Promise((resolve) => {
+                abandon = resolve;
+              });
+              const startGrace = () => {
+                graceTimer = setTimeout(() => abandon(MOVE_ABANDONED), STUCK_MOVE_ABORT_GRACE_MS);
+                graceTimer.unref?.();
+              };
+              const { signal } = abortController;
+              if (signal.aborted) startGrace();
+              else signal.addEventListener('abort', startGrace, { once: true });
+              const movePromise = performFileMove(op, log, computeFileChecksum, signal);
+              try {
+                const outcome = await Promise.race([movePromise, abandoned]);
+                if (outcome !== MOVE_ABANDONED) return outcome;
+                log.warn(
+                  '[FILE-OPS] Move did not answer after the batch was stopped; left behind',
+                  {
+                    batchId,
+                    index: i,
+                    source: path.basename(op.source),
+                    elapsedMs: Date.now() - moveStartedAt
+                  }
+                );
+                void settleAbandonedMove(
+                  movePromise,
+                  op.source,
+                  () => isUserAbort() || shouldRollback,
+                  log
+                );
+                return { cancelled: true };
+              } finally {
+                clearInterval(lockRenewal);
+                clearTimeout(graceTimer);
+                signal.removeEventListener('abort', startGrace);
+              }
+            };
+            /** @type {any} */
             let moveResult;
             try {
-              moveResult = await moveWithTimeout();
+              moveResult = await moveToCompletion();
             } catch (firstMoveError) {
               let moveError = firstMoveError;
               // A rename ENOENT is either a missing source or a destination
@@ -793,7 +865,7 @@ async function handleBatchOrganize(params) {
                 }
                 try {
                   await fs.mkdir(destDir, { recursive: true });
-                  moveResult = await moveWithTimeout();
+                  moveResult = await moveToCompletion();
                   moveError = null;
                 } catch (retryError) {
                   moveError = retryError;
@@ -829,8 +901,9 @@ async function handleBatchOrganize(params) {
             }
 
             if (moveResult && moveResult.cancelled) {
-              // performFileMove bailed before any rename (user abort landed
-              // between the gate above and the first rename attempt).
+              // performFileMove bailed with the source untouched: the abort
+              // landed between the gate above and the first rename attempt,
+              // or during a cross-volume copy that was then never published.
               recordCancelledOp(op);
               return;
             }
@@ -1651,9 +1724,11 @@ async function performFileMove(op, log, checksumFn, abortSignal = null) {
         // runs; the no-replace publish then refuses and the walk moves on to
         // the next suffix, exactly like a same-device EEXIST.
         try {
-          await performCrossDeviceMove(op.source, uniqueDestination, log, checksumFn);
+          await performCrossDeviceMove(op.source, uniqueDestination, log, checksumFn, abortSignal);
           operationComplete = true;
         } catch (crossDeviceError) {
+          // Stopped by the abort before anything was published: nothing moved.
+          if (isMoveAbortedError(crossDeviceError, abortSignal)) return { cancelled: true };
           if (!isNameTakenError(crossDeviceError)) throw crossDeviceError;
           advanceToNextCandidate();
         }
@@ -1665,10 +1740,85 @@ async function performFileMove(op, log, checksumFn, abortSignal = null) {
 
   // UUID fallback if numeric exhausted
   if (!operationComplete) {
-    uniqueDestination = await performUUIDFallback(op, baseName, ext, log, checksumFn);
+    try {
+      uniqueDestination = await performUUIDFallback(
+        op,
+        baseName,
+        ext,
+        log,
+        checksumFn,
+        abortSignal
+      );
+    } catch (fallbackError) {
+      if (isMoveAbortedError(fallbackError, abortSignal)) return { cancelled: true };
+      throw fallbackError;
+    }
   }
 
   return { destination: uniqueDestination };
+}
+
+/**
+ * Follow a move the batch stopped waiting for. The batch reported the file as
+ * not moved, so when the drive answers after all and the move went through,
+ * the file is put back where it was. That happens only when shouldReturn()
+ * says the batch was cancelled or rolled back; an interrupted batch resumes
+ * from its journal instead. It never rejects.
+ * @param {Promise<any>} movePromise
+ * @param {string} source
+ * @param {() => boolean} shouldReturn
+ * @param {LoggerLike} log
+ * @returns {Promise<void>}
+ */
+async function settleAbandonedMove(movePromise, source, shouldReturn, log) {
+  let movedTo;
+  try {
+    const outcome = await movePromise;
+    movedTo = outcome && !outcome.cancelled && !outcome.skipped ? outcome.destination : null;
+  } catch (lateError) {
+    log.warn('[FILE-OPS] Move left behind by a stopped batch failed; the file did not move', {
+      source: path.basename(source),
+      error: /** @type {any} */ (lateError)?.message
+    });
+    return;
+  }
+  if (!movedTo) return;
+  if (!shouldReturn()) {
+    log.warn('[FILE-OPS] Move left behind by an interrupted batch finished late', {
+      source: path.basename(source)
+    });
+    return;
+  }
+  try {
+    try {
+      await renameNoReplace(movedTo, source);
+    } catch (renameError) {
+      if (/** @type {any} */ (renameError)?.code !== 'EXDEV') throw renameError;
+      await crossDeviceMove(movedTo, source, { verify: true });
+    }
+    log.warn('[FILE-OPS] Move finished after the batch was stopped; file put back', {
+      source: path.basename(source)
+    });
+  } catch (returnError) {
+    // Full paths on purpose: this file is at a place the app has no record
+    // of, and the user needs to be able to find it.
+    log.error('[FILE-OPS] Move finished after the batch was stopped and could not be put back', {
+      source,
+      movedTo,
+      error: /** @type {any} */ (returnError)?.message
+    });
+  }
+}
+
+/**
+ * Whether a cross-device move stopped because the batch's signal aborted. It
+ * rejects that way only with the source left in place, so nothing moved.
+ * @param {any} error
+ * @param {AbortSignal|null} [abortSignal]
+ * @returns {boolean}
+ */
+function isMoveAbortedError(error, abortSignal) {
+  return Boolean(abortSignal?.aborted) && error?.name === 'AbortError';
 }
 
 /**
@@ -1729,11 +1879,13 @@ async function renameWithRetry(source, destination, log) {
  * @param {string} destination
  * @param {LoggerLike} log
  * @param {typeof computeFileChecksum} checksumFn
+ * @param {AbortSignal|null} [abortSignal] - Stops the move before it publishes
  */
-async function performCrossDeviceMove(source, destination, log, checksumFn) {
+async function performCrossDeviceMove(source, destination, log, checksumFn, abortSignal = null) {
   await crossDeviceMove(source, destination, {
     verify: true,
-    checksumFn
+    checksumFn,
+    signal: abortSignal
   });
 }
 
@@ -1744,8 +1896,9 @@ async function performCrossDeviceMove(source, destination, log, checksumFn) {
  * @param {string} ext
  * @param {LoggerLike} log
  * @param {typeof computeFileChecksum} checksumFn
+ * @param {AbortSignal|null} [abortSignal]
  */
-async function performUUIDFallback(op, baseName, ext, log, checksumFn) {
+async function performUUIDFallback(op, baseName, ext, log, checksumFn, abortSignal = null) {
   log.warn(`[FILE-OPS] Falling back to UUID for ${path.basename(op.source)}`);
 
   const maxPathLength = getEffectiveMaxPathLength();
@@ -1771,7 +1924,7 @@ async function performUUIDFallback(op, baseName, ext, log, checksumFn) {
       if (error.code === 'EEXIST') continue;
       if (error.code === 'EXDEV') {
         try {
-          await performCrossDeviceMove(op.source, uniqueDestination, log, checksumFn);
+          await performCrossDeviceMove(op.source, uniqueDestination, log, checksumFn, abortSignal);
           return uniqueDestination;
         } catch (crossDeviceError) {
           if (isNameTakenError(crossDeviceError)) continue;

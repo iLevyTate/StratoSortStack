@@ -54,6 +54,7 @@ const {
 } = require('../../shared/performanceConstants');
 const { findUserExclusion } = require('./watcherExclusions');
 const { getInstance: getFileOperationTracker } = require('../../shared/fileOperationTracker');
+const { isGhostCleanupDeferred } = require('../../shared/ghostCleanupGuard');
 const {
   normalizePathForIndex,
   getCanonicalFileId,
@@ -198,7 +199,10 @@ const QUEUE_DROP_LOG_INTERVAL_MS = 10_000;
 const QUEUE_PERSIST_DEBOUNCE_MS = 1000;
 const QUEUE_PERSIST_DEBOUNCE_LARGE_MS = 10_000;
 const QUEUE_PERSIST_LARGE_THRESHOLD = 2000;
-const MOVE_DETECTION_WINDOW_MS = 3000;
+// How long a deletion waits for its matching `add` beyond the time that add
+// needs to arrive: chokidar holds it for stabilityThreshold (checked on a
+// 200 ms poll) and _handleFileEvent then debounces it.
+const MOVE_DETECTION_MARGIN_MS = 2000;
 const MOVE_MTIME_TOLERANCE_MS = 2000;
 
 // File extensions that have dedicated parsers/AI analysis paths.
@@ -326,6 +330,8 @@ class SmartFolderWatcher {
     // stop() has returned and cleared _isStopping (its in-flight wait is
     // bounded, and an aborted analysis may unwind later than that).
     this._stopEpoch = 0;
+    /** @type {Promise<void> | null} the stop() in flight, awaited by start() */
+    this._stopPromise = null;
 
     // Restart machinery for chokidar 'error' recovery. Without this the
     // previous behavior was: log + bump errors counter, isRunning stays
@@ -407,7 +413,11 @@ class SmartFolderWatcher {
     const envDepth = parseInt(process.env.STRATOSORT_WATCHER_DEPTH, 10);
     this.watcherDepth =
       Number.isFinite(envDepth) && envDepth >= 0 && envDepth <= 32 ? envDepth : 10;
-    this._moveDetectionWindowMs = MOVE_DETECTION_WINDOW_MS;
+    // Must outlast stabilityThreshold + debounceDelay: with a shorter window
+    // the deletion was finalized before the renamed file's add was looked at,
+    // so every rename in Explorer was a delete plus a full re-analysis.
+    this._moveDetectionWindowMs =
+      this.stabilityThreshold + this.debounceDelay + MOVE_DETECTION_MARGIN_MS;
     this._moveMtimeToleranceMs = MOVE_MTIME_TOLERANCE_MS;
 
     // Sync concurrency from settings (non-blocking)
@@ -469,7 +479,9 @@ class SmartFolderWatcher {
     // graceful shutdown to await.
     const wantsDisabled = settings.smartFolderWatchEnabled === false;
     const shouldStop = wantsDisabled && (this.isRunning || this.isStarting);
-    const shouldStart = !wantsDisabled && !this.isRunning && !this.isStarting;
+    // A watcher that is still stopping counts as stopped: isRunning stays true
+    // until stop() has closed it, and start() waits for that stop.
+    const shouldStart = !wantsDisabled && !this.isStarting && (!this.isRunning || this._isStopping);
     if (shouldStop || shouldStart) {
       const toggle = shouldStop ? this.stop() : this.start();
       this._watchToggleWork = Promise.resolve(toggle).catch((error) => {
@@ -581,6 +593,16 @@ class SmartFolderWatcher {
    * @returns {Promise<boolean>} True if started successfully
    */
   async start() {
+    // stop() leaves isRunning true until it has closed the watcher. Wait for
+    // it, or this call reports the dying watcher as running and nothing is
+    // watched afterwards.
+    if (this._stopPromise) {
+      while (this._stopPromise) {
+        await this._stopPromise.catch(() => {});
+      }
+      // That stop was the app shutting down: stay stopped.
+      if (this._shutdownRequested) return false;
+    }
     if (this.isRunning) {
       logger.debug('[SMART-FOLDER-WATCHER] Already running');
       return true;
@@ -878,6 +900,20 @@ class SmartFolderWatcher {
    * FIX MED-6: Clean up pending move detection timeouts to prevent callbacks after stop
    */
   async stop() {
+    const stopping = this._doStop();
+    this._stopPromise = stopping;
+    try {
+      await stopping;
+    } finally {
+      if (this._stopPromise === stopping) this._stopPromise = null;
+    }
+  }
+
+  /**
+   * Internal stop implementation
+   * @private
+   */
+  async _doStop() {
     logger.info('[SMART-FOLDER-WATCHER] Stopping...');
     this._isStopping = true;
     this._stopEpoch++;
@@ -3797,6 +3833,25 @@ class SmartFolderWatcher {
     // Skip temp files
     if (isTemporaryFile(filePath)) {
       logger.debug('[SMART-FOLDER-WATCHER] Skipping temp file deletion:', filePath);
+      return;
+    }
+
+    // An unlink is also what a move out of the folder by the app looks like
+    // (organize, undo/redo). The file still exists at its new path, and its
+    // history entry still matches this one through originalPath, so cleanup
+    // here would delete the analysis of a live file.
+    if (isGhostCleanupDeferred()) {
+      logger.debug(
+        '[SMART-FOLDER-WATCHER] Skipping deletion cleanup: batch organize in progress',
+        filePath
+      );
+      return;
+    }
+    if (getFileOperationTracker().wasRecentlyOperated(filePath)) {
+      logger.debug(
+        '[SMART-FOLDER-WATCHER] Skipping deletion cleanup: recently moved by app',
+        filePath
+      );
       return;
     }
 

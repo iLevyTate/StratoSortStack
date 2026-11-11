@@ -148,11 +148,12 @@ const Modal = memo(function Modal({
       const root = modalRef.current;
       if (!root) return;
 
+      // Controls inside an inert subtree cannot take focus; they must not be the wrap targets.
       const focusable = Array.from(
         root.querySelectorAll(
           'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"]):not([disabled])'
         )
-      );
+      ).filter((el) => !el.closest('[inert]'));
 
       if (focusable.length === 0) {
         e.preventDefault();

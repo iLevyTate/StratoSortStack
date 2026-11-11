@@ -1031,6 +1031,12 @@ export function UndoRedoProvider({ children }) {
         showInfo(result.message || 'Nothing restored: the files are in the system Trash.');
         return;
       }
+      if (result?.success === false && result.removedFromHistory) {
+        // Main removed an entry that can never be reversed (file or backup
+        // gone) and says so in its message; the next undo reaches older ones.
+        showError(result.message || formatUndoRedoFailure('undo', undoAction.description, result));
+        return;
+      }
       assertSuccessfulUndoRedoResult(result, 'undo');
       showSuccess(result?.message || `Undid: ${undoAction.description}`);
     } catch (error) {
@@ -1079,6 +1085,11 @@ export function UndoRedoProvider({ children }) {
 
     try {
       const result = await action.redo(action);
+      if (result?.success === false && result.removedFromHistory) {
+        // Main removed an entry that can never be redone; see undo above.
+        showError(result.message || formatUndoRedoFailure('redo', action.description, result));
+        return;
+      }
       assertSuccessfulUndoRedoResult(result, 'redo');
       showSuccess(result?.message || `Redid: ${action.description}`);
     } catch (error) {

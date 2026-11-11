@@ -559,6 +559,139 @@ describe('ModelDownloadManager', () => {
     expect(manager.isDownloading('alpha.gguf')).toBe(false);
   });
 
+  describe('connection closed before the body is complete', () => {
+    // A clean early close (FIN before Content-Length is satisfied) makes Node
+    // emit 'aborted' and 'close' on the response, with no 'end' and no error
+    // on the request, so the piped write stream never finishes.
+    const makeWriteStream = () => {
+      const ws = new EventEmitter();
+      ws.destroy = jest.fn(() => {
+        ws.destroyed = true;
+        setTimeout(() => ws.emit('close'), 0);
+      });
+      return ws;
+    };
+    const makeRequest = () => {
+      const request = new EventEmitter();
+      request.setTimeout = jest.fn();
+      request.destroy = jest.fn();
+      return request;
+    };
+    const makeTruncatedResponse = () => {
+      const response = new EventEmitter();
+      response.statusCode = 200;
+      response.statusMessage = 'OK';
+      response.headers = { 'content-length': '2048' };
+      response.complete = false;
+      response.resume = jest.fn();
+      response.unpipe = jest.fn();
+      response.pipe = (ws) => {
+        setTimeout(() => {
+          response.emit('data', Buffer.alloc(1000));
+          response.emit('aborted');
+          response.emit('close');
+        }, 0);
+        return ws;
+      };
+      return response;
+    };
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    test('downloadModel fails instead of hanging and keeps the partial for resume', async () => {
+      jest.useFakeTimers();
+      const manager = new ModelDownloadManager();
+      const writeStream = makeWriteStream();
+      fsModule.createWriteStream.mockReturnValue(writeStream);
+      mockFs.stat.mockRejectedValueOnce(new Error('no partial'));
+
+      https.get.mockImplementation((_options, onResponse) => {
+        setTimeout(() => onResponse(makeTruncatedResponse()), 0);
+        return makeRequest();
+      });
+
+      /** @type {any} */
+      let outcome = null;
+      manager.downloadModel('alpha.gguf', { _maxRetries: 0 }).then(
+        (value) => {
+          outcome = { resolved: value };
+        },
+        (error) => {
+          outcome = { rejected: error };
+        }
+      );
+      await jest.advanceTimersByTimeAsync(100);
+
+      expect(outcome?.rejected?.code).toBe('ECONNRESET');
+      expect(writeStream.destroy).toHaveBeenCalled();
+      expect(manager.isDownloading('alpha.gguf')).toBe(false);
+      expect(manager._downloads.has('alpha.gguf')).toBe(false);
+      expect(mockFs.unlink).not.toHaveBeenCalled();
+    });
+
+    test('downloadModel retries with a Range request from the partial', async () => {
+      jest.useFakeTimers();
+      const manager = new ModelDownloadManager();
+      fsModule.createWriteStream.mockImplementation(makeWriteStream);
+
+      // Attempt 1: no partial. Attempt 2: 1000 bytes on disk, then full size.
+      mockFs.stat
+        .mockRejectedValueOnce(new Error('no partial'))
+        .mockResolvedValueOnce({ size: 1000 })
+        .mockResolvedValueOnce({ size: 2048 });
+
+      const requestOptionsSeen = [];
+      https.get.mockImplementation((requestOptions, onResponse) => {
+        requestOptionsSeen.push(requestOptions);
+        if (requestOptionsSeen.length === 1) {
+          setTimeout(() => onResponse(makeTruncatedResponse()), 0);
+          return makeRequest();
+        }
+        const response = new EventEmitter();
+        response.statusCode = 206;
+        response.statusMessage = 'Partial Content';
+        response.headers = { 'content-length': '1048' };
+        response.resume = jest.fn();
+        response.pipe = (ws) => {
+          setTimeout(() => {
+            response.complete = true;
+            ws.emit('finish');
+            response.emit('close');
+          }, 0);
+          return ws;
+        };
+        setTimeout(() => onResponse(response), 0);
+        return makeRequest();
+      });
+
+      /** @type {any} */
+      let outcome = null;
+      manager.downloadModel('alpha.gguf').then(
+        (value) => {
+          outcome = { resolved: value };
+        },
+        (error) => {
+          outcome = { rejected: error };
+        }
+      );
+      await jest.advanceTimersByTimeAsync(5000);
+
+      expect(outcome?.resolved).toEqual(expect.objectContaining({ success: true }));
+      expect(requestOptionsSeen).toHaveLength(2);
+      expect(requestOptionsSeen[0].headers.Range).toBeUndefined();
+      expect(requestOptionsSeen[1].headers.Range).toBe('bytes=1000-');
+      expect(fsModule.createWriteStream).toHaveBeenLastCalledWith(
+        expect.stringContaining('alpha.gguf.partial'),
+        { flags: 'a' }
+      );
+      expect(mockFs.unlink).not.toHaveBeenCalled();
+      expect(mockFs.rename).toHaveBeenCalledTimes(1);
+      expect(manager.isDownloading('alpha.gguf')).toBe(false);
+    });
+  });
+
   describe('_wrapWriteStreamError', () => {
     test('maps ENOSPC to "Disk full" message and preserves code + cause', () => {
       const manager = new ModelDownloadManager();

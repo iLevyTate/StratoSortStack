@@ -115,4 +115,27 @@ describe('settings schema migration with now-invalid legacy values', () => {
     const onDisk = JSON.parse(fsSync.readFileSync(SETTINGS_PATH, 'utf8'));
     expect(onDisk.settingsSchemaVersion).toBe(3);
   });
+
+  test('a setting saved while the migration is still running is not overwritten by it', async () => {
+    fsSync.writeFileSync(
+      SETTINGS_PATH,
+      JSON.stringify({ llamaTextModel: 'old-model.gguf', namingConvention: 'keep-original' }),
+      'utf8'
+    );
+    const SettingsService = loadSettingsService();
+    service = new SettingsService();
+
+    // The first load starts the migration; the save arrives before it ends.
+    const firstLoad = service.load();
+    await service.save({ textModel: 'user-choice.gguf' });
+    await firstLoad;
+
+    const loaded = await service.load();
+    expect(loaded.textModel).toBe('user-choice.gguf');
+    expect(loaded.namingConvention).toBe('keep-original');
+    const onDisk = JSON.parse(fsSync.readFileSync(SETTINGS_PATH, 'utf8'));
+    expect(onDisk.textModel).toBe('user-choice.gguf');
+    expect(onDisk.llamaTextModel).toBeUndefined();
+    expect(onDisk.settingsSchemaVersion).toBe(3);
+  });
 });

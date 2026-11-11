@@ -42,7 +42,8 @@ jest.mock('../../src/renderer/store/slices/filesSlice', () => ({
 }));
 
 jest.mock('../../src/renderer/store/slices/analysisSlice', () => ({
-  updateAnalysisResult: jest.fn()
+  updateAnalysisResult: jest.fn(),
+  updateAnalysisResultsByPaths: jest.fn()
 }));
 
 jest.mock('../../src/renderer/components/ui', () => ({

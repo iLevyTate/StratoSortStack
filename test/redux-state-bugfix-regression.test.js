@@ -26,6 +26,7 @@ const analysisReducer = require('../src/renderer/store/slices/analysisSlice').de
 const {
   mergeAnalysisResults,
   updateAnalysisResult,
+  updateAnalysisResultsByPaths,
   startAnalysis,
   updateProgress,
   stopAnalysis,
@@ -601,6 +602,64 @@ describe('BUG-8: updateAnalysisResult initializes analysis when absent', () => {
     );
 
     expect(result.results[0].analysis.v).toBe(1);
+  });
+});
+
+describe('updateAnalysisResultsByPaths applies one change to many results', () => {
+  test('updates every named path, in any path shape, and leaves the rest', () => {
+    const state = {
+      ...analysisInitial,
+      results: [
+        { path: 'C:\\Docs\\a.pdf', analysis: { category: 'old', tags: ['a'] } },
+        { path: 'C:\\Docs\\b.pdf', analysis: null },
+        { path: 'C:\\Docs\\c.pdf', analysis: { category: 'keep' } }
+      ]
+    };
+
+    const result = analysisReducer(
+      state,
+      updateAnalysisResultsByPaths({
+        paths: ['c:/docs/A.pdf', 'C:\\Docs\\b.pdf', 'C:\\Docs\\missing.pdf'],
+        changes: { category: 'Finance', userCategory: 'Finance' }
+      })
+    );
+
+    expect(result.results[0].analysis).toEqual({
+      category: 'Finance',
+      userCategory: 'Finance',
+      tags: ['a']
+    });
+    expect(result.results[1].analysis).toEqual({ category: 'Finance', userCategory: 'Finance' });
+    expect(result.results[2]).toBe(state.results[2]);
+  });
+
+  test('no-ops on an empty or malformed payload', () => {
+    const state = { ...analysisInitial, results: [{ path: '/file.pdf', analysis: { v: 1 } }] };
+
+    expect(analysisReducer(state, updateAnalysisResultsByPaths({ paths: [], changes: {} }))).toBe(
+      state
+    );
+    expect(analysisReducer(state, updateAnalysisResultsByPaths(undefined))).toBe(state);
+  });
+
+  test('a 5,000-file change is one pass over the results', () => {
+    const results = Array.from({ length: 5000 }, (_, i) => ({
+      path: `C:\\Docs\\file-${i}.pdf`,
+      analysis: { category: 'old' }
+    }));
+    const state = { ...analysisInitial, results };
+
+    const started = Date.now();
+    const result = analysisReducer(
+      state,
+      updateAnalysisResultsByPaths({
+        paths: results.map((r) => r.path),
+        changes: { category: 'Finance' }
+      })
+    );
+
+    expect(result.results.every((r) => r.analysis.category === 'Finance')).toBe(true);
+    expect(Date.now() - started).toBeLessThan(2000);
   });
 });
 

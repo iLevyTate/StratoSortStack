@@ -158,6 +158,7 @@ function ModelSelectionSection({
   const confirmChangeAndRebuild = async () => {
     const targetModel = pendingModel;
     if (!targetModel) return;
+    const previousModel = settings.embeddingModel;
     // Apply the model selection immediately (same effect as "Change only").
     // The rebuild handler switches the engine to the override at start, so
     // leaving the form on the OLD model while the rebuild runs desyncs the
@@ -207,13 +208,17 @@ function ModelSelectionSection({
               'The rebuild is taking longer than expected and is still running in the background. Check embeddings status in AI Configuration before starting another rebuild.'
           });
         } else {
+          // The main process rolls the engine and the saved settings back to
+          // the previous model when the rebuild fails. Follow it here: a form
+          // left on the new model would be pushed back by the next auto-save
+          // of any setting, switching the model and resetting the index again.
+          setSettings((prev) =>
+            prev.embeddingModel === targetModel ? { ...prev, embeddingModel: previousModel } : prev
+          );
           setRebuildStatus({
             variant: 'danger',
-            message: `Embeddings rebuild failed: ${toErrorMessage(error)}. Your model selection was kept — rebuild embeddings from AI Configuration to apply it.`
+            message: `Embeddings rebuild failed: ${toErrorMessage(error)}. The embedding model was set back to ${previousModel}. If search results are missing, rebuild embeddings from AI Configuration.`
           });
-          // Model changed but the index wasn't rebuilt — this banner is now
-          // accurate and points at the recovery path.
-          setEmbeddingModelChanged(true);
         }
       }
     } finally {

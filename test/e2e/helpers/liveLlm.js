@@ -181,6 +181,8 @@ async function waitForFileInSearch(
                   pathMatches(h?.filePath) ||
                   pathMatches(h?.path) ||
                   pathMatches(h?.id) ||
+                  pathMatches(h?.metadata?.path) ||
+                  pathMatches(h?.metadata?.filePath) ||
                   /acme|revenue|finance|quarterly/i.test(
                     `${h?.title || ''} ${h?.snippet || ''} ${h?.summary || ''}`
                   )
@@ -196,7 +198,7 @@ async function waitForFileInSearch(
         if (history && typeof history.search === 'function') {
           try {
             const res = await history.search(query, { limit: 10 });
-            const rows = res?.results || res?.data || [];
+            const rows = Array.isArray(res) ? res : res?.results || res?.data || [];
             if (
               rows.some(
                 (r) =>

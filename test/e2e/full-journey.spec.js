@@ -50,7 +50,7 @@ test.describe('@live-llm Full Journey — import -> analyze -> organize -> searc
   let movedPath;
 
   test.beforeAll(async () => {
-    const result = await launchApp();
+    const result = await launchApp({ localModels: true });
     app = result.app;
     window = result.window;
     await waitForAppReady(window);
@@ -73,7 +73,10 @@ test.describe('@live-llm Full Journey — import -> analyze -> organize -> searc
 
     const modelReady = await waitForLoadedTextModel(window);
     if (!modelReady) {
-      test.skip(true, 'No text LLM loaded; smoke requires a ready model backend.');
+      test.skip(
+        true,
+        'No text model in the profile: set STRATOSORT_E2E_MODELS_DIR to a folder of .gguf models.'
+      );
     }
 
     // --- 1. Analyze ----------------------------------------------------------
@@ -145,15 +148,17 @@ test.describe('@live-llm Full Journey — import -> analyze -> organize -> searc
     // Poll the indexes until the moved file is actually addressable by path.
     // The fixed sleep + "any rows is fine" fallback silently hid indexing
     // failures because any unrelated historical row would satisfy the assertion.
-    // Now we require an equality match on movedPath from at least one surface.
+    // Now we require an equality match on movedPath from at least one surface:
+    // the history record and the index entry both follow the file when it moves,
+    // so the path it was analyzed at no longer finds anything.
     const searchQuery = 'Acme quarterly revenue';
     const searched = await waitForFileInSearch(window, {
       query: searchQuery,
-      filePath,
+      filePath: movedPath,
       budgetMs: 30_000
     });
 
-    expect(searched.ok, `search/index did not surface analyzed file content for ${filePath}`).toBe(
+    expect(searched.ok, `search/index did not surface analyzed file content for ${movedPath}`).toBe(
       true
     );
   });

@@ -364,7 +364,11 @@ async function analyzeTextWithLlama(
     const namingContextKey = Array.isArray(namingContext)
       ? namingContext.slice(0, 5).join('|')
       : '';
-    const cacheSeed = `${originalFileName || ''}|${fileDate || ''}|${namingContextKey}|${truncated}`;
+    // Global user organization instructions (empty string when unset). They go
+    // into the prompt, so they are part of the key: an answer given under other
+    // instructions is not an answer to this request.
+    const orgGuidance = String((await getOrganizationGuidance()) || '');
+    const cacheSeed = `${originalFileName || ''}|${fileDate || ''}|${namingContextKey}|${orgGuidance}|${truncated}`;
     const cacheKey = cacheService.generateKey(cacheSeed, modelToUse, smartFolders);
     if (!bypassCache) {
       const cachedResult = cacheService.get(cacheKey);
@@ -399,8 +403,7 @@ async function analyzeTextWithLlama(
 
     const fileDateContext = fileDate ? `\nDocument File Date: ${fileDate}` : '';
 
-    // Global user organization instructions (empty string when unset).
-    const orgGuidanceStr = formatOrganizationGuidanceBlock(await getOrganizationGuidance());
+    const orgGuidanceStr = formatOrganizationGuidanceBlock(orgGuidance);
 
     // Build naming context string if available
     let namingContextStr = '';
@@ -452,6 +455,7 @@ ${truncated}
       contentLength: truncated.length, // Additional uniqueness for truncated content
       text: truncated,
       model: modelToUse,
+      guidance: orgGuidance,
       folders: smartFolders
         .map((f) => f?.name || '')
         .filter(Boolean)

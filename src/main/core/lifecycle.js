@@ -582,6 +582,10 @@ async function handleBeforeQuit(/** @type {any} */ event) {
  * Handle window-all-closed event
  */
 function handleWindowAllClosed() {
+  // A shutdown already running ends in its own app.exit(); the window closing
+  // meanwhile must not start a second quit.
+  if (_quitCleanupStarted) return;
+
   // Check if background mode is enabled - if so, don't quit when windows are closed
   const settingsService = lifecycleConfig.getSettingsService?.();
   const backgroundMode = settingsService?.get?.('backgroundMode');
@@ -982,14 +986,21 @@ function registerLifecycleHandlers(createWindow) {
   // Return cleanup functions for proper teardown
   return {
     cleanupAppListeners: () => {
-      app.removeListener('before-quit', handleBeforeQuit);
+      // handleBeforeQuit runs this cleanup in its first phase and exits through
+      // app.exit() only after the last one. The quit gate and the
+      // window-all-closed handler stay registered until then: without them a
+      // second Quit, or closing the window (Electron quits by default when
+      // nothing listens), would end the process while services still persist.
+      if (!_quitCleanupStarted) {
+        app.removeListener('before-quit', handleBeforeQuit);
+        app.removeListener('window-all-closed', handleWindowAllClosed);
+      }
       app.removeListener('will-quit', willQuitHandler);
       if (powerMonitor && typeof powerMonitor.removeListener === 'function') {
         powerMonitor.removeListener('shutdown', shutdownHandler);
       }
       detachLockPowerMonitor();
       app.removeListener('quit', quitHandler);
-      app.removeListener('window-all-closed', handleWindowAllClosed);
       app.removeListener('activate', activateHandler);
     },
     cleanupProcessListeners: () => {

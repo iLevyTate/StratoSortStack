@@ -155,13 +155,22 @@ function createIpcSanitizer({ log }) {
     return value;
   };
 
+  // Keys whose values are prose typed by the user (chat question, search
+  // query, folder description, feedback note, log message), never a path.
+  // Prose that mentions a Windows path ("What is in D:\Docs?") matches the
+  // path heuristic and used to be blanked before it left the renderer. Exact
+  // names only; every other key keeps the heuristic, and a key containing
+  // "path" or "file" always wins.
+  const FREE_TEXT_KEYS = new Set(['query', 'description', 'text', 'message', 'note']);
+
   /**
    * @param {any} obj
    * @param {boolean} [isFilePath]
    * @param {number} [_depth]
+   * @param {boolean} [isFreeText] - value sits under a FREE_TEXT_KEYS key
    * @returns {any}
    */
-  const sanitizeObject = (obj, isFilePath = false, _depth = 0) => {
+  const sanitizeObject = (obj, isFilePath = false, _depth = 0, isFreeText = false) => {
     if (_depth > MAX_SANITIZE_DEPTH) {
       log.warn('[SecureIPC] Sanitization depth limit reached, returning safe fallback value');
       return depthLimitedFallback(obj);
@@ -172,7 +181,7 @@ function createIpcSanitizer({ log }) {
       if (!isFilePath && looksLikeSimpleText(stripped)) {
         return stripped;
       }
-      if (isFilePath || looksLikeFilePath(stripped)) {
+      if (isFilePath || (!isFreeText && looksLikeFilePath(stripped))) {
         // Only strip ? and * on Windows where they are invalid in filenames.
         // process.platform may be undefined in bundled preload (process/browser polyfill),
         // so fall back to navigator.platform which is always available in Electron's renderer context.
@@ -230,7 +239,7 @@ function createIpcSanitizer({ log }) {
     }
 
     if (Array.isArray(obj)) {
-      return obj.map((item) => sanitizeObject(item, isFilePath, _depth + 1));
+      return obj.map((item) => sanitizeObject(item, isFilePath, _depth + 1, isFreeText));
     }
 
     if (obj && typeof obj === 'object') {
@@ -256,7 +265,8 @@ function createIpcSanitizer({ log }) {
           continue;
         }
 
-        sanitized[cleanKey] = sanitizeObject(value, isPathKey, _depth + 1);
+        const isFreeTextKey = !isPathKey && FREE_TEXT_KEYS.has(key.toLowerCase());
+        sanitized[cleanKey] = sanitizeObject(value, isPathKey, _depth + 1, isFreeTextKey);
       }
       return sanitized;
     }

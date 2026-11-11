@@ -48,6 +48,7 @@ const {
   TEXT_TRUNCATION_MARKER
 } = require('./documentExtractors');
 const { analyzeTextWithLlama, normalizeCategoryToSmartFolders } = require('./documentLlm');
+const { getOrganizationGuidance } = require('./organizationGuidance');
 const { getAnalysisLimits } = require('./analysisLimits');
 const { normalizeAnalysisResult } = require('./utils');
 const { normalizeExtractedTextForStorage } = require('./analysisTextUtils');
@@ -344,12 +345,20 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
     });
   }
 
+  // The user's organization instructions shape the answer, so a result cached
+  // under other instructions must not be returned for this request.
+  const guidanceSig = crypto
+    .createHash('sha256')
+    .update(String((await getOrganizationGuidance()) || ''))
+    .digest('hex')
+    .slice(0, 16);
+
   // Step 1: Attempt to compute file signature and check cache (non-fatal if fails)
   let fileSignature = null;
   let fileStats = null;
   try {
     fileStats = await fs.stat(filePath);
-    fileSignature = `${ANALYSIS_SIGNATURE_VERSION}|${modelName}|${smartFolderSig}|${filePath}|${fileStats.size}|${fileStats.mtimeMs}`;
+    fileSignature = `${ANALYSIS_SIGNATURE_VERSION}|${modelName}|${smartFolderSig}|${guidanceSig}|${filePath}|${fileStats.size}|${fileStats.mtimeMs}`;
     if (!bypassCache) {
       const cachedResult = getFileCache(fileSignature);
       if (cachedResult) {
@@ -830,9 +839,14 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
     } else if (SUPPORTED_ARCHIVE_EXTENSIONS.includes(fileExtension)) {
       // Archive metadata inspection (best-effort)
       const archiveInfo = await tryExtractArchiveMetadata(filePath);
+      // An archive with no readable listing has an empty list, not a missing one.
+      const listedKeywords = Array.isArray(archiveInfo.keywords)
+        ? archiveInfo.keywords.slice(0, TRUNCATION.KEYWORDS_MAX)
+        : [];
       const keywords =
-        archiveInfo.keywords?.slice(0, TRUNCATION.KEYWORDS_MAX) ||
-        getIntelligentKeywords(fileName, fileExtension);
+        listedKeywords.length > 0
+          ? listedKeywords
+          : getIntelligentKeywords(fileName, fileExtension);
 
       const category = normalizeCategoryToSmartFolders('archive', smartFolders);
 
@@ -957,6 +971,7 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
           contentHash,
           fileName,
           task: 'analyzeTextWithLlama',
+          guidance: guidanceSig,
           folders: Array.isArray(smartFolders)
             ? smartFolders.map((f) => f?.name || '').join(',')
             : ''

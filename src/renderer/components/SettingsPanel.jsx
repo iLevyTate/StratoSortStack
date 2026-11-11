@@ -138,6 +138,17 @@ const EXPERIENCE_MODE_COPY = {
 };
 
 /**
+ * Text for a vision model that installed but whose projector (mmproj) failed
+ * to download: the model is listed, yet it cannot analyze images.
+ */
+function projectorMissingMessage(modelName, evt) {
+  const projector = evt?.progress?.companion?.name;
+  return `Model "${modelName}" installed, but its image projector${
+    projector ? ` (${projector})` : ''
+  } did not download. Image analysis will not work until it does.`;
+}
+
+/**
  * Format a "saved <relative>" string without registering a tick interval.
  * The chip re-renders whenever lastSavedAt updates (next save, next
  * keystroke that triggers auto-save), which is the relevant cadence; if a
@@ -384,6 +395,10 @@ const SettingsPanel = React.memo(function SettingsPanel() {
   const [lastSaveError, setLastSaveError] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  // Set while the read from main has failed: the form below still holds
+  // defaults, so nothing may be saved until a read succeeds.
+  const [settingsLoadError, setSettingsLoadError] = useState(null);
+  const [isRetryingSettingsLoad, setIsRetryingSettingsLoad] = useState(false);
   const [isHydrating, setIsHydrating] = useState(true);
   const [newModel, setNewModel] = useState('');
   const [isAddingModel, setIsAddingModel] = useState(false);
@@ -417,6 +432,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
   const cancelAutoSaveRef = useRef(null);
   const settingsRef = useRef(null);
   const settingsLoadedRef = useRef(false);
+  const preloadFormRef = useRef(null);
   const modelLoadRequestRef = useRef(0);
   const lastSavedSnapshotRef = useRef(computeSettingsSnapshot(DEFAULT_SETTINGS));
   const pendingExternalSnapshotRef = useRef(null);
@@ -503,10 +519,14 @@ const SettingsPanel = React.memo(function SettingsPanel() {
     // can start editing the DEFAULT_SETTINGS form. Capture the pre-fetch form
     // state so the late-arriving persisted settings don't clobber those
     // in-flight edits — any key that changed while we awaited is overlaid
-    // back on top of the fetched values (and then auto-saved).
-    const preloadForm = { ...(settingsRef.current || DEFAULT_SETTINGS) };
+    // back on top of the fetched values (and then auto-saved). The baseline
+    // is kept across failed attempts, so an edit made before a retry counts.
+    if (settingsLoadedRef.current) return;
+    const preloadForm = preloadFormRef.current || {
+      ...(settingsRef.current || DEFAULT_SETTINGS)
+    };
+    preloadFormRef.current = preloadForm;
     try {
-      if (settingsLoadedRef.current) return;
       // Always fetch authoritative settings from main-process persistence.
       // Relying on cached Redux ui.settings can replay stale/default values and
       // accidentally overwrite user-selected locations during auto-save.
@@ -555,6 +575,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
       }
       dispatch(updateSettings(settingsWithoutLiveActivity(mergedSettings)));
       updateLastSavedSnapshot(mergedSettings);
+      preloadFormRef.current = null;
+      setSettingsLoadError(null);
       setSettingsLoaded(true);
       settingsLoadedRef.current = true;
     } catch (error) {
@@ -562,14 +584,29 @@ const SettingsPanel = React.memo(function SettingsPanel() {
         error: error.message,
         stack: error.stack
       });
-      skipAutoSaveRef.current += 1;
-      applySettingsUpdate({ ...DEFAULT_SETTINGS });
-      dispatch(updateSettings(settingsWithoutLiveActivity({ ...DEFAULT_SETTINGS })));
-      updateLastSavedSnapshot(DEFAULT_SETTINGS);
-      setSettingsLoaded(true);
-      settingsLoadedRef.current = true;
+      // Fail closed. The form still holds DEFAULT_SETTINGS; marking it loaded
+      // would let the next edit auto-save the whole default form over the
+      // stored settings, and dispatching it would make the rest of the app
+      // read defaults as if they were the user's. Stay unloaded (auto-save is
+      // gated on that) and say so, with a way to try again.
+      setSettingsLoadError(toErrorMessage(error, 'unknown error'));
+      addNotification(
+        "Couldn't load your settings. Nothing will be saved until they load.",
+        'error',
+        6000,
+        'settings-load-error'
+      );
     }
-  }, [applySettingsUpdate, dispatch, updateLastSavedSnapshot]);
+  }, [addNotification, applySettingsUpdate, dispatch, updateLastSavedSnapshot]);
+
+  const retryLoadSettings = useCallback(async () => {
+    setIsRetryingSettingsLoad(true);
+    try {
+      await loadSettings();
+    } finally {
+      setIsRetryingSettingsLoad(false);
+    }
+  }, [loadSettings]);
 
   const loadModels = useCallback(async () => {
     const requestId = modelLoadRequestRef.current + 1;
@@ -829,6 +866,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
   const autoSaveSettings = useDebouncedCallback(async () => {
     const currentSettings = settingsRef.current;
     if (!currentSettings) return;
+    // Never save a form that was not loaded from disk (see loadSettings).
+    if (!settingsLoadedRef.current) return;
 
     try {
       setIsSaving(true);
@@ -1058,7 +1097,11 @@ const SettingsPanel = React.memo(function SettingsPanel() {
             });
           } else if (evt.type === 'model-download-complete') {
             setPullProgress({ modelName: requested, filename: evt.model, percent: 100 });
-            addNotification(`Model "${requested}" installed`, 'success');
+            if (evt.degraded) {
+              addNotification(projectorMissingMessage(requested, evt), 'warning');
+            } else {
+              addNotification(`Model "${requested}" installed`, 'success');
+            }
             setNewModel('');
             // Refresh on completion — not on IPC ack — so the list reflects
             // the file actually being on disk.
@@ -1185,7 +1228,11 @@ const SettingsPanel = React.memo(function SettingsPanel() {
           });
         } else if (evt?.type === 'model-download-complete' && pendingModels.has(evt.model)) {
           pendingModels.delete(evt.model);
-          addNotification(`Model "${evt.model}" downloaded successfully`, 'success');
+          if (evt.degraded) {
+            addNotification(projectorMissingMessage(evt.model, evt), 'warning');
+          } else {
+            addNotification(`Model "${evt.model}" downloaded successfully`, 'success');
+          }
           loadModels();
           if (pendingModels.size === 0) {
             finishAll();
@@ -1522,6 +1569,25 @@ const SettingsPanel = React.memo(function SettingsPanel() {
                       Loading settings…
                     </Text>
                   </div>
+                </div>
+              )}
+              {settingsLoadError && !settingsLoaded && (
+                <div role="alert">
+                  <SettingsCard
+                    title="Couldn't load your settings"
+                    description={`The values below are the defaults, not your saved settings. Nothing will be saved until your settings load. (${settingsLoadError})`}
+                    className="border-stratosort-danger/40 bg-stratosort-danger/8"
+                  >
+                    <Button
+                      onClick={retryLoadSettings}
+                      variant="secondary"
+                      size="sm"
+                      disabled={isRetryingSettingsLoad}
+                      className="w-full sm:w-auto"
+                    >
+                      Try again
+                    </Button>
+                  </SettingsCard>
                 </div>
               )}
               {pendingExternalSettings && (

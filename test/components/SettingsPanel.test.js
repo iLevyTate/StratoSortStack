@@ -2,7 +2,7 @@
  * @jest-environment jsdom
  */
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
 
 let mockState = {};
@@ -187,7 +187,14 @@ jest.mock('../../src/renderer/components/settings/ModelSelectionSection', () => 
 jest.mock('../../src/renderer/components/settings/ChatPersonaSection', () => () => (
   <div>Chat persona settings</div>
 ));
-jest.mock('../../src/renderer/components/settings/ModelManagementSection', () => () => null);
+jest.mock('../../src/renderer/components/settings/ModelManagementSection', () => ({
+  __esModule: true,
+  default: ({ onAddModel }) => (
+    <button type="button" data-testid="add-vision-model" onClick={() => onAddModel('vision.gguf')}>
+      Add vision model
+    </button>
+  )
+}));
 jest.mock('../../src/renderer/components/settings/EmbeddingRebuildSection', () => () => null);
 jest.mock('../../src/renderer/components/settings/EmbeddingBehaviorSection', () => () => (
   <div>Embedding Behavior Section</div>
@@ -429,6 +436,102 @@ describe('SettingsPanel regression guards', () => {
     });
   });
 
+  describe('a failed settings read', () => {
+    // The form starts on DEFAULT_SETTINGS. If the read from main fails and the
+    // panel carries on as if it had loaded, the next edit auto-saves the whole
+    // default form over every stored setting.
+    const stored = {
+      language: 'fr',
+      defaultSmartFolderLocation: 'C:/Stored',
+      experienceMode: 'advanced'
+    };
+
+    // The read settles on a later tick; let React apply what follows inside
+    // act so the assertions below do not depend on scheduler timing.
+    const settle = () =>
+      act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+    test('never lets an edit auto-save the default form over stored settings', async () => {
+      mockSettingsGet.mockRejectedValue(new Error('IPC timeout'));
+
+      render(<SettingsPanel />);
+      await settle();
+      expect(mockSettingsGet).toHaveBeenCalled();
+      expect(screen.queryByTestId('settings-loading-overlay')).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByTestId('local-edit'));
+      await act(async () => {
+        await mockAutoSaveCapture.current();
+      });
+
+      expect(mockDebouncedAutoSave).not.toHaveBeenCalled();
+      expect(mockSettingsSave).not.toHaveBeenCalled();
+      // Defaults must not reach Redux either: updateSettings marks the store's
+      // settings as loaded, and the rest of the app would then read defaults.
+      expect(mockUpdateSettings).not.toHaveBeenCalled();
+    });
+
+    test('says so, and "Try again" loads the stored settings', async () => {
+      mockSettingsGet.mockRejectedValueOnce(new Error('IPC timeout'));
+      mockSettingsGet.mockResolvedValue(stored);
+
+      render(<SettingsPanel />);
+      await settle();
+
+      const alert = screen.getByRole('alert');
+      expect(alert).toHaveTextContent(/couldn't load your settings/i);
+      expect(mockAddNotification).toHaveBeenCalledWith(
+        expect.stringMatching(/couldn't load your settings/i),
+        'error',
+        expect.anything(),
+        'settings-load-error'
+      );
+
+      // Real Redux would hold the stored settings once the retry dispatches.
+      mockState = { ui: { settings: stored } };
+      fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+      await settle();
+
+      await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+      expect(mockSettingsGet).toHaveBeenCalledTimes(2);
+      expect(mockUpdateSettings).toHaveBeenCalledWith(stored);
+
+      // Auto-save works again, and saves on top of the stored values.
+      fireEvent.click(screen.getByTestId('local-edit'));
+      expect(mockDebouncedAutoSave).toHaveBeenCalled();
+      await act(async () => {
+        await mockAutoSaveCapture.current();
+      });
+      expect(mockSettingsSave).toHaveBeenCalledWith({ ...stored, language: 'local' });
+    });
+
+    test('an edit made while the read was failing is kept and saved after a retry', async () => {
+      mockSettingsGet.mockRejectedValueOnce(new Error('IPC timeout'));
+      mockSettingsGet.mockResolvedValue(stored);
+
+      render(<SettingsPanel />);
+      await settle();
+      expect(screen.getByRole('alert')).toBeInTheDocument();
+
+      fireEvent.click(screen.getByTestId('local-edit'));
+      expect(mockDebouncedAutoSave).not.toHaveBeenCalled();
+
+      mockState = { ui: { settings: stored } };
+      fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+      await settle();
+      await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+
+      // Only the key the user changed goes on top of what was stored.
+      await waitFor(() => expect(mockDebouncedAutoSave).toHaveBeenCalled());
+      await act(async () => {
+        await mockAutoSaveCapture.current();
+      });
+      expect(mockSettingsSave).toHaveBeenCalledWith({ ...stored, language: 'local' });
+    });
+  });
+
   describe('showLiveActivity belongs to the live-activity thunks, not the panel', () => {
     // Ctrl/Cmd+Shift+L, the Diagnostics switch and the Live Activity panel's
     // Close button each save just that key (liveActivityThunks). The panel
@@ -597,6 +700,41 @@ describe('SettingsPanel regression guards', () => {
     expect(screen.getByText('Processing Limits Section')).toBeInTheDocument();
     expect(screen.getByText('Graph Retrieval Section')).toBeInTheDocument();
     expect(screen.getByText('Diagnostics Logs Section')).toBeInTheDocument();
+  });
+
+  test('warns instead of reporting success when a vision model installs without its projector', async () => {
+    const { eventsIpc } = require('../../src/renderer/services/ipc');
+    let emitProgress = null;
+    eventsIpc.onOperationProgress.mockImplementationOnce((callback) => {
+      emitProgress = callback;
+      return () => {};
+    });
+
+    render(<SettingsPanel />);
+    await screen.findByText('Local AI Engine Section');
+    fireEvent.click(screen.getByRole('button', { name: 'Advanced' }));
+    fireEvent.click(await screen.findByTestId('add-vision-model'));
+    await waitFor(() => expect(emitProgress).toBeInstanceOf(Function));
+    mockAddNotification.mockClear();
+
+    act(() => {
+      emitProgress({
+        type: 'model-download-complete',
+        model: 'vision.gguf',
+        success: false,
+        degraded: true,
+        progress: {
+          percent: 100,
+          companion: { name: 'mmproj-vision.gguf', success: false, error: 'Download timeout' }
+        }
+      });
+    });
+
+    expect(mockAddNotification).toHaveBeenCalledWith(
+      expect.stringContaining('mmproj-vision.gguf'),
+      'warning'
+    );
+    expect(mockAddNotification).not.toHaveBeenCalledWith(expect.anything(), 'success');
   });
 
   // Note: The previous "surfaces backend save error details when saving

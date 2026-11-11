@@ -1055,6 +1055,10 @@ class VisionService {
      * @type {Set<{ manager: any }>}
      */
     this._requestHolds = new Set();
+    // Settles when the last request that asked for a turn is over. See
+    // _waitForRequestTurn.
+    /** @type {Promise<void>} */
+    this._requestTurn = Promise.resolve();
     /** @type {{ manager: any, type: string } | null} */
     this._memoryRegistration = null;
     /** @type {any} */
@@ -1203,6 +1207,53 @@ class VisionService {
       hold.manager?.releaseRef?.(VISION_RUNTIME_MEMORY_TYPE);
       hold.manager = null;
     };
+  }
+
+  /**
+   * Wait until the requests ahead of this one are over.
+   *
+   * The runtime is started with `--parallel 1`, while the vision inference
+   * slot can admit two or three images on a large GPU. A second request sent
+   * anyway waited inside the runtime with its timeout already running, and
+   * the restart after one request's timeout cut the connection of the other,
+   * which failed without a retry. One request at a time here means a restart
+   * never has another request on the runtime.
+   *
+   * A caller that gives up while it waits leaves at once and never reaches
+   * the runtime.
+   * @param {AbortSignal} [signal]
+   * @returns {Promise<() => void>} ends the turn
+   */
+  async _waitForRequestTurn(signal) {
+    const ahead = this._requestTurn;
+    /** @type {() => void} */
+    let endTurn = () => {};
+    /** @type {Promise<void>} */
+    const mine = new Promise((resolve) => {
+      endTurn = resolve;
+    });
+    this._requestTurn = ahead.then(() => mine);
+    if (!signal) {
+      await ahead;
+      return endTurn;
+    }
+    /** @type {() => void} */
+    let onAbort = () => {};
+    try {
+      await Promise.race([
+        ahead,
+        new Promise((_resolve, reject) => {
+          onAbort = () => reject(createVisionAbortError());
+          signal.addEventListener('abort', onAbort, { once: true });
+        })
+      ]);
+    } catch (error) {
+      endTurn();
+      throw error;
+    } finally {
+      signal.removeEventListener('abort', onAbort);
+    }
+    return endTurn;
   }
 
   _extractDecodePressureHint() {
@@ -2054,7 +2105,10 @@ class VisionService {
     // read) in which the runtime was taken from under the image that had
     // started it, and the image fell back to OCR.
     const endRequest = this._beginRequest();
+    /** @type {(() => void) | null} */
+    let endTurn = null;
     try {
+      endTurn = await this._waitForRequestTurn(signal);
       return await this._analyzeImageWithRuntime({
         imageBase64,
         imagePath,
@@ -2067,6 +2121,7 @@ class VisionService {
         config
       });
     } finally {
+      endTurn?.();
       endRequest();
       // Every way out re-arms the idle timer cleared above. A failure between
       // the runtime starting and the request going out (image file gone, a

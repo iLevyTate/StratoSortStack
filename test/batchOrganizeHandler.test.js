@@ -107,10 +107,13 @@ jest.mock('../src/shared/pathSanitization', () => ({
 }));
 
 jest.mock('../src/shared/promiseUtils', () => {
-  // Minimal Semaphore for tests (no timeout/queue-limit overhead)
+  // Minimal Semaphore for tests. Like the real one, a waiter given a queue
+  // timeout is rejected when it runs out, so a batch that queued its moves
+  // behind one again would fail the long-batch test below.
   class MockSemaphore {
-    constructor(max) {
+    constructor(max, _maxQueue, queueTimeoutMs) {
       this.max = max;
+      this.queueTimeoutMs = queueTimeoutMs;
       this.active = 0;
       this.queue = [];
     }
@@ -119,11 +122,22 @@ jest.mock('../src/shared/promiseUtils', () => {
         this.active++;
         return;
       }
-      await new Promise((resolve) => this.queue.push(resolve));
+      await new Promise((resolve, reject) => {
+        const waiter = { resolve, timeout: undefined };
+        if (this.queueTimeoutMs > 0) {
+          waiter.timeout = setTimeout(() => {
+            this.queue.splice(this.queue.indexOf(waiter), 1);
+            reject(new Error('Request queue timeout'));
+          }, this.queueTimeoutMs);
+        }
+        this.queue.push(waiter);
+      });
     }
     release() {
       if (this.queue.length > 0) {
-        this.queue.shift()();
+        const waiter = this.queue.shift();
+        clearTimeout(waiter.timeout);
+        waiter.resolve();
       } else if (this.active > 0) {
         this.active--;
       }
@@ -1411,6 +1425,306 @@ describe('Batch Organize Handler', () => {
     expect(result.successCount).toBe(2);
     expect(batchLockManager.renewBatchLock).toHaveBeenCalledTimes(2);
     expect(batchLockManager.renewBatchLock).toHaveBeenCalledWith(result.batchId);
+  });
+
+  // A cross-volume move copies and checksums the whole file, which takes
+  // longer than any fixed limit for a large one. The handler used to race the
+  // move against a 30 s timer that cancelled nothing: the row came back
+  // failed while the copy went on to publish and delete the source.
+  describe('a move that outlasts 30 s', () => {
+    const { crossDeviceMove } = require('../src/shared/atomicFileOperations');
+    const promiseUtils = require('../src/shared/promiseUtils');
+    const flush = () => new Promise((resolve) => setImmediate(resolve));
+    const exdev = () => Object.assign(new Error('EXDEV: cross-device link'), { code: 'EXDEV' });
+    const abortError = () => Object.assign(new Error('Move aborted'), { name: 'AbortError' });
+
+    /** A crossDeviceMove that copies until `finishCopy()` and honors its signal like the real one. */
+    function stubSlowCrossDeviceMove() {
+      /** @type {string[]} */
+      const moved = [];
+      /** @type {() => void} */
+      let finishCopy = () => {};
+      const copying = new Promise((resolve) => {
+        finishCopy = () => resolve(undefined);
+      });
+      crossDeviceMove.mockImplementation(async (source, _dest, options) => {
+        await copying;
+        if (options?.signal?.aborted) throw abortError();
+        moved.push(source);
+      });
+      return { moved, finishCopy };
+    }
+
+    async function waitForCopyToStart() {
+      for (let i = 0; i < 50 && crossDeviceMove.mock.calls.length === 0; i++) await flush();
+      expect(crossDeviceMove).toHaveBeenCalledTimes(1);
+    }
+
+    beforeEach(() => {
+      fs.rename.mockImplementation(async (source) => {
+        if (source === '/src/doc1.pdf') throw exdev();
+      });
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+      fs.rename.mockReset().mockResolvedValue();
+      crossDeviceMove.mockReset();
+      promiseUtils.withTimeout.mockReset().mockImplementation((promise) => promise);
+    });
+
+    test('is reported as moved, with its undo entry, and keeps the batch lock renewed meanwhile', async () => {
+      jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick', 'queueMicrotask'] });
+      // The real race, so the 30 s limit is in force wherever the handler still uses it.
+      promiseUtils.withTimeout.mockImplementation(
+        jest.requireActual('../src/shared/promiseUtils').withTimeout
+      );
+      const svc = makeStableSvc();
+      const { moved, finishCopy } = stubSlowCrossDeviceMove();
+
+      const pending = handleBatchOrganize({
+        ...params,
+        getServiceIntegration: jest.fn(() => svc),
+        operation: {
+          operations: [{ source: '/src/doc1.pdf', destination: '/dest/doc1.pdf', type: 'move' }]
+        }
+      });
+      await waitForCopyToStart();
+
+      await jest.advanceTimersByTimeAsync(95 * 1000);
+      await flush();
+      const renewalsDuringCopy = batchLockManager.renewBatchLock.mock.calls.length;
+      finishCopy();
+      const result = await pending;
+
+      expect(moved).toEqual(['/src/doc1.pdf']);
+      expect(result.results).toEqual([
+        expect.objectContaining({
+          source: '/src/doc1.pdf',
+          destination: '/dest/doc1.pdf',
+          success: true
+        })
+      ]);
+      expect(result.failCount).toBe(0);
+      expect(result.completedOperations).toBe(1);
+      expect(svc.undoRedo.recordAction).toHaveBeenCalledTimes(1);
+      expect(svc.undoRedo.recordAction.mock.calls[0][1].operations).toEqual([
+        { type: 'move', originalPath: '/src/doc1.pdf', newPath: '/dest/doc1.pdf' }
+      ]);
+      expect(svc.processingState.markOrganizeOpError).not.toHaveBeenCalled();
+      expect(renewalsDuringCopy).toBeGreaterThanOrEqual(3);
+      expect(batchLockManager.renewBatchLock).toHaveBeenCalledWith(result.batchId);
+      // The renewal stops with the move.
+      expect(jest.getTimerCount()).toBe(0);
+    });
+
+    // The batch had three 5-minute limits of its own (a wait-for-a-slot
+    // timeout, an elapsed-time check, the renderer's request timeout). A
+    // batch of large files going to another drive hit them while every move
+    // was healthy: the files already moved were moved back.
+    test('a batch still copying after 5 minutes finishes; a file waiting its turn is moved, nothing is rolled back', async () => {
+      jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick', 'queueMicrotask'] });
+      const svc = makeStableSvc();
+      // Five large files fill every slot; the sixth waits for one.
+      const bigFiles = [1, 2, 3, 4, 5].map((n) => `/src/big${n}.mp4`);
+      fs.rename.mockImplementation(async (source) => {
+        if (bigFiles.includes(source)) throw exdev();
+      });
+      const { moved, finishCopy } = stubSlowCrossDeviceMove();
+
+      const pending = handleBatchOrganize({
+        ...params,
+        getServiceIntegration: jest.fn(() => svc),
+        operation: {
+          operations: [
+            ...bigFiles.map((source) => ({
+              source,
+              destination: source.replace('/src/', '/dest/'),
+              type: 'move'
+            })),
+            { source: '/src/doc6.pdf', destination: '/dest/doc6.pdf', type: 'move' }
+          ]
+        }
+      });
+      for (let i = 0; i < 50 && crossDeviceMove.mock.calls.length < 5; i++) await flush();
+      expect(crossDeviceMove).toHaveBeenCalledTimes(5);
+
+      await jest.advanceTimersByTimeAsync(6 * 60 * 1000);
+      await flush();
+      finishCopy();
+      const result = await pending;
+
+      const { executeRollback } = require('../src/main/ipc/files/batchRollback');
+      expect(executeRollback).not.toHaveBeenCalled();
+      expect(moved.sort()).toEqual(bigFiles);
+      expect(result.success).toBe(true);
+      expect(result.successCount).toBe(6);
+      expect(result.failCount).toBe(0);
+      expect(result.results).toHaveLength(6);
+      expect(result.results.every((row) => row.success === true)).toBe(true);
+      expect(svc.processingState.markOrganizeOpError).not.toHaveBeenCalled();
+      expect(svc.processingState.completeOrganizeBatch).toHaveBeenCalledWith(result.batchId);
+      expect(jest.getTimerCount()).toBe(0);
+    });
+
+    test('strict mode: a move still copying when another file fails is stopped, not finished after the rollback', async () => {
+      fs.rename.mockImplementation(async (source) => {
+        if (source === '/src/doc1.pdf') throw exdev();
+        throw Object.assign(new Error('EINVAL: invalid argument'), { code: 'EINVAL' });
+      });
+      const { moved, finishCopy } = stubSlowCrossDeviceMove();
+
+      const pending = handleBatchOrganize({
+        ...params,
+        operation: { ...params.operation, strict: true }
+      });
+      await waitForCopyToStart();
+      for (let i = 0; i < 20; i++) await flush();
+      finishCopy();
+      const result = await pending;
+
+      expect(moved).toEqual([]);
+      expect(crossDeviceMove.mock.calls[0][2].signal.aborted).toBe(true);
+      expect(result.success).toBe(false);
+      expect(result.results.filter((row) => row.success)).toEqual([]);
+      expect(result.results).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ source: '/src/doc2.pdf', strictModeTriggered: true })
+        ])
+      );
+      // Nothing moved, so there is nothing to roll back or undo.
+      const { executeRollback } = require('../src/main/ipc/files/batchRollback');
+      expect(executeRollback).not.toHaveBeenCalled();
+    });
+
+    test('user cancel during the copy leaves the file where it was and reports it cancelled', async () => {
+      const controller = new AbortController();
+      const svc = makeStableSvc();
+      const { moved, finishCopy } = stubSlowCrossDeviceMove();
+
+      const pending = handleBatchOrganize({
+        ...params,
+        abortSignal: controller.signal,
+        getServiceIntegration: jest.fn(() => svc),
+        operation: {
+          operations: [{ source: '/src/doc1.pdf', destination: '/dest/doc1.pdf', type: 'move' }]
+        }
+      });
+      await waitForCopyToStart();
+      controller.abort('user-cancel-organize');
+      finishCopy();
+      const result = await pending;
+
+      expect(moved).toEqual([]);
+      expect(result.cancelled).toBe(true);
+      expect(result.cancelledCount).toBe(1);
+      expect(result.failCount).toBe(0);
+      expect(result.results).toEqual([
+        expect.objectContaining({ source: '/src/doc1.pdf', success: false, cancelled: true })
+      ]);
+      expect(svc.processingState.markOrganizeOpError).not.toHaveBeenCalled();
+    });
+
+    describe('on a drive that stopped answering', () => {
+      /** A rename of doc1 that stays open until `answer()` settles it. */
+      function stubHungRename() {
+        /** @type {(error?: any) => void} */
+        let answer = () => {};
+        const hung = new Promise((resolve, reject) => {
+          answer = (error) => (error ? reject(error) : resolve(undefined));
+        });
+        fs.rename.mockImplementation(async (source) => {
+          if (source === '/src/doc1.pdf') await hung;
+        });
+        return { answer: (error) => answer(error) };
+      }
+
+      async function stopAStuckBatch(reason) {
+        jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick', 'queueMicrotask'] });
+        const controller = new AbortController();
+        const { answer } = stubHungRename();
+        const pending = handleBatchOrganize({
+          ...params,
+          abortSignal: controller.signal,
+          getServiceIntegration: jest.fn(() => makeStableSvc()),
+          operation: {
+            operations: [{ source: '/src/doc1.pdf', destination: '/dest/doc1.pdf', type: 'move' }]
+          }
+        });
+        for (let i = 0; i < 50 && fs.rename.mock.calls.length === 0; i++) await flush();
+        expect(fs.rename).toHaveBeenCalledTimes(1);
+        controller.abort(reason);
+        await jest.advanceTimersByTimeAsync(16 * 1000);
+        const result = await pending;
+        return { result, answer };
+      }
+
+      const putBackCalls = () => fs.rename.mock.calls.filter(([from]) => from === '/dest/doc1.pdf');
+
+      test('Stop ends the batch after a short wait, and a move that goes through later is put back', async () => {
+        const { result, answer } = await stopAStuckBatch('user-cancel-organize');
+
+        expect(result.cancelled).toBe(true);
+        expect(result.results).toEqual([
+          expect.objectContaining({ source: '/src/doc1.pdf', success: false, cancelled: true })
+        ]);
+        expect(batchLockManager.releaseBatchLock).toHaveBeenCalled();
+        expect(jest.getTimerCount()).toBe(0);
+
+        // The drive answers after all and the rename goes through.
+        answer();
+        for (let i = 0; i < 20; i++) await flush();
+        expect(putBackCalls()).toEqual([['/dest/doc1.pdf', '/src/doc1.pdf']]);
+      });
+
+      test('a move that fails later is left alone', async () => {
+        const { result, answer } = await stopAStuckBatch('user-cancel-organize');
+        expect(result.cancelled).toBe(true);
+
+        answer(Object.assign(new Error('ENETUNREACH'), { code: 'ENETUNREACH' }));
+        for (let i = 0; i < 20; i++) await flush();
+        expect(putBackCalls()).toEqual([]);
+      });
+
+      test('an interrupted batch does not put the file back; its journal resumes it', async () => {
+        const { result, answer } = await stopAStuckBatch('ipc-timeout');
+        expect(result.results).toEqual([
+          expect.objectContaining({ source: '/src/doc1.pdf', success: false, interrupted: true })
+        ]);
+
+        answer();
+        for (let i = 0; i < 20; i++) await flush();
+        expect(putBackCalls()).toEqual([]);
+      });
+
+      test('a move that answers within the wait is still reported as moved', async () => {
+        jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick', 'queueMicrotask'] });
+        const controller = new AbortController();
+        const { answer } = stubHungRename();
+        const pending = handleBatchOrganize({
+          ...params,
+          abortSignal: controller.signal,
+          getServiceIntegration: jest.fn(() => makeStableSvc()),
+          operation: {
+            operations: [{ source: '/src/doc1.pdf', destination: '/dest/doc1.pdf', type: 'move' }]
+          }
+        });
+        for (let i = 0; i < 50 && fs.rename.mock.calls.length === 0; i++) await flush();
+        controller.abort('user-cancel-organize');
+        await jest.advanceTimersByTimeAsync(5 * 1000);
+        answer();
+        const result = await pending;
+
+        expect(result.results).toEqual([
+          expect.objectContaining({
+            source: '/src/doc1.pdf',
+            destination: '/dest/doc1.pdf',
+            success: true
+          })
+        ]);
+        expect(putBackCalls()).toEqual([]);
+      });
+    });
   });
 
   // Overlap detection folds case wherever the default filesystem does. On

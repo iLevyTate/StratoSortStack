@@ -169,3 +169,148 @@ describe('analysis history index consistency on load', () => {
     expect(second.analysisIndex.pathLookup[entry.originalPath]).toBe(entry.id);
   });
 });
+
+// An entry keeps `originalPath` for good; once the file is moved, the entry
+// lives at `organization.actual`. A different file that later shows up at the
+// old path (a second Downloads/report.pdf) must not be mistaken for it.
+describe('a moved entry is not addressed by the path it left', () => {
+  const services = [];
+  const OLD = '/downloads/report.pdf';
+  const MOVED = '/docs/report.pdf';
+
+  beforeEach(() => {
+    try {
+      fsSync.rmSync(USER_DATA, { recursive: true, force: true });
+    } catch {
+      // first run
+    }
+    fsSync.mkdirSync(USER_DATA, { recursive: true });
+  });
+
+  afterEach(async () => {
+    for (const s of services.splice(0)) {
+      try {
+        await s.shutdown();
+      } catch {
+        // already shut down
+      }
+    }
+  });
+
+  async function analysedThenMoved() {
+    const service = newService();
+    services.push(service);
+    await service.initialize();
+    await recordAndFlush(service, OLD);
+    const [first] = Object.values(service.analysisHistory.entries);
+    await service.updateEntryPaths([{ oldPath: OLD, newPath: MOVED }]);
+    return { service, first };
+  }
+
+  test('analysing a new file at the old path keeps the moved file in history', async () => {
+    const { service, first } = await analysedThenMoved();
+    first.accessCount = 7;
+
+    await recordAndFlush(service, OLD);
+
+    const entries = Object.values(service.analysisHistory.entries);
+    expect(entries).toHaveLength(2);
+    expect(service.analysisHistory.entries[first.id]).toBe(first);
+    expect((await service.getAnalysisByPath(MOVED))?.id).toBe(first.id);
+    const second = await service.getAnalysisByPath(OLD);
+    expect(second?.id).not.toBe(first.id);
+    expect(second?.originalPath).toBe(OLD);
+    // Usage belongs to the moved file, not to the newcomer.
+    expect(second?.accessCount).toBe(0);
+    expect(service.analysisHistory.totalAnalyzed).toBe(2);
+  });
+
+  test('moving an unanalysed file from the old path leaves the moved entry alone', async () => {
+    const { service, first } = await analysedThenMoved();
+
+    const result = await service.updateEntryPaths([
+      {
+        oldPath: OLD,
+        newPath: '/photos/renamed.pdf',
+        newName: 'renamed.pdf',
+        newCategory: 'Photos'
+      }
+    ]);
+
+    expect(result).toMatchObject({ updated: 0, notFound: 1, divergences: [] });
+    expect(first.organization.actual).toBe(MOVED);
+    expect(first.fileName).toBe('report.pdf');
+    expect(first.analysis.category).toBe('docs');
+    expect((await service.getAnalysisByPath(MOVED))?.id).toBe(first.id);
+    expect(await service.getAnalysisByPath('/photos/renamed.pdf')).toBeNull();
+  });
+
+  test('moving a second analysed file from the old path moves only its own entry', async () => {
+    const { service, first } = await analysedThenMoved();
+    await recordAndFlush(service, OLD);
+    const second = await service.getAnalysisByPath(OLD);
+
+    const result = await service.updateEntryPaths([{ oldPath: OLD, newPath: '/photos/b.pdf' }]);
+
+    expect(result).toMatchObject({ updated: 1, notFound: 0 });
+    expect(first.organization.actual).toBe(MOVED);
+    expect(second.organization.actual).toBe('/photos/b.pdf');
+    expect((await service.getAnalysisByPath(MOVED))?.id).toBe(first.id);
+    expect((await service.getAnalysisByPath('/photos/b.pdf'))?.id).toBe(second.id);
+    expect(await service.getAnalysisByPath(OLD)).toBeNull();
+  });
+
+  test('the old path no longer resolves, and resolves again after the move is undone', async () => {
+    const { service, first } = await analysedThenMoved();
+
+    expect(await service.getAnalysisByPath(OLD)).toBeNull();
+
+    await service.updateEntryPaths([{ oldPath: MOVED, newPath: OLD }]);
+    expect((await service.getAnalysisByPath(OLD))?.id).toBe(first.id);
+    expect(await service.getAnalysisByPath(MOVED)).toBeNull();
+  });
+
+  test('deleting, tagging or flagging the old path does not touch the moved entry', async () => {
+    const { service, first } = await analysedThenMoved();
+
+    expect(await service.removeEntriesByPath(OLD)).toEqual({ removed: 0 });
+    expect(await service.updateTags(OLD, ['wrong-file'])).toMatchObject({ updated: 0 });
+    expect(await service.updateEmbeddingStateByPath(OLD, { status: 'skipped' })).toMatchObject({
+      updated: 0
+    });
+
+    expect(service.analysisHistory.entries[first.id]).toBe(first);
+    expect(first.analysis.tags).not.toContain('wrong-file');
+    expect(first.embedding.status).not.toBe('skipped');
+    expect((await service.getAnalysisByPath(MOVED))?.id).toBe(first.id);
+  });
+
+  test('removing the moved entry keeps the newcomer at the old path findable', async () => {
+    const { service, first } = await analysedThenMoved();
+    await recordAndFlush(service, OLD);
+    const second = await service.getAnalysisByPath(OLD);
+
+    expect(await service.removeEntriesByPath(MOVED)).toEqual({ removed: 1 });
+
+    expect(service.analysisHistory.entries[first.id]).toBeUndefined();
+    expect((await service.getAnalysisByPath(OLD))?.id).toBe(second.id);
+  });
+
+  test('an index rebuilt on load does not bring the old path back', async () => {
+    const path = require('path');
+    const { service, first } = await analysedThenMoved();
+    await service.shutdown();
+
+    const historyPath = path.join(USER_DATA, 'analysis-history.json');
+    const history = JSON.parse(fsSync.readFileSync(historyPath, 'utf8'));
+    history.pairRevision = 'revision-not-in-index';
+    fsSync.writeFileSync(historyPath, JSON.stringify(history));
+
+    const reloaded = newService();
+    services.push(reloaded);
+    await reloaded.initialize();
+
+    expect(await reloaded.getAnalysisByPath(OLD)).toBeNull();
+    expect((await reloaded.getAnalysisByPath(MOVED))?.id).toBe(first.id);
+  });
+});

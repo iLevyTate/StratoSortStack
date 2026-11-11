@@ -126,6 +126,24 @@ describe('indexManager', () => {
       expect(index.pathLookup['/path/file.pdf']).toBe('entry-1');
     });
 
+    test('indexes a moved entry under its current path only', () => {
+      const index = indexManager.createEmptyIndex('2.0');
+      const entry = {
+        id: 'entry-1',
+        fileHash: 'hash123',
+        originalPath: '/downloads/file.pdf',
+        organization: { actual: '/docs/file.pdf' },
+        timestamp: '2024-01-15T10:00:00Z',
+        fileSize: 1000,
+        analysis: { tags: [], category: null }
+      };
+
+      indexManager.updateIndexes(index, entry);
+
+      expect(index.pathLookup['/docs/file.pdf']).toBe('entry-1');
+      expect(index.pathLookup['/downloads/file.pdf']).toBeUndefined();
+    });
+
     test('updates tag index', () => {
       const index = indexManager.createEmptyIndex('2.0');
       const entry = {
@@ -340,6 +358,26 @@ describe('indexManager', () => {
       expect(index.dateIndex['2024-01']).not.toContain('entry-1');
     });
 
+    test('leaves a path key that another entry owns now', () => {
+      const index = indexManager.createEmptyIndex('2.0');
+      // entry-1 moved out of /downloads; entry-2 is a different file there.
+      index.pathLookup['/downloads/file.pdf'] = 'entry-2';
+      index.pathLookup['/docs/file.pdf'] = 'entry-1';
+
+      indexManager.removeFromIndexes(index, {
+        id: 'entry-1',
+        fileHash: 'hash123',
+        originalPath: '/downloads/file.pdf',
+        organization: { actual: '/docs/file.pdf' },
+        timestamp: '2024-01-15T10:00:00Z',
+        fileSize: 500,
+        analysis: { tags: [], category: null }
+      });
+
+      expect(index.pathLookup['/docs/file.pdf']).toBeUndefined();
+      expect(index.pathLookup['/downloads/file.pdf']).toBe('entry-2');
+    });
+
     test('removes from size index', () => {
       const index = indexManager.createEmptyIndex('2.0');
       index.sizeIndex['tiny'] = ['entry-1', 'entry-2'];
@@ -356,6 +394,41 @@ describe('indexManager', () => {
       indexManager.removeFromIndexes(index, entry);
 
       expect(index.sizeIndex['tiny']).not.toContain('entry-1');
+    });
+  });
+
+  describe('updatePathIndexForMove', () => {
+    const entry = { id: 'entry-1', originalPath: '/downloads/file.pdf' };
+
+    test('a first move drops the original path and adds the new one', () => {
+      const index = indexManager.createEmptyIndex('2.0');
+      index.pathLookup['/downloads/file.pdf'] = 'entry-1';
+
+      indexManager.updatePathIndexForMove(index, entry, null, '/docs/file.pdf');
+
+      expect(index.pathLookup).toEqual({ '/docs/file.pdf': 'entry-1' });
+    });
+
+    test('a move back to the original path indexes it again', () => {
+      const index = indexManager.createEmptyIndex('2.0');
+      index.pathLookup['/docs/file.pdf'] = 'entry-1';
+
+      indexManager.updatePathIndexForMove(index, entry, '/docs/file.pdf', '/downloads/file.pdf');
+
+      expect(index.pathLookup).toEqual({ '/downloads/file.pdf': 'entry-1' });
+    });
+
+    test('keeps the key another entry holds for the path that was left', () => {
+      const index = indexManager.createEmptyIndex('2.0');
+      index.pathLookup['/downloads/file.pdf'] = 'entry-2';
+      index.pathLookup['/docs/file.pdf'] = 'entry-1';
+
+      indexManager.updatePathIndexForMove(index, entry, '/docs/file.pdf', '/archive/file.pdf');
+
+      expect(index.pathLookup).toEqual({
+        '/downloads/file.pdf': 'entry-2',
+        '/archive/file.pdf': 'entry-1'
+      });
     });
   });
 });

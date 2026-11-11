@@ -7,6 +7,9 @@
  * Run: npm run test:e2e -- --grep "Navigation"
  */
 
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { test, expect } = require('@playwright/test');
 const {
   launchApp,
@@ -73,17 +76,43 @@ test.describe('Navigation', () => {
   });
 
   test('should navigate from Welcome to Discover (Quick Start)', async () => {
-    // From Welcome, Discover should also be accessible (quick start path)
-    const canNavigate = await nav.isPhaseAccessible(PHASES.DISCOVER);
-    expect(canNavigate).toBe(true);
+    // Welcome opens Discover only once files have somewhere to go: a new
+    // profile has no destination folder, so the tab starts closed.
+    expect(await nav.isPhaseAccessible(PHASES.DISCOVER)).toBe(false);
 
-    // Navigate to Discover
-    const success = await nav.goToPhase(PHASES.DISCOVER);
-    expect(success).toBe(true);
+    const folderPath = path.join(os.tmpdir(), `stratosort-e2e-nav-${Date.now()}`);
+    const addResult = await window.evaluate(
+      async (folder) =>
+        window.electronAPI.smartFolders.add({
+          name: 'E2E Navigation Folder',
+          path: folder,
+          description: 'Destination for the quick start path'
+        }),
+      folderPath
+    );
+    expect(addResult.success).toBe(true);
 
-    await window.waitForTimeout(500);
-    const currentPhase = await nav.getCurrentPhase();
-    expect(currentPhase).toBe(PHASES.DISCOVER);
+    try {
+      // The folder was added behind the renderer's back, so reload it to read
+      // the folder list the way a launch would.
+      await window.reload();
+      await waitForAppReady(window);
+      expect(await nav.getCurrentPhase()).toBe(PHASES.WELCOME);
+
+      await expect
+        .poll(() => nav.isPhaseAccessible(PHASES.DISCOVER), { timeout: 15000 })
+        .toBe(true);
+
+      // Navigate to Discover
+      const success = await nav.goToPhase(PHASES.DISCOVER, { viaSetup: false });
+      expect(success).toBe(true);
+
+      await window.waitForTimeout(500);
+      const currentPhase = await nav.getCurrentPhase();
+      expect(currentPhase).toBe(PHASES.DISCOVER);
+    } finally {
+      fs.rmSync(folderPath, { recursive: true, force: true });
+    }
   });
 
   test('should enforce phase transition rules', async () => {

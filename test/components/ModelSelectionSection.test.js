@@ -52,8 +52,10 @@ describe('ModelSelectionSection', () => {
 
   // Contract: "Change & rebuild now" commits the model selection immediately
   // (so it can never desync from a rebuild that outlives the IPC timeout) and
-  // reports the rebuild outcome via an inline status alert. Failures keep the
-  // selection and tell the user to rebuild from AI Configuration.
+  // reports the rebuild outcome via an inline status alert. A failed rebuild
+  // puts the selection back on the previous model, because the main process
+  // rolls the engine and settings.json back to it; an IPC timeout keeps the
+  // selection, because the rebuild is still running.
 
   const renderWithModels = (setSettings) =>
     render(
@@ -103,7 +105,7 @@ describe('ModelSelectionSection', () => {
     });
   });
 
-  test('keeps committed model and surfaces failure alert when rebuild rejects', async () => {
+  test('commits model and surfaces failure alert when rebuild rejects', async () => {
     const setSettings = jest.fn();
     window.electronAPI = {
       embeddings: {
@@ -173,5 +175,74 @@ describe('ModelSelectionSection', () => {
     await waitFor(() => {
       expect(screen.getByText(/embeddings rebuild failed/i)).toBeInTheDocument();
     });
+  });
+
+  // Holds the settings like SettingsPanel does, so the dropdown shows what the
+  // next auto-save would send to the main process.
+  function StatefulSection() {
+    const [settings, setSettings] = React.useState({
+      textModel: 't.gguf',
+      visionModel: 'v.gguf',
+      embeddingModel: 'old.gguf'
+    });
+    return (
+      <ModelSelectionSection
+        settings={settings}
+        setSettings={setSettings}
+        textModelOptions={['t.gguf']}
+        visionModelOptions={['v.gguf']}
+        embeddingModelOptions={['old.gguf', 'new.gguf']}
+      />
+    );
+  }
+
+  test.each([
+    ['returns success: false', () => Promise.resolve({ success: false, error: 'Probe failed' })],
+    ['rejects', () => Promise.reject(new Error('Probe failed'))]
+  ])(
+    'puts the selection back on the previous model when the rebuild %s',
+    async (_label, fullRebuild) => {
+      window.electronAPI = {
+        embeddings: {
+          getStats: jest.fn().mockResolvedValue({ totalDocuments: 10 }),
+          fullRebuild: jest.fn(fullRebuild)
+        }
+      };
+
+      const { unmount } = render(<StatefulSection />);
+      changeAndRebuild();
+      expect(screen.getAllByRole('combobox')[2]).toHaveValue('new.gguf');
+
+      await waitFor(() => {
+        expect(screen.getByText(/embeddings rebuild failed: probe failed/i)).toBeInTheDocument();
+      });
+      expect(screen.getAllByRole('combobox')[2]).toHaveValue('old.gguf');
+      expect(screen.getByText(/set back to old\.gguf/i)).toBeInTheDocument();
+      expect(screen.queryByText(/your model selection was kept/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/model changed\./i)).not.toBeInTheDocument();
+      // Putting the model back refetches the stats, and that late update
+      // queues a React render. The shared afterEach clears every timer, and a
+      // render cancelled that way stalls the renders of the next test. So
+      // unmount (nothing new can queue) and let the queued one run.
+      unmount();
+      await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+    }
+  );
+
+  test('keeps the new selection when the rebuild only timed out over IPC', async () => {
+    window.electronAPI = {
+      embeddings: {
+        getStats: jest.fn().mockResolvedValue({ totalDocuments: 10 }),
+        fullRebuild: jest.fn().mockRejectedValue(new Error('IPC timeout after 600000ms'))
+      }
+    };
+
+    render(<StatefulSection />);
+    changeAndRebuild();
+
+    await waitFor(() => {
+      expect(screen.getByText(/still running in the background/i)).toBeInTheDocument();
+    });
+    expect(screen.getAllByRole('combobox')[2]).toHaveValue('new.gguf');
   });
 });

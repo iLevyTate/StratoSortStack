@@ -305,7 +305,7 @@ describe('useOrganization', () => {
           });
 
           expect(options.addNotification).toHaveBeenCalledWith(
-            expect.stringMatching(/1 failures/),
+            expect.stringMatching(/1 failure\./),
             'warning',
             expect.anything()
           );
@@ -1034,7 +1034,7 @@ describe('useOrganization', () => {
             })
           );
           expect(options.addNotification).toHaveBeenCalledWith(
-            'Undo partially complete: 1 files restored, 1 failed.',
+            'Undo partially complete: 1 file restored, 1 failed.',
             'warning'
           );
           expect(notified(options, /Undo complete/)).toBe(false);
@@ -1085,9 +1085,174 @@ describe('useOrganization', () => {
             expect.not.arrayContaining(['/inbox/b.txt'])
           );
           expect(options.addNotification).toHaveBeenCalledWith(
-            'Redo partially complete: 1 files re-organized, 1 failed.',
+            'Redo partially complete: 1 file re-organized, 1 failed.',
             'warning'
           );
+        });
+      });
+
+      describe('singular and plural counts in the outcome messages', () => {
+        const messages = (options) =>
+          options.addNotification.mock.calls.map(([message]) => message);
+        const twoFiles = ['a', 'b'].map((n) => ({
+          path: `/${n}.txt`,
+          name: `${n}.txt`,
+          analysis: { category: 'documents', suggestedName: `${n.toUpperCase()}.txt` }
+        }));
+        const moved = (n) => ({
+          success: true,
+          source: `/${n}.txt`,
+          destination: `/Documents/${n.toUpperCase()}.txt`
+        });
+
+        const runCallback = async (name, payload, overrides = {}) => {
+          const options = createMockOptions(overrides);
+          options.executeAction.mockImplementation(async (action) => {
+            action.callbacks[name](payload);
+            return { results: [{ success: true }] };
+          });
+          const { result } = renderHook(() => useOrganization(options));
+          await act(async () => {
+            await result.current.handleOrganizeFiles();
+          });
+          return options;
+        };
+
+        test('one organized file', async () => {
+          const options = await runCallback('onExecute', {
+            results: [{ success: true, source: '/test.txt', destination: '/Documents/test.txt' }]
+          });
+
+          expect(messages(options)).toContain('Organized 1 file');
+          expect(options.executeAction.mock.calls[0][0].label).toBe('Organize 1 file');
+        });
+
+        test('several organized files', async () => {
+          const options = await runCallback(
+            'onExecute',
+            { results: [moved('a'), moved('b')] },
+            { unprocessedFiles: twoFiles }
+          );
+
+          expect(messages(options)).toContain('Organized 2 files');
+          expect(options.executeAction.mock.calls[0][0].label).toBe('Organize 2 files');
+        });
+
+        test('one organized file and one failure', async () => {
+          const options = await runCallback(
+            'onExecute',
+            { results: [moved('a'), { success: false, source: '/b.txt', error: 'EEXIST' }] },
+            { unprocessedFiles: twoFiles }
+          );
+
+          expect(
+            messages(options).some((m) => m.startsWith('Organized 1 file with 1 failure. '))
+          ).toBe(true);
+        });
+
+        test('one file restored by undo', async () => {
+          const options = await runCallback('onUndo', {
+            results: [{ success: true, source: '/Documents/test.txt', destination: '/test.txt' }],
+            successCount: 1,
+            failCount: 0
+          });
+
+          expect(messages(options)).toContain(
+            'Undo complete. 1 file restored to its original location.'
+          );
+        });
+
+        test('several files restored by undo', async () => {
+          const options = await runCallback('onUndo', {
+            results: [
+              { success: true, source: '/Documents/A.txt', destination: '/a.txt' },
+              { success: true, source: '/Documents/B.txt', destination: '/b.txt' }
+            ],
+            successCount: 2,
+            failCount: 0
+          });
+
+          expect(messages(options)).toContain(
+            'Undo complete. 2 files restored to original locations.'
+          );
+        });
+
+        test('one file re-organized by redo', async () => {
+          const options = await runCallback('onRedo', {
+            results: [{ success: true, source: '/test.txt', destination: '/Documents/test.txt' }],
+            successCount: 1,
+            failCount: 0
+          });
+
+          expect(messages(options)).toContain('Redo complete. 1 file re-organized.');
+        });
+      });
+
+      describe('progress at the end of a run that did not finish', () => {
+        const threeFiles = ['a', 'b', 'c'].map((n) => ({
+          path: `/${n}.txt`,
+          name: `${n}.txt`,
+          analysis: { category: 'documents', suggestedName: `${n.toUpperCase()}.txt` }
+        }));
+        const movedA = { success: true, source: '/a.txt', destination: '/Documents/A.txt' };
+
+        // Holds the batch open after onExecute so the progress it left behind
+        // can be read before the hook's cleanup zeroes it.
+        const progressAfterExecute = async (batchResult) => {
+          let release;
+          const options = createMockOptions({ unprocessedFiles: threeFiles });
+          options.executeAction.mockImplementation(async (action) => {
+            action.callbacks.onExecute(batchResult);
+            await new Promise((resolve) => {
+              release = resolve;
+            });
+            return batchResult;
+          });
+          const { result } = renderHook(() => useOrganization(options));
+          let pending;
+          await act(async () => {
+            pending = result.current.handleOrganizeFiles();
+            await Promise.resolve();
+          });
+          const progress = result.current.batchProgress;
+          await act(async () => {
+            release();
+            await pending;
+          });
+          return progress;
+        };
+
+        test('a completed batch fills the bar', async () => {
+          const progress = await progressAfterExecute({
+            results: threeFiles.map((f) => ({
+              success: true,
+              source: f.path,
+              destination: `/Documents${f.path}`
+            }))
+          });
+
+          expect(progress).toEqual({ current: 3, total: 3, currentFile: '' });
+        });
+
+        test.each([
+          ['cancelled', { cancelled: true, cancelledCount: 2 }],
+          ['interrupted', { interrupted: true }],
+          ['paused', { paused: true, batchId: 'batch_1', cancelledCount: 2 }],
+          [
+            'rolled back',
+            { success: false, rolledBack: true, results: [{ ...movedA, rollbackFailed: true }] }
+          ]
+        ])('a %s batch does not report every file as done', async (_name, flags) => {
+          const progress = await progressAfterExecute({
+            success: true,
+            results: [movedA],
+            successCount: 1,
+            completedOperations: 1,
+            ...flags
+          });
+
+          expect(progress.total).toBe(3);
+          expect(progress.current).toBeLessThan(3);
         });
       });
 

@@ -691,6 +691,39 @@ class ModelDownloadManager {
           finalizeFailure(this._wrapWriteStreamError(error, filename), 'error', true);
         });
 
+        // A connection that closes cleanly before the body is complete (CDN
+        // recycle, proxy cut) emits 'aborted'/'close' on the response but no
+        // 'end' and no request 'error', so pipe() never ends the write stream
+        // and nothing above settles. Fail as ECONNRESET so the retry path
+        // resumes from the `.partial` with a Range request.
+        let prematureCloseHandled = false;
+        const onPrematureClose = (/** @type {any} */ cause) => {
+          if (prematureCloseHandled || response.complete || settled || failureClaimed) return;
+          prematureCloseHandled = true;
+          const interrupted = /** @type {Error & { code?: string, cause?: any }} */ (
+            new Error('Download interrupted - connection closed before the file was complete')
+          );
+          interrupted.code = 'ECONNRESET';
+          if (cause instanceof Error) interrupted.cause = cause;
+          const stream = writeStream;
+          try {
+            if (stream) response.unpipe(stream);
+          } catch {
+            /* defensive */
+          }
+          // Wait for the file to close before failing: the retry re-stats the
+          // `.partial` to pick its Range start.
+          if (!stream || stream.closed) {
+            finalizeFailure(interrupted);
+            return;
+          }
+          stream.once('close', () => finalizeFailure(interrupted));
+          stream.destroy();
+        };
+        response.on('aborted', onPrematureClose);
+        response.on('error', onPrematureClose);
+        response.on('close', onPrematureClose);
+
         // Abort listeners are attached immediately after https.get (below) so
         // cancel during connect/redirect is honored. Keep stream-event cleanup
         // here as a belt-and-suspenders release if a settle path skips finalize*.

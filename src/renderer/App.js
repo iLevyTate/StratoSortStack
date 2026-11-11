@@ -17,6 +17,7 @@ import { fetchLicenseStatus } from './store/slices/licenseSlice';
 import { useSettingsSubscription } from './hooks/useSettingsSubscription';
 import { useNotificationActivation } from './hooks/useNotificationActivation';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { useNotification } from './contexts/NotificationContext';
 import { hasDestinationFolder } from './utils/smartFolderDestinations';
 
 // AppShell is a .jsx module (untyped under checkJs); cast at import so JSX
@@ -90,6 +91,24 @@ function AppContent() {
 
   useSettingsSubscription(handleSettingsSync, { enabled: Boolean(settingsEventsEnabled) });
   useNotificationActivation();
+
+  // Raised here, not in WelcomePhase: store/index.js keeps viewMode across a
+  // TTL expiry, so a dashboard user never mounts a phase at startup and the
+  // session reset went unexplained. Single consumer — the flag is cleared so
+  // the notice cannot repeat.
+  const { addNotification } = useNotification();
+  useEffect(() => {
+    const win = /** @type {any} */ (window);
+    if (win.__STRATOSORT_STATE_EXPIRED__) {
+      const ageHours = win.__STRATOSORT_STATE_EXPIRED_AGE_HOURS__ || 24;
+      addNotification(
+        `Previous session (${ageHours}h old) was cleared to ensure fresh data. Your files are safe.`,
+        'info'
+      );
+      delete win.__STRATOSORT_STATE_EXPIRED__;
+      delete win.__STRATOSORT_STATE_EXPIRED_AGE_HOURS__;
+    }
+  }, [addNotification]);
 
   // Apply the chosen palette as a data-theme attribute on <html>. The stylesheet
   // re-themes every token under :root[data-theme='light'|'dark']; "primary" is

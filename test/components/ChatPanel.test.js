@@ -179,6 +179,57 @@ describe('ChatPanel', () => {
     ).toBeInTheDocument();
   });
 
+  test('a reopened conversation shows the same answer as the live one, not the stored memory text', () => {
+    // A saved assistant row keeps `text` as the prompt-memory string (document
+    // and model items joined, plus a "[Referenced: ...]" line) next to the
+    // structured answer. The bubble must render the structured answer.
+    const { container } = renderWithRedux(
+      <ChatPanel
+        {...createBaseProps({
+          messages: [
+            { role: 'user', text: 'What does the budget track?' },
+            {
+              role: 'assistant',
+              text: 'The budget tracks Q1 spending [doc-1].\nGeneral advice that was hidden live.\n[Referenced: budget.xlsx]',
+              documentAnswer: [
+                { text: 'The budget tracks Q1 spending [doc-1].', citations: ['doc-1'] }
+              ],
+              modelAnswer: [{ text: 'General advice that was hidden live.' }],
+              followUps: [],
+              sources: [{ id: 'doc-1', name: 'budget.xlsx' }]
+            }
+          ]
+        })}
+      />
+    );
+
+    // Last bubble = the assistant answer (the first is the user's question).
+    const bubbles = container.querySelectorAll('.chat-message-text');
+    expect(bubbles[bubbles.length - 1].textContent).toBe('The budget tracks Q1 spending [doc-1].');
+    expect(screen.queryByText(/\[Referenced:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/General advice that was hidden live/)).not.toBeInTheDocument();
+  });
+
+  test('a saved answer with no structured items still shows its stored text', () => {
+    renderWithRedux(
+      <ChatPanel
+        {...createBaseProps({
+          messages: [
+            {
+              role: 'assistant',
+              text: 'A plain stored reply.',
+              documentAnswer: [],
+              modelAnswer: [],
+              sources: []
+            }
+          ]
+        })}
+      />
+    );
+
+    expect(screen.getByText('A plain stored reply.')).toBeInTheDocument();
+  });
+
   test('strips unresolved [doc-N] citations from streaming text so no broken [?] renders', () => {
     // Mid-stream, `sources` isn't attached yet, so inline citations can't be
     // resolved to a number. They must be dropped rather than surface as `[?]`.

@@ -43,6 +43,7 @@ const mockFailedHandler = {
   deadLetterQueue: [],
   trackFailedItem: jest.fn(),
   retryFailedItems: jest.fn().mockResolvedValue(undefined),
+  getNextRetryDelay: jest.fn(() => null),
   setDeadLetterQueue: jest.fn(),
   persistAll: jest.fn().mockResolvedValue(undefined)
 };

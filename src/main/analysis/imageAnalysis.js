@@ -452,7 +452,8 @@ async function analyzeImageWithLlama(
     }
 
     // Global user organization instructions (empty string when unset).
-    const orgGuidanceStr = formatOrganizationGuidanceBlock(await getOrganizationGuidance());
+    const orgGuidance = String((await getOrganizationGuidance()) || '');
+    const orgGuidanceStr = formatOrganizationGuidanceBlock(orgGuidance);
 
     // Build OCR grounding context if text was extracted
     const ocrGroundingStr =
@@ -505,6 +506,7 @@ Rules:
       fileName: originalFileName,
       imageHash,
       model: modelToUse,
+      guidance: orgGuidance,
       folders: safeFolders
         .map((f) => f?.name || '')
         .filter(Boolean)
@@ -1417,7 +1419,14 @@ async function runImageAnalysis(filePath, smartFolders, options) {
     logger.debug(`Image file size`, { bytes: stats.size });
 
     // Cache quick path: signature based on file stats, before reading bytes.
-    const signature = `${IMAGE_SIGNATURE_VERSION}|${visionModelName}|${smartFolderSig}|${filePath}|${stats.size}|${stats.mtimeMs}`;
+    // The user's organization instructions shape the answer, so a result cached
+    // under other instructions must not be returned for this request.
+    const guidanceSig = crypto
+      .createHash('sha256')
+      .update(String((await getOrganizationGuidance()) || ''))
+      .digest('hex')
+      .slice(0, 16);
+    const signature = `${IMAGE_SIGNATURE_VERSION}|${visionModelName}|${smartFolderSig}|${guidanceSig}|${filePath}|${stats.size}|${stats.mtimeMs}`;
     if (!bypassCache) {
       const cached = getImageAnalysisCache().get(signature);
       if (cached != null) {

@@ -28,6 +28,7 @@ const { EXPERIENCE_MODE_VALUES } = require('../../shared/experienceMode');
 const { collapseDuplicateProtocols } = require('../../shared/urlUtils');
 const { logger } = require('../../shared/logger');
 const { getEffectiveMaxPathLength } = require('../../shared/securityConfig');
+const { validateFileOperationPathSync } = require('../../shared/pathSanitization');
 const {
   PROVIDER_BASE_URL_RULE,
   isAllowedProviderBaseUrl
@@ -419,6 +420,31 @@ if (!z) {
   const SAFE_ABSOLUTE_PATH_MESSAGE =
     'Path must be absolute and must not be a UNC, URL, or contain ../ traversal segments';
 
+  // Organize / move paths only. Smart folders may be registered on a network
+  // share, and the handlers behind these schemas accept UNC through
+  // validateFileOperationPath, with authorizeDestination refusing a UNC
+  // destination outside a registered Smart Folder. So a \\server\share path
+  // passes here when that same main-side validation accepts it. Still refused:
+  // device namespaces (\\?\, \\.\), forward-slash UNC, a server with no share
+  // and administrative shares (C$, ADMIN$), which would reach system
+  // directories without matching the dangerous-path list.
+  /**
+   * @param {unknown} val
+   * @returns {boolean}
+   */
+  const isSafeFileOpPath = (val) => {
+    if (isSafeAbsoluteFsPath(val)) return true;
+    if (typeof val !== 'string' || process.platform !== 'win32') return false;
+    const unc = val.match(/^\\\\([^\\/]+)\\([^\\/]+)(?:[\\/]|$)/);
+    if (!unc) return false;
+    const [, server, share] = unc;
+    if (server.startsWith('?') || server.startsWith('.') || share.endsWith('$')) return false;
+    if (hasPathTraversal(val)) return false;
+    return validateFileOperationPathSync(val).valid;
+  };
+  const SAFE_FILE_OP_PATH_MESSAGE =
+    'Path must be absolute and must not be a URL, a device or administrative share path, or contain ../ traversal segments';
+
   /**
    * File path validation - non-empty string with traversal protection
    */
@@ -746,15 +772,16 @@ if (!z) {
    */
   // IPC-gate path hardening (audit item #1): apply the same safe-absolute-path
   // refine used by every other path-bearing schema in this file so a 100KB
-  // string, URL, UNC, or traversal payload fails at the boundary instead of
+  // string, URL, or traversal payload fails at the boundary instead of
   // riding all the way to validateFileOperationPath in batchOrganizeHandler.js.
+  // A network share path is let through on Windows (see isSafeFileOpPath).
   // Top-level source/destination remain .optional() because move/copy use them
   // but batch_organize routes through operations[] instead.
   const fileOpPathSchema = z
     .string()
     .min(1)
     .max(2048)
-    .refine(isSafeAbsoluteFsPath, SAFE_ABSOLUTE_PATH_MESSAGE);
+    .refine(isSafeFileOpPath, SAFE_FILE_OP_PATH_MESSAGE);
 
   // What the app suggested for this file before the user confirmed. When the
   // file lands in a different smart folder, batch organize records a

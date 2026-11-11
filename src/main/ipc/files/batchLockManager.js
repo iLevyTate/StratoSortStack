@@ -19,11 +19,13 @@ if (typeof createLogger !== 'function' && logger?.setContext) {
 // Global batch operation lock to prevent concurrent batch operations
 /** @type {{ batchId: string, acquiredAt: number } | null} */
 let batchOperationLock = null;
-// Budget for the rollback tail that runs AFTER a batch trips
-// MAX_TOTAL_BATCH_TIME: the in-flight move must finish (FILE_COPY) and every
-// completed op must be restored. Holders renew the lock per op, so this TTL
-// is only the crash backstop — it must still exceed the worst-case
-// legitimate hold, or a second batch could start mid-rollback.
+// Budget for the rollback tail of a failed batch: every completed op must be
+// restored. A batch has no total time limit; MAX_TOTAL_BATCH_TIME only sizes
+// this lease. Holders renew the lock per op and on an interval while a move is in flight (a move has
+// no time limit of its own; a cross-volume copy of a large file can outlast
+// any fixed one), so this TTL is only the crash backstop — it must still
+// exceed the worst-case hold between two renewals, or a second batch could
+// start mid-rollback. FILE_COPY stays in the sum as slack.
 const ROLLBACK_ALLOWANCE_MS = 2 * 60 * 1000;
 const BATCH_LOCK_TIMEOUT =
   PROCESSING_LIMITS.MAX_TOTAL_BATCH_TIME + TIMEOUTS.FILE_COPY + ROLLBACK_ALLOWANCE_MS;

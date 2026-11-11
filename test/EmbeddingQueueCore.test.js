@@ -45,7 +45,11 @@ jest.mock('../src/shared/errorCodes', () => ({
 
 jest.mock('../src/main/analysis/embeddingQueue/persistence', () => ({
   loadPersistedData: jest.fn().mockResolvedValue(undefined),
-  persistQueueData: jest.fn().mockResolvedValue(undefined)
+  persistQueueData: jest.fn().mockResolvedValue(undefined),
+  // Used by the real failed-item handler in the retry-schedule tests below.
+  persistFailedItems: jest.fn().mockResolvedValue(true),
+  persistDeadLetterQueue: jest.fn().mockResolvedValue(true),
+  SQLITE_KEYS: {}
 }));
 
 const mockFailedHandler = {
@@ -53,6 +57,7 @@ const mockFailedHandler = {
   deadLetterQueue: [],
   trackFailedItem: jest.fn(),
   retryFailedItems: jest.fn().mockResolvedValue(undefined),
+  getNextRetryDelay: jest.fn(() => null),
   setDeadLetterQueue: jest.fn(),
   persistPending: jest.fn().mockResolvedValue(undefined)
 };
@@ -946,5 +951,169 @@ describe('EmbeddingQueueCore', () => {
       loadPersistedData.mockImplementation(async () => undefined);
       mockFailedHandler.trackFailedItem.mockImplementation(() => undefined);
     }
+  });
+
+  // A failed item used to be retried only from inside a later flush, and a
+  // flush with an empty queue returns early. So a failure in the last batch
+  // (or a database-offline give-up) stayed in the failed-items map, across
+  // restarts, until some other file was enqueued.
+  describe('failed items are retried on their own schedule', () => {
+    const {
+      createFailedItemHandler
+    } = require('../src/main/analysis/embeddingQueue/failedItemHandler');
+    const {
+      processItemsInParallel
+    } = require('../src/main/analysis/embeddingQueue/parallelProcessor');
+    const { loadPersistedData } = require('../src/main/analysis/embeddingQueue/persistence');
+    const realHandlerModule = jest.requireActual(
+      '../src/main/analysis/embeddingQueue/failedItemHandler'
+    );
+
+    const succeedAll = async ({ items, startProcessedCount }) => startProcessedCount + items.length;
+    const failAll = async ({ items, failedItemIds, startProcessedCount, onItemFailed }) => {
+      for (const item of items) {
+        failedItemIds.add(item.id);
+        onItemFailed(item, 'upsert timed out');
+      }
+      return startProcessedCount;
+    };
+    const flushedIds = () =>
+      processItemsInParallel.mock.calls.map(([args]) => args.items.map((item) => item.id));
+
+    const createQueue = () => {
+      // The real handler (mocked persistence, 10 ms mocked backoff base).
+      createFailedItemHandler.mockImplementationOnce(realHandlerModule.createFailedItemHandler);
+      const EmbeddingQueue = require('../src/main/analysis/embeddingQueue/EmbeddingQueueCore');
+      const q = new EmbeddingQueue({ flushDelayMs: 0 });
+      q.MAX_QUEUE_SIZE = 100;
+      return q;
+    };
+
+    beforeEach(() => {
+      jest.useFakeTimers();
+      processItemsInParallel.mockReset();
+      processItemsInParallel.mockImplementation(succeedAll);
+      mockContainer.resolve.mockReset();
+      mockContainer.resolve.mockReturnValue({
+        initialize: jest.fn().mockResolvedValue(undefined),
+        isOnline: true
+      });
+    });
+
+    afterEach(() => {
+      jest.clearAllTimers();
+      jest.useRealTimers();
+      processItemsInParallel.mockReset();
+      processItemsInParallel.mockImplementation(succeedAll);
+      mockContainer.resolve.mockReset();
+      loadPersistedData.mockImplementation(async () => undefined);
+    });
+
+    test('an item that failed in the last batch is embedded later with nothing else enqueued', async () => {
+      processItemsInParallel.mockImplementationOnce(failAll);
+      const q = createQueue();
+      q.initialized = true;
+      q.queue = [{ id: 'file:C:\\late.pdf', vector: [1] }];
+
+      await q.flush();
+      expect(q.queue).toHaveLength(0);
+      expect(q._failedItemHandler.failedItems.has('file:C:\\late.pdf')).toBe(true);
+
+      await advance(5000);
+
+      expect(flushedIds()).toEqual([['file:C:\\late.pdf'], ['file:C:\\late.pdf']]);
+      expect(q._failedItemHandler.failedItems.size).toBe(0);
+      expect(q.queue).toHaveLength(0);
+      expect(jest.getTimerCount()).toBe(0);
+    });
+
+    test('failed items restored at startup are retried without a new enqueue', async () => {
+      loadPersistedData.mockImplementation(async (_path, onLoad, label) => {
+        if (label === 'failed items') {
+          onLoad([
+            [
+              'file:C:\\restored.pdf',
+              {
+                item: { id: 'file:C:\\restored.pdf', vector: [1] },
+                retryCount: 1,
+                lastAttempt: 0,
+                error: 'upsert timed out'
+              }
+            ]
+          ]);
+        }
+      });
+      const q = createQueue();
+
+      await q.initialize();
+      expect(q._failedItemHandler.failedItems.size).toBe(1);
+
+      await advance(5000);
+
+      expect(flushedIds()).toEqual([['file:C:\\restored.pdf']]);
+      expect(q._failedItemHandler.failedItems.size).toBe(0);
+    });
+
+    test('a batch given up on while the database was offline is embedded once it is back', async () => {
+      const online = { initialize: jest.fn().mockResolvedValue(undefined), isOnline: true };
+      mockContainer.resolve.mockImplementationOnce(() => {
+        throw new Error('no service');
+      });
+      mockContainer.resolve.mockReturnValue(online);
+      const q = createQueue();
+      q.initialized = true;
+      q.MAX_RETRY_COUNT = 1;
+      q.queue = [{ id: 'file:C:\\offline.pdf', vector: [1] }];
+
+      await q.flush();
+      expect(q.queue).toHaveLength(0);
+      expect(q._failedItemHandler.failedItems.size).toBe(1);
+      expect(processItemsInParallel).not.toHaveBeenCalled();
+
+      await advance(5000);
+
+      expect(flushedIds()).toEqual([['file:C:\\offline.pdf']]);
+      expect(q._failedItemHandler.failedItems.size).toBe(0);
+    });
+
+    test('an item that keeps failing stops at the retry limit with the backoff between attempts', async () => {
+      processItemsInParallel.mockImplementation(failAll);
+      const q = createQueue();
+      q.initialized = true;
+      q.queue = [{ id: 'file:C:\\bad.pdf', vector: [1] }];
+
+      await q.flush();
+      expect(processItemsInParallel).toHaveBeenCalledTimes(1);
+      // Not retried before its backoff has elapsed.
+      await advance(5);
+      expect(processItemsInParallel).toHaveBeenCalledTimes(1);
+
+      await advance(60000);
+
+      // First attempt + 3 retries (ANALYSIS.retryAttempts), then dead-lettered.
+      expect(processItemsInParallel).toHaveBeenCalledTimes(4);
+      expect(q._failedItemHandler.failedItems.size).toBe(0);
+      expect(q._failedItemHandler.deadLetterQueue).toHaveLength(1);
+      expect(jest.getTimerCount()).toBe(0);
+    });
+
+    test('shutdown clears the pending retry so nothing runs or stays armed afterwards', async () => {
+      processItemsInParallel.mockImplementationOnce(failAll);
+      const q = createQueue();
+      q.initialized = true;
+      q.queue = [{ id: 'file:C:\\late.pdf', vector: [1] }];
+
+      await q.flush();
+      expect(q._failedRetryTimer).toBeTruthy();
+
+      await q.shutdown();
+      expect(q._failedRetryTimer).toBeNull();
+      expect(jest.getTimerCount()).toBe(0);
+
+      await advance(60000);
+      expect(processItemsInParallel).toHaveBeenCalledTimes(1);
+      // Still recorded for the next start.
+      expect(q._failedItemHandler.failedItems.size).toBe(1);
+    });
   });
 });

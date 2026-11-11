@@ -99,9 +99,10 @@ function CompletePhase() {
       const folderCounts = new Map();
       safeFiles.forEach((file) => {
         if (!file || typeof file !== 'object') return;
-        const destination = file.path || file.newLocation || file.destination || 'Organized';
-        destinations.add(destination);
+        // A destination is a folder. Counting file paths made every file its
+        // own destination.
         const folder = pickOpenableFolder(file);
+        destinations.add(folder ? toCanonicalPath(folder) : file.smartFolder || 'Organized');
         if (folder) {
           folderCounts.set(folder, (folderCounts.get(folder) || 0) + 1);
         }
@@ -244,9 +245,9 @@ function CompletePhase() {
         >
           <Text variant="lead">
             {totalFiles > 0
-              ? `Your reviewed batch is complete. ${totalFiles} file${
-                  totalFiles !== 1 ? 's' : ''
-                } are now in place.`
+              ? `Your reviewed batch is complete. ${totalFiles} ${
+                  totalFiles === 1 ? 'file is' : 'files are'
+                } now in place.`
               : 'No files were organized in this session.'}
           </Text>
         </motion.div>

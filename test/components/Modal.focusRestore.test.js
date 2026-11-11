@@ -9,7 +9,7 @@
  * of the newly opened dialog.
  */
 import React from 'react';
-import { render, act } from '@testing-library/react';
+import { render, act, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
 
 jest.mock('lucide-react', () => ({
@@ -118,5 +118,58 @@ describe('Modal focus restore', () => {
     });
 
     expect(document.activeElement).toBe(outside);
+  });
+});
+
+describe('Modal focus trap', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+    jest.useRealTimers();
+  });
+
+  function renderWithInertTail() {
+    const utils = render(
+      <Modal isOpen onClose={() => {}} title="Test Modal">
+        <button type="button" data-testid="visible-last">
+          visible
+        </button>
+        <div inert>
+          <button type="button" data-testid="inert-button">
+            hidden
+          </button>
+        </div>
+      </Modal>
+    );
+    act(() => {
+      jest.advanceTimersByTime(60);
+    });
+    return utils;
+  }
+
+  test('Shift+Tab from the first control wraps to the last control outside inert content', () => {
+    const utils = renderWithInertTail();
+    const first = utils.getByTestId('icon-x').closest('button');
+    first.focus();
+
+    fireEvent.keyDown(document, { key: 'Tab', shiftKey: true });
+
+    expect(document.activeElement).toBe(utils.getByTestId('visible-last'));
+  });
+
+  test('Tab from the last control outside inert content wraps to the first control', () => {
+    const utils = renderWithInertTail();
+    const first = utils.getByTestId('icon-x').closest('button');
+    utils.getByTestId('visible-last').focus();
+
+    const notPrevented = fireEvent.keyDown(document, { key: 'Tab' });
+
+    expect(notPrevented).toBe(false);
+    expect(document.activeElement).toBe(first);
   });
 });

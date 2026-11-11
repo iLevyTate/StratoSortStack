@@ -289,7 +289,7 @@ export function useFileSelection(files) {
 
 /**
  * Hook for bulk operations
- * @param {{ selectedFiles: any[], editingFiles: Record<string, any>, setEditingFiles: Function, setSelectedFiles: Function, addNotification: Function }} params
+ * @param {{ selectedFiles: any[], editingFiles: Record<string, any>, setEditingFiles: Function, setSelectedFiles: Function, addNotification: Function, onEditChange?: Function, onBulkEditChange?: Function }} params
  * @returns {Record<string, any>} Bulk operation state and handlers
  */
 export function useBulkOperations({
@@ -297,7 +297,9 @@ export function useBulkOperations({
   editingFiles,
   setEditingFiles,
   setSelectedFiles,
-  addNotification
+  addNotification,
+  onEditChange,
+  onBulkEditChange
 }) {
   const [bulkEditMode, setBulkEditMode] = useState(false);
   const [bulkCategory, setBulkCategory] = useState('');
@@ -306,6 +308,8 @@ export function useBulkOperations({
   const editingFilesRef = useRef(editingFiles);
   const bulkCategoryRef = useRef(bulkCategory);
   const addNotificationRef = useRef(addNotification);
+  const onEditChangeRef = useRef(onEditChange);
+  const onBulkEditChangeRef = useRef(onBulkEditChange);
 
   // Keep refs in sync with latest values
   useEffect(() => {
@@ -320,6 +324,10 @@ export function useBulkOperations({
   useEffect(() => {
     addNotificationRef.current = addNotification;
   }, [addNotification]);
+  useEffect(() => {
+    onEditChangeRef.current = onEditChange;
+    onBulkEditChangeRef.current = onBulkEditChange;
+  }, [onEditChange, onBulkEditChange]);
 
   // Debounced bulk category change ref
   const debouncedBulkCategoryChangeRef = useRef(null);
@@ -340,10 +348,24 @@ export function useBulkOperations({
         newEdits[i] = { ...existingEdit, category };
       });
       setEditingFiles((/** @type {any} */ prev) => ({ ...prev, ...newEdits }));
+      // Save the choice the way a single-card edit does. The card edit state
+      // alone is dropped when Organize remounts or the file is re-analyzed.
+      const persistEdit = onEditChangeRef.current;
+      const persistBulkEdit = onBulkEditChangeRef.current;
+      if (typeof persistBulkEdit === 'function') {
+        // One call for the whole selection; a call per file costs a store
+        // update per file.
+        persistBulkEdit([...selected], 'category', category);
+      } else if (typeof persistEdit === 'function') {
+        selected.forEach((/** @type {any} */ key) => persistEdit(key, 'category', category));
+      }
       setBulkEditMode(false);
       setBulkCategory('');
       setSelectedFiles(new Set());
-      notify(`Applied category "${category}" to ${selected.size} files`, 'success');
+      notify(
+        `Applied category "${category}" to ${selected.size} ${selected.size === 1 ? 'file' : 'files'}`,
+        'success'
+      );
     }, 300);
 
     return () => {

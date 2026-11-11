@@ -58,7 +58,7 @@ test.describe('Analysis Flow - Discover Phase', () => {
   let discoverPage;
 
   test.beforeEach(async () => {
-    const result = await launchApp();
+    const result = await launchApp({ localModels: true });
     app = result.app;
     window = result.window;
     await waitForAppReady(window);
@@ -106,7 +106,10 @@ test.describe('Analysis Flow - Discover Phase', () => {
 
       const modelReady = await waitForLoadedTextModel(window, { timeoutMs: 120_000 });
       if (!modelReady) {
-        test.skip(true, 'No text LLM loaded; skipping live analysis output assertions.');
+        test.skip(
+          true,
+          'No text model in the profile: set STRATOSORT_E2E_MODELS_DIR to a folder of .gguf models.'
+        );
       }
 
       const analysis = normalizeAnalysisPayload(result.result);

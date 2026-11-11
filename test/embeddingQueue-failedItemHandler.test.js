@@ -306,6 +306,38 @@ describe('Embedding Queue Failed Item Handler', () => {
     });
   });
 
+  describe('getNextRetryDelay', () => {
+    const createHandler = () =>
+      createFailedItemHandler({
+        itemMaxRetries: 3,
+        maxDeadLetterSize: 100,
+        failedItemsPath: '/path/failed.json',
+        deadLetterPath: '/path/dlq.json'
+      });
+
+    test('returns null when no failed item is waiting', () => {
+      expect(createHandler().getNextRetryDelay([])).toBeNull();
+    });
+
+    test('returns the time left on the earliest backoff, and 0 once it is due', () => {
+      const handler = createHandler();
+      handler.failedItems.set('second', { item: { id: 'second' }, retryCount: 2, lastAttempt: 0 });
+      handler.failedItems.set('first', { item: { id: 'first' }, retryCount: 1, lastAttempt: 0 });
+
+      // Backoff is 100 ms for the first failure and 200 ms for the second.
+      expect(handler.getNextRetryDelay([], 40)).toBe(60);
+      expect(handler.getNextRetryDelay([], 5000)).toBe(0);
+    });
+
+    test('ignores items already back in the queue and entries with no usable timestamp', () => {
+      const handler = createHandler();
+      handler.failedItems.set('queued', { item: { id: 'queued' }, retryCount: 1, lastAttempt: 0 });
+      handler.failedItems.set('broken', { item: { id: 'broken' }, retryCount: 1 });
+
+      expect(handler.getNextRetryDelay([{ id: 'queued' }], 5000)).toBeNull();
+    });
+  });
+
   describe('getDeadLetterItems', () => {
     test('returns dead letter items', () => {
       const handler = createFailedItemHandler({

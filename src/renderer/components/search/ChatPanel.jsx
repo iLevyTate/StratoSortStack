@@ -274,18 +274,23 @@ function stripUnresolvedCitations(text, sources) {
 }
 
 function getAssistantDisplayText(message) {
-  if (typeof message?.text === 'string' && message.text.trim()) {
-    // Streaming path: the finished message swaps `.text` for the structured,
-    // source-reconciled answer, so this branch only renders mid-stream text.
-    return stripUnresolvedCitations(
-      sanitizeAnswerText(message.text, message.sources),
-      message.sources
-    );
-  }
+  const hasText = typeof message?.text === 'string' && message.text.trim();
+  // A finished message renders its structured, source-reconciled answer. A
+  // message reopened from history still carries `.text` (the prompt-memory
+  // string, with model text and a "[Referenced: ...]" line), so `.text` is
+  // shown only mid-stream or when there is no structured answer.
+  const structuredText =
+    hasText && message.isStreaming
+      ? ''
+      : getPrimaryAnswerItems(message)
+          .map((item) => item.text)
+          .join('\n\n');
+  if (structuredText || !hasText) return structuredText;
 
-  return getPrimaryAnswerItems(message)
-    .map((item) => item.text)
-    .join('\n\n');
+  return stripUnresolvedCitations(
+    sanitizeAnswerText(message.text, message.sources),
+    message.sources
+  );
 }
 
 const LONG_THREAD_MESSAGE_THRESHOLD = 45;

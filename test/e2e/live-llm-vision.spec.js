@@ -2,6 +2,8 @@
  * @live-llm — Vision model analysis on a real image fixture.
  *
  * Run: npm run test:e2e:live-llm -- test/e2e/live-llm-vision.spec.js
+ * with STRATOSORT_E2E_MODELS_DIR set to a folder of .gguf models; without it
+ * the isolated profile has no models and the spec skips.
  */
 
 const { test, expect } = require('@playwright/test');
@@ -21,7 +23,7 @@ test.describe('@live-llm Vision image analysis', () => {
   let window;
 
   test.beforeAll(async () => {
-    const result = await launchApp();
+    const result = await launchApp({ localModels: true });
     app = result.app;
     window = result.window;
     await waitForAppReady(window);
@@ -38,7 +40,7 @@ test.describe('@live-llm Vision image analysis', () => {
     if (!visionReady) {
       test.skip(
         true,
-        'No vision model loaded; @live-llm vision requires LLaVA (or configured vision model).'
+        'No vision model in the profile: set STRATOSORT_E2E_MODELS_DIR to a folder of .gguf models.'
       );
     }
 

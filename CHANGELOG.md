@@ -12,6 +12,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [5.2.0] - 2026-11-10
+
 Cloud analysis now covers audio and video, and video frames are sent only with your consent and the
 "Describe video keyframes" setting. When the disk fills up, the app says so and stops analyzing
 until it can save again. Exact duplicates are found without a manual step, and Find Duplicates can
@@ -521,6 +523,80 @@ Changes you will notice:
   nothing else is left to unload.
 - **Whisper runs on the CPU while the text model is still being loaded** onto a GPU that cannot hold
   both.
+- **A slow move in Organize is no longer reported as failed while it still finishes.** A move to
+  another drive that took longer than 30 seconds was marked failed, but the file moved anyway, with
+  no undo entry and stale search paths. The move now runs to its end, and Stop cancels a cross-drive
+  move before the copy is published. If the drive has stopped answering, Stop ends the batch after
+  15 seconds; should the move go through later, the file is put back.
+- **An undo that can never work no longer blocks the ones before it.** When the file was deleted or
+  moved outside the app (or the backup of a deleted file is gone), the entry is removed from history
+  and the message says so. A file on a drive that is unplugged or ejected keeps its entry. Undo and
+  redo errors now carry their reason to the screen.
+- **Feedback notes no longer raise Organize confidence on their own.** With any note saved, a 69%
+  match could be shown and auto-organized as 76%, because the ranking score was written into the
+  confidence. A note now changes confidence only for the folders it is about.
+- **A file moved onto a path that an earlier, deleted file used keeps its own search entry** instead
+  of answering with the old file's content.
+- **Organize: smaller fixes.** Clicking an Organize notification focuses the file again; a bulk
+  category change is saved; "Done! Organized N" and the Complete screen count the files and folders
+  that were really used; the progress highlight follows a renamed file; counts of one read "1 file",
+  not "1 files".
+- **Smart folders on a network share (`\\server\share\…`) can be organized.** The paths were refused
+  before they reached the mover. Device paths and administrative shares (`C$`) stay refused.
+- **A question, search or description that mentions a Windows path is no longer blanked** before it
+  is sent (for example "What is in D:\Docs?").
+- **Graph preferences survive a session that expired**, and the "session expired" notice shows on
+  whichever screen opens first.
+- **Several recordings analyzed one by one no longer fail with "busy";** they wait their turn.
+- **Model downloads.** A download whose connection closes early fails and resumes instead of
+  hanging. A vision model whose image projector did not download is reported with a warning, not as
+  installed. When "Change & rebuild now" fails, Settings goes back to the previous embedding model,
+  as the app already had.
+- **A timed-out image no longer restarts the vision runtime under another image** that is being
+  analyzed at the same time; images go to the runtime one at a time.
+- **Analysis results.** The filename fallback no longer picks a folder because its description
+  contains the extension's letters inside a word ("ai" in "email"). Changing the organization
+  instructions re-analyzes files instead of returning the cached answer. Archives that cannot be
+  listed get keywords, and `.tgz` and `.bz2` count as archives. A document confidence the model gave
+  as a fraction (0.9) is stored as 90%, not 1%.
+- **Smart-folder watcher.** A file the app itself moved out of a watched folder keeps its analysis
+  history. A file renamed in Explorer keeps its analysis instead of being analyzed again. Turning
+  the watcher back on while it is still stopping leaves it on.
+- **Quitting twice, or closing the window during shutdown, no longer ends the app before cleanup is
+  done.**
+- **"Update ready" stays after a later update check fails.**
+- **Search window.** The Timeline list fills the window instead of staying 400 px tall, and the
+  hidden Atlas tab is no longer reachable with the Tab key.
+- **Organizing many or large files to another drive no longer stops after five minutes.** The batch
+  was cut off, a timeout was shown and the files already moved could be moved back. A batch that is
+  still moving files now runs until it is done or you press Stop.
+- **A failed settings read can no longer replace your saved settings with the defaults.** Settings
+  now says the read failed and offers Try again; nothing is saved until the real settings have
+  loaded.
+- **Chat.** Dragging files or folders onto the Document scope panel adds them, and says so when
+  nothing could be added. A reopened chat shows each answer as it first appeared. Retry after a
+  failed request saves the question with the answer. Chats scoped to more than 200 documents are
+  saved and keep their memory.
+- **Files whose search indexing hit a temporary error are retried on their own** after a short wait,
+  also after a restart, instead of waiting until another file is analyzed.
+- **Analysis history no longer mixes up two files that used the same path.** Analyzing a new file
+  where an organized file used to be, or moving or deleting a file from there, no longer removes or
+  re-points the organized file's history.
+- **Setup wizard.** No false "Required model downloads stopped" right after clicking Download. When
+  the AI engine cannot start, the wizard says so with the reason instead of listing installed models
+  as missing. An image model whose projector file did not download is shown as failed, and the retry
+  fetches (and Cancel stops) only that file.
+- **Dropping a folder whose files are already in the Discover queue no longer analyzes them again;**
+  only new files are added.
+- **Recordings queued behind one that timed out now really wait their turn.** The earlier fix did
+  not take effect in the packaged app.
+- **A setting changed a moment ago no longer reads back as its old value.** While the app was busy
+  (most often just after launch), a change such as a newly chosen model could show the previous
+  value for a couple of seconds, and a second change made in that time could save the old value
+  back.
+- **A setting changed in the first moments after an update is kept.** On the first launch after an
+  update the app brings the settings file up to date; a change made while that was still running
+  could be overwritten by it and go back to the old value.
 
 ## [5.1.2] - 2026-11-01
 
@@ -1326,7 +1402,8 @@ notes.
 Note: versions before 5.0.0 were released from predecessor repositories whose tags are not part of
 this repository's history, so they are listed without links.
 
-[Unreleased]: https://github.com/iLevyTate/StratoSortStack/compare/v5.1.2...HEAD
+[Unreleased]: https://github.com/iLevyTate/StratoSortStack/compare/v5.2.0...HEAD
+[5.2.0]: https://github.com/iLevyTate/StratoSortStack/compare/v5.1.2...v5.2.0
 [5.1.2]: https://github.com/iLevyTate/StratoSortStack/compare/v5.1.1...v5.1.2
 [5.1.1]: https://github.com/iLevyTate/StratoSortStack/compare/v5.1.0...v5.1.1
 [5.1.0]: https://github.com/iLevyTate/StratoSortStack/compare/v5.0.0...v5.1.0

@@ -38,11 +38,36 @@ const STEP_TITLES = {
   downloading: 'Download',
   complete: 'Finish'
 };
+const DOWNLOADS_STOPPED_MESSAGE = 'Required model downloads stopped. Please retry downloads.';
+// Main says "started" before the download is in its status list (it checks
+// disk space and any partial file first), so for this long after a request an
+// empty list does not mean the download stopped.
+const DOWNLOAD_START_GRACE_MS = 3000;
+const PROJECTOR_MISSING_MESSAGE =
+  'The model downloaded, but its image projector file did not download. Images cannot be analyzed until it does. Retry to fetch it.';
 const CHECKING_STATUS_MESSAGES = [
   'Detecting available local models...',
   'Checking active background downloads...',
   'Preparing safe defaults for your setup...'
 ];
+
+/**
+ * The model list answer when the AI engine failed to start: main sends an
+ * empty list plus the reason. That list says nothing about what is on disk.
+ * @param {any} modelsResponse
+ * @returns {string|null} the reason, or null when the list can be trusted
+ */
+function getModelListError(modelsResponse) {
+  if (!modelsResponse || Array.isArray(modelsResponse)) return null;
+  const { error } = modelsResponse;
+  if (!error) return null;
+  return toErrorMessage(error, 'Unknown error');
+}
+
+/** @param {string} detail */
+function describeEngineFailure(detail) {
+  return `The AI engine could not start, so installed models cannot be checked. Press Refresh to try again, or continue with limited AI. Details: ${detail}`;
+}
 
 function getModelTotalBytes(filename) {
   const model = getModel(filename);
@@ -208,6 +233,15 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
   // first one was still enumerating models. This ref flips immediately on
   // entry and resets in `finally`.
   const startDownloadsInFlightRef = useRef(false);
+  // When main last acknowledged a download request (see DOWNLOAD_START_GRACE_MS).
+  const lastDownloadAckAtRef = useRef(0);
+  // Vision models whose GGUF arrived without its projector (mmproj) file:
+  // model filename -> projector filename (null when unknown). Main lists the
+  // GGUF as installed, so the list alone must not mark these ready.
+  const missingProjectorRef = useRef(/** @type {Map<string, string|null>} */ (new Map()));
+  // True when the engine failed to start and the model list is therefore
+  // empty for a reason other than "nothing is installed".
+  const [modelListUnknown, setModelListUnknown] = useState(false);
   // Embedding model the engine is configured with when the wizard loaded,
   // and the pending "switch and rebuild?" question, if any (audit row ML-08).
   const currentEmbeddingModelRef = useRef(null);
@@ -250,11 +284,32 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
     }));
   }, []);
 
+  // Installed names from main, minus vision models still waiting for their
+  // projector. A list that names the projector settles the matter.
+  const withoutMissingProjector = useCallback((names) => {
+    const missing = missingProjectorRef.current;
+    if (missing.size === 0) return names;
+    const listed = new Set(names);
+    for (const [model, projector] of missing) {
+      if (projector && listed.has(projector)) missing.delete(model);
+    }
+    return names.filter((name) => !missing.has(name));
+  }, []);
+
+  const downloadWasJustRequested = useCallback(
+    () =>
+      startDownloadsInFlightRef.current ||
+      Date.now() - lastDownloadAckAtRef.current < DOWNLOAD_START_GRACE_MS,
+    []
+  );
+
   const handleCancelDownload = useCallback(
     async (filename) => {
       if (!filename || !window?.electronAPI?.llama?.cancelDownload) return;
       try {
-        const result = await window.electronAPI.llama.cancelDownload(filename);
+        // A projector-only retry downloads the projector file, not the model.
+        const target = missingProjectorRef.current.get(filename) || filename;
+        const result = await window.electronAPI.llama.cancelDownload(target);
         if (result?.success !== false) {
           updateDownloadState(filename, { status: 'cancelled', error: null });
         }
@@ -438,7 +493,17 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
         'AI system check'
       );
       if (!isMountedRef.current) return;
-      const config = configResponse?.config || configResponse || {};
+      // A failed engine answers getConfig with an error envelope, not a config.
+      const configFailed = configResponse?.success === false;
+      const config = configFailed ? {} : configResponse?.config || configResponse || {};
+      const modelListError = getModelListError(modelsResponse);
+      const engineError =
+        modelListError ||
+        (configFailed ? toErrorMessage(configResponse?.error, 'Unknown error') : null);
+      setModelListUnknown(Boolean(modelListError));
+      if (engineError) {
+        setInitError(describeEngineFailure(engineError));
+      }
 
       const suggestedSelection = modelsResponse?.selected || {};
       currentEmbeddingModelRef.current =
@@ -459,7 +524,9 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
         : Array.isArray(modelsResponse?.models)
           ? modelsResponse.models
           : [];
-      const available = modelList.map((m) => m.name || m.filename || m).filter(Boolean);
+      const available = withoutMissingProjector(
+        modelList.map((m) => m.name || m.filename || m).filter(Boolean)
+      );
       const availableNow = new Set(available);
 
       setSelectedProfile(profileKey);
@@ -533,7 +600,10 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
         .filter(Boolean)
         .filter((name) => !availableNow.has(name));
 
-      if (missingSelected.length === 0) {
+      if (modelListError) {
+        // Nothing is known about what is installed; the reason is on screen.
+        setStep('select');
+      } else if (missingSelected.length === 0) {
         // All profile models already on disk: still apply the profile so
         // LlamaService config matches the selection. Skipping this left the
         // wizard "complete" while the engine kept stale model settings.
@@ -553,6 +623,7 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
     } catch (error) {
       if (!isMountedRef.current) return;
       applyFallbackSelection();
+      setModelListUnknown(false);
       if (
         typeof error?.message === 'string' &&
         error.message.startsWith('AI system check timed out')
@@ -569,7 +640,7 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
         setIsRefreshing(false);
       }
     }
-  }, [applyProfileConfig]);
+  }, [applyProfileConfig, withoutMissingProjector]);
 
   useEffect(() => {
     void checkSystem();
@@ -627,6 +698,53 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
       const modelName = data.model || payload.model || payload.filename;
       if (!modelName) return;
 
+      // A projector fetched on its own (the retry for a vision model that
+      // arrived without one) reports under its own filename; the row on
+      // screen belongs to the vision model.
+      const missingProjector = missingProjectorRef.current;
+      const projectorOwner = [...missingProjector.keys()].find(
+        (owner) => missingProjector.get(owner) === modelName
+      );
+      if (projectorOwner) {
+        if (eventType === 'model-download') {
+          updateDownloadState(projectorOwner, {
+            status: 'downloading',
+            percent: payload.percent ?? payload.percentage ?? 0,
+            downloadedBytes: payload.downloadedBytes,
+            totalBytes: payload.totalBytes,
+            speedBps: payload.speedBps,
+            etaSeconds: payload.etaSeconds,
+            error: null
+          });
+        } else if (eventType === 'model-download-complete') {
+          missingProjector.delete(projectorOwner);
+          const ownerBytes = getModelTotalBytes(projectorOwner);
+          updateDownloadState(projectorOwner, {
+            status: 'ready',
+            percent: 100,
+            downloadedBytes: ownerBytes,
+            totalBytes: ownerBytes,
+            speedBps: 0,
+            etaSeconds: 0,
+            error: null
+          });
+          setAvailableModels((prev) => Array.from(new Set([...(prev || []), projectorOwner])));
+        } else if (eventType === 'model-download-error') {
+          setDownloadState((prev) => {
+            if (prev[projectorOwner]?.status === 'cancelled') return prev;
+            return {
+              ...prev,
+              [projectorOwner]: {
+                ...(prev[projectorOwner] || {}),
+                status: 'failed',
+                error: PROJECTOR_MISSING_MESSAGE
+              }
+            };
+          });
+        }
+        return;
+      }
+
       if (eventType === 'model-download') {
         updateDownloadState(modelName, {
           status: 'downloading',
@@ -640,6 +758,24 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
       }
 
       if (eventType === 'model-download-complete') {
+        // Main reports a vision model whose projector failed to download as
+        // complete but degraded (success: false). The GGUF alone cannot
+        // analyze images, so the model is not ready.
+        if (data.degraded === true || payload.degraded === true) {
+          missingProjector.set(
+            modelName,
+            payload.companion?.name || getModel(modelName)?.clipModel?.name || null
+          );
+          updateDownloadState(modelName, {
+            status: 'failed',
+            speedBps: 0,
+            etaSeconds: 0,
+            error: PROJECTOR_MISSING_MESSAGE
+          });
+          setAvailableModels((prev) => (prev || []).filter((name) => name !== modelName));
+          return;
+        }
+        missingProjector.delete(modelName);
         const totalBytes =
           typeof payload.totalBytes === 'number' && payload.totalBytes > 0
             ? payload.totalBytes
@@ -713,8 +849,11 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
           : Array.isArray(modelsResponse?.models)
             ? modelsResponse.models
             : [];
-        const latestAvailable = modelList.map((m) => m.name || m.filename || m).filter(Boolean);
+        const latestAvailable = withoutMissingProjector(
+          modelList.map((m) => m.name || m.filename || m).filter(Boolean)
+        );
         const latestAvailableSet = new Set(latestAvailable);
+        const modelListError = getModelListError(modelsResponse);
         const hasReliableDownloadStatus = Array.isArray(downloadStatus?.status?.downloads);
         const activeDownloads = hasReliableDownloadStatus ? downloadStatus.status.downloads : [];
 
@@ -750,6 +889,17 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
           return next;
         });
 
+        if (modelListError) {
+          // The engine failed to start, so the empty list is not "nothing
+          // installed" and finished downloads are not "stopped". Say why
+          // setup cannot finish and leave the rows to the download events.
+          const engineMessage = describeEngineFailure(modelListError);
+          setInitError((prev) =>
+            !prev || prev === DOWNLOADS_STOPPED_MESSAGE ? engineMessage : prev
+          );
+          return;
+        }
+
         const selectedMissing = Object.values(selectedModels)
           .filter(Boolean)
           .filter((name) => !latestAvailableSet.has(name));
@@ -770,11 +920,11 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
         if (
           requiredMissing.length > 0 &&
           hasReliableDownloadStatus &&
-          activeDownloads.length === 0
+          activeDownloads.length === 0 &&
+          // A request main has only just acknowledged is not in its list yet.
+          !downloadWasJustRequested()
         ) {
-          setInitError(
-            (prev) => prev || 'Required model downloads stopped. Please retry downloads.'
-          );
+          setInitError((prev) => prev || DOWNLOADS_STOPPED_MESSAGE);
           setStep('select');
         }
       } catch {
@@ -791,7 +941,13 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [step, selectedModels, applySelectedProfileConfig]);
+  }, [
+    step,
+    selectedModels,
+    applySelectedProfileConfig,
+    withoutMissingProjector,
+    downloadWasJustRequested
+  ]);
 
   async function startDownloads() {
     // Synchronous double-trigger guard. Even with `disabled` on the button
@@ -811,9 +967,10 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
   }
 
   async function runStartDownloads() {
+    const missingProjector = missingProjectorRef.current;
     const modelsToDownload = Object.values(selectedModels)
       .filter(Boolean)
-      .filter((modelName) => !availableSet.has(modelName));
+      .filter((modelName) => !availableSet.has(modelName) || missingProjector.has(modelName));
 
     if (modelsToDownload.length === 0) {
       const applied = await applySelectedProfileConfig();
@@ -829,14 +986,22 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
     }
 
     userInitiatedDownloadsRef.current = true;
+    // A new attempt replaces the verdict on the last one.
+    setInitError((prev) => (prev === DOWNLOADS_STOPPED_MESSAGE ? null : prev));
     setStep('downloading');
 
-    const nextAvailable = new Set(availableSet);
+    const nextAvailable = new Set([...availableSet].filter((name) => !missingProjector.has(name)));
+    let acknowledged = 0;
     for (const filename of modelsToDownload) {
       updateDownloadState(filename, { status: 'downloading', percent: 0, error: null });
       try {
-        const result = await window.electronAPI.llama.downloadModel(filename);
+        // The GGUF of a vision model that only lacks its projector is already
+        // on disk: fetch the projector alone instead of the whole model again.
+        const target = missingProjector.get(filename) || filename;
+        const result = await window.electronAPI.llama.downloadModel(target);
         if (result?.success) {
+          acknowledged += 1;
+          lastDownloadAckAtRef.current = Date.now();
           // downloadModel() acknowledges that a download has started; it does not
           // guarantee the model is installed yet. We only mark ready when the
           // model appears in getModels() or a completion event arrives.
@@ -859,6 +1024,7 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
     // This avoids treating "alreadyInProgress" downloads as fully installed.
     let activeDownloads = [];
     let hasReliableDownloadStatus = false;
+    let modelListError = null;
     try {
       const [modelsResponse, downloadStatus] = await Promise.all([
         window.electronAPI.llama.getModels(),
@@ -875,7 +1041,10 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
         : Array.isArray(modelsResponse?.models)
           ? modelsResponse.models
           : [];
-      const latestAvailable = modelList.map((m) => m.name || m.filename || m).filter(Boolean);
+      const latestAvailable = withoutMissingProjector(
+        modelList.map((m) => m.name || m.filename || m).filter(Boolean)
+      );
+      modelListError = getModelListError(modelsResponse);
 
       latestAvailable.forEach((name) => nextAvailable.add(name));
       if (latestAvailable.length > 0) {
@@ -912,13 +1081,15 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
     if (selectedMissing.length === 0 && configApplied) {
       setStep('complete');
     } else {
-      setStep(
-        hasReliableDownloadStatus
-          ? activeDownloads.length > 0
-            ? 'downloading'
-            : 'select'
-          : 'downloading'
-      );
+      // An empty status list right after main acknowledged a request only
+      // means the download is not registered yet; with a failed engine the
+      // model list cannot say what is missing either. The poll takes over.
+      const statusSaysNothingRuns =
+        hasReliableDownloadStatus &&
+        activeDownloads.length === 0 &&
+        acknowledged === 0 &&
+        !modelListError;
+      setStep(statusSaysNothingRuns ? 'select' : 'downloading');
     }
   }
 
@@ -1134,7 +1305,11 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
             selected={selectedModels.embedding}
             recommendations={recommendations}
             onChange={(f) => toggleModel('embedding', f)}
-            status={downloadState[selectedModels.embedding]?.status}
+            status={
+              modelListUnknown && !downloadState[selectedModels.embedding]?.status
+                ? 'unknown'
+                : downloadState[selectedModels.embedding]?.status
+            }
             error={downloadState[selectedModels.embedding]?.error}
             disabled={!hasApi || isRefreshing}
             required
@@ -1148,7 +1323,11 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
             selected={selectedModels.text}
             recommendations={recommendations}
             onChange={(f) => toggleModel('text', f)}
-            status={downloadState[selectedModels.text]?.status}
+            status={
+              modelListUnknown && !downloadState[selectedModels.text]?.status
+                ? 'unknown'
+                : downloadState[selectedModels.text]?.status
+            }
             error={downloadState[selectedModels.text]?.error}
             disabled={!hasApi || isRefreshing}
             required
@@ -1162,7 +1341,11 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
             selected={selectedModels.vision}
             recommendations={recommendations}
             onChange={(f) => toggleModel('vision', f)}
-            status={downloadState[selectedModels.vision]?.status}
+            status={
+              modelListUnknown && !downloadState[selectedModels.vision]?.status
+                ? 'unknown'
+                : downloadState[selectedModels.vision]?.status
+            }
             error={downloadState[selectedModels.vision]?.error}
             disabled={!hasApi || isRefreshing}
             optional
@@ -1191,7 +1374,7 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
           </div>
         </div>
 
-        {requiredModelsMissing.length > 0 && (
+        {requiredModelsMissing.length > 0 && !modelListUnknown && (
           <AlertBox variant="warning" className="mb-4 py-2 px-3">
             Required models are missing. Download them to enable AI features.
           </AlertBox>
@@ -1202,7 +1385,15 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
             onClick={startDownloads}
             variant="primary"
             className="flex-1"
-            disabled={!selectedModels.embedding || !selectedModels.text || !hasApi || isRefreshing}
+            disabled={
+              !selectedModels.embedding ||
+              !selectedModels.text ||
+              !hasApi ||
+              isRefreshing ||
+              // Downloading again what may already be on disk helps nobody
+              // while the engine that would load it cannot start.
+              modelListUnknown
+            }
           >
             <Download className="w-4 h-4" />
             Download models
@@ -1542,7 +1733,13 @@ function ModelSelector({
   const displayName = modelInfo?.displayName || filename;
   const modelSize = getModelSize(filename);
   const isInstalled = status === 'ready' || status === 'complete';
-  const statusLabel = isInstalled ? 'Installed' : status === 'failed' ? 'Failed' : 'Not installed';
+  const statusLabel = isInstalled
+    ? 'Installed'
+    : status === 'failed'
+      ? 'Failed'
+      : status === 'unknown'
+        ? 'Not checked'
+        : 'Not installed';
   const statusClass = isInstalled
     ? 'bg-stratosort-success/10 text-stratosort-success'
     : status === 'failed'

@@ -362,14 +362,21 @@ function notifyRenderer(payload, getMainWindow) {
  */
 function handleError(err, getMainWindow) {
   logger.error('[UPDATER] Error:', err);
-  hasDownloadedUpdate = false;
-  notifyRenderer(
-    {
-      status: 'error',
-      error: err?.message || 'Update error'
-    },
-    getMainWindow
-  );
+  // A failed check does not discard an installer that already finished
+  // downloading: electron-updater still installs it on quit. Keep the flag
+  // (lifecycle reads it at exit) and skip the error status, which would hide
+  // the renderer's "Update ready" button.
+  if (hasDownloadedUpdate) {
+    logger.info('[UPDATER] Keeping the downloaded update pending after the error');
+  } else {
+    notifyRenderer(
+      {
+        status: 'error',
+        error: err?.message || 'Update error'
+      },
+      getMainWindow
+    );
+  }
   // Surface auto-update failures (network, signature mismatch, manifest
   // fetch failure, missing latest*.yml) on the DegradedStateBanner so a
   // user who is not actively looking at the update UI can still tell that
@@ -556,8 +563,7 @@ async function initializeAutoUpdater(isDev, getMainWindow) {
           // the check failed. Previously we just logged, which meant the
           // UpdateIndicator UI sat in "checking" forever on network
           // outages / 404s / feed timeouts and the user had no signal the
-          // check had given up. handleError also resets
-          // `hasDownloadedUpdate` and emits a structured payload via
+          // check had given up. handleError emits a structured payload via
           // IPC_EVENTS.APP_UPDATE that the renderer already understands.
           handleError(e, getMainWindow);
         } finally {
@@ -644,7 +650,8 @@ async function checkForUpdates() {
   }
 
   try {
-    hasDownloadedUpdate = false;
+    // hasDownloadedUpdate is left alone: update-available / update-not-available
+    // reset it when the check succeeds, and a failed check changes nothing.
     applyCustomUpdateFeedIfConfigured();
     await getAutoUpdater().checkForUpdates();
     return { success: true };

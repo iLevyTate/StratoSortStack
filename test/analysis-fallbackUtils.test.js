@@ -101,6 +101,8 @@ describe('Analysis Fallback Utils', () => {
 
       test('returns Archives for archive files', () => {
         expect(getIntelligentCategory('files.zip', '.zip')).toBe('Archives');
+        expect(getIntelligentCategory('files.tgz', '.tgz')).toBe('Archives');
+        expect(getIntelligentCategory('files.bz2', '.bz2')).toBe('Archives');
       });
 
       test('returns Documents for unknown extensions', () => {
@@ -190,6 +192,50 @@ describe('Analysis Fallback Utils', () => {
         // "financial" pattern with a real "Financial" folder must resolve there.
         const folders = [{ name: 'Financial' }, { name: 'Documents' }, { name: 'Uncategorized' }];
         expect(getIntelligentCategory('invoice_2024.pdf', '.pdf', folders)).toBe('Financial');
+      });
+
+      describe('an extension listed in a folder description', () => {
+        test('letters inside a longer word are not the extension', () => {
+          // "ai" is in "email", "details" and "training"; "mov" is in "removed".
+          expect(
+            getIntelligentCategory('logo.ai', '.ai', [
+              { name: 'Correspondence', description: 'Email details and training' }
+            ])
+          ).not.toBe('Correspondence');
+          expect(
+            getIntelligentCategory('clip.mov', '.mov', [
+              { name: 'Cleanup', description: 'Removed items' }
+            ])
+          ).not.toBe('Cleanup');
+          expect(
+            getIntelligentCategory('run.sh', '.sh', [
+              { name: 'Money', description: 'Shipping and cash' }
+            ])
+          ).not.toBe('Money');
+        });
+
+        test('the extension as its own word still matches, with or without the dot', () => {
+          expect(
+            getIntelligentCategory('part.xyz', '.xyz', [
+              { name: 'Lab', description: 'Instrument output: .xyz, .abc' }
+            ])
+          ).toBe('Lab');
+          expect(
+            getIntelligentCategory('part.xyz', '.xyz', [
+              { name: 'Lab', description: 'xyz files from the instrument' }
+            ])
+          ).toBe('Lab');
+          expect(
+            getIntelligentCategory('part.xyz', '.xyz', [
+              { name: 'Lab', description: 'Everything saved as XYZ.' }
+            ])
+          ).toBe('Lab');
+          expect(
+            getIntelligentCategory('main.c++', '.c++', [
+              { name: 'Code', description: 'Sources (.c++/.h++)' }
+            ])
+          ).toBe('Code');
+        });
       });
     });
   });

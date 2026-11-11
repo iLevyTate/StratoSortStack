@@ -191,12 +191,13 @@ class UndoRedoService {
       ? normalizedSource.toLowerCase() === normalizedDestination.toLowerCase()
       : normalizedSource === normalizedDestination;
     if (!(await this.fileExists(normalizedSource))) {
-      const missingErr = /** @type {Error & { code?: string }} */ (
+      const missingErr = /** @type {Error & { code?: string, path?: string }} */ (
         new Error(
           `Cannot move: source no longer exists (moved or deleted outside the app): ${normalizedSource}`
         )
       );
       missingErr.code = 'UNDO_SOURCE_MISSING';
+      missingErr.path = normalizedSource;
       throw missingErr;
     }
     if (!isSameFileTarget && (await this.fileExists(normalizedDestination))) {
@@ -1179,8 +1180,122 @@ class UndoRedoService {
       logger.error('[UndoRedoService] Failed to undo action', {
         error: error.message
       });
-      throw new Error(`Failed to undo action: ${error.message}`, { cause: error });
+      // The batch branch above always advances; a single action that can
+      // never be reversed must not hold the cursor either, or every Undo
+      // retries it and nothing older can be undone.
+      if (await this._isPermanentlyIrreversible(error)) {
+        return this._dropIrreversibleAction(action, 'undo', error);
+      }
+      // Keep the code on the wrapper: the IPC layer forwards error.code so
+      // the renderer can tell the user what to do.
+      const wrapped = /** @type {Error & { code?: string }} */ (
+        new Error(`Failed to undo action: ${error.message}`, { cause: error })
+      );
+      if (error?.code) wrapped.code = error.code;
+      throw wrapped;
     }
+  }
+
+  /**
+   * True when a missing file is gone rather than out of reach: the path
+   * itself reports ENOENT while its volume root still answers. An unplugged
+   * or offline drive fails the root probe.
+   * @private
+   * @param {any} filePath
+   * @returns {Promise<boolean>}
+   */
+  async _isGoneForGood(filePath) {
+    if (typeof filePath !== 'string' || !filePath) return false;
+    try {
+      await fs.stat(filePath);
+      return false;
+    } catch (statError) {
+      if (/** @type {any} */ (statError)?.code !== 'ENOENT') return false;
+    }
+    // On macOS and Linux the root is always "/", so probe the mount point of
+    // a removable or network volume instead: an ejected drive leaves no
+    // /Volumes/<name>, and its files must not read as deleted.
+    const mount = filePath.match(
+      /^(\/Volumes\/[^/]+|\/media\/[^/]+\/[^/]+|\/run\/media\/[^/]+\/[^/]+|\/mnt\/[^/]+)\//
+    );
+    try {
+      await fs.access(mount ? mount[1] : path.parse(filePath).root);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Whether a failed single undo/redo can never succeed on a retry: the file
+   * (or the delete backup) it needs no longer exists. An occupied destination
+   * or a changed copy is something the user can fix, and a file on a volume
+   * that is not reachable right now may come back; those keep their entry.
+   * @private
+   * @param {any} error
+   * @returns {Promise<boolean>}
+   */
+  async _isPermanentlyIrreversible(error) {
+    const code = error?.code;
+    if (code !== 'UNDO_SOURCE_MISSING' && code !== 'UNDO_BACKUP_MISSING') return false;
+    // A delete recorded without any backup has nothing to wait for.
+    if (code === 'UNDO_BACKUP_MISSING' && !error.path) return true;
+    return this._isGoneForGood(error.path);
+  }
+
+  /**
+   * Remove an entry that can never be undone or redone, as the trash-only
+   * branch of _doUndo does, and say so: the result names the entry, the
+   * reason and the fact that it left history, so the failure is never silent.
+   * @private
+   * @param {any} action
+   * @param {'undo'|'redo'} direction
+   * @param {any} error
+   */
+  async _dropIrreversibleAction(action, direction, error) {
+    const index = this.actions.indexOf(action);
+    if (index !== -1) {
+      this.actions.splice(index, 1);
+      if (index <= this.currentIndex) this.currentIndex--;
+      this._recalculateMemoryEstimate();
+    }
+    try {
+      await this._saveActionsNow();
+    } catch (saveError) {
+      logger.warn('[UndoRedoService] Could not persist history after dropping an entry', {
+        actionId: action.id,
+        error: /** @type {any} */ (saveError)?.message
+      });
+    }
+    logger.warn(
+      `[UndoRedoService] Entry can never be ${direction === 'undo' ? 'undone' : 'redone'}; removed from history`,
+      {
+        actionId: action.id,
+        type: action.type,
+        description: action.description,
+        code: error.code,
+        error: error.message
+      }
+    );
+    this._notifyStateChanged('remove');
+    const reason =
+      error.code === 'UNDO_BACKUP_MISSING'
+        ? 'the backup of the deleted file is gone'
+        : 'the file was moved or deleted outside the app';
+    return {
+      success: false,
+      code: error.code,
+      removedFromHistory: true,
+      action: {
+        id: action.id,
+        type: action.type,
+        description: action.description,
+        timestamp: action.timestamp
+      },
+      message: `Cannot ${direction} "${action.description}": ${reason}. The entry was removed from history.`,
+      error: error.message,
+      pathMutations: /** @type {Array<{ oldPath: string, newPath: string }>} */ ([])
+    };
   }
 
   /**
@@ -1319,7 +1434,16 @@ class UndoRedoService {
       logger.error('[UndoRedoService] Failed to redo action', {
         error: error.message
       });
-      throw new Error(`Failed to redo action: ${error.message}`, { cause: error });
+      // Same as undo: an entry whose file is gone leaves history, and the
+      // wrapper keeps the code.
+      if (await this._isPermanentlyIrreversible(error)) {
+        return this._dropIrreversibleAction(action, 'redo', error);
+      }
+      const wrapped = /** @type {Error & { code?: string }} */ (
+        new Error(`Failed to redo action: ${error.message}`, { cause: error })
+      );
+      if (error?.code) wrapped.code = error.code;
+      throw wrapped;
     }
   }
 
@@ -1421,11 +1545,15 @@ class UndoRedoService {
         // Previous code didn't persist backup paths immediately, risking data loss on crashes
         // Now we check multiple backup locations and provide detailed error information
         if (!action.data.backupPath) {
-          throw new Error(
-            'Cannot restore deleted file - no backup path was recorded. ' +
-              'File may have been permanently deleted without backup. ' +
-              `Original path: ${action.data.originalPath}`
+          const noBackupErr = /** @type {Error & { code?: string }} */ (
+            new Error(
+              'Cannot restore deleted file - no backup path was recorded. ' +
+                'File may have been permanently deleted without backup. ' +
+                `Original path: ${action.data.originalPath}`
+            )
           );
+          noBackupErr.code = 'UNDO_BACKUP_MISSING';
+          throw noBackupErr;
         }
 
         const backupExists = await this.fileExists(action.data.backupPath);
@@ -1439,13 +1567,18 @@ class UndoRedoService {
             timestamp: action.timestamp
           });
 
-          throw new Error(
-            `Cannot restore deleted file - backup not found at expected location.\n` +
-              `Original file: ${action.data.originalPath}\n` +
-              `Expected backup: ${action.data.backupPath}\n` +
-              `This may indicate the backup was never created, was deleted, or the path is incorrect.\n` +
-              `Action ID: ${action.id}, Timestamp: ${action.timestamp}`
+          const backupErr = /** @type {Error & { code?: string, path?: string }} */ (
+            new Error(
+              `Cannot restore deleted file - backup not found at expected location.\n` +
+                `Original file: ${action.data.originalPath}\n` +
+                `Expected backup: ${action.data.backupPath}\n` +
+                `This may indicate the backup was never created, was deleted, or the path is incorrect.\n` +
+                `Action ID: ${action.id}, Timestamp: ${action.timestamp}`
+            )
           );
+          backupErr.code = 'UNDO_BACKUP_MISSING';
+          backupErr.path = action.data.backupPath;
+          throw backupErr;
         }
 
         // Restore file from backup
@@ -1566,10 +1699,11 @@ class UndoRedoService {
         const copySrc = await this._validateActionPath(action.data.originalPath, 'copy-source');
         const copyDest = await this._validateActionPath(action.data.newPath, 'copy-destination');
         if (!(await this.fileExists(copySrc))) {
-          const missingErr = /** @type {Error & { code?: string }} */ (
+          const missingErr = /** @type {Error & { code?: string, path?: string }} */ (
             new Error(`Cannot redo copy: source no longer exists: ${copySrc}`)
           );
           missingErr.code = 'UNDO_SOURCE_MISSING';
+          missingErr.path = copySrc;
           throw missingErr;
         }
         try {

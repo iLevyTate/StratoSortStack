@@ -874,6 +874,218 @@ describe('useAnalysis', () => {
       await finish();
     });
 
+    // The preload lets one analysis:analyze-media request run per window and
+    // refuses a second while it is pending. This stands in for that lock.
+    describe('recordings on the per-file path', () => {
+      const mediaFiles = (names) => names.map((name) => ({ path: '/rec/' + name, name }));
+      // As the renderer receives it: contextBridge copies an Error's message
+      // and drops the code the preload set on it.
+      const refusal = () =>
+        new Error('IPC Error: Operation already in progress: analysis:analyze-media');
+      const errorCalls = () => mockUpdateFileState.mock.calls.filter((call) => call[1] === 'error');
+      const workers = (count) => {
+        mockElectronAPI.system = {
+          getRecommendedConcurrency: jest
+            .fn()
+            .mockResolvedValue({ success: true, maxConcurrent: count })
+        };
+      };
+
+      beforeEach(() => workers(3));
+
+      afterEach(() => {
+        delete mockElectronAPI.system;
+      });
+
+      const readyPaths = () =>
+        mockUpdateFileState.mock.calls.filter((call) => call[1] === 'ready').map((call) => call[0]);
+
+      test('are analyzed one at a time, none refused as already in progress', async () => {
+        const files = mediaFiles(['a.mp3', 'b.mp3', 'c.mp4']);
+        let inFlight = 0;
+        let mostInFlight = 0;
+        let refused = 0;
+        const releases = [];
+        mockElectronAPI.analysis.batch.mockRejectedValueOnce(new Error('Batch route failed'));
+        mockElectronAPI.files.analyze.mockImplementation(() => {
+          if (inFlight > 0) {
+            refused += 1;
+            return Promise.reject(refusal());
+          }
+          inFlight += 1;
+          mostInFlight = Math.max(mostInFlight, inFlight);
+          return new Promise((resolve) => {
+            releases.push(() => {
+              inFlight -= 1;
+              resolve({ category: 'audio', suggestedName: 'done' });
+            });
+          });
+        });
+        const hook = renderHook(() => useAnalysis(createMockOptions({ selectedFiles: files })));
+
+        let analyzePromise;
+        await act(async () => {
+          analyzePromise = hook.result.current.analyzeFiles(files);
+          await jest.advanceTimersByTimeAsync(50);
+        });
+        for (let turn = 0; turn < files.length; turn += 1) {
+          await act(async () => {
+            releases.shift()?.();
+            await jest.advanceTimersByTimeAsync(50);
+          });
+        }
+        await act(async () => {
+          await jest.advanceTimersByTimeAsync(1000);
+          await analyzePromise;
+        });
+
+        expect(refused).toBe(0);
+        expect(mostInFlight).toBe(1);
+        expect(errorCalls()).toEqual([]);
+        expect(readyPaths().sort()).toEqual(['/rec/a.mp3', '/rec/b.mp3', '/rec/c.mp4']);
+      });
+
+      test('a document is not held back by a recording in progress', async () => {
+        const files = [
+          { path: '/rec/a.mp3', name: 'a.mp3' },
+          { path: '/rec/b.mp3', name: 'b.mp3' },
+          { path: '/rec/notes.txt', name: 'notes.txt' }
+        ];
+        const started = [];
+        mockElectronAPI.analysis.batch.mockRejectedValueOnce(new Error('Batch route failed'));
+        mockElectronAPI.files.analyze.mockImplementation((filePath) => {
+          started.push(filePath);
+          return new Promise(() => {});
+        });
+        const hook = renderHook(() => useAnalysis(createMockOptions({ selectedFiles: files })));
+
+        await act(async () => {
+          hook.result.current.analyzeFiles(files);
+          await jest.advanceTimersByTimeAsync(50);
+        });
+
+        expect(started.sort()).toEqual(['/rec/a.mp3', '/rec/notes.txt']);
+
+        act(() => {
+          hook.result.current.cancelAnalysis();
+        });
+      });
+
+      test('a recording waits for the request of one that timed out to let go', async () => {
+        // The first recording runs past its limit. Its request stays pending
+        // in the preload a little longer, and the next recording is refused
+        // until then.
+        const files = mediaFiles(['long.mp3', 'next.mp3']);
+        let held = false;
+        workers(1);
+        mockElectronAPI.analysis.batch.mockRejectedValueOnce(new Error('Batch route failed'));
+        mockElectronAPI.files.analyze.mockImplementation((filePath) => {
+          if (held) return Promise.reject(refusal());
+          if (filePath === '/rec/long.mp3') {
+            held = true;
+            setTimeout(
+              () => {
+                held = false;
+              },
+              5 * 60 * 1000 + 20 * 1000
+            );
+            return new Promise(() => {});
+          }
+          return Promise.resolve({ category: 'audio', suggestedName: 'done' });
+        });
+        const hook = renderHook(() => useAnalysis(createMockOptions({ selectedFiles: files })));
+
+        let analyzePromise;
+        await act(async () => {
+          analyzePromise = hook.result.current.analyzeFiles(files);
+          await jest.advanceTimersByTimeAsync(50);
+        });
+        for (let step = 0; step < 34; step += 1) {
+          await act(async () => {
+            await jest.advanceTimersByTimeAsync(10 * 1000);
+          });
+        }
+        await act(async () => {
+          await analyzePromise;
+        });
+
+        expect(errorCalls().map((call) => call[0])).toEqual(['/rec/long.mp3']);
+        expect(readyPaths()).toEqual(['/rec/next.mp3']);
+      });
+
+      test('a recording past its limit is not sent again when its request times out', async () => {
+        // The preload ends the request 35 s after the file's limit, with a
+        // timeout error. Sending the file again then would hold the media
+        // request for minutes more and refuse the recordings after it.
+        const files = mediaFiles(['long.mp3', 'next.mp3']);
+        let held = false;
+        workers(1);
+        mockElectronAPI.analysis.batch.mockRejectedValueOnce(new Error('Batch route failed'));
+        mockElectronAPI.files.analyze.mockImplementation((filePath) => {
+          if (held) return Promise.reject(refusal());
+          if (filePath === '/rec/long.mp3') {
+            held = true;
+            return new Promise((resolve, reject) => {
+              setTimeout(() => {
+                held = false;
+                reject(
+                  new Error('IPC Error: IPC timeout after 330000ms for analysis:analyze-media')
+                );
+              }, 330 * 1000);
+            });
+          }
+          return Promise.resolve({ category: 'audio', suggestedName: 'done' });
+        });
+        const hook = renderHook(() => useAnalysis(createMockOptions({ selectedFiles: files })));
+
+        let analyzePromise;
+        await act(async () => {
+          analyzePromise = hook.result.current.analyzeFiles(files);
+          await jest.advanceTimersByTimeAsync(50);
+        });
+        for (let step = 0; step < 40; step += 1) {
+          await act(async () => {
+            await jest.advanceTimersByTimeAsync(10 * 1000);
+          });
+        }
+        await act(async () => {
+          await analyzePromise;
+        });
+
+        expect(
+          mockElectronAPI.files.analyze.mock.calls.filter((call) => call[0] === '/rec/long.mp3')
+        ).toHaveLength(1);
+        expect(errorCalls().map((call) => call[0])).toEqual(['/rec/long.mp3']);
+        expect(readyPaths()).toEqual(['/rec/next.mp3']);
+      });
+
+      test('a recording refused for longer than the wait fails with the refusal', async () => {
+        const files = mediaFiles(['only.mp3']);
+        workers(1);
+        mockElectronAPI.analysis.batch.mockRejectedValueOnce(new Error('Batch route failed'));
+        mockElectronAPI.files.analyze.mockImplementation(() => Promise.reject(refusal()));
+        const hook = renderHook(() => useAnalysis(createMockOptions({ selectedFiles: files })));
+
+        let analyzePromise;
+        await act(async () => {
+          analyzePromise = hook.result.current.analyzeFiles(files);
+          await jest.advanceTimersByTimeAsync(50);
+        });
+        for (let step = 0; step < 6; step += 1) {
+          await act(async () => {
+            await jest.advanceTimersByTimeAsync(10 * 1000);
+          });
+        }
+        await act(async () => {
+          await analyzePromise;
+        });
+
+        expect(errorCalls().map((call) => [call[0], call[2].error])).toEqual([
+          ['/rec/only.mp3', 'IPC Error: Operation already in progress: analysis:analyze-media']
+        ]);
+      });
+    });
+
     test('fallback pool skips files whose results already streamed in [F-154]', async () => {
       const { result } = renderHook(() => useAnalysis(createMockOptions()));
       const files = Array.from({ length: 40 }, (_, index) => ({

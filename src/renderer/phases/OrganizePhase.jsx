@@ -53,7 +53,7 @@ import { useOrganizeSuggestions } from './organize/useOrganizeSuggestions';
 import { resolveOrganizeDestination } from './organize/organizeDestination';
 import { useOrganizeNotificationFocus } from './organize/useOrganizeNotificationFocus';
 import { setFileStates as setFileStatesAction } from '../store/slices/filesSlice';
-import { updateAnalysisResult } from '../store/slices/analysisSlice';
+import { updateAnalysisResult, updateAnalysisResultsByPaths } from '../store/slices/analysisSlice';
 import { selectOrganizedCount, selectRedactPaths } from '../store/selectors';
 import { PHASE_PREREQUISITE_REASONS } from '../store/slices/uiSlice';
 import { formatDisplayPath } from '../utils/pathDisplay';
@@ -145,27 +145,44 @@ function OrganizePhase() {
     return getFilteredFiles(filesWithAnalysis);
   }, [getFilteredFiles, filesWithAnalysis]);
 
+  // Shared by single-card edits and the bulk category change.
+  const persistFileEdit = useCallback(
+    (filePath, field, value) => {
+      if (!filePath) return;
+      if (field === 'category') {
+        // userCategory marks the choice as the user's, so it still wins
+        // over the engine's ranking after Organize remounts and the card
+        // edit state is gone.
+        dispatch(
+          updateAnalysisResult({
+            path: filePath,
+            changes: { category: value, userCategory: value }
+          })
+        );
+      }
+      if (field === 'suggestedName') {
+        dispatch(updateAnalysisResult({ path: filePath, changes: { suggestedName: value } }));
+      }
+    },
+    [dispatch]
+  );
+
+  // The bulk category change saves the whole selection in one store update.
+  const persistBulkFileEdit = useCallback(
+    (filePaths, field, value) => {
+      if (field !== 'category' || !Array.isArray(filePaths) || filePaths.length === 0) return;
+      dispatch(
+        updateAnalysisResultsByPaths({
+          paths: filePaths,
+          changes: { category: value, userCategory: value }
+        })
+      );
+    },
+    [dispatch]
+  );
+
   const { editingFiles, setEditingFiles, handleEditFile, getFileWithEdits } = useFileEditing({
-    onEditChange: useCallback(
-      (filePath, field, value) => {
-        if (!filePath) return;
-        if (field === 'category') {
-          // userCategory marks the choice as the user's, so it still wins
-          // over the engine's ranking after Organize remounts and the card
-          // edit state is gone.
-          dispatch(
-            updateAnalysisResult({
-              path: filePath,
-              changes: { category: value, userCategory: value }
-            })
-          );
-        }
-        if (field === 'suggestedName') {
-          dispatch(updateAnalysisResult({ path: filePath, changes: { suggestedName: value } }));
-        }
-      },
-      [dispatch]
-    )
+    onEditChange: persistFileEdit
   });
 
   const findSmartFolderForCategory = useSmartFolderMatcher(safeSmartFolders);
@@ -260,7 +277,9 @@ function OrganizePhase() {
       editingFiles,
       setEditingFiles,
       setSelectedFiles,
-      addNotification
+      addNotification,
+      onEditChange: persistFileEdit,
+      onBulkEditChange: persistBulkFileEdit
     });
 
   // Drop edits for files that left the queue so a filtered grid cannot write
@@ -779,6 +798,7 @@ function OrganizePhase() {
                   pausedSummary={pausedSummary}
                   onResume={resumeOrganize}
                   onDismissPaused={dismissPausedBatch}
+                  organizedCount={lastOrganizeSummary?.count}
                 />
               </div>
             )}

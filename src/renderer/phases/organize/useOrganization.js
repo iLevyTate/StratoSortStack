@@ -32,6 +32,16 @@ function describeFirstFailure(results) {
   return message;
 }
 
+/**
+ * "1 file", "3 files".
+ * @param {number} count
+ * @param {string} [noun]
+ * @returns {string}
+ */
+function countOf(count, noun = 'file') {
+  return `${count} ${count === 1 ? noun : `${noun}s`}`;
+}
+
 const ROLLBACK_NAMES_SHOWN = 3;
 
 /**
@@ -923,7 +933,7 @@ export function useOrganization({
                   // Reported once, after this block.
                 } else if (result?.partialFailure || failedCount > 0) {
                   addNotification(
-                    `Organized ${uiResults.length} files with ${failedCount} failures. ${describeFirstFailure(resArray)}`,
+                    `Organized ${countOf(uiResults.length)} with ${countOf(failedCount, 'failure')}. ${describeFirstFailure(resArray)}`,
                     'warning',
                     8000
                   );
@@ -933,7 +943,7 @@ export function useOrganization({
                     error: result?.error
                   });
                 } else {
-                  addNotification(`Organized ${uiResults.length} files`, 'success', 7000);
+                  addNotification(`Organized ${countOf(uiResults.length)}`, 'success', 7000);
                 }
 
                 // Files moved on disk but the search index / history / undo
@@ -963,11 +973,20 @@ export function useOrganization({
                   });
                 }
 
-                setBatchProgress({
-                  current: filesToProcess.length,
-                  total: filesToProcess.length,
-                  currentFile: ''
-                });
+                // Only a run that got through every file fills the bar. A
+                // cancelled, paused, interrupted or rolled-back run keeps the
+                // count it reached, so it is not shown as done.
+                const stoppedEarly =
+                  rolledBackBatch ||
+                  cancelledRef.current ||
+                  Boolean(result?.cancelled || result?.interrupted || result?.paused);
+                if (!stoppedEarly) {
+                  setBatchProgress({
+                    current: filesToProcess.length,
+                    total: filesToProcess.length,
+                    currentFile: ''
+                  });
+                }
               } else if (!rolledBackBatch) {
                 logger.warn('[ORGANIZE] onExecute: No successful results to process');
                 if (resArray.length > 0) {
@@ -1060,12 +1079,14 @@ export function useOrganization({
 
               if (failCount > 0) {
                 addNotification(
-                  `Undo partially complete: ${successCount} files restored, ${failCount} failed.`,
+                  `Undo partially complete: ${countOf(successCount)} restored, ${failCount} failed.`,
                   'warning'
                 );
               } else if (successCount > 0) {
                 addNotification(
-                  `Undo complete. ${successCount} files restored to original locations.`,
+                  successCount === 1
+                    ? 'Undo complete. 1 file restored to its original location.'
+                    : `Undo complete. ${successCount} files restored to original locations.`,
                   'info'
                 );
               }
@@ -1175,11 +1196,11 @@ export function useOrganization({
 
               if (failCount > 0) {
                 addNotification(
-                  `Redo partially complete: ${successCount} files re-organized, ${failCount} failed.`,
+                  `Redo partially complete: ${countOf(successCount)} re-organized, ${failCount} failed.`,
                   'warning'
                 );
               } else if (successCount > 0) {
-                addNotification(`Redo complete. ${successCount} files re-organized.`, 'info');
+                addNotification(`Redo complete. ${countOf(successCount)} re-organized.`, 'info');
               }
             } catch (redoError) {
               logger.error('[ORGANIZE] onRedo callback failed:', redoError.message);
@@ -1193,7 +1214,7 @@ export function useOrganization({
 
         const result = await executeAction(
           createOrganizeBatchAction(
-            `Organize ${operations.length} files`,
+            `Organize ${countOf(operations.length)}`,
             operations,
             stateCallbacks,
             resumeInfo ? { resumeBatchId: resumeInfo.batchId } : undefined

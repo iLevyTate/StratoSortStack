@@ -99,7 +99,8 @@ jest.mock('../src/main/analysis/embeddingQueue/stageQueues', () => ({
 jest.mock('../src/main/utils/llmOptimization', () => ({
   globalDeduplicator: {
     dedupe: jest.fn((key, fn) => fn()),
-    deduplicate: jest.fn((key, fn) => fn())
+    deduplicate: jest.fn((key, fn) => fn()),
+    generateKey: jest.fn(() => 'dedup-key')
   }
 }));
 jest.mock('../src/main/analysis/namingContextBm25', () => ({
@@ -107,6 +108,12 @@ jest.mock('../src/main/analysis/namingContextBm25', () => ({
 }));
 jest.mock('../src/main/analysis/analysisLimits', () => ({
   getAnalysisLimits: jest.fn(async () => ({ maxTextFileSize: 16 }))
+}));
+
+const mockGetOrganizationGuidance = jest.fn(async () => '');
+jest.mock('../src/main/analysis/organizationGuidance', () => ({
+  ...jest.requireActual('../src/main/analysis/organizationGuidance'),
+  getOrganizationGuidance: () => mockGetOrganizationGuidance()
 }));
 
 const extractors = require('../src/main/analysis/documentExtractors');
@@ -122,6 +129,7 @@ describe('documentAnalysis dispatch for the restored file types', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     documentLlm.analyzeTextWithLlama.mockResolvedValue(LLM_OK);
+    mockGetOrganizationGuidance.mockResolvedValue('');
   });
 
   test.each([
@@ -208,6 +216,8 @@ describe('documentAnalysis dispatch for the restored file types', () => {
 
     expect(result.extractionMethod).toBe('archive');
     expect(result.purpose).toMatch(/content listing unavailable/);
+    // No entry names to draw on: the generic archive keywords stand in.
+    expect(result.keywords).toEqual(expect.arrayContaining(['archive', 'tgz']));
   });
 
   test('.rar keeps the bare archive summary (no permissively licensed reader)', async () => {
@@ -215,6 +225,7 @@ describe('documentAnalysis dispatch for the restored file types', () => {
 
     expect(archives.describeArchive).not.toHaveBeenCalled();
     expect(result.purpose).toBe('RAR archive');
+    expect(result.keywords).toEqual(expect.arrayContaining(['archive', 'rar']));
   });
 
   test('an oversize text file is analyzed from its head instead of failing as too large', async () => {
@@ -230,6 +241,23 @@ describe('documentAnalysis dispatch for the restored file types', () => {
     expect(documentLlm.analyzeTextWithLlama).toHaveBeenCalled();
     expect(result.extractionMethod).toBe('content');
     expect(result.partialContent).toBe(true);
+  });
+
+  test('an unchanged file is analyzed again once the organization instructions change', async () => {
+    fs.mkdirSync('/guided', { recursive: true });
+    fs.writeFileSync('/guided/notes.txt', 'short');
+    extractors.readTextFileWithEncoding.mockResolvedValue('short note content here');
+
+    mockGetOrganizationGuidance.mockResolvedValue('Keep notes in Journal.');
+    await analyzeDocumentFile('/guided/notes.txt', []);
+    await analyzeDocumentFile('/guided/notes.txt', []);
+    // Same instructions: the second run comes from the file cache.
+    expect(documentLlm.analyzeTextWithLlama).toHaveBeenCalledTimes(1);
+
+    mockGetOrganizationGuidance.mockResolvedValue('Keep notes in Work.');
+    await analyzeDocumentFile('/guided/notes.txt', []);
+
+    expect(documentLlm.analyzeTextWithLlama).toHaveBeenCalledTimes(2);
   });
 
   test('a text file within the limit is read whole', async () => {

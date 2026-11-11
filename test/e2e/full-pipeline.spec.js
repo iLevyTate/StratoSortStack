@@ -127,49 +127,30 @@ test.describe('Full Pipeline — Analysis to Organize', () => {
   });
 
   test('should show Complete phase with session summary', async () => {
+    // Organize opens once a file is analyzed and Complete once one is
+    // organized; seed one of each, as a previous session leaves them.
+    const [readyFile, organizedFile] = createSyntheticFiles(app, [
+      'pipeline-report.txt',
+      'pipeline-invoice.txt'
+    ]);
+    await seedAnalyzedFiles(window, [readyFile], { organized: [organizedFile] });
+
     // Reach Organize through the canonical phase order.
     const discoverOk = await nav.goToPhase(PHASES.DISCOVER);
     expect(discoverOk).toBe(true);
 
-    const organizeAccessible = await nav.isPhaseAccessible(PHASES.ORGANIZE);
-    if (!organizeAccessible) {
-      test.skip(true, 'Organize phase is unavailable in this session state');
-    }
-
     const organizeOk = await nav.goToPhase(PHASES.ORGANIZE);
     expect(organizeOk).toBe(true);
 
-    // Complete phase is only meaningful once files have been processed.
-    const viewResultsButton = window.locator('button:has-text("View Results")').first();
-    const hasViewResults = await viewResultsButton.isVisible().catch(() => false);
-    if (!hasViewResults) {
-      test.skip(true, 'View Results action is not visible in current Organize layout');
-    }
-    const canViewResults = await viewResultsButton.isEnabled();
-    if (!canViewResults) {
-      test.skip(true, 'Complete summary is unavailable until at least one file is organized');
-    }
-
+    const viewResultsButton = window.getByRole('button', { name: /View Results/i });
+    await expect(viewResultsButton).toBeEnabled();
     await viewResultsButton.click();
-    await safeWaitForTimeout(window, 500);
+    await expect.poll(() => nav.getCurrentPhase()).toBe(PHASES.COMPLETE);
 
-    const uiState = await window.evaluate(() => {
-      const body = document.body.textContent || '';
-      return {
-        hasCompleteActions:
-          body.includes('Start New Session') ||
-          body.includes('Back to Organize') ||
-          body.includes('What Changed'),
-        hasStartNewSession: body.includes('Start New Session'),
-        hasSummary:
-          body.includes('What Changed') ||
-          body.includes('organized') ||
-          body.includes('No files were moved')
-      };
-    });
-
-    expect(uiState.hasCompleteActions).toBe(true);
-    expect(uiState.hasStartNewSession || uiState.hasSummary).toBe(true);
+    await expect(window.getByRole('heading', { name: /Organization Complete/i })).toBeVisible();
+    await expect(window.getByText('Session summary').first()).toBeVisible();
+    await expect(window.getByLabel('Organized file 1')).toContainText('pipeline-invoice.txt');
+    await expect(window.getByRole('button', { name: /Start over/i })).toBeVisible();
   });
 
   test('should maintain file count when navigating between phases', async () => {

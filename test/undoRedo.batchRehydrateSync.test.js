@@ -437,6 +437,67 @@ describe('UndoRedo batch rehydrated sync', () => {
     expect(mockShowSuccess).not.toHaveBeenCalledWith(expect.stringMatching(/^Undid/));
   });
 
+  test('an entry main removed because it can never be reversed shows main’s message once, as an error', async () => {
+    window.electronAPI.undoRedo.getState = undefined;
+    window.electronAPI.undoRedo.onStateChanged = undefined;
+    const undoMessage =
+      'Cannot undo "Clean a.txt": the backup of the deleted file is gone. The entry was removed from history.';
+    const redoMessage =
+      'Cannot redo "File b.txt": the file was moved or deleted outside the app. The entry was removed from history.';
+    const onDone = jest.fn();
+
+    function RemovedScenario() {
+      const { executeAction, undo, redo } = useUndoRedo();
+      React.useEffect(() => {
+        let active = true;
+        const run = async () => {
+          await executeAction({
+            type: 'CUSTOM_ACTION',
+            description: 'File b.txt',
+            execute: async () => ({ success: true }),
+            undo: async () => ({ success: true }),
+            redo: async () => ({
+              success: false,
+              code: 'UNDO_SOURCE_MISSING',
+              removedFromHistory: true,
+              message: redoMessage
+            })
+          });
+          await undo();
+          await redo();
+          await executeAction({
+            type: 'CUSTOM_ACTION',
+            description: 'Clean a.txt',
+            execute: async () => ({ success: true }),
+            undo: async () => ({
+              success: false,
+              code: 'UNDO_BACKUP_MISSING',
+              removedFromHistory: true,
+              message: undoMessage
+            }),
+            redo: async () => ({ success: true })
+          });
+          await undo();
+          if (active) onDone();
+        };
+        run();
+        return () => {
+          active = false;
+        };
+      }, [executeAction, undo, redo]);
+      return null;
+    }
+
+    render(
+      <UndoRedoProvider>
+        <RemovedScenario />
+      </UndoRedoProvider>
+    );
+
+    await waitFor(() => expect(onDone).toHaveBeenCalled());
+    expect(mockShowError.mock.calls.map(([text]) => text)).toEqual([redoMessage, undoMessage]);
+  });
+
   test('defers main-process sync while a multi-step jump is in progress', async () => {
     const getState = jest
       .fn()

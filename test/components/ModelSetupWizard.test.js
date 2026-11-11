@@ -882,6 +882,317 @@ describe('ModelSetupWizard', () => {
   });
 });
 
+describe('ModelSetupWizard download status it cannot trust yet', () => {
+  const baseProfile = INSTALL_MODEL_PROFILES?.BASE_SMALL?.models || {};
+  const embeddingModel = baseProfile.EMBEDDING;
+  const textModel = baseProfile.TEXT_ANALYSIS;
+  const visionModel = baseProfile.IMAGE_ANALYSIS;
+  const allActive = [embeddingModel, textModel, visionModel].map((filename) => ({
+    filename,
+    progress: 1
+  }));
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+    delete window.electronAPI;
+  });
+
+  /** Let pending promises settle, then move the clock. */
+  async function advance(ms = 0) {
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(ms);
+    });
+  }
+
+  async function renderOnChooseStep() {
+    render(<ModelSetupWizard onComplete={jest.fn()} onSkip={jest.fn()} />);
+    await advance();
+    expect(screen.getByText(/Choose AI Models/i)).toBeInTheDocument();
+  }
+
+  test('a status read that arrives before main has registered the download is not "stopped"', async () => {
+    // Main answers the status question from memory at once, while the
+    // download it was just asked for is still behind a few disk checks.
+    let registered = false;
+    window.electronAPI = {
+      llama: {
+        getConfig: jest.fn(async () => ({ embeddingModel, textModel, visionModel })),
+        getModels: jest.fn(async () => ({ models: [] })),
+        getDownloadStatus: jest.fn(async () => ({
+          status: { downloads: registered ? allActive : [] }
+        })),
+        downloadModel: jest.fn(async () => ({ success: true, started: true }))
+      },
+      events: { onOperationProgress: jest.fn(() => jest.fn()) }
+    };
+
+    await renderOnChooseStep();
+    fireEvent.click(screen.getByRole('button', { name: /Download Models/i }));
+    await advance();
+
+    expect(window.electronAPI.llama.downloadModel).toHaveBeenCalledTimes(3);
+    expect(screen.getByText(/Downloading Models/i)).toBeInTheDocument();
+    expect(screen.queryByText(/downloads stopped/i)).not.toBeInTheDocument();
+
+    registered = true;
+    await advance(4100);
+    expect(screen.getByText(/Downloading Models/i)).toBeInTheDocument();
+    expect(screen.queryByText(/downloads stopped/i)).not.toBeInTheDocument();
+  });
+
+  test('downloads that never show up are still reported as stopped, and a retry clears the message', async () => {
+    let registered = false;
+    window.electronAPI = {
+      llama: {
+        getConfig: jest.fn(async () => ({ embeddingModel, textModel, visionModel })),
+        getModels: jest.fn(async () => ({ models: [] })),
+        getDownloadStatus: jest.fn(async () => ({
+          status: { downloads: registered ? allActive : [] }
+        })),
+        downloadModel: jest.fn(async () => ({ success: true, started: true }))
+      },
+      events: { onOperationProgress: jest.fn(() => jest.fn()) }
+    };
+
+    await renderOnChooseStep();
+    fireEvent.click(screen.getByRole('button', { name: /Download Models/i }));
+    await advance();
+    await advance(12500);
+
+    expect(screen.getByText(/Choose AI Models/i)).toBeInTheDocument();
+    expect(
+      screen.getByText('Required model downloads stopped. Please retry downloads.')
+    ).toBeInTheDocument();
+
+    // The retry starts real downloads: the old message must not sit above them.
+    registered = true;
+    fireEvent.click(screen.getByRole('button', { name: /Download Models/i }));
+    await advance();
+    expect(screen.getByText(/Downloading Models/i)).toBeInTheDocument();
+    expect(screen.queryByText(/downloads stopped/i)).not.toBeInTheDocument();
+  });
+
+  test('an engine that failed to start is named, and its empty model list is not read as "nothing installed"', async () => {
+    const downloadModel = jest.fn(async () => ({ success: true, started: true }));
+    window.electronAPI = {
+      llama: {
+        getConfig: jest.fn(async () => ({
+          success: false,
+          error: 'Synthetic engine load failure',
+          code: 'LLAMA_ERROR'
+        })),
+        getModels: jest.fn(async () => ({
+          models: [],
+          categories: { text: [], vision: [], embedding: [] },
+          selected: {},
+          error: 'Synthetic engine load failure'
+        })),
+        getDownloadStatus: jest.fn(async () => ({ status: { downloads: [] } })),
+        downloadModel
+      },
+      events: { onOperationProgress: jest.fn(() => jest.fn()) }
+    };
+
+    await renderOnChooseStep();
+
+    expect(screen.getByText(/The AI engine could not start/i)).toHaveTextContent(
+      'Synthetic engine load failure'
+    );
+    // Nothing is known to be missing, so nothing is offered for download.
+    expect(screen.queryByText(/Required models are missing/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('Not installed')).not.toBeInTheDocument();
+    expect(screen.getAllByText('Not checked').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByRole('button', { name: /Download Models/i })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: /Download Models/i }));
+    await advance();
+    expect(downloadModel).not.toHaveBeenCalled();
+  });
+
+  test('an engine failure during the download is shown instead of "downloads stopped"', async () => {
+    let engineFailed = false;
+    window.electronAPI = {
+      llama: {
+        getConfig: jest.fn(async () => ({ embeddingModel, textModel, visionModel })),
+        getModels: jest.fn(async () =>
+          engineFailed
+            ? { models: [], selected: {}, error: 'Synthetic engine load failure' }
+            : { models: [] }
+        ),
+        getDownloadStatus: jest.fn(async () => ({
+          status: { downloads: engineFailed ? [] : allActive }
+        })),
+        downloadModel: jest.fn(async () => ({ success: true, started: true }))
+      },
+      events: { onOperationProgress: jest.fn(() => jest.fn()) }
+    };
+
+    await renderOnChooseStep();
+    fireEvent.click(screen.getByRole('button', { name: /Download Models/i }));
+    await advance();
+    expect(screen.getByText(/Downloading Models/i)).toBeInTheDocument();
+
+    // The files finished (nothing active any more) but the engine cannot
+    // list them: that is not a stopped download.
+    engineFailed = true;
+    await advance(12500);
+
+    expect(screen.queryByText(/downloads stopped/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/The AI engine could not start/i)).toHaveTextContent(
+      'Synthetic engine load failure'
+    );
+    expect(screen.getByText(/Downloading Models/i)).toBeInTheDocument();
+  });
+});
+
+describe('ModelSetupWizard vision model without its projector file', () => {
+  const baseProfile = INSTALL_MODEL_PROFILES?.BASE_SMALL?.models || {};
+  const embeddingModel = baseProfile.EMBEDDING;
+  const textModel = baseProfile.TEXT_ANALYSIS;
+  const visionModel = baseProfile.IMAGE_ANALYSIS;
+  const projector = 'synthetic-mmproj.gguf';
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+    delete window.electronAPI;
+  });
+
+  async function advance(ms = 0) {
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(ms);
+    });
+  }
+
+  test('is not marked ready, and the retry fetches only the projector', async () => {
+    let progressListener;
+    let installed = [];
+    let active = [embeddingModel, textModel, visionModel].map((filename) => ({
+      filename,
+      progress: 10
+    }));
+    const downloadModel = jest.fn(async () => ({ success: true, started: true }));
+    window.electronAPI = {
+      llama: {
+        getConfig: jest.fn(async () => ({ embeddingModel, textModel, visionModel })),
+        getModels: jest.fn(async () => ({ models: installed })),
+        getDownloadStatus: jest.fn(async () => ({ status: { downloads: active } })),
+        downloadModel,
+        updateConfig: jest.fn(async () => ({ success: true }))
+      },
+      events: {
+        onOperationProgress: jest.fn((cb) => {
+          progressListener = cb;
+          return jest.fn();
+        })
+      }
+    };
+
+    render(<ModelSetupWizard onComplete={jest.fn()} onSkip={jest.fn()} />);
+    await advance();
+    fireEvent.click(screen.getByRole('button', { name: /Download Models/i }));
+    await advance();
+    expect(screen.getByText(/Downloading Models/i)).toBeInTheDocument();
+    expect(downloadModel).toHaveBeenCalledTimes(3);
+
+    // What main sends when the GGUF landed but its projector did not.
+    await act(async () => {
+      progressListener({ type: 'model-download-complete', model: embeddingModel });
+      progressListener({ type: 'model-download-complete', model: textModel });
+      progressListener({
+        type: 'model-download-complete',
+        model: visionModel,
+        success: false,
+        degraded: true,
+        progress: {
+          model: visionModel,
+          percent: 100,
+          companion: { name: projector, success: false, error: 'network' }
+        }
+      });
+    });
+
+    expect(screen.queryByRole('button', { name: /^Continue$/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/projector file did not download/i)).toBeInTheDocument();
+    expect(screen.getByText('Failed')).toBeInTheDocument();
+
+    // The GGUF is on disk, so the model list names it; that alone is not ready.
+    installed = [embeddingModel, textModel, visionModel];
+    active = [];
+    await advance(4100);
+    expect(screen.queryByText(/Setup complete/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/projector file did not download/i)).toBeInTheDocument();
+
+    downloadModel.mockClear();
+    fireEvent.click(screen.getByRole('button', { name: /Retry Failed Downloads/i }));
+    await advance();
+    expect(downloadModel).toHaveBeenCalledTimes(1);
+    expect(downloadModel).toHaveBeenCalledWith(projector);
+
+    await act(async () => {
+      progressListener({ type: 'model-download-complete', model: projector });
+    });
+    installed = [embeddingModel, textModel, visionModel, projector];
+    await advance(4100);
+    expect(screen.queryByText(/projector file did not download/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/Setup complete/i)).toBeInTheDocument();
+  });
+
+  test('Cancel during the projector retry cancels the projector download', async () => {
+    let progressListener;
+    const cancelDownload = jest.fn(async () => ({ success: true }));
+    window.electronAPI = {
+      llama: {
+        getConfig: jest.fn(async () => ({ embeddingModel, textModel, visionModel })),
+        getModels: jest.fn(async () => ({ models: [embeddingModel, textModel] })),
+        getDownloadStatus: jest.fn(async () => ({
+          status: { downloads: [{ filename: visionModel, progress: 10 }] }
+        })),
+        downloadModel: jest.fn(async () => ({ success: true, started: true })),
+        cancelDownload,
+        updateConfig: jest.fn(async () => ({ success: true }))
+      },
+      events: {
+        onOperationProgress: jest.fn((cb) => {
+          progressListener = cb;
+          return jest.fn();
+        })
+      }
+    };
+
+    render(<ModelSetupWizard onComplete={jest.fn()} onSkip={jest.fn()} />);
+    await advance();
+    fireEvent.click(screen.getByRole('button', { name: /Download Models/i }));
+    await advance();
+    await act(async () => {
+      progressListener({
+        type: 'model-download-complete',
+        model: visionModel,
+        success: false,
+        degraded: true,
+        progress: {
+          model: visionModel,
+          percent: 100,
+          companion: { name: projector, success: false, error: 'network' }
+        }
+      });
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Retry Failed Downloads/i }));
+    await advance();
+
+    fireEvent.click(screen.getByRole('button', { name: /Cancel download of/i }));
+    await advance();
+    expect(cancelDownload).toHaveBeenCalledWith(projector);
+    expect(screen.getByText('Cancelled')).toBeInTheDocument();
+  });
+});
+
 describe('ModelSetupWizard hardware-aware profile (ML-07)', () => {
   afterEach(() => {
     delete window.electronAPI;
