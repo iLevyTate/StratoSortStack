@@ -115,6 +115,26 @@ describe('IPC Event Schemas', () => {
       });
       expect(result.valid).toBe(true);
     });
+
+    // UndoRedoService._notifyStateChanged broadcasts these bare reasons. When
+    // the schema only allowed undo/redo, strict mode blocked every
+    // record/remove/clear broadcast, so the toolbar missed history changes.
+    test.each(['record', 'remove', 'clear'])(
+      'accepts the bare "%s" history broadcast from UndoRedoService',
+      (reason) => {
+        const result = validateEventPayload(IPC_CHANNELS.UNDO_REDO.STATE_CHANGED, {
+          action: reason
+        });
+        expect(result.valid).toBe(true);
+      }
+    );
+
+    test('rejects an unknown undo-redo action', () => {
+      const result = validateEventPayload(IPC_CHANNELS.UNDO_REDO.STATE_CHANGED, {
+        action: 'teleport'
+      });
+      expect(result.valid).toBe(false);
+    });
   });
 
   describe('operationProgressSchema', () => {
