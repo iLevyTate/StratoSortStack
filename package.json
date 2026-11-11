@@ -306,7 +306,7 @@
     "jest": "^30.5.2",
     "jest-axe": "^11.0.0",
     "jest-environment-jsdom": "^30.5.2",
-    "knip": "^6.44.1",
+    "knip": "^6.44.2",
     "lint-staged": "^17.6.0",
     "lucide-react": "^1.70.0",
     "memfs": "^4.80.0",
