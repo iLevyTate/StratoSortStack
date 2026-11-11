@@ -18,13 +18,12 @@ import {
   AnalysisProgress
 } from '../components/discover';
 import { FileListSkeleton } from '../components/ui/LoadingSkeleton';
-import store from '../store';
 import { useAppSelector } from '../store/hooks';
 import { selectOrganizedCount } from '../store/selectors';
 import { toCanonicalPath } from '../utils/canonicalPath';
 import {
   useDiscoverState,
-  useAnalysis,
+  useAnalysisRun,
   useFileHandlers,
   useFileActions,
   getFileStateDisplayInfo
@@ -46,13 +45,9 @@ function DiscoverPhase() {
     dateFormat,
     caseConvention,
     separator,
-    namingSettings,
     setSelectedFiles,
     addSelectedFiles,
     setAnalysisResults,
-    setIsAnalyzing,
-    setAnalysisProgress,
-    setCurrentAnalysisFile,
     setNamingConvention,
     setDateFormat,
     setCaseConvention,
@@ -61,7 +56,6 @@ function DiscoverPhase() {
     updateFileState,
     resetAnalysisState,
     actions,
-    getCurrentPhase,
     organizedFiles,
     organizedPathIndex,
     fileStats
@@ -72,7 +66,6 @@ function DiscoverPhase() {
   const { openSearchModal } = useFloatingSearch();
 
   const [showNamingSettings, setShowNamingSettings] = useState(false);
-  const [totalAnalysisFailure, setTotalAnalysisFailure] = useState(false);
   const [showEmbeddingPrompt, setShowEmbeddingPrompt] = useState(false);
   const [isRebuildingEmbeddings, setIsRebuildingEmbeddings] = useState(false);
   const isMountedRef = useRef(true);
@@ -280,45 +273,17 @@ function DiscoverPhase() {
   // and it's never set in this context, so use a stable empty object
   const stablePhaseData = useRef({}).current;
 
-  const extendedActions = useMemo(
-    () => ({
-      ...actions,
-      setPhaseData: (key, value) => {
-        if (key === 'totalAnalysisFailure') {
-          setTotalAnalysisFailure(value);
-        } else {
-          actions.setPhaseData(key, value);
-        }
-      }
-    }),
-    [actions]
-  );
-
+  // The run lives in AnalysisRunProvider (PhaseRenderer), not here, so it
+  // keeps going when the user moves to Organize or Complete.
   const {
     analyzeFiles,
     cancelAnalysis,
     clearAnalysisQueue,
     retryFailedFiles,
-    pruneBatchResultsForPath
-  } = useAnalysis({
-    selectedFiles,
-    fileStates,
-    analysisResults,
-    isAnalyzing,
-    analysisProgress,
-    namingSettings,
-    setters: {
-      setIsAnalyzing,
-      setAnalysisProgress,
-      setCurrentAnalysisFile,
-      setAnalysisResults,
-      setFileStates
-    },
-    updateFileState,
-    addNotification,
-    actions: extendedActions,
-    getCurrentPhase
-  });
+    pruneBatchResultsForPath,
+    totalAnalysisFailure,
+    setTotalAnalysisFailure
+  } = useAnalysisRun();
 
   const {
     isScanning,
@@ -354,7 +319,6 @@ function DiscoverPhase() {
   );
 
   const { isDragging, dragProps } = useDragAndDrop(handleFileDrop);
-  const initialStuckCheckRef = useRef(false);
 
   useSettingsSubscription(
     useCallback(
@@ -447,67 +411,7 @@ function DiscoverPhase() {
     };
   }, []);
 
-  const analysisProgressRef = useRef(analysisProgress);
-  analysisProgressRef.current = analysisProgress;
-
-  useEffect(() => {
-    if (initialStuckCheckRef.current) return;
-    initialStuckCheckRef.current = true;
-
-    if (isAnalyzing) {
-      const lastActivity = analysisProgress?.lastActivity || Date.now();
-      const timeSinceActivity = Date.now() - lastActivity;
-      const isStuck = timeSinceActivity > 2 * 60 * 1000;
-
-      if (isStuck) {
-        logger.info('Detected stuck analysis state on mount, resetting');
-        resetAnalysisState('Stuck analysis detected on mount');
-      }
-    }
-  }, [isAnalyzing, analysisProgress, resetAnalysisState]);
-
-  useEffect(() => {
-    if (!isAnalyzing) return;
-
-    const checkStalled = () => {
-      // Use Redux store directly to prevent stale reads when the window is minimized
-      // (React suspends rendering when minimized, so refs bound to props become stale)
-      const state = store.getState();
-      const isActuallyAnalyzing = state.analysis.isAnalyzing;
-
-      if (!isActuallyAnalyzing) return; // Already finished, ignore
-
-      const progress = state.analysis.analysisProgress || analysisProgressRef.current;
-      const lastActivity = progress?.lastActivity || Date.now();
-      const timeSinceActivity = Date.now() - lastActivity;
-      const current = progress?.current || 0;
-      const total = progress?.total || 0;
-
-      if (current === 0 && total > 0 && timeSinceActivity > TIMEOUTS.STUCK_ANALYSIS_CHECK) {
-        addNotification('Analysis paused. Restarting...', 'info', 3000, 'analysis-stalled');
-        resetAnalysisState('Analysis stalled with no progress after 2 minutes');
-        return;
-      }
-
-      if (timeSinceActivity > TIMEOUTS.ANALYSIS_LOCK) {
-        addNotification('Analysis timed out. Ready to retry.', 'info', 3000, 'analysis-auto-reset');
-        resetAnalysisState('Stuck analysis state after 5 minutes of inactivity');
-      }
-    };
-
-    // Defer state updates so the interval handler returns quickly (avoids Long Task violations)
-    const checkStalledDeferred = () => {
-      setTimeout(checkStalled, 0);
-    };
-
-    // Check immediately on dependency change
-    checkStalled();
-
-    // Also check periodically in case dependencies stop updating (the exact stall scenario).
-    // Defer so the interval handler returns quickly (avoids Long Task violations).
-    const intervalId = setInterval(checkStalledDeferred, TIMEOUTS.SERVICE_STARTUP);
-    return () => clearInterval(intervalId);
-  }, [isAnalyzing, addNotification, resetAnalysisState]);
+  // Stuck-run checks live in AnalysisRunProvider with the run itself.
 
   const fileStatesRef = useRef(fileStates);
   fileStatesRef.current = fileStates;
@@ -938,27 +842,25 @@ function DiscoverPhase() {
           // one analyzed file, so there would be nothing to organize there.
           // Organized history also opens Organize, the same rule as the tab
           // (uiSlice getPhaseNavigation), so a returning user can reach it.
+          // A running analysis does not hold this back: the run lives above
+          // the phases (AnalysisRunProvider), so files already analyzed can be
+          // organized while the rest keep analyzing.
           const canContinue = visibleReadyCount > 0 || organizedCount > 0;
-          const disabledBecauseAnalyzing = isAnalyzing;
-          const disabledBecauseNoReady = !canContinue;
 
           let disabledReason = '';
-          if (disabledBecauseAnalyzing) {
-            disabledReason = 'Analysis is in progress.';
-          } else if (disabledBecauseNoReady) {
-            disabledReason =
-              visibleFailedCount > 0
+          if (!canContinue) {
+            disabledReason = isAnalyzing
+              ? 'Organize opens as soon as the first file is analyzed.'
+              : visibleFailedCount > 0
                 ? 'All files failed analysis. Retry them, or clear the queue and try again.'
                 : 'Analyze at least one file first.';
+          } else if (isAnalyzing) {
+            disabledReason = 'Analysis keeps running while you organize the files that are ready.';
           }
 
           return (
             <Button
               onClick={() => {
-                if (isAnalyzing) {
-                  addNotification('Please wait for analysis to complete', 'warning', 3000);
-                  return;
-                }
                 if (!canContinue) {
                   addNotification(
                     visibleFailedCount > 0
@@ -977,7 +879,7 @@ function DiscoverPhase() {
               variant="primary"
               size="md"
               className="w-full sm:w-auto min-w-[180px]"
-              disabled={isAnalyzing || !canContinue}
+              disabled={!canContinue}
               title={disabledReason || undefined}
             >
               Continue to Organize →

@@ -21,5 +21,6 @@ export {
 // Custom hooks
 export { useDiscoverState } from './useDiscoverState';
 export { useAnalysis } from './useAnalysis';
+export { AnalysisRunProvider, useAnalysisRun } from './AnalysisRunProvider';
 export { useFileHandlers } from './useFileHandlers';
 export { useFileActions } from './useFileActions';

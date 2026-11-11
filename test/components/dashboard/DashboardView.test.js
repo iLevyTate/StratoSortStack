@@ -731,8 +731,24 @@ describe('DashboardView', () => {
   describe('navigation pause', () => {
     const PAUSED = 'Navigation is paused until the current operation finishes.';
 
+    // The analysis run lives in AnalysisRunProvider above the phases and
+    // keeps going across phase moves, so a running analysis does not pause
+    // the links (nor the tabs).
+    test('links still open a step while analysis runs, like the tabs', () => {
+      setupState({
+        currentPhase: 'discover',
+        fileStats: { total: 5, ready: 1, failed: 0, pending: 4 },
+        isAnalyzing: true,
+        analysisProgress: { current: 1, total: 5 }
+      });
+      render(<DashboardView />);
+
+      fireEvent.click(buttonFor('Review & organize'));
+      expect(phasePayloads()).toEqual(['organize']);
+      expect(mockNotification.showInfo).not.toHaveBeenCalledWith(PAUSED, 5200);
+    });
+
     test.each([
-      ['analysis', { isAnalyzing: true, analysisProgress: { current: 1, total: 5 } }],
       ['a file move', { isOrganizing: true }],
       ['loading', { isLoading: true }]
     ])('links pause while %s runs, like the tabs', (_label, busy) => {

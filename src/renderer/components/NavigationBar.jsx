@@ -267,7 +267,7 @@ const NavTab = memo(function NavTab({
       title={
         !canNavigate && !isActive
           ? blockReason ||
-            'Navigation is paused while analysis or file moves run. Wait for the step to finish, or cancel from the active phase.'
+            'Navigation is paused while files are being moved. Wait for the move to finish, or cancel from the active phase.'
           : `Step ${(metadata?.step ?? 0) + 1} of ${PHASE_ORDER.length} • ${metadata?.description || metadata?.title}`
       }
       style={{ WebkitAppRegion: 'no-drag' }}
@@ -339,8 +339,9 @@ const DASHBOARD_WAITS_FOR_ANALYSIS =
  * dashboard overview. Subscribes to ui.viewMode directly and dispatches
  * setViewMode, so it is not gated by isBlockedByOperation the way the phase
  * tabs are: the way back to Guided is always open. The way into the dashboard
- * waits for a running analysis, because Discover owns the run and App.js
- * unmounts Discover to show the dashboard, which would stop it.
+ * waits for a running analysis: the run lives in AnalysisRunProvider inside
+ * PhaseRenderer, and App.js replaces PhaseRenderer with the dashboard, which
+ * would stop it. (Phase tabs do not wait: the run outlives a phase change.)
  */
 const ViewModeToggle = memo(function ViewModeToggle() {
   const dispatch = useAppDispatch();
@@ -842,9 +843,10 @@ function NavigationBar() {
     };
   }, []);
 
-  // Keep top-level navigation responsive; analysis state can become stale.
-  const isBlockedByOperation =
-    isOrganizing || isLoading || Boolean(isAnalyzing) || Boolean(isUndoRedoExecuting);
+  // File moves, loading and undo/redo pause the step tabs. A running analysis
+  // does not: the run lives in AnalysisRunProvider above the phases, so the
+  // user can organize finished files while the rest keep analyzing.
+  const isBlockedByOperation = isOrganizing || isLoading || Boolean(isUndoRedoExecuting);
 
   // Phase navigation handler
   const handlePhaseChange = useCallback(
@@ -871,9 +873,7 @@ function NavigationBar() {
         showInfo(
           isOrganizing
             ? 'Files are still moving. Stay on this step until the move finishes or cancel from Organize.'
-            : isAnalyzing
-              ? 'Analysis is still running. You can keep reviewing this step while processing finishes.'
-              : 'Navigation is paused until the current operation finishes.',
+            : 'Navigation is paused until the current operation finishes.',
           5200
         );
         return;
@@ -891,11 +891,11 @@ function NavigationBar() {
       showInfo(
         isOrganizing
           ? 'Navigation is paused while files are moving. You can still open Settings from the gear.'
-          : 'Navigation is paused while analysis is running. You can still open Settings from the gear.',
+          : 'Navigation is paused until the current operation finishes. You can still open Settings from the gear.',
         5200
       );
     },
-    [actions, currentPhase, isAnalyzing, isBlockedByOperation, isOrganizing, showInfo]
+    [actions, currentPhase, isBlockedByOperation, isOrganizing, showInfo]
   );
 
   // Settings handler
@@ -905,7 +905,8 @@ function NavigationBar() {
 
   // Return to the dashboard the user deep-linked out of. A view switch, not a
   // phase transition, so moves and undo/redo do not gate it. A running
-  // analysis does: it belongs to Discover, which unmounts for the dashboard.
+  // analysis does: its provider lives in PhaseRenderer, which the dashboard
+  // replaces.
   const handleReturnToDashboard = useCallback(() => {
     if (isAnalyzing) {
       showInfo(DASHBOARD_WAITS_FOR_ANALYSIS, 5200);
@@ -1052,9 +1053,7 @@ function NavigationBar() {
                 ? executionStatus?.label
                   ? `${executionStatus.label} Step navigation is paused until file moves finish.`
                   : 'Step navigation is paused while undo/redo moves files.'
-                : isAnalyzing
-                  ? 'Step navigation is paused while analysis is running.'
-                  : 'Step navigation is paused. Please wait for the current operation to finish.'}
+                : 'Step navigation is paused. Please wait for the current operation to finish.'}
           </Text>
         </div>
       )}

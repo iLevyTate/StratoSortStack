@@ -37,6 +37,7 @@ import {
 import { mapErrorToNotification } from '../../utils/errorMapping';
 import { normalizeNamingConventionState } from '../../../shared/namingConventions';
 import { toCanonicalPath } from '../../utils/canonicalPath';
+import { collectOrganizedPathKeys, mergeOrganizedPathIndex } from '../../utils/organizedPathIndex';
 import {
   BATCH_BUSY_RETRY_MS,
   filesNotYetReady,
@@ -327,10 +328,42 @@ function mergeFileStates(existingStates, results) {
 }
 
 /**
+ * Move to Organize shortly after a run finishes, unless the user has left
+ * Discover or more analysis is running or queued. Files added during the run
+ * start as the next run right after this one ends; jumping to Organize then
+ * used to unmount Discover and cancel that run before it analyzed anything.
+ *
+ * @param {{ actions: any, getCurrentPhase: Function, autoAdvanceTimeoutRef: any, isMoreAnalysisPending?: () => boolean }} params
+ */
+function scheduleAutoAdvance({
+  actions,
+  getCurrentPhase,
+  autoAdvanceTimeoutRef,
+  isMoreAnalysisPending
+}) {
+  clearAutoAdvanceTimeoutRef(autoAdvanceTimeoutRef); // Clear any previous pending timeout
+  autoAdvanceTimeoutRef.current = setTimeout(() => {
+    autoAdvanceTimeoutRef.current = null;
+    const currentPhase = getCurrentPhase?.();
+    if (currentPhase !== (PHASES?.DISCOVER ?? 'discover')) {
+      logger.debug('Skipping auto-advance: phase changed during delay', {
+        currentPhase,
+        expectedPhase: PHASES?.DISCOVER ?? 'discover'
+      });
+      return;
+    }
+    if (isMoreAnalysisPending?.()) {
+      logger.debug('Skipping auto-advance: another analysis run is active or queued');
+      return;
+    }
+    actions.advancePhase(PHASES?.ORGANIZE ?? 'organize');
+  }, 2000);
+}
+
+/**
  * Show appropriate notification based on analysis results.
  *
-/**
- * @param {{ successCount: number, failureCount: number, addNotification: Function, actions: any, getCurrentPhase: Function, autoAdvanceTimeoutRef: any }} params
+ * @param {{ successCount: number, failureCount: number, addNotification: Function, actions: any, getCurrentPhase: Function, autoAdvanceTimeoutRef: any, isMoreAnalysisPending?: () => boolean }} params
  */
 function showAnalysisCompletionNotification({
   successCount,
@@ -338,7 +371,8 @@ function showAnalysisCompletionNotification({
   addNotification,
   actions,
   getCurrentPhase,
-  autoAdvanceTimeoutRef
+  autoAdvanceTimeoutRef,
+  isMoreAnalysisPending
 }) {
   if (successCount > 0 && failureCount === 0) {
     addNotification(
@@ -347,21 +381,7 @@ function showAnalysisCompletionNotification({
       4000,
       'analysis-complete'
     );
-    clearAutoAdvanceTimeoutRef(autoAdvanceTimeoutRef); // Clear any previous pending timeout
-    autoAdvanceTimeoutRef.current = setTimeout(() => {
-      autoAdvanceTimeoutRef.current = null;
-      // Check if still in DISCOVER phase before auto-advancing
-      // This prevents unexpected navigation if user moved away during the delay
-      const currentPhase = getCurrentPhase?.();
-      if (currentPhase === (PHASES?.DISCOVER ?? 'discover')) {
-        actions.advancePhase(PHASES?.ORGANIZE ?? 'organize');
-      } else {
-        logger.debug('Skipping auto-advance: phase changed during delay', {
-          currentPhase,
-          expectedPhase: PHASES?.DISCOVER ?? 'discover'
-        });
-      }
-    }, 2000);
+    scheduleAutoAdvance({ actions, getCurrentPhase, autoAdvanceTimeoutRef, isMoreAnalysisPending });
   } else if (successCount > 0) {
     addNotification(
       `Analysis complete: ${successCount} successful, ${failureCount} failed`,
@@ -369,20 +389,7 @@ function showAnalysisCompletionNotification({
       4000,
       'analysis-complete'
     );
-    clearAutoAdvanceTimeoutRef(autoAdvanceTimeoutRef); // Clear any previous pending timeout
-    autoAdvanceTimeoutRef.current = setTimeout(() => {
-      autoAdvanceTimeoutRef.current = null;
-      // Check if still in DISCOVER phase before auto-advancing
-      const currentPhase = getCurrentPhase?.();
-      if (currentPhase === (PHASES?.DISCOVER ?? 'discover')) {
-        actions.advancePhase(PHASES?.ORGANIZE ?? 'organize');
-      } else {
-        logger.debug('Skipping auto-advance: phase changed during delay', {
-          currentPhase,
-          expectedPhase: PHASES?.DISCOVER ?? 'discover'
-        });
-      }
-    }, 2000);
+    scheduleAutoAdvance({ actions, getCurrentPhase, autoAdvanceTimeoutRef, isMoreAnalysisPending });
   } else if (failureCount > 0) {
     addNotification(
       `Analysis failed for all ${failureCount} files.`,
@@ -401,11 +408,12 @@ export {
   BATCH_ANALYSIS_LOW_VRAM_MIN_FILES
 };
 
-// Parked resume intent across Discover unmount/remount. Redux `isAnalyzing`
-// drives NavigationBar's isBlockedByOperation, so it MUST be cleared when
-// Discover unmounts mid-run (otherwise every tab — including the one back to
-// Discover — stays blocked with no way to recover). This module flag survives
-// the unmount so the resume effect still knows a run was interrupted.
+// Parked resume intent across an unmount/remount of the hook's owner. The
+// hook runs in AnalysisRunProvider (PhaseRenderer), so phase changes do not
+// unmount it; the phased view being replaced (dashboard) or torn down does.
+// Redux `isAnalyzing` must be cleared then, or the dashboard toggle and the
+// way back stay waiting on a run that no longer exists. This module flag
+// survives the unmount so the resume effect still knows a run was interrupted.
 let analysisInterruptedByUnmount = false;
 
 // Counts runs across every instance of the hook. Refs cannot: a Discover
@@ -1892,7 +1900,20 @@ export function useAnalysis(options = {}) {
         };
         dispatchProgressUpdate(finalProgress, { force: true });
 
-        const batchResults = batchResultsRef.current;
+        // Analysis now keeps running while the user organizes, so a file
+        // this run finished may already have been moved (its result re-keyed
+        // to the new path). Re-adding its old-path result would resurrect a
+        // file that is no longer there.
+        const filesState = /** @type {any} */ (store.getState())?.files;
+        const organizedKeys = new Set(
+          mergeOrganizedPathIndex(
+            filesState?.organizedPathIndex,
+            collectOrganizedPathKeys(filesState?.organizedFiles)
+          )
+        );
+        const batchResults = batchResultsRef.current.filter(
+          (/** @type {any} */ r) => !organizedKeys.has(toCanonicalPath(r?.path))
+        );
         // Merge results using extracted helper functions
         const mergedResults = dedupeSuggestedNames(
           mergeAnalysisResults(analysisResultsRef.current, batchResults)
@@ -1922,7 +1943,12 @@ export function useAnalysis(options = {}) {
           addNotification,
           actions,
           getCurrentPhase,
-          autoAdvanceTimeoutRef
+          autoAdvanceTimeoutRef,
+          // Read at fire time: by then a queued run has either started (store
+          // says analyzing) or is still waiting in pendingFilesRef.
+          isMoreAnalysisPending: () =>
+            pendingFilesRef.current.length > 0 ||
+            Boolean(/** @type {any} */ (store.getState())?.analysis?.isAnalyzing)
         });
       } catch (error) {
         if (error.message !== 'Analysis cancelled by user') {

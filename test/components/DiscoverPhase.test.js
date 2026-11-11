@@ -160,11 +160,15 @@ jest.mock('../../src/renderer/phases/discover', () => ({
     organizedFiles: [],
     organizedPathIndex: []
   })),
-  useAnalysis: jest.fn(() => ({
+  // The run lives in AnalysisRunProvider; Discover reads it via useAnalysisRun.
+  useAnalysisRun: jest.fn(() => ({
     analyzeFiles: mockAnalyzeFiles,
     cancelAnalysis: mockCancelAnalysis,
     clearAnalysisQueue: mockClearAnalysisQueue,
-    retryFailedFiles: mockRetryFailedFiles
+    retryFailedFiles: mockRetryFailedFiles,
+    pruneBatchResultsForPath: jest.fn(),
+    totalAnalysisFailure: false,
+    setTotalAnalysisFailure: jest.fn()
   })),
   useFileHandlers: jest.fn(() => ({
     isScanning: false,
@@ -259,6 +263,29 @@ describe('DiscoverPhase premium guidance', () => {
     }
   });
 
+  // The run lives above the phases now, so leaving Discover no longer stops
+  // it: analyzed files can be organized while the rest keep analyzing.
+  test('Continue to Organize stays open while more files analyze', () => {
+    const { useDiscoverState } = require('../../src/renderer/phases/discover');
+    const defaultImpl = useDiscoverState.getMockImplementation();
+    const advancePhase = jest.fn();
+    useDiscoverState.mockImplementation(() => ({
+      ...defaultImpl(),
+      isAnalyzing: true,
+      analysisProgress: { current: 1, total: 3, lastActivity: Date.now() },
+      actions: { setPhaseData: jest.fn(), advancePhase }
+    }));
+    try {
+      render(<DiscoverPhase />);
+      const footer = screen.getByRole('button', { name: /Continue to Organize/i });
+      expect(footer).toBeEnabled();
+      fireEvent.click(footer);
+      expect(advancePhase).toHaveBeenCalledWith('organize');
+    } finally {
+      useDiscoverState.mockImplementation(defaultImpl);
+    }
+  });
+
   test('the selection badge says "ready" once every file is analyzed', () => {
     render(<DiscoverPhase />);
     expect(screen.getByText('1 file ready')).toBeInTheDocument();
@@ -347,12 +374,11 @@ describe('DiscoverPhase premium guidance', () => {
   // failed there is nothing it can organize. Discover must offer recovery
   // instead of sending the user to an empty Organize screen.
   test('when every analysis failed, Discover offers recovery and does not advance to Organize', () => {
-    const { useDiscoverState, useAnalysis } = require('../../src/renderer/phases/discover');
+    const { useDiscoverState, useAnalysisRun } = require('../../src/renderer/phases/discover');
     const defaults = useDiscoverState();
     const originalDiscoverState = useDiscoverState.getMockImplementation();
-    const originalAnalysis = useAnalysis.getMockImplementation();
+    const originalAnalysisRun = useAnalysisRun.getMockImplementation();
     const advancePhase = jest.fn();
-    let analysisArgs;
     useDiscoverState.mockImplementation(() => ({
       ...defaults,
       analysisResults: [
@@ -369,16 +395,14 @@ describe('DiscoverPhase premium guidance', () => {
       readySelectedFilesCount: 0,
       actions: { setPhaseData: jest.fn(), advancePhase }
     }));
-    useAnalysis.mockImplementation((args) => {
-      analysisArgs = args;
-      return originalAnalysis(args);
-    });
+    // The run reports a total failure (AnalysisRunProvider owns the flag).
+    useAnalysisRun.mockImplementation(() => ({
+      ...originalAnalysisRun(),
+      totalAnalysisFailure: true
+    }));
 
     try {
       render(<DiscoverPhase />);
-      act(() => {
-        analysisArgs.actions.setPhaseData('totalAnalysisFailure', true);
-      });
 
       expect(screen.getByText('All file analyses failed')).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /Skip to Organize/i })).not.toBeInTheDocument();
@@ -397,7 +421,7 @@ describe('DiscoverPhase premium guidance', () => {
       expect(advancePhase).not.toHaveBeenCalledWith('organize');
     } finally {
       useDiscoverState.mockImplementation(originalDiscoverState);
-      useAnalysis.mockImplementation(originalAnalysis);
+      useAnalysisRun.mockImplementation(originalAnalysisRun);
     }
   });
   // A returning user with organized history may continue to Organize even
