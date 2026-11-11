@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-09T17:53:58.711Z",
+  "generatedAt": "2026-11-10T23:39:10.960Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
@@ -7891,7 +7891,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-android-arm-eabi",
-      "version": "0.155.0",
+      "version": "0.156.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7901,7 +7901,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-android-arm64",
-      "version": "0.155.0",
+      "version": "0.156.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7911,7 +7911,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-darwin-arm64",
-      "version": "0.155.0",
+      "version": "0.156.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7921,7 +7921,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-darwin-x64",
-      "version": "0.155.0",
+      "version": "0.156.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7931,7 +7931,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-freebsd-x64",
-      "version": "0.155.0",
+      "version": "0.156.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7941,7 +7941,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-linux-arm-gnueabihf",
-      "version": "0.155.0",
+      "version": "0.156.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7951,7 +7951,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-linux-arm-musleabihf",
-      "version": "0.155.0",
+      "version": "0.156.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7961,7 +7961,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-linux-arm64-gnu",
-      "version": "0.155.0",
+      "version": "0.156.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7971,7 +7971,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-linux-arm64-musl",
-      "version": "0.155.0",
+      "version": "0.156.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7981,7 +7981,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-linux-ppc64-gnu",
-      "version": "0.155.0",
+      "version": "0.156.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7991,7 +7991,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-linux-riscv64-gnu",
-      "version": "0.155.0",
+      "version": "0.156.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -8001,7 +8001,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-linux-riscv64-musl",
-      "version": "0.155.0",
+      "version": "0.156.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -8011,7 +8011,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-linux-s390x-gnu",
-      "version": "0.155.0",
+      "version": "0.156.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -8021,7 +8021,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-linux-x64-gnu",
-      "version": "0.155.0",
+      "version": "0.156.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -8031,7 +8031,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-linux-x64-musl",
-      "version": "0.155.0",
+      "version": "0.156.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -8041,7 +8041,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-openharmony-arm64",
-      "version": "0.155.0",
+      "version": "0.156.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -8051,7 +8051,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-win32-arm64-msvc",
-      "version": "0.155.0",
+      "version": "0.156.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -8061,7 +8061,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-win32-ia32-msvc",
-      "version": "0.155.0",
+      "version": "0.156.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -8071,7 +8071,7 @@
     },
     {
       "packageName": "@oxc-parser/binding-win32-x64-msvc",
-      "version": "0.155.0",
+      "version": "0.156.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -8081,7 +8081,7 @@
     },
     {
       "packageName": "@oxc-project/types",
-      "version": "0.155.0",
+      "version": "0.156.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -17427,7 +17427,7 @@
     },
     {
       "packageName": "knip",
-      "version": "6.44.1",
+      "version": "6.44.2",
       "license": "ISC",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -18835,7 +18835,7 @@
     },
     {
       "packageName": "oxc-parser",
-      "version": "0.155.0",
+      "version": "0.156.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
