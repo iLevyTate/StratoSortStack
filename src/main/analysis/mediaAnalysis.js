@@ -28,7 +28,7 @@ const crypto = require('crypto');
 const { createLogger } = require('../../shared/logger');
 const { ERROR_CODES } = require('../../shared/errorCodes');
 const { attachErrorCode } = require('../../shared/errorHandlingUtils');
-const { normalizeAnalysisResult } = require('./utils');
+const { normalizeAnalysisResult, dropPromptEchoes } = require('./utils');
 const { isMemoryBudgetExceeded } = require('../../shared/analysisProvenance');
 const { analyzeVideoWithCloud, resolveCloudFrameProvider } = require('./cloudMedia');
 
@@ -686,17 +686,20 @@ async function analyzeMediaFile(filePath, dependencies = {}, options = {}) {
           ? 'whisper-transcription'
           : 'no-speech';
 
+    // Fields the model copied out of its prompt are cleared (and the
+    // confidence capped) before anything below reads them.
+    const answer = dropPromptEchoes(llmResult, smartFolders);
     const normalized = normalizeAnalysisResult(
       {
-        ...llmResult,
+        ...answer,
         type: kind,
-        category: llmResult?.category || baseFallback.category,
-        keywords: llmResult?.keywords || baseFallback.keywords,
-        confidence: llmResult?.confidence ?? baseFallback.confidence,
-        llmSuggestedName: llmResult?.suggestedName || null,
-        suggestedName: llmResult?.suggestedName,
+        category: answer?.category || baseFallback.category,
+        keywords: answer?.keywords || baseFallback.keywords,
+        confidence: answer?.confidence ?? baseFallback.confidence,
+        llmSuggestedName: answer?.suggestedName || null,
+        suggestedName: answer?.suggestedName,
         purpose:
-          llmResult?.purpose ||
+          answer?.purpose ||
           (usedCloudFrames
             ? 'Spoken content transcribed locally; video frames analyzed by the selected cloud provider'
             : hasUsableTranscript

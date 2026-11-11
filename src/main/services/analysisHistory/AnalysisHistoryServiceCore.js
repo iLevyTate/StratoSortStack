@@ -67,6 +67,7 @@ const {
   getRecentAnalysis: getRecentAnalysisHelper,
   getAnalysisByDateRange: getAnalysisByDateRangeHelper,
   buildTimelineItems,
+  buildUncategorizedItems,
   getCategories: getCategoriesHelper,
   getTags: getTagsHelper
 } = require('./queries');
@@ -1156,6 +1157,11 @@ class AnalysisHistoryServiceCore {
   async getTimelineItems(options = {}) {
     await this.initialize();
     return buildTimelineItems(this.analysisHistory, options);
+  }
+
+  async getUncategorizedItems(options = {}) {
+    await this.initialize();
+    return buildUncategorizedItems(this.analysisHistory, options);
   }
 
   async getCategories() {

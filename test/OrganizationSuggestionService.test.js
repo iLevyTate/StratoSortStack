@@ -576,6 +576,72 @@ describe('OrganizationSuggestionService', () => {
     });
   });
 
+  describe('folder description changes', () => {
+    const change = (description, previousDescription, extra = {}) => ({
+      folderId: 'fin',
+      name: 'Finance',
+      description,
+      previousDescription,
+      ...extra
+    });
+
+    test('a reworded description becomes one memory aimed at that folder', async () => {
+      const entry = await service.recordFolderDescriptionChange(
+        change('Invoices and bank statements', 'Money things')
+      );
+      expect(entry).toEqual(
+        expect.objectContaining({
+          text: '"Finance" is for: Invoices and bank statements',
+          targetFolder: 'Finance',
+          source: 'folder_description',
+          rules: []
+        })
+      );
+      expect(entry.history).toEqual([expect.objectContaining({ description: 'Money things' })]);
+
+      // A second edit updates the same memory and keeps the trail.
+      await service.recordFolderDescriptionChange(
+        change('Invoices, receipts and bank statements', 'Invoices and bank statements')
+      );
+      const memories = (await service.listFeedbackMemory()).filter(
+        (m) => m.source === 'folder_description'
+      );
+      expect(memories).toHaveLength(1);
+      expect(memories[0].text).toBe('"Finance" is for: Invoices, receipts and bank statements');
+      expect(memories[0].history.map((h) => h.description)).toEqual([
+        'Invoices and bank statements',
+        'Money things'
+      ]);
+    });
+
+    test('wording that reads like a rule does not become an extension rule', async () => {
+      const entry = await service.recordFolderDescriptionChange(
+        change('All .pdf files go to the accountant', '')
+      );
+      expect(entry.rules).toEqual([]);
+      expect(entry.targetFolder).toBe('Finance');
+    });
+
+    test('an unchanged or empty description records nothing', async () => {
+      expect(await service.recordFolderDescriptionChange(change('Same', 'Same'))).toBeNull();
+      expect(await service.recordFolderDescriptionChange(change('', 'Was something'))).toBeNull();
+      expect(await service.listFeedbackMemory()).toEqual([]);
+    });
+
+    test('renaming the folder re-aims its memory', async () => {
+      await service.recordFolderDescriptionChange(change('Invoices', 'Money'));
+      const entry = await service.recordFolderDescriptionChange({
+        folderId: 'fin',
+        name: 'Accounting',
+        previousName: 'Finance',
+        description: 'Invoices',
+        previousDescription: 'Invoices'
+      });
+      expect(entry.targetFolder).toBe('Accounting');
+      expect(entry.text).toBe('"Accounting" is for: Invoices');
+    });
+  });
+
   describe('feedback memory adjustments', () => {
     test('applies rule-based memory boost for matching extension', async () => {
       const file = createTestFile({

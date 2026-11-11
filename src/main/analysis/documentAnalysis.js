@@ -50,9 +50,10 @@ const {
 const { analyzeTextWithLlama, normalizeCategoryToSmartFolders } = require('./documentLlm');
 const { getOrganizationGuidance } = require('./organizationGuidance');
 const { getAnalysisLimits } = require('./analysisLimits');
-const { normalizeAnalysisResult } = require('./utils');
+const { normalizeAnalysisResult, dropPromptEchoes } = require('./utils');
 const { normalizeExtractedTextForStorage } = require('./analysisTextUtils');
 const {
+  FILENAME_ONLY_CONFIDENCE,
   getIntelligentCategory,
   getIntelligentKeywords,
   safeSuggestedName,
@@ -733,7 +734,8 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
           const intelligentKeywords = getIntelligentKeywords(fileName, fileExtension);
 
           let purpose = 'Office document (content extraction failed)';
-          const confidence = 70;
+          // The contents could not be read: a filename guess, flagged for review.
+          const confidence = FILENAME_ONLY_CONFIDENCE;
           // A reader this build lacks, or a password, is not a capability a
           // model install restores: stamp a method the watcher never
           // retries (analysisProvenance.format_unsupported).
@@ -848,7 +850,17 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
           ? listedKeywords
           : getIntelligentKeywords(fileName, fileExtension);
 
-      const category = normalizeCategoryToSmartFolders('archive', smartFolders);
+      // File an archive by what it holds: a zip of .stl parts belongs with
+      // 3D prints, not under the generic 'archive' (which only ever reached
+      // Uncategorized). Taken only when the entries' dominant type lands on
+      // one of the user's own folders.
+      const contentFolder = archiveInfo.dominantExtension
+        ? findSmartFolderName(
+            getIntelligentCategory(fileName, `.${archiveInfo.dominantExtension}`, smartFolders),
+            smartFolders
+          )
+        : null;
+      const category = contentFolder || normalizeCategoryToSmartFolders('archive', smartFolders);
 
       return {
         purpose: archiveInfo.summary || 'Archive file',
@@ -856,7 +868,9 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
         category,
         date: fileDate,
         keywords,
-        confidence: 70,
+        // Only the entry names were read. A folder matched on them is a fair
+        // guess; the generic 'archive' bucket is not one.
+        confidence: contentFolder ? 70 : FILENAME_ONLY_CONFIDENCE,
         suggestedName: safeSuggestedName(fileName, fileExtension),
         extractionMethod: 'archive'
       };
@@ -1032,7 +1046,7 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
         });
         const normalized = normalizeAnalysisResult(
           {
-            ...analysis,
+            ...dropPromptEchoes(analysis, smartFolders),
             llmSuggestedName: analysis.suggestedName || null,
             contentLength: extractedTextLength,
             extractionMethod: 'content',
@@ -1226,6 +1240,7 @@ async function tryExtractArchiveMetadata(filePath) {
       const listing = await describeArchive(filePath);
       if (listing) {
         info.keywords = deriveKeywordsFromFilenames(listing.entryNames);
+        info.dominantExtension = dominantEntryExtension(listing.entryNames);
         info.summary = listing.summary;
         if (typeof listing.totalEntries === 'number') info.totalEntries = listing.totalEntries;
         info.processedEntries = listing.entryNames.length;
@@ -1251,6 +1266,7 @@ async function tryExtractArchiveMetadata(filePath) {
       const sampledEntries = allEntries.slice(0, 50);
       const names = sampledEntries.map((/** @type {any} */ e) => e.entryName);
       info.keywords = deriveKeywordsFromFilenames(names);
+      info.dominantExtension = dominantEntryExtension(names);
       info.totalEntries = totalEntries;
       info.processedEntries = sampledEntries.length;
       info.summary = `ZIP archive with ${totalEntries} entries`;
@@ -1265,6 +1281,53 @@ async function tryExtractArchiveMetadata(filePath) {
   info.summary = `${ext.substring(1).toUpperCase()} archive`;
   info.keywords = [];
   return info;
+}
+
+/**
+ * The extension that at least half of an archive's file entries share, or
+ * null when no single type dominates. Folder entries are ignored.
+ * @param {string[]} names
+ * @returns {string|null}
+ */
+function dominantEntryExtension(names) {
+  /** @type {Record<string, number>} */
+  const counts = {};
+  let files = 0;
+  for (const name of names || []) {
+    const base = String(name).split(/[\\/]/).pop() || '';
+    if (!base) continue; // folder entry ("parts/")
+    files += 1;
+    const dot = base.lastIndexOf('.');
+    if (dot <= 0 || dot === base.length - 1) continue;
+    const ext = base.slice(dot + 1).toLowerCase();
+    counts[ext] = (counts[ext] || 0) + 1;
+  }
+  let best = null;
+  let bestCount = 0;
+  for (const [ext, count] of Object.entries(counts)) {
+    if (count > bestCount) {
+      best = ext;
+      bestCount = count;
+    }
+  }
+  return best && bestCount * 2 >= files ? best : null;
+}
+
+/**
+ * The user's folder whose name equals `candidate` (case-insensitive), or null.
+ * Uncategorized does not count: it is the absence of a match.
+ * @param {string|null|undefined} candidate
+ * @param {any[]} smartFolders
+ * @returns {string|null}
+ */
+function findSmartFolderName(candidate, smartFolders) {
+  if (typeof candidate !== 'string' || !candidate) return null;
+  const wanted = candidate.trim().toLowerCase();
+  if (!wanted || wanted === 'uncategorized') return null;
+  const folder = (smartFolders || []).find(
+    (f) => typeof f?.name === 'string' && f.name.trim().toLowerCase() === wanted
+  );
+  return folder ? folder.name : null;
 }
 
 /** @param {string[]} names */

@@ -156,3 +156,35 @@ describe('calibrateConfidence — caps that prevent false-precision routing', ()
     expect(calibrateConfidence({ rawConfidence: -10 }).original).toBe(0); // clamped
   });
 });
+
+// A banner was filed under Research at 90% while the vectors pointed at a
+// different folder: the LLM's pick was kept and nothing said the two signals
+// disagreed. Disagreement now caps the claim below the auto-organize default.
+describe('calibrateConfidence — LLM and embedding disagree', () => {
+  test('a kept LLM folder the embedding does not back is capped at DISAGREEMENT_CAP (65)', () => {
+    const result = calibrateConfidence({
+      ...baseRequest,
+      rawConfidence: 90,
+      signalsDisagree: true
+    });
+    expect(result.confidence).toBe(65);
+    expect(result.reason).toBe('llm_embedding_disagree');
+  });
+
+  test('agreement leaves the decisive case untouched', () => {
+    const result = calibrateConfidence({ ...baseRequest, signalsDisagree: false });
+    expect(result.confidence).toBe(95);
+    expect(result.reason).toBeNull();
+  });
+
+  test('a tighter cap still wins over the disagreement cap', () => {
+    const result = calibrateConfidence({
+      ...baseRequest,
+      topScore: 0.62,
+      runnerUpScore: 0.61,
+      signalsDisagree: true
+    });
+    expect(result.confidence).toBe(60);
+    expect(result.reason).toBe('no_spread');
+  });
+});

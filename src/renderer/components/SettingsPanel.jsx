@@ -69,6 +69,7 @@ import { lockAppScroll, unlockAppScroll } from '../utils/scrollLock';
 import { isTopOverlay, registerOverlay, unregisterOverlay } from '../utils/overlayStack';
 import { toErrorMessage } from '../utils/errorMapping';
 import AutoOrganizeSection from './settings/AutoOrganizeSection';
+import FeedbackMemoryPanel from './organize/FeedbackMemoryPanel';
 import BackgroundModeSection from './settings/BackgroundModeSection';
 import NotificationSettingsSection from './settings/NotificationSettingsSection';
 import LlamaConfigSection from './settings/LlamaConfigSection';
@@ -1755,6 +1756,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
                 >
                   <Stack gap="spacious">
                     <AutoOrganizeSection settings={settings} setSettings={applySettingsUpdate} />
+                    <FeedbackMemoryPanel />
                     <BackgroundModeSection settings={settings} setSettings={applySettingsUpdate} />
                     {effectiveAdvancedMode && (
                       <ProcessingLimitsSection

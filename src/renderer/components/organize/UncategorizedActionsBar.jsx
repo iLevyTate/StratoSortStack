@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import PropTypes from 'prop-types';
 import { FolderPlus, RefreshCw, Lightbulb } from 'lucide-react';
 import { Button } from '../ui';
@@ -8,40 +8,9 @@ import { AddSmartFolderModal } from '../setup';
 import { createLogger } from '../../../shared/logger';
 import { smartFoldersIpc } from '../../services/ipc';
 import { mapErrorToNotification } from '../../utils/errorMapping';
+import { findRecurringTheme } from './uncategorizedThemes';
 
 const logger = createLogger('UncategorizedActionsBar');
-
-/**
- * Threshold above which a recurring entity in uncategorized files becomes a
- * Smart Folder suggestion. Picked so the user sees the suggestion early enough
- * to be useful (after the third file) but not so eagerly that one-off entities
- * trigger noise.
- */
-const PATTERN_SUGGESTION_THRESHOLD = 3;
-
-/**
- * Heuristic: extract a normalized "entity" key from a file's analysis result
- * for grouping. Falls back through the most-specific to least-specific fields
- * so we group on whatever signal the LLM produced. Returns null when no
- * entity can be derived (file shouldn't contribute to pattern detection).
- */
-function deriveEntityKey(file) {
-  const analysis = file?.analysis;
-  if (!analysis || typeof analysis !== 'object') return null;
-  const candidate =
-    analysis.vendor ||
-    analysis.organization ||
-    analysis.entity ||
-    analysis.sender ||
-    analysis.project ||
-    analysis.category ||
-    null;
-  if (!candidate || typeof candidate !== 'string') return null;
-  const trimmed = candidate.trim();
-  if (!trimmed) return null;
-  // Lowercase + collapse whitespace so "Acme Inc" and "acme inc " group together.
-  return trimmed.toLowerCase().replace(/\s+/g, ' ');
-}
 
 /**
  * Determine whether a file is currently routed to the Uncategorized bucket —
@@ -59,6 +28,45 @@ function isUncategorized(file, findFolderForFile) {
   return String(folder?.name || '').toLowerCase() === 'uncategorized';
 }
 
+/** Same file, whichever slash or letter case the path was recorded with. */
+const pathKey = (file) =>
+  String(file?.path || '')
+    .replace(/\\/g, '/')
+    .toLowerCase();
+
+/**
+ * Files analyzed in earlier runs that are still uncategorized, shaped like
+ * this screen's files. Themes are counted across these too: three invoices
+ * from one vendor rarely arrive in the same batch.
+ */
+function useEarlierUncategorizedFiles() {
+  const [files, setFiles] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    const load = window.electronAPI?.analysisHistory?.getUncategorized;
+    if (typeof load !== 'function') return undefined;
+    Promise.resolve(load({ limit: 500 }))
+      .then((result) => {
+        if (cancelled || !Array.isArray(result?.items)) return undefined;
+        setFiles(
+          result.items.map((item) => ({
+            ...item,
+            // History keeps keywords under `tags`.
+            analysis: { ...item.analysis, keywords: item.analysis?.tags }
+          }))
+        );
+        return undefined;
+      })
+      .catch((error) => {
+        logger.debug('Could not load earlier uncategorized files', { error: error?.message });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return files;
+}
+
 function UncategorizedActionsBar({
   unprocessedFiles,
   findSmartFolderForCategory,
@@ -72,6 +80,7 @@ function UncategorizedActionsBar({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [prefillName, setPrefillName] = useState('');
   const [isReanalyzing, setIsReanalyzing] = useState(false);
+  const earlierFiles = useEarlierUncategorizedFiles();
 
   // Derive uncategorized files + pattern suggestions in one pass.
   const { uncategorizedFiles, suggestion } = useMemo(() => {
@@ -84,39 +93,29 @@ function UncategorizedActionsBar({
           ((file) => findSmartFolderForCategory(file?.analysis?.category));
     const uncategorized = (unprocessedFiles || []).filter((f) => isUncategorized(f, matcher));
 
-    // Group by derived entity to find recurring patterns.
-    const counts = new Map();
-    for (const file of uncategorized) {
-      const key = deriveEntityKey(file);
-      if (!key) continue;
-      const entry = counts.get(key) || { displayName: null, files: [] };
-      // Preserve the first non-lowercased label we see for display.
-      if (!entry.displayName) {
-        const raw =
-          file?.analysis?.vendor ||
-          file?.analysis?.organization ||
-          file?.analysis?.entity ||
-          file?.analysis?.sender ||
-          file?.analysis?.project ||
-          file?.analysis?.category ||
-          key;
-        entry.displayName = String(raw).trim();
-      }
-      entry.files.push(file);
-      counts.set(key, entry);
-    }
-
-    // Find the top suggestion: largest group above threshold. We surface only
-    // ONE suggestion at a time to avoid stacking banners — once the user
-    // creates that folder (or dismisses), the next pattern will surface.
-    let topGroup = null;
-    for (const entry of counts.values()) {
-      if (entry.files.length < PATTERN_SUGGESTION_THRESHOLD) continue;
-      if (!topGroup || entry.files.length > topGroup.files.length) topGroup = entry;
-    }
-
-    return { uncategorizedFiles: uncategorized, suggestion: topGroup };
-  }, [unprocessedFiles, findSmartFolderForFile, findSmartFolderForCategory, resolveDestination]);
+    // One suggestion at a time, the largest recurring theme: once the user
+    // creates that folder, its files leave this list and the next theme shows.
+    // Earlier files count toward a theme too, until a folder matches them.
+    const inThisRun = new Set((unprocessedFiles || []).map(pathKey));
+    const earlier = earlierFiles.filter(
+      (f) => !inThisRun.has(pathKey(f)) && isUncategorized(f, matcher)
+    );
+    const combined = findRecurringTheme([...uncategorized, ...earlier]);
+    const earlierCount = combined ? combined.files.filter((f) => earlier.includes(f)).length : 0;
+    // A theme made only of earlier files says nothing about the files on
+    // screen, so fall back to what this run shows on its own.
+    const theme =
+      combined && earlierCount < combined.files.length
+        ? { ...combined, earlierCount }
+        : findRecurringTheme(uncategorized);
+    return { uncategorizedFiles: uncategorized, suggestion: theme };
+  }, [
+    unprocessedFiles,
+    earlierFiles,
+    findSmartFolderForFile,
+    findSmartFolderForCategory,
+    resolveDestination
+  ]);
 
   const openCreateModal = useCallback((seedName = '') => {
     setPrefillName(seedName);
@@ -247,9 +246,13 @@ function UncategorizedActionsBar({
               <Text variant="tiny" className="text-system-gray-600 mt-1 flex items-center gap-1">
                 <Lightbulb className="w-3.5 h-3.5 text-stratosort-blue inline-shrink-0" />
                 <span>
-                  {suggestion.files.length} are from{' '}
-                  <strong className="text-system-gray-800">{suggestion.displayName}</strong> — want
-                  a Smart Folder for them?
+                  {suggestion.files.length}{' '}
+                  {suggestion.source === 'entity' ? 'are from' : 'share the theme'}{' '}
+                  <strong className="text-system-gray-800">{suggestion.displayName}</strong>
+                  {suggestion.earlierCount > 0
+                    ? ` (${suggestion.earlierCount} analyzed earlier)`
+                    : ''}{' '}
+                  — want a Smart Folder for them?
                 </span>
               </Text>
             ) : (

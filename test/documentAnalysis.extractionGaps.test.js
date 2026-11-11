@@ -169,7 +169,8 @@ describe('documentAnalysis dispatch for the restored file types', () => {
     expect(documentLlm.analyzeTextWithLlama).not.toHaveBeenCalled();
     expect(result.extractionMethod).toBe('filename');
     expect(result.fallbackReason).toMatch(/no PSD reader/);
-    expect(result.confidence).toBe(70);
+    // Only the name was read: reported as a filename guess (50), not 70.
+    expect(result.confidence).toBe(50);
   });
 
   test('an empty metadata read falls back to the filename instead of calling the model', async () => {
@@ -207,6 +208,48 @@ describe('documentAnalysis dispatch for the restored file types', () => {
     expect(result.purpose).toBe('TAR archive with 3 entries');
     expect(result.keywords.length).toBeGreaterThan(0);
     expect(documentLlm.analyzeTextWithLlama).not.toHaveBeenCalled();
+  });
+
+  // A zip of .stl parts went to Uncategorized: the category was hardcoded
+  // to 'archive' even though the listing showed what the archive held.
+  test('an archive of 3D parts is filed with the folder that takes those parts', async () => {
+    archives.describeArchive.mockResolvedValue({
+      format: 'tar',
+      summary: 'TAR archive with 3 entries',
+      entryNames: ['parts/', 'parts/grip.stl', 'parts/mount.stl', 'README.txt'],
+      totalEntries: 4,
+      truncated: false
+    });
+    const folders = [
+      { name: '3D print', description: 'Any .stl, .3mf, .obj or other 3D print file.' },
+      { name: 'Financial', description: 'Invoices and statements.' }
+    ];
+
+    const result = await analyzeDocumentFile('/downloads/AR+15+foregrip_stls.tar', folders, {
+      bypassCache: true
+    });
+
+    expect(result.extractionMethod).toBe('archive');
+    expect(result.category).toBe('3D print');
+    expect(result.confidence).toBe(70);
+  });
+
+  test('an archive with no dominant type keeps the generic bucket at filename confidence', async () => {
+    archives.describeArchive.mockResolvedValue({
+      format: 'tar',
+      summary: 'TAR archive with 4 entries',
+      entryNames: ['a.stl', 'b.pdf', 'c.png', 'd.txt'],
+      totalEntries: 4,
+      truncated: false
+    });
+    const folders = [{ name: '3D print', description: 'Any .stl file.' }];
+
+    const result = await analyzeDocumentFile('/downloads/mixed.tar', folders, {
+      bypassCache: true
+    });
+
+    expect(result.category).toBe('archive'); // normalizeCategoryToSmartFolders is identity here
+    expect(result.confidence).toBe(50);
   });
 
   test('an unreadable tar still returns an archive result instead of failing', async () => {

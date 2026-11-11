@@ -443,6 +443,48 @@ describe('Smart Folders IPC', () => {
     });
   });
 
+  describe('SMART_FOLDERS.EDIT description changes', () => {
+    test('a reworded description is reported to the suggestion service and drops derived keywords', async () => {
+      const recordFolderDescriptionChange = jest.fn().mockResolvedValue({});
+      mockServiceIntegration.suggestionService = { recordFolderDescriptionChange };
+      mockFoldersService.getCustomFolders.mockReturnValue([
+        {
+          id: '1',
+          name: 'Work',
+          path: 'C:\\Users\\Test\\Documents\\Work',
+          description: 'Work stuff',
+          keywords: ['stuff'],
+          semanticTags: ['misc']
+        }
+      ]);
+
+      const result = await getHandler(IPC_CHANNELS.SMART_FOLDERS.EDIT)({}, '1', {
+        description: 'Client contracts and statements of work'
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.folder.keywords).toEqual([]);
+      expect(result.folder.semanticTags).toEqual([]);
+      expect(recordFolderDescriptionChange).toHaveBeenCalledWith({
+        folderId: '1',
+        name: 'Work',
+        previousName: 'Work',
+        description: 'Client contracts and statements of work',
+        previousDescription: 'Work stuff'
+      });
+    });
+
+    test('a failure to record the change does not fail the edit', async () => {
+      mockServiceIntegration.suggestionService = {
+        recordFolderDescriptionChange: jest.fn().mockRejectedValue(new Error('store offline'))
+      };
+      const result = await getHandler(IPC_CHANNELS.SMART_FOLDERS.EDIT)({}, '1', {
+        description: 'Something new'
+      });
+      expect(result.success).toBe(true);
+    });
+  });
+
   describe('Smart Folder root vetting', () => {
     // The preload gives up on an invoke after its timeout and the registry
     // aborts event.abortSignal; the confirmation dialog must go with it, so

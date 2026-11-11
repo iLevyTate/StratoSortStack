@@ -55,3 +55,31 @@ describe('AnalysisHistory timeline IPC', () => {
     expect(logger.error).toHaveBeenCalled();
   });
 });
+
+describe('AnalysisHistory uncategorized IPC', () => {
+  beforeEach(() => {
+    ipcMain._handlers.clear();
+    ipcMain.handle.mockClear();
+    jest.resetModules();
+  });
+
+  test('GET_UNCATEGORIZED returns the service items', async () => {
+    const items = [{ path: '/a.pdf', name: 'a.pdf', analysis: { category: 'Uncategorized' } }];
+    const { IPC_CHANNELS, service } = register({
+      getUncategorizedItems: jest.fn(async () => items)
+    });
+    const handler = ipcMain._handlers.get(IPC_CHANNELS.ANALYSIS_HISTORY.GET_UNCATEGORIZED);
+    expect(await handler(null, { limit: 50 })).toEqual({ items });
+    expect(service.getUncategorizedItems).toHaveBeenCalledWith({ limit: 50 });
+  });
+
+  test('GET_UNCATEGORIZED returns no items on service error', async () => {
+    const { IPC_CHANNELS } = register({
+      getUncategorizedItems: jest.fn(async () => {
+        throw new Error('boom');
+      })
+    });
+    const handler = ipcMain._handlers.get(IPC_CHANNELS.ANALYSIS_HISTORY.GET_UNCATEGORIZED);
+    expect(await handler(null, {})).toEqual({ items: [] });
+  });
+});

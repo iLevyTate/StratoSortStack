@@ -212,3 +212,72 @@ describe('Analysis Utils', () => {
     });
   });
 });
+
+// Small models sometimes answer with the prompt instead of the file: a schema
+// instruction or a smart folder's description, copied word for word. The
+// examples below are values found in a real analysis history.
+describe('dropPromptEchoes', () => {
+  const { dropPromptEchoes } = require('../src/main/analysis/utils');
+  const folders = [
+    {
+      name: 'Logos',
+      description: 'Art, graphic design, images not related to other categories, logos.'
+    },
+    {
+      name: 'Research',
+      description:
+        'Anything to do with topics like SCAN, SCANUE, STAC, SCANAQ code related to neuromorphic or agent systems and code related to that topic.'
+    }
+  ];
+
+  test.each([
+    [
+      'a folder description',
+      'purpose',
+      'Art, graphic design, images not related to other categories, logos'
+    ],
+    [
+      'a paraphrased description',
+      'summary',
+      'Research on SCANUE, a code related to neuromorphic or agent systems.'
+    ],
+    [
+      'the summary instruction',
+      'summary',
+      "A concise 1-2 sentence summary of the document's content."
+    ],
+    ['a shortened instruction', 'summary', "A concise summary of the document's content."],
+    [
+      'the naming instruction, examples and all',
+      'summary',
+      "A short, concise topic-based filename (max 3 words) using underscores (e.g., 'budget_report', 'sunset_beach'). Do NOT include the extension."
+    ]
+  ])('clears %s and caps the confidence', (_label, field, value) => {
+    const result = dropPromptEchoes({ category: 'Logos', confidence: 90, [field]: value }, folders);
+    expect(result[field]).toBeNull();
+    expect(result.confidence).toBe(50);
+    expect(result.promptEchoFields).toEqual([field]);
+  });
+
+  test.each([
+    'A colorful image of a sunset beach landscape.',
+    'A logo for a company or organization.',
+    'A study on neuromorphic agent systems.',
+    'The study examines the detection of simulator authenticity using a tabula rasa recurrent network.'
+  ])('keeps a real answer that only shares words: %s', (summary) => {
+    const input = { category: 'Research', confidence: 90, summary };
+    expect(dropPromptEchoes(input, folders)).toBe(input);
+  });
+
+  test('caps on the 0-1 scale when the confidence is on it', () => {
+    const result = dropPromptEchoes(
+      { confidence: 0.9, summary: "A concise 1-2 sentence summary of the document's content." },
+      folders
+    );
+    expect(result.confidence).toBe(0.5);
+  });
+
+  test('passes a missing answer through', () => {
+    expect(dropPromptEchoes(null, folders)).toBeNull();
+  });
+});

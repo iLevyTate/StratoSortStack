@@ -40,6 +40,9 @@ const {
 
 const { PatternMatcher } = require('./patternMatcher');
 const { FeedbackMemoryStore, getMetrics: getFeedbackMetrics } = require('./feedbackMemoryStore');
+
+/** Earlier wordings kept per folder for the Settings history. */
+const FOLDER_DESCRIPTION_HISTORY_LIMIT = 5;
 const {
   buildMemoryEntry,
   applyMemoryRuleAdjustments,
@@ -1676,6 +1679,55 @@ class OrganizationSuggestionServiceCore {
       await this._savePatterns();
     }
     return result;
+  }
+
+  /**
+   * A user rewording what a folder is for is the plainest statement of what
+   * belongs there. Keep it as one memory per folder, so matching files lean
+   * toward that folder and Settings shows what was changed and when.
+   * @param {{ folderId?: string, name: string, previousName?: string, description?: string, previousDescription?: string }} change
+   * @returns {Promise<any|null>} the stored memory, or null when nothing changed
+   */
+  async recordFolderDescriptionChange({
+    folderId,
+    name,
+    previousName,
+    description,
+    previousDescription
+  }) {
+    const next = String(description || '').trim();
+    const previous = String(previousDescription || '').trim();
+    if (!name || !next) return null;
+
+    await this._ensureFeedbackMemoryLoaded();
+    const autoKey = `folder-description:${folderId || name.toLowerCase()}`;
+    const existing = (await this.feedbackMemoryStore.list()).find(
+      (entry) => entry?.autoKey === autoKey
+    );
+    const renamed = Boolean(previousName) && previousName !== name;
+    if (next === previous && !(existing && renamed)) return null;
+
+    const text = normalizeText(`"${name}" is for: ${next}`);
+    const metadata = {
+      source: 'folder_description',
+      targetFolder: name,
+      scope: { type: 'folder', value: name }
+    };
+    const entry = existing
+      ? await this.updateFeedbackMemory(existing.id, text, metadata)
+      : await this.addFeedbackMemory(text, metadata);
+    if (!entry) return null;
+
+    const history = Array.isArray(existing?.history) ? [...existing.history] : [];
+    if (previous && previous !== next) {
+      history.unshift({ description: previous, changedAt: new Date().toISOString() });
+    }
+    return this.feedbackMemoryStore.update(
+      entry.id,
+      // A description is prose, not a "X goes to Y" rule: keep none parsed from it.
+      { autoKey, rules: [], history: history.slice(0, FOLDER_DESCRIPTION_HISTORY_LIMIT) },
+      {}
+    );
   }
 
   async addFeedbackMemory(/** @type {any} */ text, metadata = {}) {

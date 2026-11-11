@@ -22,6 +22,47 @@ const FolderMatchingService = require('../services/FolderMatchingService');
 const { createLogger } = require('../../shared/logger');
 const logger = createLogger('FallbackUtils');
 
+/**
+ * Confidence for a result built from the file name alone (nothing inside the
+ * file was read). Below auto-organize's default threshold (75%) and in the
+ * history view's warning band (50-69%), so these files ask for a look instead
+ * of reading as settled. They were reported at 65-75, above real content
+ * analyses that scored lower.
+ */
+const FILENAME_ONLY_CONFIDENCE = 50;
+
+/**
+ * Lowercased words of a file name, space-joined and space-padded so a phrase
+ * can be found as whole words: "AR+15_foregrip-stls.zip" -> " ar 15 foregrip stls zip ".
+ * @param {string} fileName
+ * @returns {string}
+ */
+function toWordString(fileName) {
+  const words = String(fileName || '')
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+  return ` ${words.join(' ')} `;
+}
+
+/**
+ * Whether `phrase` appears in the file name as whole words, allowing a plural
+ * on its last word ("invoice" matches "invoices"). Substring matching filed
+ * "network" under a "Work" folder and "barcode" under "code".
+ * @param {string} wordString - From toWordString
+ * @param {string} phrase - Lowercased word or phrase
+ * @returns {boolean}
+ */
+function nameHasWords(wordString, phrase) {
+  const words = String(phrase || '')
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+  if (words.length === 0) return false;
+  const joined = words.join(' ');
+  return [joined, `${joined}s`, `${joined}es`].some((form) => wordString.includes(` ${form} `));
+}
+
 const normalizeCategoryToSmartFolders =
   typeof FolderMatchingService?.matchCategoryToFolder === 'function'
     ? FolderMatchingService.matchCategoryToFolder.bind(FolderMatchingService)
@@ -67,6 +108,9 @@ function getIntelligentCategory(fileName, extension, smartFolders = []) {
   const extNoDot = lowerExtension.replace(/^\./, '');
 
   if (smartFolders && smartFolders.length > 0) {
+    // Folder words are matched against the name's whole words (see
+    // nameHasWords); the generic pattern table further down is unchanged.
+    const nameWords = toWordString(fileName);
     const validFolders = smartFolders.filter(
       (f) => f && f.name && typeof f.name === 'string' && f.name.trim().length > 0
     );
@@ -75,11 +119,11 @@ function getIntelligentCategory(fileName, extension, smartFolders = []) {
     for (const folder of validFolders) {
       const folderNameLower = folder.name.toLowerCase();
       let score = 0;
-      if (lowerFileName.includes(folderNameLower)) score += 10;
+      if (nameHasWords(nameWords, folderNameLower)) score += 10;
       const folderWords = folderNameLower
         .split(/[\s_-]+/)
         .filter((/** @type {string} */ w) => w.length > 2);
-      for (const word of folderWords) if (lowerFileName.includes(word)) score += 8;
+      for (const word of folderWords) if (nameHasWords(nameWords, word)) score += 8;
 
       // SEMANTIC EXTENSION MATCHING: Understand that "3D printing" folder means .stl files belong there
       // This checks folder NAME for semantic concepts (e.g., "3D Prints" folder → .stl files)
@@ -95,7 +139,7 @@ function getIntelligentCategory(fileName, extension, smartFolders = []) {
         const descWords = descLower
           .split(/[\s,.-]+/)
           .filter((/** @type {string} */ w) => w.length > 3);
-        for (const word of descWords) if (lowerFileName.includes(word)) score += 6;
+        for (const word of descWords) if (nameHasWords(nameWords, word)) score += 6;
 
         // SEMANTIC EXTENSION MATCHING: Understand that "models for my Ender 3" means .stl files
         // This checks folder DESCRIPTION for semantic concepts
@@ -118,7 +162,7 @@ function getIntelligentCategory(fileName, extension, smartFolders = []) {
       if (Array.isArray(folder.semanticTags)) {
         for (const tag of folder.semanticTags) {
           const tagLower = String(tag).toLowerCase();
-          if (lowerFileName.includes(tagLower)) score += 5;
+          if (nameHasWords(nameWords, tagLower)) score += 5;
           // Extension match in semantic tags (e.g., semanticTags: ["stl", "3d-model"])
           if (extNoDot && (tagLower === lowerExtension || tagLower === extNoDot)) {
             score += 10; // High score for explicit extension in semantic tags
@@ -129,7 +173,7 @@ function getIntelligentCategory(fileName, extension, smartFolders = []) {
       if (Array.isArray(folder.keywords)) {
         for (const kw of folder.keywords) {
           const kwLower = String(kw).toLowerCase();
-          if (lowerFileName.includes(kwLower)) score += 4;
+          if (nameHasWords(nameWords, kwLower)) score += 4;
           // Extension match in keywords (e.g., keywords: [".stl", "3mf", "gcode"])
           if (extNoDot && (kwLower === lowerExtension || kwLower === extNoDot)) {
             score += 12; // High score for explicit extension in keywords
@@ -142,18 +186,18 @@ function getIntelligentCategory(fileName, extension, smartFolders = []) {
         if (Array.isArray(pathParts)) {
           const parts = pathParts.filter((p) => p && p.length > 2);
           for (const part of parts) {
-            if (lowerFileName.includes(part)) score += 3;
+            if (nameHasWords(nameWords, part)) score += 3;
           }
         }
       }
       if (folder.category) {
         for (const word of folder.category.toLowerCase().split(/[\s_-]+/)) {
-          if (word.length > 2 && lowerFileName.includes(word)) score += 2;
+          if (word.length > 2 && nameHasWords(nameWords, word)) score += 2;
         }
       }
       if (Array.isArray(folder.relatedFolders)) {
         for (const relatedName of folder.relatedFolders)
-          if (lowerFileName.includes(String(relatedName).toLowerCase())) score += 1;
+          if (nameHasWords(nameWords, String(relatedName))) score += 1;
       }
       if (folder.confidenceScore && folder.confidenceScore > 0.8) score *= 1.2;
       if (score > bestScore) {
@@ -633,10 +677,13 @@ function createFallbackAnalysis(params) {
     fileExtension,
     reason,
     smartFolders = [],
-    confidence = 65,
+    confidence: requestedConfidence = FILENAME_ONLY_CONFIDENCE,
     type = 'document',
     options = {}
   } = params;
+  // Nothing but the name was read, so the result never claims more than a
+  // filename guess is worth, whatever the caller asked for.
+  const confidence = Math.min(requestedConfidence, FILENAME_ONLY_CONFIDENCE);
 
   const {
     extractionMethod = 'filename_fallback',
@@ -698,6 +745,7 @@ function createFallbackAnalysis(params) {
 }
 
 module.exports = {
+  FILENAME_ONLY_CONFIDENCE,
   getIntelligentCategory,
   getIntelligentKeywords,
   safeSuggestedName,
