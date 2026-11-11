@@ -129,22 +129,21 @@ These are tracked gaps that the project slash commands help address:
    check failed for asar archive entry"), silent install and first/second launch work, the zip
    launches and its updater skips with the zip reason, the bundled VC++ runtime installs, local AI
    initializes, the OCR, image-preprocess and embedding worker pools run, and four synthetic files
-   analyze. The same test on the published v5.1.2 (latest release, 2026-11-01) found local AI broken
-   on clean PCs (missing VC++ runtime, `NoBinaryFoundError`) and those workers crashing
-   (`pino-std-serializers`); both are fixed on main but **not yet released**. On 2026-11-09 the
-   dispatch-only `.github/workflows/packaged-smoke.yml` (run 42649893628) built, installed and
-   launched all four packages with a throwaway profile and `scripts/packaged-launch-smoke.js`:
-   Windows x64 and arm64 Azure-signed (silent NSIS install; our files carry the Kennedy Applied
-   Sciences signature and `vc_redist.<arch>.exe` keeps Microsoft's, in the installer and the
-   installed copy), macOS arm64 (unsigned, Metal) and Linux x64 (xvfb, CPU). Each reached
-   coordinated startup, loaded the native AI engine (Windows x64 on a Hyper-V GPU falls back from
-   Vulkan to CPU, which the check reports but allows) and ran the packaged OCR worker on a synthetic
-   image. Run 42702179765 added a seeded 5 MB LZ4 search index: all four restored it through
-   `oramaRestoreWorker` (`parsedIn: 'worker'`, 800/800 documents). Still not verified: Defender
-   real-time-protection timing (Sandbox disables Defender), the interactive UAC/decline path, the
-   zip's **Install now** click-through, the vision model (timed out in the memory-limited sandbox),
-   the Atlas, log-export and settings-import workers, and a signed and notarized macOS build. The
-   checklist lives in
+   analyze. The same test on the published v5.1.2 (2026-11-01) found local AI broken on clean PCs
+   (missing VC++ runtime, `NoBinaryFoundError`) and those workers crashing (`pino-std-serializers`);
+   both fixes shipped in **v5.2.0** (2026-11-10). On 2026-11-09 the dispatch-only
+   `.github/workflows/packaged-smoke.yml` (run 42649893628) built, installed and launched all four
+   packages with a throwaway profile and `scripts/packaged-launch-smoke.js`: Windows x64 and arm64
+   Azure-signed (silent NSIS install; our files carry the Kennedy Applied Sciences signature and
+   `vc_redist.<arch>.exe` keeps Microsoft's, in the installer and the installed copy), macOS arm64
+   (unsigned, Metal) and Linux x64 (xvfb, CPU). Each reached coordinated startup, loaded the native
+   AI engine (Windows x64 on a Hyper-V GPU falls back from Vulkan to CPU, which the check reports
+   but allows) and ran the packaged OCR worker on a synthetic image. Run 42702179765 added a seeded
+   5 MB LZ4 search index: all four restored it through `oramaRestoreWorker` (`parsedIn: 'worker'`,
+   800/800 documents). Still not verified: Defender real-time-protection timing (Sandbox disables
+   Defender), the interactive UAC/decline path, the zip's **Install now** click-through, the vision
+   model (timed out in the memory-limited sandbox), the Atlas, log-export and settings-import
+   workers, and a signed and notarized macOS build. The checklist lives in
    [`docs/RELEASING.md` § Packaged-integrity checks](docs/RELEASING.md#packaged-integrity-checks) —
    keep that the single source and do not re-fork it here.
 
