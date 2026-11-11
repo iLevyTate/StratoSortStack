@@ -111,9 +111,14 @@ jest.mock('framer-motion', () => ({
 jest.mock('lucide-react', () => ({
   CheckCircle2: () => <span />,
   Check: () => <span />,
-  RotateCcw: () => <span />,
+  FilePlus: () => <span />,
   ArrowLeft: () => <span />,
   FolderOpen: () => <span />
+}));
+
+const mockRevealFile = jest.fn();
+jest.mock('../../src/renderer/hooks/useFileActions', () => ({
+  useFileActions: () => ({ revealFile: mockRevealFile })
 }));
 
 jest.mock('../../src/renderer/contexts/NotificationContext', () => ({
@@ -139,10 +144,8 @@ describe('CompletePhase premium finish', () => {
 
     expect(screen.getByText(/Step 5 of 5/i)).toBeInTheDocument();
     expect(screen.getAllByText(/Session summary/i).length).toBeGreaterThan(0);
-    expect(screen.getByText(/Start over/i)).toBeInTheDocument();
-    expect(
-      screen.getAllByText(/Review organized files|Open organized folder/i).length
-    ).toBeGreaterThan(0);
+    expect(screen.getByText(/Analyze more files/i)).toBeInTheDocument();
+    expect(screen.getByText(/Review organized files/i)).toBeInTheDocument();
   });
 
   test('allows the top completion card to be minimized', () => {
@@ -168,13 +171,82 @@ describe('CompletePhase premium finish', () => {
     expect(screen.getAllByText(/Destination hidden/i).length).toBeGreaterThan(0);
   });
 
-  test('Start over cancels any pending persistence write so cleared storage stays cleared', () => {
+  test('Analyze more files cancels any pending persistence write so cleared storage stays cleared', () => {
     mockCancelPendingPersistence.mockClear();
 
     render(<CompletePhase />);
-    fireEvent.click(screen.getByText(/Start over/i));
+    fireEvent.click(screen.getByText(/Analyze more files/i));
 
     expect(mockCancelPendingPersistence).toHaveBeenCalled();
+  });
+
+  test('Analyze more files clears the batch and lands on Discover, not Welcome', () => {
+    const { setPhase, resetUi } = require('../../src/renderer/store/slices/uiSlice');
+    setPhase.mockClear();
+    resetUi.mockClear();
+
+    render(<CompletePhase />);
+    fireEvent.click(screen.getByText(/Analyze more files/i));
+
+    expect(resetUi).toHaveBeenCalled();
+    expect(setPhase).toHaveBeenCalledWith('discover');
+  });
+
+  test('the open-folder button names the folder it opens', () => {
+    selectRedactPaths.mockReturnValue(false);
+    const { useAppSelector } = require('../../src/renderer/store/hooks');
+    const defaultSelector = useAppSelector.getMockImplementation();
+    useAppSelector.mockImplementation((selector) =>
+      selector({
+        files: {
+          organizedFiles: [
+            { originalName: 'a.pdf', path: 'C:\\Docs\\Finance\\a.pdf' },
+            { originalName: 'b.pdf', path: 'C:\\Docs\\Finance\\b.pdf' }
+          ],
+          organizedPathIndex: []
+        },
+        analysis: { results: [] }
+      })
+    );
+    try {
+      render(<CompletePhase />);
+      expect(screen.getByText('Open Finance')).toBeInTheDocument();
+      expect(screen.queryByText(/Open organized folder/i)).not.toBeInTheDocument();
+    } finally {
+      useAppSelector.mockImplementation(defaultSelector);
+    }
+  });
+
+  test('a renamed file shows its new name and folder, and can be shown in its folder', () => {
+    selectRedactPaths.mockReturnValue(false);
+    mockRevealFile.mockClear();
+    const { useAppSelector } = require('../../src/renderer/store/hooks');
+    const defaultSelector = useAppSelector.getMockImplementation();
+    useAppSelector.mockImplementation((selector) =>
+      selector({
+        files: {
+          organizedFiles: [
+            {
+              originalName: 'Tiller Template (3).xlsx',
+              path: 'C:\\Docs\\Finance\\transaction-log.xlsx'
+            }
+          ],
+          organizedPathIndex: []
+        },
+        analysis: { results: [] }
+      })
+    );
+    try {
+      render(<CompletePhase />);
+      expect(
+        screen.getByText('Renamed to transaction-log.xlsx · in C:\\Docs\\Finance')
+      ).toBeInTheDocument();
+      const row = screen.getByLabelText('Organized file 1');
+      fireEvent.click(row.querySelector('button'));
+      expect(mockRevealFile).toHaveBeenCalledWith('C:\\Docs\\Finance\\transaction-log.xlsx');
+    } finally {
+      useAppSelector.mockImplementation(defaultSelector);
+    }
   });
 
   describe('counts in the summary', () => {

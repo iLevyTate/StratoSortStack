@@ -238,6 +238,32 @@ describe('DiscoverPhase premium guidance', () => {
     expect(screen.getByText(/1 file ready to review/i)).toBeInTheDocument();
   });
 
+  test('the selection badge says "ready" only for analyzed files', () => {
+    const { useDiscoverState } = require('../../src/renderer/phases/discover');
+    const defaultImpl = useDiscoverState.getMockImplementation();
+    useDiscoverState.mockImplementation(() => ({
+      ...defaultImpl(),
+      selectedFiles: [
+        { path: '/tmp/example.pdf', name: 'example.pdf', size: 1024 },
+        { path: '/tmp/added-mid-run-1.pdf', name: 'added-mid-run-1.pdf', size: 1024 },
+        { path: '/tmp/added-mid-run-2.pdf', name: 'added-mid-run-2.pdf', size: 1024 }
+      ],
+      fileStats: { total: 3, ready: 1, failed: 0, pending: 2 }
+    }));
+    try {
+      render(<DiscoverPhase />);
+      expect(screen.getByText('3 files added · 1 analyzed')).toBeInTheDocument();
+      expect(screen.queryByText('3 files ready')).not.toBeInTheDocument();
+    } finally {
+      useDiscoverState.mockImplementation(defaultImpl);
+    }
+  });
+
+  test('the selection badge says "ready" once every file is analyzed', () => {
+    render(<DiscoverPhase />);
+    expect(screen.getByText('1 file ready')).toBeInTheDocument();
+  });
+
   // Regression: after analysis, successful results must not keep the sticky
   // queue bar stuck on "waiting for analysis" just because fileStates is empty
   // or still lists the path as pending/ready for re-run.

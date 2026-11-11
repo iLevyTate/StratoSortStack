@@ -145,6 +145,15 @@ function DiscoverPhase() {
   // Canonical queue stats (Dashboard / Organize share selectFileStats).
   const visibleReadyCount = fileStats?.ready ?? 0;
   const visibleFailedCount = fileStats?.failed ?? 0;
+  // "N files ready" counted every added file, analyzed or not, and grew the
+  // moment files were added mid-run. Only call files ready once analyzed.
+  const selectionBadgeLabel = useMemo(() => {
+    const plural = (n) => `${n} file${n !== 1 ? 's' : ''}`;
+    if (visibleReadyCount >= unorganizedSelectedCount) {
+      return `${plural(unorganizedSelectedCount)} ready`;
+    }
+    return `${plural(unorganizedSelectedCount)} added · ${visibleReadyCount} analyzed`;
+  }, [unorganizedSelectedCount, visibleReadyCount]);
 
   const pendingAnalysisFiles = useMemo(() => {
     // Canonical-key lookup: fileStates keys and selected paths can disagree
@@ -607,8 +616,10 @@ function DiscoverPhase() {
                 </Heading>
               </div>
               {unorganizedSelectedCount > 0 && (
-                <StatusBadge variant="info">
-                  {unorganizedSelectedCount} file{unorganizedSelectedCount !== 1 ? 's' : ''} ready
+                <StatusBadge
+                  variant={visibleReadyCount >= unorganizedSelectedCount ? 'success' : 'info'}
+                >
+                  {selectionBadgeLabel}
                 </StatusBadge>
               )}
             </Inline>
