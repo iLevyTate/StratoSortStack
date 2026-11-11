@@ -29,16 +29,20 @@ const ENABLE_SEARCH_TRACE_LOGS = process.env.NODE_ENV === 'development';
 
 const MAX_CHAT_MESSAGES = 200;
 
+// Both the index lookup (paths) and the chat query (contextFileIds,
+// documentScopeItems) are capped at 1000 entries by the IPC schemas.
+const MAX_SCOPE_LOOKUP_PATHS = 1000;
+const MAX_DOCUMENT_SCOPE_ITEMS = 1000;
+
 /**
  * @param {{
  *   isOpen: boolean,
  *   searchResults: any[],
  *   defaultTopK: number,
- *   openFile: (path: string) => void,
- *   setError: (v: string) => void
+ *   openFile: (path: string) => void
  * }} props
  */
-export function useChatTab({ isOpen, searchResults, defaultTopK, openFile, setError }) {
+export function useChatTab({ isOpen, searchResults, defaultTopK, openFile }) {
   const [chatMessages, setChatMessages] = useState([]);
   const [currentConversationId, setCurrentConversationId] = useState(null);
   const [strictScope, setStrictScope] = useState(false);
@@ -98,6 +102,12 @@ export function useChatTab({ isOpen, searchResults, defaultTopK, openFile, setEr
 
   const chatSessionRef = useRef(null);
   const chatRequestCounterRef = useRef(0);
+  const conversationLoadCounterRef = useRef(0);
+  // Mirrors documentScope so handleAddToScope can tell how much room is left.
+  const documentScopeRef = useRef(documentScope);
+  useEffect(() => {
+    documentScopeRef.current = documentScope;
+  }, [documentScope]);
   const chatInFlightRef = useRef(false);
   const chatStreamRef = useRef(null);
   const chatWatchdogRef = useRef(null);
@@ -138,6 +148,8 @@ export function useChatTab({ isOpen, searchResults, defaultTopK, openFile, setEr
     return chatSessionRef.current;
   }, []);
 
+  // Resolves false when the send was refused (nothing was added to the
+  // thread), so the caller can keep the typed text.
   const handleChatSend = useCallback(
     async (
       /** @type {any} */ text,
@@ -146,10 +158,10 @@ export function useChatTab({ isOpen, searchResults, defaultTopK, openFile, setEr
     ) => {
       const { skipAddUserMessage = false } = options || {};
       const trimmed = typeof text === 'string' ? text.trim() : '';
-      if (!trimmed) return;
+      if (!trimmed) return false;
       if (chatInFlightRef.current) {
         setChatWarning('Please wait for the current response to finish.');
-        return;
+        return false;
       }
 
       const requestId = nextRequestId(chatRequestCounterRef);
@@ -197,7 +209,7 @@ export function useChatTab({ isOpen, searchResults, defaultTopK, openFile, setEr
           setChatStatus('');
           setIsChatting(false);
           chatInFlightRef.current = false;
-          return;
+          return false;
         }
 
         if (strictScope && documentScope.length === 0 && contextFileIds.length > 0) {
@@ -459,6 +471,7 @@ export function useChatTab({ isOpen, searchResults, defaultTopK, openFile, setEr
         });
 
         stream.begin();
+        return true;
       } catch (chatErr) {
         clearTimeout(chatWatchdogRef.current);
         cancelAnimationFrame(streamingRafRef.current);
@@ -466,7 +479,7 @@ export function useChatTab({ isOpen, searchResults, defaultTopK, openFile, setEr
         clearInterval(streamingFlushIntervalRef.current);
         streamingFlushIntervalRef.current = null;
         pendingStreamChunkRef.current = '';
-        if (!isCurrentRequest(chatRequestCounterRef, requestId)) return;
+        if (!isCurrentRequest(chatRequestCounterRef, requestId)) return false;
         logger.warn('[KnowledgeOS] Chat query failed', { error: chatErr?.message || chatErr });
         const { message } = mapErrorToNotification({ error: chatErr?.message || chatErr });
         setChatError(message);
@@ -476,6 +489,7 @@ export function useChatTab({ isOpen, searchResults, defaultTopK, openFile, setEr
         chatInFlightRef.current = false;
         chatStreamRef.current?.cancel?.();
         chatStreamRef.current = null;
+        return false;
       }
     },
     [
@@ -489,21 +503,20 @@ export function useChatTab({ isOpen, searchResults, defaultTopK, openFile, setEr
     ]
   );
 
-  const handleResponseModeChange = useCallback(
-    (/** @type {any} */ nextMode) => {
-      if (nextMode !== 'fast' && nextMode !== 'deep') return;
-      setResponseMode(nextMode);
-      window.electronAPI?.settings
-        ?.save?.({ chatResponseMode: nextMode })
-        .catch((/** @type {any} */ err) => {
-          logger.debug('[UnifiedSearchModal] Failed to save chat response mode', {
-            error: err?.message || String(err)
-          });
-          setError('Failed to save chat response mode. Please try again.');
+  // Save failures show in the chat panel's own banner: the modal-level
+  // banner is titled "Search error".
+  const handleResponseModeChange = useCallback((/** @type {any} */ nextMode) => {
+    if (nextMode !== 'fast' && nextMode !== 'deep') return;
+    setResponseMode(nextMode);
+    window.electronAPI?.settings
+      ?.save?.({ chatResponseMode: nextMode })
+      .catch((/** @type {any} */ err) => {
+        logger.debug('[UnifiedSearchModal] Failed to save chat response mode', {
+          error: err?.message || String(err)
         });
-    },
-    [setError]
-  );
+        setChatWarning('Failed to save chat response mode. Please try again.');
+      });
+  }, []);
 
   const handleChatPersonaChange = useCallback(
     (/** @type {any} */ nextPersona) => {
@@ -515,10 +528,10 @@ export function useChatTab({ isOpen, searchResults, defaultTopK, openFile, setEr
           logger.debug('[UnifiedSearchModal] Failed to save chat persona', {
             error: err?.message || String(err)
           });
-          setError('Failed to save chat persona. Please try again.');
+          setChatWarning('Failed to save chat persona. Please try again.');
         });
     },
-    [savedCustomPersonas, setError]
+    [savedCustomPersonas]
   );
 
   const handleAddToScope = useCallback(async (/** @type {any} */ items) => {
@@ -552,14 +565,25 @@ export function useChatTab({ isOpen, searchResults, defaultTopK, openFile, setEr
     }
 
     try {
-      const result =
-        allPaths.length > 0
-          ? await window.electronAPI.embeddings.findFilesByPaths(allPaths)
-          : { success: true, results: [] };
-      if (result?.success === false) {
-        throw new Error(result.error || 'Index lookup failed');
+      // The lookup accepts at most 1000 paths per call, so a large folder is
+      // checked in chunks, stopping once the matches would fill the scope.
+      const lookupPaths = Array.from(new Set(allPaths));
+      const checkedPaths = [];
+      const directMatches = [];
+      for (
+        let start = 0;
+        start < lookupPaths.length && directMatches.length < MAX_DOCUMENT_SCOPE_ITEMS;
+        start += MAX_SCOPE_LOOKUP_PATHS
+      ) {
+        const chunk = lookupPaths.slice(start, start + MAX_SCOPE_LOOKUP_PATHS);
+        const result = await window.electronAPI.embeddings.findFilesByPaths(chunk);
+        if (result?.success === false) {
+          throw new Error(result.error || 'Index lookup failed');
+        }
+        checkedPaths.push(...chunk);
+        if (Array.isArray(result?.results)) directMatches.push(...result.results);
       }
-      const directMatches = result?.results ? result.results : [];
+      let scopeCapped = checkedPaths.length < lookupPaths.length;
       const nameMatches = [];
 
       for (const unresolvedName of unresolvedNames) {
@@ -595,7 +619,7 @@ export function useChatTab({ isOpen, searchResults, defaultTopK, openFile, setEr
       const dedupedNewItems = Array.from(new Map(newItems.map((item) => [item.id, item])).values());
 
       const resolvedPaths = new Set(dedupedNewItems.map((i) => i.path));
-      const droppedPaths = allPaths.filter((p) => !resolvedPaths.has(p));
+      const droppedPaths = checkedPaths.filter((p) => !resolvedPaths.has(p));
       const unresolvedFoundByName = new Set(
         dedupedNewItems.map((item) => item.name?.toLowerCase()).filter(Boolean)
       );
@@ -603,25 +627,38 @@ export function useChatTab({ isOpen, searchResults, defaultTopK, openFile, setEr
         (name) => !unresolvedFoundByName.has(name.toLowerCase())
       );
       const droppedEntries = [...droppedPaths, ...droppedNames];
+
+      const currentScope = documentScopeRef.current;
+      const currentIds = new Set(currentScope.map((/** @type {any} */ i) => i.id));
+      const room = Math.max(0, MAX_DOCUMENT_SCOPE_ITEMS - currentScope.length);
+      if (dedupedNewItems.filter((i) => !currentIds.has(i.id)).length > room) scopeCapped = true;
+
       // Warn even when nothing resolved, so adding to the scope is never a
       // silent no-op.
+      const warnings = [];
       if (droppedEntries.length > 0) {
         const visibleNames = droppedEntries.map((p) => p.split(/[/\\]/).pop()).slice(0, 5);
         const suffix = droppedEntries.length > 5 ? ` and ${droppedEntries.length - 5} more` : '';
-        setChatWarning(
+        warnings.push(
           `${droppedEntries.length} file(s) not in index: ${visibleNames.join(', ')}${suffix}. Index these files first.`
         );
       } else if (dedupedNewItems.length === 0 && items.length > 0) {
-        setChatWarning(
+        warnings.push(
           'No files were added to the document scope. The items could not be read, or the folder has no files.'
         );
       }
+      if (scopeCapped) {
+        warnings.push(
+          `The document scope holds up to ${MAX_DOCUMENT_SCOPE_ITEMS} files, so not every file was added.`
+        );
+      }
+      if (warnings.length > 0) setChatWarning(warnings.join(' '));
 
       if (dedupedNewItems.length > 0) {
         setDocumentScope((prev) => {
           const existingIds = new Set(prev.map((i) => i.id));
           const uniqueNew = dedupedNewItems.filter((i) => !existingIds.has(i.id));
-          return [...prev, ...uniqueNew];
+          return [...prev, ...uniqueNew].slice(0, MAX_DOCUMENT_SCOPE_ITEMS);
         });
       }
     } catch (e) {
@@ -649,6 +686,8 @@ export function useChatTab({ isOpen, searchResults, defaultTopK, openFile, setEr
     chatStreamRef.current?.cancel?.();
     chatStreamRef.current = null;
     invalidateRequests(chatRequestCounterRef);
+    // A conversation still loading must not replace the new, empty one.
+    invalidateRequests(conversationLoadCounterRef);
     chatInFlightRef.current = false;
     setCurrentConversationId(null);
     setChatMessages([]);
@@ -671,8 +710,11 @@ export function useChatTab({ isOpen, searchResults, defaultTopK, openFile, setEr
   }, []);
 
   const handleSelectConversation = useCallback(async (/** @type {any} */ id) => {
+    // Latest click wins: an earlier conversation that resolves later is dropped.
+    const loadId = nextRequestId(conversationLoadCounterRef);
     try {
       const conversation = await getConversation(id);
+      if (!isCurrentRequest(conversationLoadCounterRef, loadId)) return;
       if (conversation) {
         clearTimeout(chatWatchdogRef.current);
         cancelAnimationFrame(streamingRafRef.current);
@@ -694,6 +736,7 @@ export function useChatTab({ isOpen, searchResults, defaultTopK, openFile, setEr
         setDocumentScope(conversation.documentScope || []);
       }
     } catch (err) {
+      if (!isCurrentRequest(conversationLoadCounterRef, loadId)) return;
       logger.error('[UnifiedSearchModal] Failed to load conversation', err);
       setChatError('Failed to load conversation');
     }
@@ -757,10 +800,22 @@ export function useChatTab({ isOpen, searchResults, defaultTopK, openFile, setEr
   );
 
   // Reset to a clean slate for a fresh open (called from the modal's
-  // open-reset effect so the reset ordering stays exactly as before).
+  // open-reset effect so the reset ordering stays exactly as before). The
+  // modal drops the messages and the stream on close, so a reopen is a new
+  // conversation: nothing of the previous one may stay selected, scoped or
+  // marked as still sending.
   const resetChatState = useCallback(() => {
+    invalidateRequests(chatRequestCounterRef);
+    invalidateRequests(conversationLoadCounterRef);
+    chatInFlightRef.current = false;
+    pendingStreamChunkRef.current = '';
     setChatMessages([]);
+    setCurrentConversationId(null);
+    setDocumentScope([]);
+    setStrictScope(false);
     setChatError('');
+    setChatWarning('');
+    setChatStatus('');
     setIsChatting(false);
     setUseSearchContext(false);
     chatSessionRef.current = crypto.randomUUID();

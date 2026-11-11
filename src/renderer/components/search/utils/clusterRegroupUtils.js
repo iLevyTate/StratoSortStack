@@ -211,3 +211,18 @@ export function regroupClustersForMode(clusters, mode) {
     };
   });
 }
+
+/**
+ * Numeric backend id of a semantic cluster node (`cluster:<n>`). Regrouped
+ * (`regroup:<mode>:<bucket>`) and duplicate-group nodes have no backend
+ * cluster, so they return null and callers must use the node's own memberIds.
+ *
+ * @param {any} clusterNodeId
+ * @returns {number|null}
+ */
+export function parseSemanticClusterId(clusterNodeId) {
+  const match = /^cluster:(\d+)$/.exec(typeof clusterNodeId === 'string' ? clusterNodeId : '');
+  if (!match) return null;
+  const numeric = Number(match[1]);
+  return Number.isSafeInteger(numeric) ? numeric : null;
+}

@@ -29,6 +29,15 @@ jest.mock('../../src/renderer/components/ui', () => ({
   )
 }));
 
+const mockSmartFolders = [
+  { id: 'sf-1', name: 'Invoices/2025', path: 'C:\\Docs\\Invoices\\2025' },
+  { id: 'sf-2', name: 'Receipts', path: 'C:\\Docs\\Receipts' }
+];
+jest.mock('../../src/renderer/store/hooks', () => ({
+  useAppSelector: (selector) => selector({ files: { smartFolders: mockSmartFolders } }),
+  useAppDispatch: () => jest.fn()
+}));
+
 import FolderNode from '../../src/renderer/components/search/nodes/FolderNode';
 
 const baseData = {
@@ -67,10 +76,28 @@ describe('FolderNode keyboard affordances', () => {
     fireEvent.keyDown(node, { key: 'Enter' });
 
     expect(handler).toHaveBeenCalledTimes(1);
+    // folderPath is the smart folder's path on disk, never its display name.
     expect(handler.mock.calls[0][0].detail).toEqual({
       action: 'moveFilesHere',
       folderId: 'folder-1',
-      folderPath: 'Invoices/2025'
+      folderName: 'Invoices/2025',
+      folderPath: 'C:\\Docs\\Invoices\\2025'
+    });
+    window.removeEventListener('graph:folderAction', handler);
+  });
+
+  test('sends an empty folderPath when the name matches no smart folder', () => {
+    const handler = jest.fn();
+    window.addEventListener('graph:folderAction', handler);
+
+    render(<FolderNode data={{ ...baseData, label: 'Unknown folder' }} selected={false} />);
+    fireEvent.keyDown(screen.getByRole('button', { name: /Unknown folder/i }), { key: 'Enter' });
+
+    expect(handler.mock.calls[0][0].detail).toEqual({
+      action: 'moveFilesHere',
+      folderId: 'folder-1',
+      folderName: 'Unknown folder',
+      folderPath: ''
     });
     window.removeEventListener('graph:folderAction', handler);
   });

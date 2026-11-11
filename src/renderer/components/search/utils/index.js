@@ -20,6 +20,12 @@ export {
   buildUndirectedEdgeKey,
   applyParallelEdgeOffsets,
   buildRecommendationGraph,
+  resolveSmartFolderPath,
+  carryOverRelClusterEdges,
+  buildClusterOverviewSignature,
+  isClusterOverviewUntouched,
+  getClusterPayloadKey,
+  REL_CLUSTER_EDGE_PREFIX,
   EDGE_KIND_PRIORITY
 } from './graphLayoutUtils';
 
@@ -44,8 +50,17 @@ export {
   flattenClusterMembers,
   getRecencyBucketKey,
   getRecencyBucketLabel,
+  parseSemanticClusterId,
   RECENCY_BUCKETS
 } from './clusterRegroupUtils';
+
+export {
+  FILE_METADATA_BATCH_LIMIT,
+  ADD_TAGS_BATCH_LIMIT,
+  chunkArray,
+  fetchFileMetadataChunked,
+  addTagsChunked
+} from './ipcBatchUtils';
 
 export {
   scoreBridgeConnection,
