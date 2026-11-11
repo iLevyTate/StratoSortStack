@@ -32,6 +32,23 @@ describe('FeedbackMemoryPanel', () => {
     });
   });
 
+  test('shows what a folder description used to say', async () => {
+    mockElectronAPI.suggestions.getFeedbackMemory.mockResolvedValue({
+      success: true,
+      items: [
+        {
+          id: 'mem-2',
+          text: '"Finance" is for: Invoices and bank statements',
+          targetFolder: 'Finance',
+          history: [{ description: 'Money things', changedAt: '2026-11-01T12:00:00.000Z' }]
+        }
+      ]
+    });
+    render(<FeedbackMemoryPanel refreshToken={0} />);
+    expect(await screen.findByText(/Money things/)).toBeInTheDocument();
+    expect(screen.getByText('Target: Finance')).toBeInTheDocument();
+  });
+
   test('loads and updates a memory entry', async () => {
     render(<FeedbackMemoryPanel refreshToken={0} />);
 

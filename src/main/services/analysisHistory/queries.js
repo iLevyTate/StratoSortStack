@@ -15,6 +15,7 @@ const {
   toLocalCalendarDay
 } = require('../../../shared/contentDateSanity');
 const { normalizePathForIndex } = require('../../../shared/pathSanitization');
+const { isDefaultCategoryName } = require('../../../shared/categoryFolderMatching');
 
 // Lookup normalizer must match the write side in `indexManager.js`, which uses
 // `normalizePathForIndex` (NFC unicode + win32/darwin lowercase + forward-slash
@@ -457,6 +458,48 @@ function buildTimelineItems(analysisHistory, options = {}) {
 }
 
 /**
+ * Every analyzed file whose category is still the default one, newest first.
+ * Scans the entries rather than `categoryIndex`: a move rewrites an entry's
+ * category without re-keying that index. Items are lean (no extracted text)
+ * and shaped like the Organize screen's files.
+ * @param {any} analysisHistory
+ * @param {{limit?: number}} [options]
+ * @returns {Array<{path: string, name: string, extension: string, analysis: {category: string, tags: string[], entity?: string, project?: string}}>}
+ */
+function buildUncategorizedItems(analysisHistory, options = {}) {
+  const entries = analysisHistory?.entries;
+  if (!entries || typeof entries !== 'object') return [];
+  const limit = Number.isInteger(options.limit) && options.limit > 0 ? options.limit : 500;
+
+  const matched = [];
+  for (const entry of Object.values(entries)) {
+    const analysis = /** @type {any} */ (entry)?.analysis;
+    if (!analysis || !isDefaultCategoryName(analysis.category)) continue;
+    const path =
+      typeof entry.organization?.actual === 'string' && entry.organization.actual
+        ? entry.organization.actual
+        : entry.originalPath;
+    if (typeof path !== 'string' || !path) continue;
+    matched.push({
+      path,
+      name: typeof entry.fileName === 'string' ? entry.fileName : '',
+      extension: typeof entry.fileExtension === 'string' ? entry.fileExtension : '',
+      timestamp: typeof entry.timestamp === 'string' ? entry.timestamp : '',
+      analysis: {
+        category: analysis.category,
+        tags: Array.isArray(analysis.tags)
+          ? analysis.tags.filter((/** @type {any} */ t) => typeof t === 'string').slice(0, 20)
+          : [],
+        ...(typeof analysis.entity === 'string' ? { entity: analysis.entity } : {}),
+        ...(typeof analysis.project === 'string' ? { project: analysis.project } : {})
+      }
+    });
+  }
+  matched.sort((a, b) => (a.timestamp < b.timestamp ? 1 : a.timestamp > b.timestamp ? -1 : 0));
+  return matched.slice(0, limit).map(({ timestamp: _timestamp, ...item }) => item);
+}
+
+/**
  * Get all available categories with counts
  * Performance: Uses index directly, no iteration over entries
  * @param {Record<string, any>} analysisIndex - Analysis index
@@ -489,6 +532,7 @@ module.exports = {
   getRecentAnalysis,
   getAnalysisByDateRange,
   buildTimelineItems,
+  buildUncategorizedItems,
   getCategories,
   getTags
 };

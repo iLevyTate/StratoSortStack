@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import PropTypes from 'prop-types';
 import { FolderPlus, RefreshCw, Lightbulb } from 'lucide-react';
 import { Button } from '../ui';
@@ -28,6 +28,45 @@ function isUncategorized(file, findFolderForFile) {
   return String(folder?.name || '').toLowerCase() === 'uncategorized';
 }
 
+/** Same file, whichever slash or letter case the path was recorded with. */
+const pathKey = (file) =>
+  String(file?.path || '')
+    .replace(/\\/g, '/')
+    .toLowerCase();
+
+/**
+ * Files analyzed in earlier runs that are still uncategorized, shaped like
+ * this screen's files. Themes are counted across these too: three invoices
+ * from one vendor rarely arrive in the same batch.
+ */
+function useEarlierUncategorizedFiles() {
+  const [files, setFiles] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    const load = window.electronAPI?.analysisHistory?.getUncategorized;
+    if (typeof load !== 'function') return undefined;
+    Promise.resolve(load({ limit: 500 }))
+      .then((result) => {
+        if (cancelled || !Array.isArray(result?.items)) return undefined;
+        setFiles(
+          result.items.map((item) => ({
+            ...item,
+            // History keeps keywords under `tags`.
+            analysis: { ...item.analysis, keywords: item.analysis?.tags }
+          }))
+        );
+        return undefined;
+      })
+      .catch((error) => {
+        logger.debug('Could not load earlier uncategorized files', { error: error?.message });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return files;
+}
+
 function UncategorizedActionsBar({
   unprocessedFiles,
   findSmartFolderForCategory,
@@ -41,6 +80,7 @@ function UncategorizedActionsBar({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [prefillName, setPrefillName] = useState('');
   const [isReanalyzing, setIsReanalyzing] = useState(false);
+  const earlierFiles = useEarlierUncategorizedFiles();
 
   // Derive uncategorized files + pattern suggestions in one pass.
   const { uncategorizedFiles, suggestion } = useMemo(() => {
@@ -55,8 +95,27 @@ function UncategorizedActionsBar({
 
     // One suggestion at a time, the largest recurring theme: once the user
     // creates that folder, its files leave this list and the next theme shows.
-    return { uncategorizedFiles: uncategorized, suggestion: findRecurringTheme(uncategorized) };
-  }, [unprocessedFiles, findSmartFolderForFile, findSmartFolderForCategory, resolveDestination]);
+    // Earlier files count toward a theme too, until a folder matches them.
+    const inThisRun = new Set((unprocessedFiles || []).map(pathKey));
+    const earlier = earlierFiles.filter(
+      (f) => !inThisRun.has(pathKey(f)) && isUncategorized(f, matcher)
+    );
+    const combined = findRecurringTheme([...uncategorized, ...earlier]);
+    const earlierCount = combined ? combined.files.filter((f) => earlier.includes(f)).length : 0;
+    // A theme made only of earlier files says nothing about the files on
+    // screen, so fall back to what this run shows on its own.
+    const theme =
+      combined && earlierCount < combined.files.length
+        ? { ...combined, earlierCount }
+        : findRecurringTheme(uncategorized);
+    return { uncategorizedFiles: uncategorized, suggestion: theme };
+  }, [
+    unprocessedFiles,
+    earlierFiles,
+    findSmartFolderForFile,
+    findSmartFolderForCategory,
+    resolveDestination
+  ]);
 
   const openCreateModal = useCallback((seedName = '') => {
     setPrefillName(seedName);
@@ -189,8 +248,11 @@ function UncategorizedActionsBar({
                 <span>
                   {suggestion.files.length}{' '}
                   {suggestion.source === 'entity' ? 'are from' : 'share the theme'}{' '}
-                  <strong className="text-system-gray-800">{suggestion.displayName}</strong> — want
-                  a Smart Folder for them?
+                  <strong className="text-system-gray-800">{suggestion.displayName}</strong>
+                  {suggestion.earlierCount > 0
+                    ? ` (${suggestion.earlierCount} analyzed earlier)`
+                    : ''}{' '}
+                  — want a Smart Folder for them?
                 </span>
               </Text>
             ) : (

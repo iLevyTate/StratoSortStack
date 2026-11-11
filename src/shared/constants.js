@@ -103,7 +103,8 @@ const IPC_CHANNELS = {
     CLEAR: 'analysis-history:clear',
     EXPORT: 'analysis-history:export',
     EXPORT_TRANSCRIPT: 'analysis-history:export-transcript',
-    GET_TIMELINE: 'analysis-history:get-timeline'
+    GET_TIMELINE: 'analysis-history:get-timeline',
+    GET_UNCATEGORIZED: 'analysis-history:get-uncategorized'
   },
   EMBEDDINGS: {
     REBUILD_FOLDERS: 'embeddings:rebuild-folders',

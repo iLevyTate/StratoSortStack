@@ -124,6 +124,23 @@ test('changing the smart folders ranks everything again', async () => {
   await waitFor(() => expect(result.current.suggestionsByPath.size).toBe(2));
 });
 
+test('rewording a folder description ranks everything again, with no reanalysis', async () => {
+  const files = makeFiles(2);
+  const { result, rerender } = renderHook(({ folders }) => useOrganizeSuggestions(files, folders), {
+    initialProps: { folders: FOLDERS }
+  });
+  await waitFor(() => expect(result.current.suggestionsByPath.size).toBe(2));
+  expect(getBatchSuggestions).toHaveBeenCalledTimes(1);
+
+  rerender({ folders: [{ ...FOLDERS[0], description: 'Invoices and bank statements' }] });
+  await waitFor(() => expect(getBatchSuggestions).toHaveBeenCalledTimes(2));
+
+  // Same wording in a fresh array is not a change.
+  rerender({ folders: [{ ...FOLDERS[0], description: 'Invoices and bank statements' }] });
+  await waitFor(() => expect(result.current.isRanking).toBe(false));
+  expect(getBatchSuggestions).toHaveBeenCalledTimes(2);
+});
+
 test('a failed chunk leaves those files unranked instead of throwing', async () => {
   getBatchSuggestions.mockRejectedValueOnce(new Error('timeout'));
   const files = makeFiles(2);

@@ -69,7 +69,17 @@ export function toSuggestionFile(file) {
 /** @param {any[]} smartFolders */
 function folderSignature(smartFolders) {
   return (Array.isArray(smartFolders) ? smartFolders : [])
-    .map((f) => `${f?.id || ''}|${toCanonicalPath(f?.path) || ''}|${f?.name || ''}`)
+    .map((f) =>
+      [
+        f?.id || '',
+        toCanonicalPath(f?.path) || '',
+        f?.name || '',
+        // What a folder is for decides what ranks into it: a reworded
+        // description or new keywords re-rank the files, with no reanalysis.
+        f?.description || '',
+        Array.isArray(f?.keywords) ? f.keywords.join(',') : ''
+      ].join('|')
+    )
     .sort()
     .join('\n');
 }

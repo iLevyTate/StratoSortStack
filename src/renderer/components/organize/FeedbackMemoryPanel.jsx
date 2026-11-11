@@ -103,6 +103,11 @@ function FeedbackMemoryPanel({ className = '', refreshToken }) {
         </Button>
       </div>
 
+      <Text variant="tiny" className="text-system-gray-600 mb-3">
+        What StratoSort has learned from your corrections and folder descriptions. Future
+        suggestions follow these; edit or delete any that are wrong.
+      </Text>
+
       <div className="space-y-2 mb-4">
         <Textarea
           value={newText}
@@ -171,6 +176,16 @@ function FeedbackMemoryPanel({ className = '', refreshToken }) {
                         Target: {entry.targetFolder}
                       </Text>
                     )}
+                    {(entry.history || []).map((past) => (
+                      <Text
+                        as="div"
+                        variant="tiny"
+                        className="text-system-gray-500"
+                        key={past.changedAt}
+                      >
+                        Before {new Date(past.changedAt).toLocaleDateString()}: {past.description}
+                      </Text>
+                    ))}
                   </Text>
                   <div className="flex items-center gap-1">
                     <Button

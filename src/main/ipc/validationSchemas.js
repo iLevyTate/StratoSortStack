@@ -1494,6 +1494,13 @@ if (!z) {
     offset: z.number().int().min(0).optional()
   });
 
+  /**
+   * Uncategorized-files request (analysis-history:get-uncategorized)
+   */
+  const uncategorizedOptionsSchema = z.object({
+    limit: z.number().int().min(1).max(2000).optional()
+  });
+
   const embeddingsFullRebuildSchema = z
     .object({
       modelOverride: z.string().min(1).max(500).optional()
@@ -1678,6 +1685,7 @@ if (!z) {
     analysisExportFormat: analysisExportFormatSchema,
     transcriptExport: transcriptExportSchema,
     timelineOptions: timelineOptionsSchema,
+    uncategorizedOptions: uncategorizedOptionsSchema,
 
     // Backup
     backupPath: backupPathSchema,
