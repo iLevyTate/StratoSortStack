@@ -103,7 +103,7 @@ tree.
   `ci`) enforces a monotonic floor and blocks new .js under `COVERED_DIRS` (`src/shared`,
   `src/preload`, `src/main/{ipc,services,analysis,errors,utils,workers,transports,core}`,
   `src/renderer/{services,hooks,phases,store,utils,components}` today (every `.js` under `src/` is
-  now opted in — 493/493 as of 2026-11-09, and `GLOBAL_DIRECTIVE_FLOOR` matches at 493) — see
+  now opted in — 494/494 as of 2026-11-11, and `GLOBAL_DIRECTIVE_FLOOR` matches at 494) — see
   `scripts/verify-checkjs-ratchet.js` for the authoritative list) from landing without the
   directive. When adding a file to a covered dir: put `// @ts-check` on line 1 and fix the errors
   before commit. When opting in a new file elsewhere: bump `GLOBAL_DIRECTIVE_FLOOR` in

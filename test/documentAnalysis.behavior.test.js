@@ -102,7 +102,9 @@ jest.mock('../src/main/analysis/utils', () => ({
       category: raw.category || fallback.category,
       confidence: raw.confidence !== undefined ? raw.confidence : fallback.confidence
     };
-  })
+  }),
+  // The prompt-echo guard has its own tests (analysis-utils.test.js).
+  dropPromptEchoes: jest.fn((result) => result)
 }));
 
 describe('documentAnalysis (behavior)', () => {

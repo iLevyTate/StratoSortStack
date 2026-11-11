@@ -220,9 +220,17 @@ function normalizeLlmConfidence(raw) {
  * @param {number|null} params.topScore - top folder cosine similarity in [0, 1], or null
  * @param {number|null} params.runnerUpScore - second-best folder cosine in [0, 1], or null
  * @param {boolean} params.llmCategoryUnmatchable - LLM picked a label that maps to no folder
+ * @param {boolean} [params.signalsDisagree] - The LLM's folder was kept although the
+ *   embedding's best folder is a different one
  * @returns {{confidence: number, cap: number, reason: string|null, original: number, spread: number|null}}
  */
-function calibrateConfidence({ rawConfidence, topScore, runnerUpScore, llmCategoryUnmatchable }) {
+function calibrateConfidence({
+  rawConfidence,
+  topScore,
+  runnerUpScore,
+  llmCategoryUnmatchable,
+  signalsDisagree = false
+}) {
   const original =
     typeof rawConfidence === 'number' && Number.isFinite(rawConfidence)
       ? Math.max(0, Math.min(100, Math.round(rawConfidence)))
@@ -271,6 +279,10 @@ function calibrateConfidence({ rawConfidence, topScore, runnerUpScore, llmCatego
 
   if (llmCategoryUnmatchable) {
     setCap(CAL.UNMATCHABLE_CATEGORY_CAP ?? 75, 'unmatchable_category');
+  }
+
+  if (signalsDisagree) {
+    setCap(CAL.DISAGREEMENT_CAP ?? 65, 'llm_embedding_disagree');
   }
 
   const confidence = Math.min(original, cap);
@@ -522,6 +534,9 @@ async function applySemanticFolderMatching(params) {
     // Hoisted so the calibration block at the bottom of this function can
     // read it regardless of which override branch fired.
     let llmCategoryUnmatchable = false;
+    // Set when the LLM's folder is kept although the embedding confidently
+    // prefers another one; the calibration below caps the claim.
+    let signalsDisagree = false;
 
     // Process candidates and potentially override category
     if (Array.isArray(liveCandidates) && liveCandidates.length > 0) {
@@ -594,6 +609,12 @@ async function applySemanticFolderMatching(params) {
             shouldOverride = top.score >= overrideFloor && top.score > effectiveLlmConfidence;
           }
         }
+
+        signalsDisagree =
+          !shouldOverride &&
+          categoryMatchesFolder &&
+          !vectorAgrees &&
+          top.score >= THRESHOLDS.FOLDER_MATCH_CONFIDENCE;
 
         if (shouldOverride) {
           logger.info('[FolderMatcher] Embedding override - folder match exceeds LLM confidence', {
@@ -683,7 +704,8 @@ async function applySemanticFolderMatching(params) {
       rawConfidence: preCalibrationPercent,
       topScore: typeof topCandidate?.score === 'number' ? topCandidate.score : null,
       runnerUpScore: typeof runnerUpCandidate?.score === 'number' ? runnerUpCandidate.score : null,
-      llmCategoryUnmatchable
+      llmCategoryUnmatchable,
+      signalsDisagree
     });
     const confidencePercent = calibration.confidence;
     if (calibration.reason) {

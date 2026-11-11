@@ -468,7 +468,8 @@ describe('BUG-9: _fileMovedDuringAnalysis flag on result', () => {
       normalizeAnalysisResult: jest.fn((raw, fb) => ({
         ...raw,
         category: raw.category || fb.category
-      }))
+      })),
+      dropPromptEchoes: jest.fn((result) => result)
     }));
 
     const { analyzeDocumentFile } = require('../src/main/analysis/documentAnalysis');

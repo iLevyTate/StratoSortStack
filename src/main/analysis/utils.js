@@ -1,5 +1,6 @@
 // @ts-check
 /** @typedef {import('../../shared/analysisSchema').AnalysisResult} AnalysisResult */
+const { ANALYSIS_SCHEMA_PROMPT } = require('../../shared/analysisSchema');
 // Coerce a non-numeric confidence shape into a number on the caller's
 // existing scale. Models routinely return numeric strings ("0.85"),
 // percent strings ("85%"), or categorical tokens ("high"/"medium"/"low")
@@ -87,6 +88,95 @@ function normalizeAnalysisResult(raw, fallback = {}) {
   return { ...result, ...normalized };
 }
 
+// Filler words left out when comparing a model's answer with the prompt.
+const ECHO_STOPWORDS = new Set(
+  'a an and are as at be by e g for from in into is it its of on or that the this to with'.split(
+    ' '
+  )
+);
+const ECHO_FIELDS = ['summary', 'purpose', 'project', 'reasoning', 'type', 'entity'];
+// A value is an echo when nearly all of its words come from one source text
+// AND it reproduces a good part of that text. The second test keeps a real
+// answer that merely shares vocabulary ("A logo for a company or
+// organization") from reading as a copy of a longer instruction.
+const ECHO_CONTAINMENT = 0.8;
+const ECHO_SOURCE_COVERAGE = 0.4;
+const ECHO_MIN_WORDS = 4;
+// Same ceiling as a filename-only guess (fallbackUtils FILENAME_ONLY_CONFIDENCE).
+const ECHO_CONFIDENCE_CAP = 50;
+
+/** @param {unknown} text @returns {string[]} */
+function echoWords(text) {
+  return String(text ?? '')
+    .toLowerCase()
+    .replace(/['’]s\b/g, '')
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((w) => w && !ECHO_STOPWORDS.has(w));
+}
+
+/**
+ * Drop answers a model copied out of its own prompt instead of writing.
+ *
+ * Small vision models in particular fill a field with the schema's
+ * instruction for it ("A concise summary of the document's content.") or
+ * with a smart folder's description ("Art, graphic design, images not
+ * related to other categories, logos"). Kept, those read as real summaries,
+ * feed the embedding, and the category picked alongside them looked certain
+ * (one such answer filed a banner under Research at 90%). Copied fields are
+ * cleared; when any was copied, the confidence is capped like a filename
+ * guess so the file is flagged for review. Same idea as
+ * normalizeImageContentType, applied to the free-text fields.
+ *
+ * @param {Record<string, any>} result - Model output (mutated copy returned)
+ * @param {Array<{ description?: string }>} [smartFolders]
+ * @returns {Record<string, any>}
+ */
+function dropPromptEchoes(result, smartFolders = []) {
+  if (!result || typeof result !== 'object') return result;
+  const sources = [
+    // The instructions without their "(e.g., ...)" examples: an example like
+    // 'sunset_beach' is a legitimate thing for a picture to show.
+    ...Object.values(ANALYSIS_SCHEMA_PROMPT)
+      .filter((v) => typeof v === 'string')
+      .map((v) => v.replace(/\(e\.g\.[^)]*\)/gi, ' ')),
+    ...(Array.isArray(smartFolders) ? smartFolders : [])
+      .map((f) => f?.description)
+      .filter((d) => typeof d === 'string' && d.trim())
+  ]
+    .map((text) => new Set(echoWords(text)))
+    .filter((source) => source.size > 0);
+
+  /** @param {unknown} value */
+  const isEcho = (value) => {
+    if (typeof value !== 'string') return false;
+    // Compared without "(e.g., ...)" on both sides: a copied instruction
+    // carries its examples along.
+    const words = new Set(echoWords(value.replace(/\(e\.g\.[^)]*\)/gi, ' ')));
+    if (words.size < ECHO_MIN_WORDS) return false;
+    return sources.some((source) => {
+      let shared = 0;
+      for (const word of words) if (source.has(word)) shared += 1;
+      return (
+        shared / words.size >= ECHO_CONTAINMENT && shared / source.size >= ECHO_SOURCE_COVERAGE
+      );
+    });
+  };
+
+  const echoed = ECHO_FIELDS.filter((field) => isEcho(result[field]));
+  if (echoed.length === 0) return result;
+
+  const cleaned = { ...result };
+  for (const field of echoed) cleaned[field] = null;
+  const confidence = _coerceConfidence(cleaned.confidence);
+  if (confidence !== null) {
+    // Callers use both scales; cap on the one the value is on.
+    cleaned.confidence =
+      confidence > 1 ? Math.min(confidence, ECHO_CONFIDENCE_CAP) : Math.min(confidence, 0.5);
+  }
+  cleaned.promptEchoFields = echoed;
+  return cleaned;
+}
+
 /**
  * Read the STRATOSORT_ANALYSIS_EMBEDDING_QUEUE_WAIT env flag in a single
  * canonical way. Three analysis modules (image, media, semanticFolderMatcher)
@@ -105,4 +195,8 @@ function isPipelineEmbeddingQueueWaitEnabled() {
   );
 }
 
-module.exports = { normalizeAnalysisResult, isPipelineEmbeddingQueueWaitEnabled };
+module.exports = {
+  normalizeAnalysisResult,
+  dropPromptEchoes,
+  isPipelineEmbeddingQueueWaitEnabled
+};
