@@ -1526,14 +1526,6 @@ if (!z) {
     })
     .optional();
 
-  const embeddingsReanalyzeFileSchema = z.union([
-    z.string().min(1),
-    z.object({
-      filePath: z.string().min(1),
-      applyNaming: z.boolean().optional()
-    })
-  ]);
-
   const embeddingsEmptyPayloadSchema = z.object({}).optional();
 
   const embeddingsDiagnoseSearchSchema = z
@@ -1637,7 +1629,6 @@ if (!z) {
     embeddingsFullRebuild: embeddingsFullRebuildSchema,
     embeddingsReanalyzeAll: embeddingsReanalyzeAllSchema,
     rebuildFilesOptions: rebuildFilesOptionsSchema,
-    embeddingsReanalyzeFile: embeddingsReanalyzeFileSchema,
     embeddingsEmptyPayload: embeddingsEmptyPayloadSchema,
     embeddingsDiagnoseSearch: embeddingsDiagnoseSearchSchema,
     embeddingsFindMultiHop: embeddingsFindMultiHopSchema,

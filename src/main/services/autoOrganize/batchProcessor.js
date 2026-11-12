@@ -9,8 +9,6 @@
 
 const path = require('path');
 const { createLogger } = require('../../../shared/logger');
-const { TIMEOUTS } = require('../../../shared/performanceConstants');
-const { withTimeout } = require('../../../shared/promiseUtils');
 const { sanitizeFile } = require('./fileTypeUtils');
 const { getFallbackDestination, buildDestinationPath } = require('./folderOperations');
 const { safeSuggestion, resolveSuggestionToSmartFolder } = require('./pathUtils');
@@ -27,27 +25,21 @@ const CONFIDENCE_THRESHOLDS = {
 
 /**
  * Process batch suggestion results
+ *
+ * Plans moves only. Learning is recorded where a move completes
+ * (batchOrganizeHandler, moveOneFile), never here: a plan may not be executed,
+ * and a record made here would be made again after the move.
  * @param {Record<string, any>} batchSuggestions - Batch suggestions from suggestion service
  * @param {Array<any>} files - Files being processed
  * @param {Record<string, any>} options - Processing options (includes confidenceThreshold)
  * @param {Record<string, any>} results - Results object to populate
- * @param {Record<string, any>} suggestionService - Suggestion service for feedback
  * @param {Array<any>} smartFolders - Smart folders
  */
-async function processBatchResults(
-  batchSuggestions,
-  files,
-  options,
-  results,
-  suggestionService,
-  smartFolders
-) {
+function processBatchResults(batchSuggestions, files, options, results, smartFolders) {
   const { confidenceThreshold, defaultLocation, preserveNames } = options;
   const effectiveThreshold = Number.isFinite(confidenceThreshold)
     ? confidenceThreshold
     : CONFIDENCE_THRESHOLDS.DEFAULT;
-
-  const pendingFeedback = [];
 
   // Track planned destinations within batch to prevent overwrite collisions
   const plannedDestinations = new Map();
@@ -120,29 +112,6 @@ async function processBatchResults(
           source: sourcePath,
           destination
         });
-
-        // Record feedback for learning (non-blocking with error handling)
-        // Promise.resolve().then(): recordFeedback must never throw out of this
-        // loop. A synchronous throw (or a non-promise return, which withTimeout
-        // treats as a function and whose .catch then throws) aborted the batch
-        // after its first file, and the caller re-ran the whole batch, so files
-        // already planned for a move were planned twice.
-        pendingFeedback.push(
-          /** @type {Promise<any>} */ (
-            withTimeout(
-              Promise.resolve().then(() =>
-                suggestionService.recordFeedback(file, canonicalSuggestion, true)
-              ),
-              TIMEOUTS.API_REQUEST,
-              'AutoOrganize feedback'
-            )
-          ).catch((/** @type {any} */ err) => {
-            logger.warn('[AutoOrganize] Failed to record feedback (non-critical):', {
-              file: sourcePath,
-              error: err.message
-            });
-          })
-        );
       } else if (confidence >= effectiveThreshold && !canonicalSuggestion) {
         results.needsReview.push({
           file: sanitizeFile(file),
@@ -164,14 +133,12 @@ async function processBatchResults(
       }
     }
   }
-
-  if (pendingFeedback.length > 0) {
-    await Promise.allSettled(pendingFeedback);
-  }
 }
 
 /**
  * Batch organize with automatic confidence-based filtering
+ *
+ * Plans moves only; like processBatchResults, it records no learning.
  * @param {Array<any>} files - Files to organize
  * @param {Array<any>} smartFolders - Smart folders
  * @param {Record<string, any>} options - Options (includes confidenceThreshold)
@@ -208,8 +175,6 @@ async function batchOrganize(
     skipped: [],
     failed: []
   };
-  /** @type {any[]} */
-  const pendingFeedback = [];
 
   // Track planned destinations across all groups in the batch to prevent cross-group collisions
   const plannedDestinations = new Map();
@@ -293,23 +258,6 @@ async function batchOrganize(
               source: file.path,
               destination
             });
-
-            if (file.suggestion) {
-              pendingFeedback.push(
-                /** @type {Promise<any>} */ (
-                  withTimeout(
-                    suggestionService.recordFeedback(file, file.suggestion, true),
-                    TIMEOUTS.API_REQUEST,
-                    'AutoOrganize feedback'
-                  )
-                ).catch((/** @type {any} */ feedbackError) => {
-                  logger.warn('[AutoOrganize] Failed to record feedback for file:', {
-                    file: file.path,
-                    error: feedbackError.message
-                  });
-                })
-              );
-            }
           } catch (fileError) {
             const errorDetails = {
               filePath: file.path,
@@ -391,9 +339,6 @@ async function batchOrganize(
     skippedCount: results.skipped.length
   });
 
-  if (pendingFeedback.length > 0) {
-    await Promise.allSettled(pendingFeedback);
-  }
   return results;
 }
 

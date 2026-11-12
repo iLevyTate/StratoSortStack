@@ -193,16 +193,8 @@ jest.mock('../src/main/analysis/embeddingModelOptions', () => ({
   resolveEmbeddingModelOptions: jest.fn().mockResolvedValue({})
 }));
 
-// The real WatcherQueueStore is loaded only for its field filter
-// (toPersisted); its durable write pulls in securityConfig, which the
-// trimmed constants mock above cannot satisfy.
-jest.mock('../src/shared/atomicFileOperations', () => ({
-  durableWriteJson: jest.fn().mockResolvedValue(undefined)
-}));
-
 const fs = require('fs').promises;
 const SmartFolderWatcher = require('../src/main/services/SmartFolderWatcher');
-const { toPersisted } = require('../src/main/services/watcher/WatcherQueueStore');
 
 describe('SmartFolderWatcher queue persistence (K-07)', () => {
   const WATCH_ROOT = 'C:\\w';
@@ -304,7 +296,8 @@ describe('SmartFolderWatcher queue persistence (K-07)', () => {
   test('restoreQueue drops items that a rule added since the queue was written now excludes', async () => {
     const queueStore = makeStore([
       { filePath: 'C:\\w\\keep.txt', mtime: 1, eventType: 'add', queuedAt: 1 },
-      { filePath: 'C:\\w\\mockup.psd', mtime: 1, eventType: 'add', queuedAt: 1 }
+      { filePath: 'C:\\w\\mockup.psd', mtime: 1, eventType: 'add', queuedAt: 1 },
+      { filePath: 'C:\\w\\poster.psd', mtime: 1, eventType: 'reanalyze', queuedAt: 1 }
     ]);
     baseOptions.settingsService.getAll.mockReturnValue({ downloadsTriageExclusions: ['*.psd'] });
     const watcher = makeWatcher(queueStore);
@@ -314,38 +307,6 @@ describe('SmartFolderWatcher queue persistence (K-07)', () => {
 
     expect(restored).toBe(1);
     expect(watcher.analysisQueue.map((i) => i.filePath)).toEqual(['C:\\w\\keep.txt']);
-  });
-
-  test('restoreQueue keeps the hand-picked single-file reanalyze the analysis gate exempts', async () => {
-    // _analyzeFile deliberately lets one hand-picked `reanalyze` through the
-    // exclusion rules — an explicit user request beats a standing rule. The
-    // restore path dropped it anyway, so the request died silently across the
-    // very restart it was waiting on. Bulk reanalysis is NOT exempt.
-    //
-    // The rows go through the real store's field filter, not the verbatim
-    // mock: the bulk flag only protects the restart if it survives the trip
-    // to disk, and a mock that hands items back unchanged cannot tell.
-    const queueStore = makeStore(
-      [
-        { filePath: 'C:\\w\\picked.psd', mtime: 1, eventType: 'reanalyze', queuedAt: 1 },
-        {
-          filePath: 'C:\\w\\bulk.psd',
-          mtime: 1,
-          eventType: 'reanalyze',
-          bulk: true,
-          queuedAt: 1
-        },
-        { filePath: 'C:\\w\\live.psd', mtime: 1, eventType: 'add', queuedAt: 1 }
-      ].map(toPersisted)
-    );
-    baseOptions.settingsService.getAll.mockReturnValue({ downloadsTriageExclusions: ['*.psd'] });
-    const watcher = makeWatcher(queueStore);
-    watcher._processQueue = jest.fn().mockResolvedValue(undefined);
-
-    const restored = await watcher._restoreQueue();
-
-    expect(restored).toBe(1);
-    expect(watcher.analysisQueue.map((i) => i.filePath)).toEqual(['C:\\w\\picked.psd']);
   });
 
   test('works with no store injected', async () => {

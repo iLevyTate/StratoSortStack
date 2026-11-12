@@ -27,16 +27,11 @@ const PERSISTED_FIELDS = [
   'queuedAt',
   'retryCount',
   'applyNaming',
-  'dedupKey',
-  // forceReanalyzeAll's mark. The watcher's exclusion gates exempt a
-  // hand-picked single-file reanalyze from the user's rules but not a bulk
-  // one; without this on disk, every row of an interrupted bulk run came
-  // back exempt after the restart.
-  'bulk'
+  'dedupKey'
 ];
 
 /**
- * @typedef {{ filePath: string, mtime?: number, eventType?: string, queuedAt?: number, retryCount?: number, applyNaming?: boolean, dedupKey?: string, bulk?: boolean }} PersistedQueueItem
+ * @typedef {{ filePath: string, mtime?: number, eventType?: string, queuedAt?: number, retryCount?: number, applyNaming?: boolean, dedupKey?: string }} PersistedQueueItem
  */
 
 /**

@@ -108,6 +108,12 @@ describe('SessionMemory', () => {
       }),
       addMessage: jest.fn((id, message) => {
         conversations.get(id).messages.push(message);
+      }),
+      deleteAssistantMessagesAfterLastUser: jest.fn((id) => {
+        const { messages } = conversations.get(id);
+        while (messages.length > 0 && messages[messages.length - 1].role === 'assistant') {
+          messages.pop();
+        }
       })
     };
   }
@@ -168,7 +174,58 @@ describe('SessionMemory', () => {
     );
 
     const roles = store.conversations.get('regen').messages.map((m) => m.role);
-    expect(roles).toEqual(['user', 'assistant', 'assistant']);
+    expect(roles.filter((role) => role === 'user')).toEqual(['user']);
+  });
+
+  test('regenerate replaces the saved answer instead of adding a second one', async () => {
+    const store = createFakeStore();
+    const memory = new SessionMemory({ chatHistoryStore: store });
+    const session = await memory.getSessionMemory('regen-replace');
+    await memory.saveMemoryTurn(session, 'Earlier question', { text: 'Earlier answer' });
+    await memory.saveMemoryTurn(session, 'Same question', { text: 'First answer' });
+
+    await memory.saveMemoryTurn(
+      session,
+      'Same question',
+      { text: 'Regenerated answer' },
+      { skipUserMessage: true }
+    );
+
+    const rows = store.conversations.get('regen-replace').messages.map((m) => [m.role, m.text]);
+    expect(rows).toEqual([
+      ['user', 'Earlier question'],
+      ['assistant', 'Earlier answer'],
+      ['user', 'Same question'],
+      ['assistant', 'Regenerated answer']
+    ]);
+  });
+
+  test('a new question keeps the previous answer', async () => {
+    const store = createFakeStore();
+    const memory = new SessionMemory({ chatHistoryStore: store });
+    const session = await memory.getSessionMemory('no-delete');
+    await memory.saveMemoryTurn(session, 'First question', { text: 'First answer' });
+    await memory.saveMemoryTurn(session, 'Second question', { text: 'Second answer' });
+
+    expect(store.deleteAssistantMessagesAfterLastUser).not.toHaveBeenCalled();
+    expect(store.conversations.get('no-delete').messages).toHaveLength(4);
+  });
+
+  test('getHistoryText leaves the turn being regenerated out of the prompt history', async () => {
+    const store = createFakeStore();
+    const memory = new SessionMemory({ chatHistoryStore: store });
+    const session = await memory.getSessionMemory('regen-history');
+    await memory.saveMemoryTurn(session, 'Earlier question', { text: 'Earlier answer' });
+    await memory.saveMemoryTurn(session, 'Same question', { text: 'Discarded answer' });
+
+    const history = await memory.getHistoryText(session, { regeneratedInput: 'Same question' });
+
+    expect(history).toBe('User: Earlier question\nAssistant: Earlier answer');
+    // A different question is not a regenerate: the whole history is kept.
+    expect(await memory.getHistoryText(session, { regeneratedInput: 'Another one' })).toContain(
+      'Assistant: Discarded answer'
+    );
+    expect(await memory.getHistoryText(session)).toContain('Assistant: Discarded answer');
   });
 
   test('follow-ups keep their history when a turn could not be saved', async () => {

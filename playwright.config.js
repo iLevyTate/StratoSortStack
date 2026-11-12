@@ -19,10 +19,11 @@ const { defineConfig } = require('@playwright/test');
 const path = require('path');
 
 module.exports = defineConfig({
-  // Directory containing E2E test files
+  // Directory containing E2E test files. Specs are grouped by product area in
+  // subfolders (app/, setup/, discover/, ...); see test/e2e/README.md for the index.
   testDir: './test/e2e',
 
-  // Test file pattern
+  // Test file pattern (recursive, so every area folder is picked up)
   testMatch: '**/*.spec.js',
 
   // Maximum time one test can run (3 minutes for analysis tests)

@@ -609,7 +609,9 @@ Now respond as JSON:`;
       if (conversationalEarly) {
         const memory = await this._getSessionMemory(sessionId);
         memory._documentScope = documentScopeItems || [];
-        const history = await this._getHistoryText(memory);
+        const history = await this._getHistoryText(memory, {
+          regeneratedInput: skipSaveUserTurn ? cleanQuery : null
+        });
 
         const prompt = `You are StratoSort, a friendly local AI assistant. You help users search, explore, and understand the files on their machine. Everything runs on-device — no data leaves their computer.
 
@@ -714,7 +716,8 @@ Now respond as JSON:`;
         chunkWeight,
         contextFileIds,
         strictScope,
-        responseMode
+        responseMode,
+        regeneratedInput: skipSaveUserTurn ? cleanQuery : null
       });
       memory._documentScope = documentScopeItems || [];
 
@@ -882,12 +885,12 @@ Now respond as JSON:`;
                 memory.sessionId
               );
             }
-            if (!skipSaveUserTurn) {
-              this.chatHistoryStore.addMessage(memory.sessionId, {
-                role: 'user',
-                text: cleanQuery
-              });
-            }
+            // On a regenerate or retry this drops the answer (or the earlier
+            // error row) the question already has, so only this attempt's
+            // outcome is stored.
+            this._sessions.saveUserMessage(conv, memory.sessionId, cleanQuery, {
+              skipUserMessage: skipSaveUserTurn
+            });
             this.chatHistoryStore.addMessage(memory.sessionId, {
               role: 'assistant',
               text: '',
@@ -1148,6 +1151,8 @@ Now respond as JSON:`;
   /**
    * `memoryStore` is the SessionMemory that history is read from and citation
    * ordinals are registered on; defaults to the in-app store (`_sessions`).
+   * `regeneratedInput` is the question of a regenerate/retry, whose stored
+   * turn is left out of the prompt history.
    * @param {any} params
    */
   async _runRetrieval({
@@ -1160,6 +1165,7 @@ Now respond as JSON:`;
     contextFileIds,
     strictScope = false,
     responseMode,
+    regeneratedInput = null,
     memoryStore = this._sessions
   }) {
     logger.info('[ChatService] Retrieval started', {
@@ -1173,7 +1179,7 @@ Now respond as JSON:`;
     });
 
     const memory = await memoryStore.getSessionMemory(sessionId);
-    const history = await memoryStore.getHistoryText(memory);
+    const history = await memoryStore.getHistoryText(memory, { regeneratedInput });
     const holisticIntent = this._isHolisticSynthesisQuery(cleanQuery);
     const correctionIntent = this._isCorrectionFeedback(cleanQuery);
     const comparisonIntent = this._isComparisonQuery(cleanQuery);
@@ -1335,8 +1341,8 @@ Now respond as JSON:`;
     return this._sessions.createMemory(sessionKey);
   }
 
-  async _getHistoryText(/** @type {any} */ memory) {
-    return this._sessions.getHistoryText(memory);
+  async _getHistoryText(/** @type {any} */ memory, options = {}) {
+    return this._sessions.getHistoryText(memory, options);
   }
 
   async _saveMemoryTurn(

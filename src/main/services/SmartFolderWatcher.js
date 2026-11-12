@@ -162,7 +162,6 @@ function keepAnalysisRequest(replaced, replacement) {
   if (replaced.eventType !== 'reanalyze' || replacement.eventType === 'reanalyze') return;
   replacement.eventType = 'reanalyze';
   replacement.applyNaming = replaced.applyNaming;
-  if (replaced.bulk) replacement.bulk = true;
 }
 
 /**
@@ -1302,25 +1301,6 @@ class SmartFolderWatcher {
     }
   }
 
-  /**
-   * The single queue item the exclusion rules do NOT apply to: one file the
-   * user hand-picked for reanalysis. That is an explicit request, so it wins
-   * over a standing rule. Bulk reanalysis is not exempt — "reanalyze all"
-   * means "all of what you still watch", and a rule is how the user says
-   * what that leaves out.
-   *
-   * Every gate that consults the rules asks this one question, so the
-   * exemption cannot drift between the live path (`_analyzeFile`) and the
-   * restored one (`_restoreQueue`): an item the gate would let through is an
-   * item restore must keep.
-   * @private
-   * @param {any} item
-   * @returns {boolean}
-   */
-  _isExclusionExempt(item) {
-    return item?.eventType === 'reanalyze' && !item?.bulk;
-  }
-
   _handleFileEvent(
     /** @type {any} */ eventType,
     /** @type {any} */ filePath,
@@ -1930,10 +1910,7 @@ class SmartFolderWatcher {
       )
     );
     let skippedDuplicate = 0;
-    // Rules added since the queue was written apply to what comes back —
-    // on exactly the terms _analyzeFile's gate uses, so a hand-picked
-    // single-file reanalyze survives the restart it was interrupted by
-    // instead of dying silently.
+    // Rules added since the queue was written apply to what comes back.
     let droppedExcluded = 0;
 
     /** @type {any[]} */
@@ -1946,7 +1923,7 @@ class SmartFolderWatcher {
         discardedOutsideConfigured++;
         continue;
       }
-      if (!this._isExclusionExempt(item) && this._matchUserExclusion(item.filePath)) {
+      if (this._matchUserExclusion(item.filePath)) {
         droppedExcluded++;
         continue;
       }
@@ -2735,7 +2712,7 @@ class SmartFolderWatcher {
     try {
       // An embedding retry reuses the analysis it already has.
       if (item.cachedAnalysis) return false;
-      if (!this._isExclusionExempt(item) && this._matchUserExclusion(item.filePath)) return false;
+      if (this._matchUserExclusion(item.filePath)) return false;
       if (item.eventType === 'reanalyze') return true;
       if (isUserAnalysisInFlight(item.filePath)) return false;
       let stats;
@@ -2906,18 +2883,14 @@ class SmartFolderWatcher {
 
     // Exclusion rules apply at the one point every queue path shares: live
     // events, the startup and folder-add scans, items restored from disk and
-    // bulk reanalysis all land here. A single file the user asked to
-    // reanalyze by hand is the one explicit request that goes through
-    // (_isExclusionExempt owns that rule for every gate).
-    if (!this._isExclusionExempt(item)) {
-      const excludedBy = this._matchUserExclusion(filePath);
-      if (excludedBy) {
-        logger.debug('[SMART-FOLDER-WATCHER] Skipping queued file excluded by user rule:', {
-          filePath,
-          pattern: excludedBy
-        });
-        return;
-      }
+    // "reanalyze all" all land here.
+    const excludedBy = this._matchUserExclusion(filePath);
+    if (excludedBy) {
+      logger.debug('[SMART-FOLDER-WATCHER] Skipping queued file excluded by user rule:', {
+        filePath,
+        pattern: excludedBy
+      });
+      return;
     }
 
     // Use the canonical dedup key so a case-variant of an in-flight file
@@ -4590,43 +4563,6 @@ class SmartFolderWatcher {
   }
 
   /**
-   * Queue a single file for reanalysis.
-   * @param {string} filePath
-   * @param {any} [options]
-   * @returns {Promise<any>}
-   */
-  async reanalyzeFile(filePath, /** @type {any} */ options = {}) {
-    if (!filePath) {
-      return { queued: false, error: 'filePath is required', errorCode: 'MISSING_FILE_PATH' };
-    }
-
-    if (!options.force && !this._isInWatchedPath(filePath)) {
-      return {
-        queued: false,
-        error: 'File is not inside a watched smart folder',
-        errorCode: 'NOT_IN_SMART_FOLDER'
-      };
-    }
-
-    const stats = await fs.stat(filePath);
-    const mtime = stats?.mtime ? new Date(stats.mtime).getTime() : Date.now();
-
-    this._enqueueAnalysisItem({
-      filePath,
-      mtime,
-      eventType: 'reanalyze',
-      applyNaming: options.applyNaming,
-      queuedAt: Date.now()
-    });
-
-    logger.info('[SMART-FOLDER-WATCHER] Queued single file for reanalysis', {
-      filePath
-    });
-
-    return { queued: true };
-  }
-
-  /**
    * Force reanalysis of ALL files in smart folders, regardless of existing analysis.
    * Use this when changing AI models to regenerate all analysis with the new model.
    * @returns {Promise<{scanned: number, queued: number}>}
@@ -4675,7 +4611,6 @@ class SmartFolderWatcher {
               filePath: file,
               mtime,
               eventType: 'reanalyze',
-              bulk: true,
               queuedAt: Date.now(),
               applyNaming: options.applyNaming
             });
@@ -4706,12 +4641,6 @@ class SmartFolderWatcher {
         filePath,
         mtime,
         eventType: 'reanalyze',
-        // Same flag as the watched-folder leg above: these are part of a
-        // bulk run, not a hand-picked file, so _analyzeFile's gate must
-        // check them against the exclusion rules. Without it a rule added
-        // between this collection and the analysis (or one the collector
-        // could not read) would be skipped for exactly these files.
-        bulk: true,
         queuedAt: Date.now(),
         applyNaming: options.applyNaming
       });

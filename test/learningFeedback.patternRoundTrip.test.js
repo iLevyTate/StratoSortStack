@@ -58,6 +58,46 @@ describe('learned placements round-trip into pattern suggestions', () => {
     expect(suggestions).toEqual([]);
   });
 
+  // Suggestion lookups carry the extension as path.extname returns it.
+  test('a manual move of an analyzed file suggests that folder for a `.pdf` lookup', () => {
+    const matcher = new PatternMatcher();
+    matcher.recordFeedback(
+      buildFileMetadata('/library/Finance/q1-report.pdf', { category: 'Finance' }),
+      buildFolderSuggestion(finance, 1),
+      true
+    );
+
+    const suggestions = matcher.getPatternBasedSuggestions({
+      name: 'q2-report.pdf',
+      extension: '.pdf',
+      analysis: { category: 'Finance' }
+    });
+
+    expect(suggestions.map((s) => s.folder)).toEqual(['Finance']);
+  });
+
+  // Batch organize records with the file's category; undo retracts knowing
+  // only the path the file landed at.
+  test('undo takes back the pattern a batch organize recorded with a category', () => {
+    const matcher = new PatternMatcher();
+    const landed = '/library/Finance/q1-report.pdf';
+    matcher.recordFeedback(
+      buildFileMetadata(landed, { category: 'Invoices' }),
+      buildFolderSuggestion(finance, 0.9),
+      true
+    );
+    expect(matcher.userPatterns.size).toBe(1);
+
+    const result = matcher.retractFeedback(
+      buildFileMetadata(landed, null),
+      buildFolderSuggestion(finance, 1)
+    );
+
+    expect(result).toEqual({ retracted: true });
+    expect(matcher.userPatterns.size).toBe(0);
+    expect(matcher.feedbackHistory).toHaveLength(0);
+  });
+
   test('flat feedback metadata and analysis-bearing files produce the same key', () => {
     const matcher = new PatternMatcher();
     expect(matcher.extractPattern({ extension: 'pdf', category: 'Finance' })).toBe(

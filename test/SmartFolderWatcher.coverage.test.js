@@ -943,7 +943,7 @@ describe('SmartFolderWatcher', () => {
       expect(files).toEqual([path.join('/docs', 'report.pdf')]);
     });
 
-    test('a queued item that matches a rule is dropped before analysis, a hand-picked reanalyze is not', async () => {
+    test('a queued item that matches a rule is dropped before analysis', async () => {
       mockDeps.settingsService.getAll.mockReturnValue({ downloadsTriageExclusions: ['*.psd'] });
       watcher._embedAnalyzedFile = jest.fn().mockResolvedValue();
 
@@ -955,15 +955,11 @@ describe('SmartFolderWatcher', () => {
       });
       await watcher._analyzeFile({
         filePath: '/images/mockup.psd',
-        eventType: 'reanalyze',
-        bulk: true
+        eventType: 'reanalyze'
       });
       expect(fs.stat).not.toHaveBeenCalledWith('/images/mockup.psd');
       expect(mockDeps.analyzeImageFile).not.toHaveBeenCalled();
       expect(watcher.processingFiles.size).toBe(0);
-
-      await watcher._analyzeFile({ filePath: '/images/mockup.psd', eventType: 'reanalyze' });
-      expect(fs.stat).toHaveBeenCalledWith('/images/mockup.psd');
     });
   });
 
@@ -1141,10 +1137,8 @@ describe('SmartFolderWatcher', () => {
     /**
      * The F-223 leg of "reanalyze all" adds every file the app ever analyzed
      * that lives OUTSIDE the watched folders (Discover-analyzed files, files
-     * organized into non-smart folders). It used to push those items with no
-     * `bulk` flag, which is exactly the shape _analyzeFile's gate exempts, so
-     * the exclusion rules were skipped for precisely those files — and the
-     * preview still counted them.
+     * organized into non-smart folders). The exclusion rules used to be
+     * skipped for precisely those files — and the preview still counted them.
      */
     beforeEach(() => {
       watcher.watchedPaths = new Set(['/docs']);
@@ -1179,7 +1173,7 @@ describe('SmartFolderWatcher', () => {
       expect(preview.scanned).toBe(1);
     });
 
-    test('outside-watched items are flagged bulk, so a rule added after queueing still stops them', async () => {
+    test('a rule added after queueing still stops an outside-watched item', async () => {
       // No rules at collection time: both files are queued.
       mockDeps.settingsService.getAll.mockReturnValue({});
       await watcher.forceReanalyzeAll({ applyNaming: false });
@@ -1189,7 +1183,6 @@ describe('SmartFolderWatcher', () => {
         '/elsewhere/mockup.psd',
         '/elsewhere/report.pdf'
       ]);
-      expect(queued.every((item) => item.bulk === true)).toBe(true);
 
       // The user adds the rule while the run is still draining.
       mockDeps.settingsService.getAll.mockReturnValue({ downloadsTriageExclusions: ['*.psd'] });

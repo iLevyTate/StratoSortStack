@@ -225,3 +225,78 @@ describe('ChatHistoryStore — input size validation', () => {
     });
   });
 });
+
+describe('ChatHistoryStore — deleteAssistantMessagesAfterLastUser', () => {
+  /**
+   * Store over a fake db that keeps one conversation's message rows in memory
+   * and answers the statements this method and getConversation issue.
+   */
+  function buildStoreWithMessages(roles) {
+    let rows = roles.map((role, i) => ({
+      id: `m${i + 1}`,
+      conversation_id: 'conv-1',
+      role,
+      text: `${role} ${i + 1}`,
+      sort_order: i + 1
+    }));
+    const touched = jest.fn();
+    const store = new ChatHistoryStore();
+    store._db = {
+      prepare(sql) {
+        const trimmed = String(sql).replace(/\s+/g, ' ').trim();
+        return {
+          get: (id) =>
+            trimmed.startsWith('SELECT * FROM conversations WHERE id') && id === 'conv-1'
+              ? { id, title: 'Chat', document_scope: '[]', updated_at: 't0' }
+              : undefined,
+          all: () => rows,
+          run: (...args) => {
+            if (trimmed.startsWith('DELETE FROM messages WHERE id IN')) {
+              rows = rows.filter((row) => !args.includes(row.id));
+            } else if (trimmed.startsWith('UPDATE conversations SET updated_at')) {
+              touched(...args);
+            } else {
+              throw new Error(`Unhandled SQL in fake db: ${trimmed}`);
+            }
+          }
+        };
+      }
+    };
+    store._initGuard.isInitialized = () => true;
+    store._hasMetaColumn = true;
+    store._hasSortOrderColumn = true;
+    return { store, touched, remainingIds: () => rows.map((row) => row.id) };
+  }
+
+  test('removes every assistant row after the last user row', () => {
+    const { store, touched, remainingIds } = buildStoreWithMessages([
+      'user',
+      'assistant',
+      'user',
+      'assistant',
+      'assistant'
+    ]);
+    // Prime the read cache: the delete must not leave the old rows in it.
+    expect(store.getConversation('conv-1').messages).toHaveLength(5);
+
+    expect(store.deleteAssistantMessagesAfterLastUser('conv-1')).toBe(2);
+
+    expect(remainingIds()).toEqual(['m1', 'm2', 'm3']);
+    expect(touched).toHaveBeenCalledWith('conv-1');
+    expect(store.getConversation('conv-1').messages.map((m) => m.id)).toEqual(['m1', 'm2', 'm3']);
+  });
+
+  test('leaves the conversation alone when the last row is the user row', () => {
+    const { store, touched, remainingIds } = buildStoreWithMessages(['user', 'assistant', 'user']);
+    expect(store.deleteAssistantMessagesAfterLastUser('conv-1')).toBe(0);
+    expect(remainingIds()).toEqual(['m1', 'm2', 'm3']);
+    expect(touched).not.toHaveBeenCalled();
+  });
+
+  test('removes nothing without a user row or without the conversation', () => {
+    const { store, remainingIds } = buildStoreWithMessages(['assistant', 'assistant']);
+    expect(store.deleteAssistantMessagesAfterLastUser('conv-1')).toBe(0);
+    expect(store.deleteAssistantMessagesAfterLastUser('missing')).toBe(0);
+    expect(remainingIds()).toEqual(['m1', 'm2']);
+  });
+});

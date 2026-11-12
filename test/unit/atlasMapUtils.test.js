@@ -7,7 +7,9 @@ const {
   ATLAS_OTHER_COLOR,
   ATLAS_KIND_COLORS,
   ATLAS_SEARCH_TOP_K,
-  atlasIpcFailureMessage
+  atlasIpcFailureMessage,
+  ATLAS_FOLDER_KEYWORD_LIMIT,
+  describeSelectionForFolder
 } = require('../../src/renderer/components/search/atlasMapUtils');
 
 describe('atlasMapUtils', () => {
@@ -164,6 +166,51 @@ describe('atlasMapUtils', () => {
     test('formats a bulk-tag error object as its message', () => {
       expect(atlasIpcFailureMessage({ code: 'TAG_FAILED', message: 'Tag too long' }, 'Tags')).toBe(
         'Tag too long'
+      );
+    });
+  });
+
+  // "Smart folder…" on a lasso selection used to create a folder that knew
+  // nothing about the files it was made from.
+  describe('describeSelectionForFolder', () => {
+    test('seeds the folder with the topics the selected files share most', () => {
+      const result = describeSelectionForFolder([
+        { keywords: ['Invoice', 'tax'], tags: ['2025'] },
+        { keywords: ['invoice', 'receipt'], tags: [] },
+        { keywords: ['Invoice'], tags: ['2025'] }
+      ]);
+
+      expect(result.keywords).toEqual(['Invoice', '2025', 'tax', 'receipt']);
+      expect(result.description).toBe(
+        'Created from an Atlas selection of 3 files. Common topics: Invoice, 2025, tax, receipt.'
+      );
+    });
+
+    test('counts a topic once per file, whether it is a keyword, a tag or both', () => {
+      const result = describeSelectionForFolder([
+        { keywords: ['alpha', 'Alpha'], tags: ['ALPHA'] },
+        { keywords: ['beta'], tags: ['beta'] },
+        { keywords: ['beta'] }
+      ]);
+
+      expect(result.keywords).toEqual(['beta', 'alpha']);
+    });
+
+    test('keeps no more keywords than the limit', () => {
+      const many = Array.from({ length: ATLAS_FOLDER_KEYWORD_LIMIT + 5 }, (_, i) => `topic-${i}`);
+
+      expect(describeSelectionForFolder([{ keywords: many }]).keywords).toHaveLength(
+        ATLAS_FOLDER_KEYWORD_LIMIT
+      );
+    });
+
+    test('files without metadata still count, and yield no keywords', () => {
+      expect(describeSelectionForFolder([null, undefined, { keywords: 'not a list' }])).toEqual({
+        description: 'Created from an Atlas selection of 3 files',
+        keywords: []
+      });
+      expect(describeSelectionForFolder([{}]).description).toBe(
+        'Created from an Atlas selection of 1 file'
       );
     });
   });

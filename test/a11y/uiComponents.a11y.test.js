@@ -7,7 +7,7 @@
  * sibling primitives), so axe inspects the real DOM the app ships. Fully-mocked
  * phase screens (Discover/Organize) are intentionally NOT audited here — mocking
  * the ui layer away makes an axe pass a vanity check. Whole-screen audits live in
- * the Playwright E2E pass (test/e2e/accessibility.spec.js) where the real layout,
+ * the Playwright E2E pass (test/e2e/app/accessibility.spec.js) where the real layout,
  * focus order, and color contrast can be measured.
  *
  * jsdom limitation: axe's color-contrast rule is reported "incomplete" (no layout
@@ -33,7 +33,7 @@ expect.extend(toHaveNoViolations);
 // Page-composition rules (region/landmark) only make sense for a whole page.
 // These are isolated component fragments with no surrounding <main>, so those
 // rules would always fire — they're enforced instead by the full-page E2E pass
-// (test/e2e/accessibility.spec.js). Everything else (WCAG name/role/label
+// (test/e2e/app/accessibility.spec.js). Everything else (WCAG name/role/label
 // conformance) stays on.
 const FRAGMENT_AXE_OPTIONS = {
   rules: {

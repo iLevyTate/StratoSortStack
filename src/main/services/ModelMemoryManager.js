@@ -229,6 +229,35 @@ class ModelMemoryManager {
   }
 
   /**
+   * Whether a model runs on the CPU beside another model that holds the GPU
+   * (see ensureModelLoaded). Its caller may want it back on the GPU once
+   * there is room. Asking does not count as using the model.
+   * @param {string} modelType
+   * @returns {boolean}
+   */
+  isOnCpuBeside(modelType) {
+    const entry = this._loadedModels.get(modelType);
+    return Boolean(entry && !entry.disposing && entry.cpuBeside);
+  }
+
+  /**
+   * Residents that take memory from the budget. One that takes none (a
+   * model on the CPU beside the one that holds the GPU, Whisper on the CPU)
+   * is never unloaded to make room and is not something a load waits for:
+   * a text model larger than the budget unloaded them on every load and
+   * freed nothing.
+   * @param {string} [excludeType]
+   * @returns {number}
+   */
+  _budgetedResidentCount(excludeType) {
+    let count = 0;
+    for (const [type, entry] of this._loadedModels) {
+      if (type !== excludeType && entry.sizeBytes > 0) count += 1;
+    }
+    return count;
+  }
+
+  /**
    * Check if we can load a model of given type
    */
   canLoadModel(/** @type {any} */ modelType) {
@@ -335,7 +364,7 @@ class ModelMemoryManager {
     this._refreshMemoryBudget();
     const excluded = excludeType ? this._loadedModels.get(excludeType) : null;
     const residentCount =
-      this._loadedModels.size - (excluded ? 1 : 0) + this._pendingLoadEntries(excludeType).length;
+      this._budgetedResidentCount(excludeType) + this._pendingLoadEntries(excludeType).length;
     if (residentCount <= 0) return true;
     const usage =
       this._currentMemoryUsage -
@@ -366,7 +395,10 @@ class ModelMemoryManager {
         continue;
       }
       const evictable = [...this._loadedModels.entries()]
-        .filter(([type]) => type !== excludeType && (this._activeRefs.get(type) || 0) === 0)
+        .filter(
+          ([type, entry]) =>
+            type !== excludeType && entry.sizeBytes > 0 && (this._activeRefs.get(type) || 0) === 0
+        )
         .sort((a, b) => (a[1].lastUsed || 0) - (b[1].lastUsed || 0));
       if (evictable.length === 0) return false;
       const [type] = evictable[0];
@@ -382,9 +414,10 @@ class ModelMemoryManager {
 
   /**
    * Whether optional background work may use a model without forcing a load.
-   * Returns true when the model is the only thing in memory (a call on a
-   * loaded context loads nothing), when it is resident with headroom left
-   * beside the others, or when a fresh load fits within the current budget. Unlike ensureModelLoaded(), this never proceeds
+   * Returns true when the model is the only thing that takes memory from the
+   * budget (a call on a loaded context loads nothing), when it is resident
+   * with headroom left beside the others, or when a fresh load fits within
+   * the current budget. Unlike ensureModelLoaded(), this never proceeds
    * when the budget is exceeded — callers use it to skip non-critical inference
    * (e.g. graph cluster label refinement) instead of risking native OOM.
    *
@@ -399,7 +432,9 @@ class ModelMemoryManager {
       // A model whose estimate is above the budget on its own (7B on a 6 GB
       // card) never has headroom, so this said no for the rest of the session
       // while the model sat idle in memory.
-      if (this._loadedModels.size === 1 && this._pendingLoadEntries().length === 0) return true;
+      if (this._budgetedResidentCount(modelType) === 0 && this._pendingLoadEntries().length === 0) {
+        return true;
+      }
       const remaining = Math.max(
         0,
         this._maxMemoryUsage - this._currentMemoryUsage - this._pendingLoadBytes()
@@ -475,10 +510,11 @@ class ModelMemoryManager {
             this._maxMemoryUsage
         : this.canLoadModel(modelType);
     };
-    // Residents, or loads in progress that will become residents.
-    const othersHoldMemory = () => this._loadedModels.size > 0 || this._pendingLoads.size > 0;
+    // Residents that take memory from the budget, or loads in progress that
+    // will become residents.
+    const othersHoldMemory = () => this._budgetedResidentCount() > 0 || this._pendingLoads.size > 0;
 
-    while (!fits() && this._loadedModels.size > 0) {
+    while (!fits() && this._budgetedResidentCount() > 0) {
       const sizeBefore = this._loadedModels.size;
       await this._unloadLeastRecentlyUsed();
       if (this._loadedModels.size === sizeBefore) {
@@ -506,7 +542,7 @@ class ModelMemoryManager {
       while (!fits() && othersHoldMemory() && Date.now() < deadline) {
         await delay(this._pinnedResidentPollMs);
         this._refreshMemoryBudget();
-        while (!fits() && this._loadedModels.size > 0) {
+        while (!fits() && this._budgetedResidentCount() > 0) {
           const sizeBefore = this._loadedModels.size;
           // Quiet: the pass above already logged that nothing can be
           // evicted; repeating it every poll wrote a warning every 2 s for
@@ -538,9 +574,10 @@ class ModelMemoryManager {
         });
         throw budgetError;
       }
-      // Nothing else is resident: the single model's conservative estimate
-      // exceeds the budget on its own. Proceed — the runtime can still
-      // succeed (GPU offload, mmap), and failing here would permanently
+      // Nothing else takes memory from the budget: the single model's
+      // conservative estimate exceeds the budget on its own. Proceed — the
+      // runtime can still succeed (GPU offload, mmap), and failing here
+      // would permanently
       // brick the feature on low-RAM machines.
       logger.warn('[Memory] Budget exceeded by single model estimate, attempting load anyway', {
         requestedType: modelType,
@@ -565,11 +602,15 @@ class ModelMemoryManager {
       // The load callback may have refined the estimate from the real file
       // size (updateModelSizeEstimate); record what this model actually
       // costs so later budget decisions are not held to the fixed guess.
-      const recordedSize = this._modelSizeEstimates[modelType] || estimatedSize;
+      // A model on the CPU beside the one that holds the GPU takes none of
+      // the memory the budget stands for, as Whisper on the CPU does not
+      // (WhisperService registers that at 0 bytes).
+      const recordedSize = cpuBeside ? 0 : this._modelSizeEstimates[modelType] || estimatedSize;
       this._loadedModels.set(modelType, {
         context,
         lastUsed: Date.now(),
-        sizeBytes: recordedSize
+        sizeBytes: recordedSize,
+        cpuBeside
       });
       this._currentMemoryUsage += recordedSize;
 
@@ -585,7 +626,8 @@ class ModelMemoryManager {
   }
 
   /**
-   * Unload least recently used model, skipping models with active references.
+   * Unload least recently used model, skipping models with active references
+   * and models that take nothing from the budget.
    * @param {{ quiet?: boolean }} [options] quiet: no warning when nothing can be evicted
    */
   async _unloadLeastRecentlyUsed({ quiet = false } = {}) {
@@ -595,6 +637,7 @@ class ModelMemoryManager {
     for (const [type, entry] of this._loadedModels) {
       // Never evict a model that is currently in-use for inference
       if ((this._activeRefs.get(type) || 0) > 0) continue;
+      if (!(entry.sizeBytes > 0)) continue;
 
       if (entry.lastUsed < oldestTime) {
         oldest = type;

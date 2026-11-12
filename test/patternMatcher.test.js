@@ -439,5 +439,97 @@ describe('PatternMatcher', () => {
       expect(matcher.retractFeedback(file, suggestion)).toEqual({ retracted: false });
       expect(matcher.retractFeedback(null, suggestion)).toEqual({ retracted: false });
     });
+
+    // Undo only knows the path the file landed at, so it retracts without the
+    // category the organize recorded. The history row carries the key.
+    test('reverses the recorded pattern when the retract call has no category', () => {
+      matcher.recordFeedback(file, suggestion, true);
+      const pattern = matcher.extractPattern(file, suggestion);
+      expect(matcher.feedbackHistory[0].pattern).toBe(pattern);
+
+      const result = matcher.retractFeedback({ name: 'q1.pdf', extension: 'pdf' }, suggestion);
+
+      expect(result).toEqual({ retracted: true });
+      expect(matcher.userPatterns.has(pattern)).toBe(false);
+      expect(matcher.feedbackHistory).toHaveLength(0);
+    });
+
+    test('a history row saved without a key still retracts through extractPattern', () => {
+      const pattern = matcher.extractPattern(file, suggestion);
+      matcher.loadPatterns({
+        patterns: [[pattern, { folder: 'Finance', count: 1, confidence: 0.6 }]],
+        feedbackHistory: [
+          {
+            timestamp: Date.now(),
+            file: { name: 'q1.pdf', type: '.pdf' },
+            suggestion,
+            accepted: true
+          }
+        ]
+      });
+
+      expect(matcher.retractFeedback(file, suggestion)).toEqual({ retracted: true });
+      expect(matcher.userPatterns.has(pattern)).toBe(false);
+    });
+  });
+
+  // Callers disagree on the extension's shape: analysis and suggestion files
+  // carry `.pdf`, learning feedback records `pdf`. The key has one form.
+  describe('extension form in pattern keys', () => {
+    const suggestion = { folder: 'Finance', path: '/docs/Finance' };
+
+    test('dotted and undotted extensions produce the same key', () => {
+      expect(matcher.extractPattern({ extension: '.PDF', category: 'Finance' }, suggestion)).toBe(
+        'pdf:finance:finance'
+      );
+      expect(matcher.extractPattern({ extension: 'pdf', category: 'Finance' }, suggestion)).toBe(
+        'pdf:finance:finance'
+      );
+    });
+
+    test('a pattern recorded without the dot matches a lookup that has it', () => {
+      matcher.recordFeedback(
+        { name: 'q1.pdf', extension: 'pdf', category: 'Finance' },
+        suggestion,
+        true
+      );
+
+      const suggestions = matcher.getPatternBasedSuggestions({
+        name: 'q2.pdf',
+        extension: '.pdf',
+        analysis: { category: 'Finance' }
+      });
+
+      expect(suggestions.map((s) => s.folder)).toEqual(['Finance']);
+    });
+
+    test('loadPatterns rewrites saved dotted keys and merges them into the undotted twin', () => {
+      matcher.loadPatterns({
+        patterns: [
+          [
+            '.pdf:finance:finance',
+            { folder: 'Finance', count: 2, confidence: 0.7, lastUsed: 200, createdAt: 50 }
+          ],
+          [
+            'pdf:finance:finance',
+            { folder: 'Finance', count: 3, confidence: 0.8, lastUsed: 100, createdAt: 80 }
+          ],
+          ['.jpg:photos:pics', { folder: 'Pics', count: 1, confidence: 0.6 }]
+        ]
+      });
+
+      expect(Array.from(matcher.userPatterns.keys()).sort()).toEqual([
+        'jpg:photos:pics',
+        'pdf:finance:finance'
+      ]);
+      expect(matcher.userPatterns.get('pdf:finance:finance')).toEqual({
+        folder: 'Finance',
+        count: 5,
+        confidence: 0.8,
+        lastUsed: 200,
+        createdAt: 50
+      });
+      expect(matcher.userPatterns.get('jpg:photos:pics').count).toBe(1);
+    });
   });
 });

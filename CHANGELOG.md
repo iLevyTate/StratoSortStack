@@ -12,6 +12,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **An image that arrives just as a text model starts loading no longer starts the vision runtime
+  beside it.** The image looked for a loading model before the load began and found none. The vision
+  runtime now checks the memory budget again at the moment it starts; if a load began meanwhile, the
+  image waits for it, makes room and is sent once more. Such a refusal does not count toward turning
+  vision off.
+- **An embedding model put on the CPU beside a text model returns to the GPU when there is room.**
+  After a text-model load that failed, or once the text model was unloaded, it stayed on the CPU
+  until some other load replaced it.
+- **A text model larger than the memory budget no longer unloads models that hold no GPU memory.**
+  An embedding model on the CPU and Whisper on the CPU were unloaded to make room, which freed
+  nothing, and were loaded again for the next file.
+
 ## [5.2.0] - 2026-11-10
 
 Cloud analysis now covers audio and video, and video frames are sent only with your consent and the

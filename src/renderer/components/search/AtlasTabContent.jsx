@@ -20,7 +20,8 @@ import {
   pickNextPointInDirection,
   ARROW_DIRECTIONS,
   ATLAS_SEARCH_TOP_K,
-  atlasIpcFailureMessage
+  atlasIpcFailureMessage,
+  describeSelectionForFolder
 } from './atlasMapUtils';
 import { buildEmbeddingData, nearestPointIndex, indicesInLasso } from './atlasEmbeddingData';
 
@@ -890,17 +891,28 @@ function AtlasTabContent({ isActive, openFile, revealFile, setError, simpleMode 
         const files = /** @type {any} */ (window).electronAPI?.files;
         const dirResult = await files?.selectDirectory?.({ purpose: 'destination' });
         if (!dirResult?.success || !dirResult?.path) return;
+        // The folder is described by what the selected files have in common,
+        // so files like them are suggested for it. The files stay where they
+        // are; Move… is the control that moves a selection.
+        const metaMap = await fetchMetaBatch(selectedFileIds);
+        const { description, keywords } = describeSelectionForFolder(
+          selectedFileIds.map((id) => metaMap.get(id))
+        );
         const res = await /** @type {any} */ (window).electronAPI?.smartFolders?.add?.({
           name,
           path: joinPath(dirResult.path, name),
-          description: `Created from an Atlas selection of ${selectedFileIds.length} files`,
-          keywords: [],
+          description,
+          keywords,
           category: 'General'
         });
         if (res?.success === false) {
           throw new Error(atlasIpcFailureMessage(res, 'Smart folder'));
         }
-        setBulkStatus(`Smart folder "${name}" created.`);
+        setBulkStatus(
+          keywords.length
+            ? `Smart folder "${name}" created from the selection's topics. Use Move… to put these files in it.`
+            : `Smart folder "${name}" created. Use Move… to put these files in it.`
+        );
         setFolderDraft(null);
       } catch (err) {
         setBothErrors(atlasIpcFailureMessage(err, 'Smart folder'));
@@ -908,7 +920,7 @@ function AtlasTabContent({ isActive, openFile, revealFile, setError, simpleMode 
         setIsBulkWorking(false);
       }
     },
-    [folderDraft, selectedFileIds, setBothErrors]
+    [folderDraft, selectedFileIds, fetchMetaBatch, setBothErrors]
   );
 
   const focusSimilarItem = useCallback(

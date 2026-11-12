@@ -250,6 +250,10 @@ function getDegradedStateTrackerSafe() {
 // clear on its own.
 const STORAGE_FULL_RETRY_MS = 60_000;
 
+// Degraded flag raised when saving gives up for a reason other than a full
+// disk (see _raiseSaveFailed).
+const SAVE_FAILED_CODE = 'orama.save-failed';
+
 // Without the lz4-napi native binding the codec passes bytes through
 // unchanged, so compressing would put plain JSON under the .lz4 name. Save to
 // the plain .json path instead; the .lz4 files are left alone (see
@@ -2777,6 +2781,37 @@ class OramaVectorService extends EventEmitter {
   }
 
   /**
+   * Tell the user saving has stopped for a reason other than a full disk
+   * (a locked file, an I/O error). Raised only when a round of retries gives
+   * up, so one transient failure shows nothing. Nothing retries on a timer
+   * here: the next write starts a fresh round, and the first save that
+   * works clears the flag.
+   * @private
+   * @param {any} error
+   */
+  _raiseSaveFailed(error) {
+    const tracker = getDegradedStateTrackerSafe();
+    if (!tracker) return;
+    tracker.raise({
+      code: SAVE_FAILED_CODE,
+      subsystem: 'vector-db',
+      severity: 'error',
+      message:
+        'StratoSort could not save its search index, so recent changes to it may be lost when the app closes. It will try again the next time the index changes, and this message goes away once a save works.',
+      detail: { errno: error?.code || null, error: error?.message || null }
+    });
+    this._saveFailedRaised = true;
+  }
+
+  /** @private */
+  _clearSaveFailed() {
+    if (!this._saveFailedRaised) return;
+    this._saveFailedRaised = false;
+    logger.info('[OramaVectorService] Saved again after repeated save failures');
+    getDegradedStateTrackerSafe()?.clear?.(SAVE_FAILED_CODE);
+  }
+
+  /**
    * Tell the user a collection has outgrown what one save file can hold.
    * Logged once per occurrence and raised as a degraded flag, so the size
    * limit is a visible error rather than a save that silently stops.
@@ -3213,6 +3248,7 @@ class OramaVectorService extends EventEmitter {
         }
       );
       this._clearStorageFull();
+      this._clearSaveFailed();
       return {
         success: true,
         ...(oversized.size > 0 ? { tooLargeToSave: [...oversized] } : {}),
@@ -3247,7 +3283,9 @@ class OramaVectorService extends EventEmitter {
           attachErrorCode(error, ERROR_CODES.VECTOR_DB_PERSIST_FAILED)
         );
         this._persistPending = false;
+        // The storage-full banner already covers the disk-full case.
         if (keepSlowRetry) this._scheduleStorageFullRetry(maxRetries);
+        else this._raiseSaveFailed(error);
       } else {
         this._persistPending = true;
         logger.error(

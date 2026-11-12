@@ -560,10 +560,10 @@ const RULES = [
     return activity('model', 'cpu', 'info', type ? `Unloading ${type} model` : 'Unloading a model');
   }),
   prefixRule(
-    'embedding-unloaded-for-vision',
+    'embedding-returning-to-gpu',
     LLAMA,
-    '[LlamaService] Unloaded the CPU embedding model from the vision batch',
-    () => activity('model', 'cpu', 'info', 'Embedding model unloaded for the vision batch')
+    '[LlamaService] Unloaded the CPU embedding model; the next load uses the GPU',
+    () => activity('model', 'cpu', 'info', 'Embedding model moving back to the GPU')
   ),
   prefixRule(
     'embeddings-flushed',

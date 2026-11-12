@@ -239,12 +239,11 @@ class AutoOrganizeServiceCore {
           }
 
           // Process batch results
-          await processBatchResults(
+          processBatchResults(
             batchSuggestions,
             batch,
             { confidenceThreshold: effectiveThreshold, defaultLocation, preserveNames },
             results,
-            this.suggestionService,
             smartFolders
           );
 

@@ -507,6 +507,71 @@ describe('LlamaService – inference methods', () => {
         expect(mockModelMemoryManager.unloadModel).not.toHaveBeenCalled();
       });
 
+      describe('a text load that began after the image checked for room', () => {
+        // Nothing was loading when the image looked, so it freed nothing;
+        // the runtime then refuses to start beside the load.
+        const startRefused = () =>
+          Object.assign(new Error('Cannot start the vision runtime: memory budget exceeded'), {
+            code: 'MODEL_MEMORY_BUDGET_EXCEEDED'
+          });
+
+        test('the image makes room and is sent once more', async () => {
+          const service = batchImageService({ textResident: false, visionAlive: false });
+          mockVisionService.analyzeImage
+            .mockRejectedValueOnce(startRefused())
+            .mockResolvedValue({ response: 'a cat' });
+
+          await expect(
+            service.analyzeImage({ imagePath: '/test.jpg', prompt: 'describe' })
+          ).resolves.toEqual({ response: 'a cat' });
+
+          expect(service._releaseMemoryForVisionRuntime).toHaveBeenCalledTimes(1);
+          expect(service._releaseMemoryForVisionRuntime).toHaveBeenCalledWith('batch');
+          expect(mockVisionService.analyzeImage).toHaveBeenCalledTimes(2);
+        });
+
+        test('outside a batch the image makes room the single-image way', async () => {
+          const service = batchImageService({ textResident: false, visionAlive: false });
+          service._visionBatchMode = false;
+          mockVisionService.analyzeImage
+            .mockRejectedValueOnce(startRefused())
+            .mockResolvedValue({ response: 'a cat' });
+
+          await expect(
+            service.analyzeImage({ imagePath: '/test.jpg', prompt: 'describe' })
+          ).resolves.toEqual({ response: 'a cat' });
+
+          expect(service._releaseMemoryForVisionRuntime.mock.calls).toEqual([
+            ['single'],
+            ['single']
+          ]);
+          expect(mockVisionService.analyzeImage).toHaveBeenCalledTimes(2);
+        });
+
+        test('a second refusal is given back, not retried again', async () => {
+          const service = batchImageService({ textResident: false, visionAlive: false });
+          mockVisionService.analyzeImage.mockRejectedValue(startRefused());
+
+          await expect(
+            service.analyzeImage({ imagePath: '/test.jpg', prompt: 'describe' })
+          ).rejects.toMatchObject({ code: 'MODEL_MEMORY_BUDGET_EXCEEDED' });
+
+          expect(mockVisionService.analyzeImage).toHaveBeenCalledTimes(2);
+        });
+
+        test('a failure that is not about memory is not retried', async () => {
+          const service = batchImageService({ textResident: false, visionAlive: false });
+          mockVisionService.analyzeImage.mockRejectedValue(new Error('spawn failed'));
+
+          await expect(
+            service.analyzeImage({ imagePath: '/test.jpg', prompt: 'describe' })
+          ).rejects.toThrow('spawn failed');
+
+          expect(mockVisionService.analyzeImage).toHaveBeenCalledTimes(1);
+          expect(service._releaseMemoryForVisionRuntime).not.toHaveBeenCalled();
+        });
+      });
+
       test('a text load in progress does not disturb a runtime that is up', async () => {
         const service = batchImageService({
           textResident: false,

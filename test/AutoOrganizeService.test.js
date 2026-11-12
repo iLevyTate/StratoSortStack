@@ -158,7 +158,7 @@ describe('AutoOrganizeService', () => {
         });
       });
 
-      test('records positive feedback for automatic organization', async () => {
+      test('plans automatic organization without recording feedback', async () => {
         const file = {
           name: 'document.pdf',
           path: '/downloads/document.pdf',
@@ -173,18 +173,11 @@ describe('AutoOrganizeService', () => {
 
         mockSuggestionService.getSuggestionsForFile.mockResolvedValue(suggestion);
 
-        await service.organizeFiles([file], mockSmartFolders);
+        const result = await service.organizeFiles([file], mockSmartFolders);
 
-        expect(mockSuggestionService.recordFeedback).toHaveBeenCalledWith(
-          file,
-          expect.objectContaining({
-            folder: 'Documents',
-            path: '/base/Documents',
-            isSmartFolder: true,
-            folderId: 'folder-1'
-          }),
-          true
-        );
+        // Learning belongs to the completed move (batchOrganizeHandler)
+        expect(result.operations).toHaveLength(1);
+        expect(mockSuggestionService.recordFeedback).not.toHaveBeenCalled();
       });
     });
 
@@ -513,7 +506,7 @@ describe('AutoOrganizeService', () => {
         expect(result.operations).toHaveLength(0);
       });
 
-      test('records positive feedback for batch operations', async () => {
+      test('plans batch operations without recording feedback', async () => {
         const file = {
           name: 'doc1.pdf',
           path: '/downloads/doc1.pdf',
@@ -533,13 +526,10 @@ describe('AutoOrganizeService', () => {
           ]
         });
 
-        await service.batchOrganize([file], mockSmartFolders);
+        const result = await service.batchOrganize([file], mockSmartFolders);
 
-        expect(mockSuggestionService.recordFeedback).toHaveBeenCalledWith(
-          file,
-          file.suggestion,
-          true
-        );
+        expect(result.operations).toHaveLength(1);
+        expect(mockSuggestionService.recordFeedback).not.toHaveBeenCalled();
       });
     });
 

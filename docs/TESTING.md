@@ -290,6 +290,10 @@ Notes:
 
 E2E automation notes:
 
+- Specs are grouped by product area under `test/e2e/<area>/` (`app`, `setup`, `discover`,
+  `organize`, `search`, `settings`, `workflows`, `live-llm`, `manual`).
+  [`test/e2e/README.md`](../test/e2e/README.md) lists every spec, the CI smoke set and what each
+  spec needs. Run one area with `npx playwright test test/e2e/<area>`.
 - Every `launchApp()` profile is isolated and seeded with `modelAutoDownloadSkipped: true`
   (`E2E_SEED_SETTINGS` in `test/e2e/helpers/electronApp.js`), so a run never starts a model download
   and needs no network. A spec that needs the first-run model wizard keeps the seed and calls

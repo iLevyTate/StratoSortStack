@@ -623,6 +623,33 @@ class ChatHistoryStore {
     return { id, ...message };
   }
 
+  /**
+   * Remove the assistant rows that follow a conversation's last user row.
+   * Regenerate and Retry answer a question that is already stored; unless
+   * the answer it had is removed first, both answers show after a reload.
+   * @param {string} conversationId
+   * @returns {number} How many rows were removed.
+   */
+  deleteAssistantMessagesAfterLastUser(conversationId) {
+    this._checkInit();
+    /** @type {Array<{ id: string, role: string }>} */
+    const messages = this.getConversation(conversationId)?.messages || [];
+    let lastUserIndex = messages.length - 1;
+    while (lastUserIndex >= 0 && messages[lastUserIndex].role !== 'user') lastUserIndex -= 1;
+    if (lastUserIndex < 0) return 0;
+    const staleIds = messages.slice(lastUserIndex + 1).map((message) => message.id);
+    if (staleIds.length === 0) return 0;
+
+    this._db
+      .prepare(`DELETE FROM messages WHERE id IN (${staleIds.map(() => '?').join(', ')})`)
+      .run(...staleIds);
+    this._db
+      .prepare("UPDATE conversations SET updated_at = datetime('now') WHERE id = ?")
+      .run(conversationId);
+    this._invalidateConversationCache(conversationId);
+    return staleIds.length;
+  }
+
   deleteConversation(/** @type {any} */ id) {
     this._checkInit();
     this._db.prepare('DELETE FROM conversations WHERE id = ?').run(id);

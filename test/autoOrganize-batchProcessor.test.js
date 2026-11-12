@@ -104,14 +104,7 @@ describe('AutoOrganize Batch Processor', () => {
         failed: []
       };
 
-      await processBatchResults(
-        batchSuggestions,
-        files,
-        options,
-        results,
-        mockSuggestionService,
-        smartFolders
-      );
+      processBatchResults(batchSuggestions, files, options, results, smartFolders);
 
       expect(results.organized).toHaveLength(1);
       expect(results.organized[0].method).toBe('batch-automatic');
@@ -149,14 +142,7 @@ describe('AutoOrganize Batch Processor', () => {
         failed: []
       };
 
-      await processBatchResults(
-        batchSuggestions,
-        files,
-        options,
-        results,
-        mockSuggestionService,
-        smartFolders
-      );
+      processBatchResults(batchSuggestions, files, options, results, smartFolders);
 
       expect(results.organized).toHaveLength(0);
       expect(results.needsReview).toHaveLength(1);
@@ -192,14 +178,7 @@ describe('AutoOrganize Batch Processor', () => {
         failed: []
       };
 
-      await processBatchResults(
-        batchSuggestions,
-        files,
-        options,
-        results,
-        mockSuggestionService,
-        smartFolders
-      );
+      processBatchResults(batchSuggestions, files, options, results, smartFolders);
 
       // D2: held for review with the engine's pick; never moved to the default folder.
       expect(results.organized).toHaveLength(0);
@@ -238,14 +217,7 @@ describe('AutoOrganize Batch Processor', () => {
         failed: []
       };
 
-      await processBatchResults(
-        batchSuggestions,
-        files,
-        options,
-        results,
-        mockSuggestionService,
-        smartFolders
-      );
+      processBatchResults(batchSuggestions, files, options, results, smartFolders);
 
       expect(results.organized).toHaveLength(1);
       expect(results.organized[0].method).toBe('batch-automatic');
@@ -284,14 +256,7 @@ describe('AutoOrganize Batch Processor', () => {
         failed: []
       };
 
-      await processBatchResults(
-        batchSuggestions,
-        files,
-        options,
-        results,
-        mockSuggestionService,
-        smartFolders
-      );
+      processBatchResults(batchSuggestions, files, options, results, smartFolders);
 
       // D2: low confidence files are held for review even when a default folder exists.
       expect(results.organized).toHaveLength(0);
@@ -330,14 +295,7 @@ describe('AutoOrganize Batch Processor', () => {
         failed: []
       };
 
-      await processBatchResults(
-        batchSuggestions,
-        files,
-        options,
-        results,
-        mockSuggestionService,
-        smartFolders
-      );
+      processBatchResults(batchSuggestions, files, options, results, smartFolders);
 
       // D2: the rule-based folder is offered for review instead of moved into.
       expect(results.organized).toHaveLength(0);
@@ -348,7 +306,7 @@ describe('AutoOrganize Batch Processor', () => {
       );
     });
 
-    test('records feedback for high confidence suggestions', async () => {
+    test('plans a high confidence move without recording feedback', async () => {
       const batchSuggestions = {
         groups: [
           {
@@ -379,18 +337,11 @@ describe('AutoOrganize Batch Processor', () => {
         failed: []
       };
 
-      await processBatchResults(
-        batchSuggestions,
-        files,
-        options,
-        results,
-        mockSuggestionService,
-        smartFolders
-      );
+      processBatchResults(batchSuggestions, files, options, results, smartFolders);
 
-      // Feedback is recorded asynchronously (void promise)
-      await new Promise((r) => setTimeout(r, 10));
-      expect(mockSuggestionService.recordFeedback).toHaveBeenCalled();
+      // Learning belongs to the completed move (batchOrganizeHandler)
+      expect(results.operations).toHaveLength(1);
+      expect(mockSuggestionService.recordFeedback).not.toHaveBeenCalled();
     });
   });
 
@@ -546,7 +497,7 @@ describe('AutoOrganize Batch Processor', () => {
       expect(result.failed[0].error).toBe('Build failed');
     });
 
-    test('records feedback for processed files', async () => {
+    test('plans processed files without recording feedback', async () => {
       mockSuggestionService.getBatchSuggestions.mockResolvedValueOnce({
         success: true,
         groups: [
@@ -573,9 +524,16 @@ describe('AutoOrganize Batch Processor', () => {
       const thresholds = { autoApprove: 0.9 };
 
       const smartFolders = [{ name: 'Documents', path: '/docs', isDefault: true }];
-      await batchOrganize(files, smartFolders, options, mockSuggestionService, thresholds);
+      const result = await batchOrganize(
+        files,
+        smartFolders,
+        options,
+        mockSuggestionService,
+        thresholds
+      );
 
-      expect(mockSuggestionService.recordFeedback).toHaveBeenCalled();
+      expect(result.operations).toHaveLength(1);
+      expect(mockSuggestionService.recordFeedback).not.toHaveBeenCalled();
     });
   });
 });

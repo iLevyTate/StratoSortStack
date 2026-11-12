@@ -124,14 +124,26 @@ class SessionMemory {
     return memory;
   }
 
-  async getHistoryText(/** @type {any} */ memory) {
+  /**
+   * @param {any} memory
+   * @param {{ regeneratedInput?: string | null }} [options] `regeneratedInput`
+   *   is the question of a regenerate/retry. Its stored turn is left out, so
+   *   the model answers it afresh instead of reading the discarded answer.
+   */
+  async getHistoryText(memory, { regeneratedInput = null } = {}) {
     if (this.chatHistoryStore && memory?.sessionId) {
       try {
         const conv = this.chatHistoryStore.getConversation(memory.sessionId);
         // No stored conversation: a turn that could not be persisted lives in
         // the in-memory buffer, so follow-ups still read their history there.
         if (!conv) return this._getInMemoryHistoryText(memory);
-        const messages = conv.messages.slice(-(this.memoryWindow * 2));
+        const regeneratedTurnIndex =
+          typeof regeneratedInput === 'string'
+            ? this._findLastUserMessageIndex(conv, regeneratedInput)
+            : -1;
+        const priorMessages =
+          regeneratedTurnIndex >= 0 ? conv.messages.slice(0, regeneratedTurnIndex) : conv.messages;
+        const messages = priorMessages.slice(-(this.memoryWindow * 2));
         return messages
           .map((/** @type {any} */ m) => {
             const role = m.role === 'user' ? 'User' : 'Assistant';
@@ -213,17 +225,7 @@ class SessionMemory {
           }
         }
 
-        // Persist user turn — unless this is a regenerate, where the original
-        // user row already exists and re-inserting duplicates it on reload.
-        // Retry after a failed request sends the same flag although nothing
-        // was saved, so the skip is honoured only when the row is really there.
-        const userText = typeof input === 'string' ? input : '';
-        if (!skipUserMessage || !this._isLastUserMessage(conv, userText)) {
-          this.chatHistoryStore.addMessage(memory.sessionId, {
-            role: 'user',
-            text: userText
-          });
-        }
+        this.saveUserMessage(conv, memory.sessionId, input, { skipUserMessage });
 
         /** @type {Record<string, any>} */
         const assistantMessage = {
@@ -271,19 +273,42 @@ class SessionMemory {
   }
 
   /**
-   * Whether the conversation's most recent user row is this question.
+   * Persist the user row of a turn — unless this is a regenerate, where the
+   * original user row already exists and re-inserting duplicates it on
+   * reload. The answer that row already has is removed instead, so the one
+   * saved next replaces it. Retry after a failed request sends the same flag
+   * although nothing may have been saved, so the skip is honoured only when
+   * the row is really there.
+   * @param {any} conv Conversation as read before this turn, or null when it
+   *   was only just created.
+   * @param {string} sessionId
+   * @param {any} input
+   * @param {{ skipUserMessage?: boolean }} [options]
+   */
+  saveUserMessage(conv, sessionId, input, { skipUserMessage = false } = {}) {
+    const userText = typeof input === 'string' ? input : '';
+    if (skipUserMessage && this._findLastUserMessageIndex(conv, userText) >= 0) {
+      this.chatHistoryStore.deleteAssistantMessagesAfterLastUser(sessionId);
+      return;
+    }
+    this.chatHistoryStore.addMessage(sessionId, { role: 'user', text: userText });
+  }
+
+  /**
+   * Index of the conversation's most recent user row when it is this
+   * question, otherwise -1.
    * @private
    * @param {any} conv Stored conversation, or null when none exists yet.
    * @param {string} userText
-   * @returns {boolean}
+   * @returns {number}
    */
-  _isLastUserMessage(conv, userText) {
+  _findLastUserMessageIndex(conv, userText) {
     const messages = Array.isArray(conv?.messages) ? conv.messages : [];
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       if (messages[i]?.role !== 'user') continue;
-      return String(messages[i].text ?? '').trim() === userText.trim();
+      return String(messages[i].text ?? '').trim() === userText.trim() ? i : -1;
     }
-    return false;
+    return -1;
   }
 
   /**

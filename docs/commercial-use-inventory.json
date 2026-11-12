@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-10T23:39:10.960Z",
+  "generatedAt": "2026-11-12T01:40:35.862Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
@@ -18725,7 +18725,7 @@
     },
     {
       "packageName": "officeparser",
-      "version": "8.6.0",
+      "version": "8.7.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": true,
