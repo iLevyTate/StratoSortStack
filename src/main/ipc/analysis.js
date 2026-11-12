@@ -292,7 +292,9 @@ function registerAnalysisIpc(servicesOrParams) {
         stringSchema,
         z.object({
           filePath: z.string().min(1).max(4096),
-          namingSettings: namingSettingsSchema.optional()
+          namingSettings: namingSettingsSchema.optional(),
+          // A reanalysis the user asked for: skip the cached result.
+          bypassCache: z.boolean().optional()
         })
       ])
     : {
@@ -316,15 +318,16 @@ function registerAnalysisIpc(servicesOrParams) {
   /** @param {any} payload */
   function normalizeAnalyzeFilePayload(payload) {
     if (typeof payload === 'string') {
-      return { filePath: payload, namingOverride: null };
+      return { filePath: payload, namingOverride: null, bypassCache: false };
     }
     if (payload && typeof payload === 'object') {
       return {
         filePath: payload.filePath,
-        namingOverride: payload.namingSettings || null
+        namingOverride: payload.namingSettings || null,
+        bypassCache: payload.bypassCache === true
       };
     }
-    return { filePath: '', namingOverride: null };
+    return { filePath: '', namingOverride: null, bypassCache: false };
   }
   // Defense-in-depth path refine for batch entries: the preload validator
   // rejects UNC/URL/etc, but a compromised renderer could bypass the preload
@@ -513,8 +516,14 @@ function registerAnalysisIpc(servicesOrParams) {
    * @param {string} filePath
    * @param {AbortSignal|undefined} abortSignal
    * @param {Record<string, any>|null} [namingOverride]
+   * @param {boolean} [bypassCache]
    */
-  async function performDocumentAnalysis(filePath, abortSignal, namingOverride = null) {
+  async function performDocumentAnalysis(
+    filePath,
+    abortSignal,
+    namingOverride = null,
+    bypassCache = false
+  ) {
     const serviceIntegration = getServiceIntegration?.();
     const cleanPath = await validateAnalysisPath(filePath);
 
@@ -551,7 +560,10 @@ function registerAnalysisIpc(servicesOrParams) {
           );
 
           const statsBefore = await statBeforeAnalysis(cleanPath);
-          const result = await analyzeDocumentFile(cleanPath, folderCategories, { abortSignal });
+          const result = await analyzeDocumentFile(cleanPath, folderCategories, {
+            abortSignal,
+            bypassCache
+          });
           await applyUserNamingFromSettings(
             cleanPath,
             result,
@@ -622,9 +634,9 @@ function registerAnalysisIpc(servicesOrParams) {
     context: 'Analysis',
     schema: analyzeFilePayloadSchema,
     handler: (event, payload) => {
-      const { filePath, namingOverride } = normalizeAnalyzeFilePayload(payload);
+      const { filePath, namingOverride, bypassCache } = normalizeAnalyzeFilePayload(payload);
       return withUserAnalysis(filePath, () =>
-        performDocumentAnalysis(filePath, event?.abortSignal, namingOverride)
+        performDocumentAnalysis(filePath, event?.abortSignal, namingOverride, bypassCache)
       );
     }
   });
@@ -638,8 +650,14 @@ function registerAnalysisIpc(servicesOrParams) {
    * @param {string} filePath
    * @param {AbortSignal|undefined} abortSignal
    * @param {Record<string, any>|null} [namingOverride]
+   * @param {boolean} [bypassCache]
    */
-  async function performImageAnalysis(filePath, abortSignal, namingOverride = null) {
+  async function performImageAnalysis(
+    filePath,
+    abortSignal,
+    namingOverride = null,
+    bypassCache = false
+  ) {
     const serviceIntegration = getServiceIntegration?.();
     const cleanPath = await validateAnalysisPath(filePath);
 
@@ -676,7 +694,10 @@ function registerAnalysisIpc(servicesOrParams) {
           );
 
           const statsBefore = await statBeforeAnalysis(cleanPath);
-          const result = await analyzeImageFile(cleanPath, folderCategories, { abortSignal });
+          const result = await analyzeImageFile(cleanPath, folderCategories, {
+            abortSignal,
+            bypassCache
+          });
           await applyUserNamingFromSettings(
             cleanPath,
             result,
@@ -747,9 +768,9 @@ function registerAnalysisIpc(servicesOrParams) {
     context: 'Analysis',
     schema: analyzeFilePayloadSchema,
     handler: (event, payload) => {
-      const { filePath, namingOverride } = normalizeAnalyzeFilePayload(payload);
+      const { filePath, namingOverride, bypassCache } = normalizeAnalyzeFilePayload(payload);
       return withUserAnalysis(filePath, () =>
-        performImageAnalysis(filePath, event?.abortSignal, namingOverride)
+        performImageAnalysis(filePath, event?.abortSignal, namingOverride, bypassCache)
       );
     }
   });
@@ -766,8 +787,14 @@ function registerAnalysisIpc(servicesOrParams) {
    * @param {string} filePath
    * @param {AbortSignal|undefined} abortSignal
    * @param {Record<string, any>|null} [namingOverride]
+   * @param {boolean} [bypassCache]
    */
-  async function performMediaAnalysis(filePath, abortSignal, namingOverride = null) {
+  async function performMediaAnalysis(
+    filePath,
+    abortSignal,
+    namingOverride = null,
+    bypassCache = false
+  ) {
     const serviceIntegration = getServiceIntegration?.();
     const cleanPath = await validateAnalysisPath(filePath);
 
@@ -807,7 +834,11 @@ function registerAnalysisIpc(servicesOrParams) {
           );
           const isCancelled = () => Boolean(abortSignal?.aborted);
           const statsBefore = await statBeforeAnalysis(cleanPath);
-          const result = await analyzer(cleanPath, folderCategories, { isCancelled, abortSignal });
+          const result = await analyzer(cleanPath, folderCategories, {
+            isCancelled,
+            abortSignal,
+            bypassCache
+          });
           await applyUserNamingFromSettings(
             cleanPath,
             result,
@@ -878,9 +909,9 @@ function registerAnalysisIpc(servicesOrParams) {
     context: 'Analysis',
     schema: analyzeFilePayloadSchema,
     handler: (event, payload) => {
-      const { filePath, namingOverride } = normalizeAnalyzeFilePayload(payload);
+      const { filePath, namingOverride, bypassCache } = normalizeAnalyzeFilePayload(payload);
       return withUserAnalysis(filePath, () =>
-        performMediaAnalysis(filePath, event?.abortSignal, namingOverride)
+        performMediaAnalysis(filePath, event?.abortSignal, namingOverride, bypassCache)
       );
     }
   });

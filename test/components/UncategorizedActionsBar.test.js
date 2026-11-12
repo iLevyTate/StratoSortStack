@@ -3,7 +3,7 @@
  * too: three invoices from one vendor rarely arrive in the same batch.
  */
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 
 jest.mock('../../src/shared/logger', () => {
   const logger = { info: jest.fn(), debug: jest.fn(), warn: jest.fn(), error: jest.fn() };
@@ -85,6 +85,38 @@ describe('UncategorizedActionsBar', () => {
     await screen.findByText('1 file is uncategorized');
     await Promise.resolve();
     expect(container.textContent).not.toContain('Create folder for');
+  });
+
+  // Reanalyze used to go to the Smart Folder watcher, which refuses files
+  // outside a Smart Folder: every file still waiting in Organize.
+  test('Reanalyze hands the uncategorized files to the analysis run', async () => {
+    const onReanalyze = jest.fn();
+    window.electronAPI = { analysisHistory: { getUncategorized: jest.fn() } };
+    render(
+      <UncategorizedActionsBar
+        unprocessedFiles={[file('a.pdf', ['x']), file('b.pdf', ['y'])]}
+        findSmartFolderForCategory={() => null}
+        onReanalyze={onReanalyze}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reanalyze 2 uncategorized files' }));
+
+    expect(onReanalyze).toHaveBeenCalledWith(['/in/a.pdf', '/in/b.pdf']);
+  });
+
+  test('Reanalyze is disabled while an analysis runs', async () => {
+    window.electronAPI = { analysisHistory: { getUncategorized: jest.fn() } };
+    render(
+      <UncategorizedActionsBar
+        unprocessedFiles={[file('a.pdf', ['x'])]}
+        findSmartFolderForCategory={() => null}
+        onReanalyze={jest.fn()}
+        isAnalyzing
+      />
+    );
+
+    expect(screen.getByRole('button', { name: 'Reanalyze 1 uncategorized files' })).toBeDisabled();
   });
 
   test('nothing uncategorized on screen, no bar', async () => {

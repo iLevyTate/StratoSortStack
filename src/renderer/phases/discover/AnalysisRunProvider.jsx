@@ -63,6 +63,7 @@ export function AnalysisRunProvider({ children }) {
     cancelAnalysis,
     clearAnalysisQueue,
     retryFailedFiles,
+    reanalyzeFiles,
     pruneBatchResultsForPath
   } = useAnalysis({
     selectedFiles,
@@ -143,6 +144,7 @@ export function AnalysisRunProvider({ children }) {
       cancelAnalysis,
       clearAnalysisQueue,
       retryFailedFiles,
+      reanalyzeFiles,
       pruneBatchResultsForPath,
       totalAnalysisFailure,
       setTotalAnalysisFailure
@@ -152,6 +154,7 @@ export function AnalysisRunProvider({ children }) {
       cancelAnalysis,
       clearAnalysisQueue,
       retryFailedFiles,
+      reanalyzeFiles,
       pruneBatchResultsForPath,
       totalAnalysisFailure
     ]

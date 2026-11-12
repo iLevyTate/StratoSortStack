@@ -60,10 +60,12 @@ import { PHASE_PREREQUISITE_REASONS } from '../store/slices/uiSlice';
 import { formatDisplayPath } from '../utils/pathDisplay';
 import { toCanonicalPath } from '../utils/canonicalPath';
 import { useFileActions } from '../hooks/useFileActions';
+import { useAnalysisRun } from './discover/AnalysisRunProvider';
 
 const logger = createLogger('OrganizePhase');
 function OrganizePhase() {
   const { addNotification } = useNotification();
+  const { reanalyzeFiles } = useAnalysisRun();
   const { executeAction } = useUndoRedo();
   const [viewingFileDetails, setViewingFileDetails] = React.useState(null);
   const redactPaths = useAppSelector(selectRedactPaths);
@@ -716,6 +718,8 @@ function OrganizePhase() {
                     defaultLocation={defaultLocation}
                     existingFolders={safeSmartFolders}
                     onFolderCreated={reloadSmartFolders}
+                    onReanalyze={reanalyzeFiles}
+                    isAnalyzing={isAnalysisRunning}
                     addNotification={addNotification}
                   />
                 </ErrorBoundaryCore>

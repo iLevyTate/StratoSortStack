@@ -1781,9 +1781,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
         let ext = '';
         if (lastDot > lastSlash && lastDot > 0) ext = filePath.slice(lastDot + 1).toLowerCase();
 
-        const payload =
+        const namingSettings =
           options?.namingSettings && typeof options.namingSettings === 'object'
-            ? { filePath, namingSettings: options.namingSettings }
+            ? options.namingSettings
+            : null;
+        // bypassCache: a reanalysis the user asked for must not return the
+        // cached result of the analysis it replaces.
+        const bypassCache = options?.bypassCache === true;
+        const payload =
+          namingSettings || bypassCache
+            ? {
+                filePath,
+                ...(namingSettings ? { namingSettings } : {}),
+                ...(bypassCache ? { bypassCache: true } : {})
+              }
             : filePath;
 
         // Fix 1B: Use IMAGE_EXT_SET derived from constants.js instead of hardcoded list

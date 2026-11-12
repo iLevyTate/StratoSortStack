@@ -82,6 +82,7 @@ function clearAutoAdvanceTimeoutRef(autoAdvanceTimeoutRef) {
  * @param {any} [abortSignal]
  * @param {any} [namingSettings]
  * @param {number} [mediaBusyWaitedMs] - time already spent waiting for an earlier media request
+ * @param {boolean} [bypassCache] - a reanalysis: do not return the cached result
  * @returns {Promise<Object>} Analysis result
  */
 async function analyzeWithRetry(
@@ -89,7 +90,8 @@ async function analyzeWithRetry(
   attempt = 1,
   abortSignal = null,
   namingSettings = null,
-  mediaBusyWaitedMs = 0
+  mediaBusyWaitedMs = 0,
+  bypassCache = false
 ) {
   // Ensure electronAPI is available before attempting analysis
   if (!window.electronAPI?.files?.analyze) {
@@ -99,8 +101,14 @@ async function analyzeWithRetry(
   }
 
   try {
+    const hasNaming = namingSettings && typeof namingSettings === 'object';
     const analyzeOptions =
-      namingSettings && typeof namingSettings === 'object' ? { namingSettings } : undefined;
+      hasNaming || bypassCache
+        ? {
+            ...(hasNaming ? { namingSettings } : {}),
+            ...(bypassCache ? { bypassCache: true } : {})
+          }
+        : undefined;
     return await window.electronAPI.files.analyze(filePath, analyzeOptions);
   } catch (error) {
     // Analysis is fully local (in-process node-llama-cpp via main IPC); the
@@ -132,7 +140,8 @@ async function analyzeWithRetry(
         attempt,
         abortSignal,
         namingSettings,
-        mediaBusyWaitedMs + BATCH_BUSY_RETRY_MS
+        mediaBusyWaitedMs + BATCH_BUSY_RETRY_MS,
+        bypassCache
       );
     }
 
@@ -154,7 +163,8 @@ async function analyzeWithRetry(
         attempt + 1,
         abortSignal,
         namingSettings,
-        mediaBusyWaitedMs
+        mediaBusyWaitedMs,
+        bypassCache
       );
     }
     throw error;
@@ -363,7 +373,7 @@ function scheduleAutoAdvance({
 /**
  * Show appropriate notification based on analysis results.
  *
- * @param {{ successCount: number, failureCount: number, addNotification: Function, actions: any, getCurrentPhase: Function, autoAdvanceTimeoutRef: any, isMoreAnalysisPending?: () => boolean }} params
+ * @param {{ successCount: number, failureCount: number, addNotification: Function, actions: any, getCurrentPhase: Function, autoAdvanceTimeoutRef: any, isMoreAnalysisPending?: () => boolean, isReanalysis?: boolean }} params
  */
 function showAnalysisCompletionNotification({
   successCount,
@@ -372,8 +382,28 @@ function showAnalysisCompletionNotification({
   actions,
   getCurrentPhase,
   autoAdvanceTimeoutRef,
-  isMoreAnalysisPending
+  isMoreAnalysisPending,
+  isReanalysis = false
 }) {
+  if (isReanalysis) {
+    // The user asked for these files again from where they are: say what
+    // happened, and neither move them on to Organize nor call the whole
+    // analysis failed.
+    const plural = (/** @type {number} */ n) => `${n} ${n === 1 ? 'file' : 'files'}`;
+    if (failureCount === 0) {
+      addNotification(`Reanalyzed ${plural(successCount)}`, 'success', 4000, 'analysis-complete');
+    } else {
+      addNotification(
+        successCount > 0
+          ? `Reanalyzed ${plural(successCount)}; ${failureCount} failed`
+          : `Reanalysis failed for ${plural(failureCount)}`,
+        successCount > 0 ? 'warning' : 'error',
+        6000,
+        'analysis-complete'
+      );
+    }
+    return;
+  }
   if (successCount > 0 && failureCount === 0) {
     addNotification(
       `Analysis complete! ${successCount} files ready`,
@@ -1005,7 +1035,10 @@ export function useAnalysis(options = {}) {
    * Main analysis function
    */
   const analyzeFiles = useCallback(
-    async (/** @type {any} */ files) => {
+    async (/** @type {any} */ files, /** @type {{ bypassCache?: boolean }} */ runOptions = {}) => {
+      // A reanalysis: every file goes through the per-file request, which
+      // carries bypassCache, and the run ends without auto-advance.
+      const bypassCache = runOptions?.bypassCache === true;
       if (!files || files.length === 0) {
         addNotification('No files queued for analysis.', 'info', 2000, 'analysis-empty');
         return { started: false, reason: 'empty' };
@@ -1395,7 +1428,9 @@ export function useAnalysis(options = {}) {
         });
         logger.info(`Starting analysis of ${uniqueFiles.length} files`);
         addNotification(
-          `Starting AI analysis of ${uniqueFiles.length} files...`,
+          bypassCache
+            ? `Reanalyzing ${uniqueFiles.length} ${uniqueFiles.length === 1 ? 'file' : 'files'}...`
+            : `Starting AI analysis of ${uniqueFiles.length} files...`,
           'info',
           3000,
           'analysis-start'
@@ -1736,7 +1771,7 @@ export function useAnalysis(options = {}) {
 
           try {
             const analysis = await withTimeout(
-              analyzeWithRetry(file.path, 1, fileSignal, namingSettings),
+              analyzeWithRetry(file.path, 1, fileSignal, namingSettings, 0, bypassCache),
               PER_FILE_LIMIT_MS,
               `Analysis for ${fileName}`
             ).catch((/** @type {any} */ error) => {
@@ -1814,12 +1849,9 @@ export function useAnalysis(options = {}) {
           }
         };
 
-        const useBatchPath = shouldUseBatchAnalysis(
-          uniqueFiles.length,
-          concurrency,
-          systemRecommended,
-          hasMedia
-        );
+        const useBatchPath =
+          !bypassCache &&
+          shouldUseBatchAnalysis(uniqueFiles.length, concurrency, systemRecommended, hasMedia);
         if (useBatchPath) {
           try {
             logger.info('Using batch analysis path', {
@@ -1948,7 +1980,8 @@ export function useAnalysis(options = {}) {
           // says analyzing) or is still waiting in pendingFilesRef.
           isMoreAnalysisPending: () =>
             pendingFilesRef.current.length > 0 ||
-            Boolean(/** @type {any} */ (store.getState())?.analysis?.isAnalyzing)
+            Boolean(/** @type {any} */ (store.getState())?.analysis?.isAnalyzing),
+          isReanalysis: bypassCache
         });
       } catch (error) {
         if (error.message !== 'Analysis cancelled by user') {
@@ -2223,6 +2256,58 @@ export function useAnalysis(options = {}) {
     }
   }, [analysisResults, fileStates, setFileStates, addNotification]);
 
+  /**
+   * Analyze files again that already have a result, where they are, without
+   * the cached result. This is what the Reanalyze controls in Discover and
+   * Organize run; it works for any file in the list, inside a Smart Folder
+   * or not.
+   * @returns {{ started: boolean, reason?: string }}
+   */
+  const reanalyzeFiles = useCallback(
+    (/** @type {string[]} */ filePaths) => {
+      const wanted = new Set((Array.isArray(filePaths) ? filePaths : []).map(toCanonicalPath));
+      const seen = new Set();
+      const files = [...analysisResults, ...selectedFiles].filter((/** @type {any} */ f) => {
+        const key = toCanonicalPath(f?.path);
+        if (!f?.path || !wanted.has(key) || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      if (files.length === 0) {
+        addNotification('No files to reanalyze', 'info', 2000, 'reanalyze');
+        return { started: false, reason: 'empty' };
+      }
+      // A running analysis would queue these behind it as an ordinary
+      // analysis, which returns the cached result: refuse instead.
+      if (
+        analysisLockRef.current ||
+        isAnalyzingRef.current ||
+        /** @type {any} */ (store.getState())?.analysis?.isAnalyzing
+      ) {
+        addNotification(
+          'Analysis is still running. Reanalyze when it finishes.',
+          'info',
+          3000,
+          'reanalyze'
+        );
+        return { started: false, reason: 'busy' };
+      }
+
+      setFileStates((/** @type {any} */ prev) => {
+        const keyByCanonical = new Map(Object.keys(prev).map((p) => [toCanonicalPath(p), p]));
+        const updated = { ...prev };
+        files.forEach((/** @type {any} */ file) => {
+          const key = keyByCanonical.get(toCanonicalPath(file.path)) || file.path;
+          updated[key] = { ...updated[key], state: 'pending', error: null };
+        });
+        return updated;
+      });
+      void analyzeFilesRef.current?.(files, { bypassCache: true });
+      return { started: true };
+    },
+    [analysisResults, selectedFiles, setFileStates, addNotification, store]
+  );
+
   useEffect(() => {
     // Reset on StrictMode re-mount — refs persist across unmount/remount
     isMountedRef.current = true;
@@ -2337,6 +2422,7 @@ export function useAnalysis(options = {}) {
     cancelAnalysis,
     clearAnalysisQueue,
     retryFailedFiles,
+    reanalyzeFiles,
     resetAnalysisState,
     generatePreviewName
   };

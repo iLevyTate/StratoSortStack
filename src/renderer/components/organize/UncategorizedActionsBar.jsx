@@ -75,11 +75,12 @@ function UncategorizedActionsBar({
   defaultLocation,
   existingFolders,
   onFolderCreated,
+  onReanalyze,
+  isAnalyzing = false,
   addNotification
 }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [prefillName, setPrefillName] = useState('');
-  const [isReanalyzing, setIsReanalyzing] = useState(false);
   const earlierFiles = useEarlierUncategorizedFiles();
 
   // Derive uncategorized files + pattern suggestions in one pass.
@@ -165,68 +166,16 @@ function UncategorizedActionsBar({
     [addNotification, onFolderCreated]
   );
 
-  const handleReanalyzeAll = useCallback(async () => {
-    if (!window?.electronAPI?.embeddings?.reanalyzeFile) {
+  // The analysis run does the work and reports the outcome. The button is
+  // disabled while any analysis runs: the run refuses a reanalysis then.
+  const handleReanalyzeAll = useCallback(() => {
+    if (typeof onReanalyze !== 'function') {
       addNotification?.('Reanalyze is not available in this build.', 'warning');
       return;
     }
-    if (uncategorizedFiles.length === 0) return;
-
-    setIsReanalyzing(true);
-    let succeeded = 0;
-    let outOfScope = 0;
-    let otherFailed = 0;
-    try {
-      // Sequential rather than parallel: the embedding queue serializes
-      // anyway, and parallel calls just queue depth without finishing faster.
-      // Sequential also keeps the notification count predictable.
-      for (const file of uncategorizedFiles) {
-        if (!file?.path) {
-          otherFailed += 1;
-          continue;
-        }
-        try {
-          const result = await window.electronAPI.embeddings.reanalyzeFile(file.path);
-          if (result?.success !== false) {
-            succeeded += 1;
-          } else if (result?.errorCode === 'NOT_IN_SMART_FOLDER') {
-            outOfScope += 1;
-          } else {
-            otherFailed += 1;
-          }
-        } catch (err) {
-          logger.warn('Reanalyze single file failed', {
-            path: file.path,
-            error: err?.message
-          });
-          otherFailed += 1;
-        }
-      }
-      // Tailor the toast to what actually happened so users understand the
-      // scope guard: out-of-scope rejections need a different remediation
-      // (add the source folder as a Smart Folder) than transient failures.
-      if (succeeded > 0 && outOfScope === 0 && otherFailed === 0) {
-        addNotification?.(
-          `Reanalyzed ${succeeded} ${succeeded === 1 ? 'file' : 'files'}.`,
-          'success'
-        );
-      } else if (outOfScope > 0 && otherFailed === 0) {
-        const skipNote = `${outOfScope} skipped (not inside a configured Smart Folder). Add the source folder as a Smart Folder destination to enable reanalysis.`;
-        addNotification?.(
-          succeeded > 0 ? `Reanalyzed ${succeeded}. ${skipNote}` : skipNote,
-          'warning'
-        );
-      } else {
-        const parts = [];
-        if (succeeded > 0) parts.push(`Reanalyzed ${succeeded}`);
-        if (outOfScope > 0) parts.push(`${outOfScope} not in a Smart Folder`);
-        if (otherFailed > 0) parts.push(`${otherFailed} failed`);
-        addNotification?.(parts.join(', ') + '.', 'warning');
-      }
-    } finally {
-      setIsReanalyzing(false);
-    }
-  }, [uncategorizedFiles, addNotification]);
+    const paths = uncategorizedFiles.map((file) => file?.path).filter(Boolean);
+    if (paths.length > 0) onReanalyze(paths);
+  }, [uncategorizedFiles, onReanalyze, addNotification]);
 
   if (uncategorizedFiles.length === 0) return null;
 
@@ -288,15 +237,11 @@ function UncategorizedActionsBar({
               variant="ghost"
               size="sm"
               onClick={handleReanalyzeAll}
-              disabled={isReanalyzing}
-              aria-label={
-                isReanalyzing
-                  ? 'Reanalyzing…'
-                  : `Reanalyze ${uncategorizedFiles.length} uncategorized files`
-              }
+              disabled={isAnalyzing}
+              aria-label={`Reanalyze ${uncategorizedFiles.length} uncategorized files`}
             >
-              <RefreshCw className={`w-4 h-4 mr-1.5 ${isReanalyzing ? 'animate-spin' : ''}`} />
-              {isReanalyzing ? 'Reanalyzing…' : `Reanalyze ${uncategorizedFiles.length}`}
+              <RefreshCw className="w-4 h-4 mr-1.5" />
+              Reanalyze {uncategorizedFiles.length}
             </Button>
           </div>
         </div>
@@ -326,6 +271,9 @@ UncategorizedActionsBar.propTypes = {
   defaultLocation: PropTypes.string,
   existingFolders: PropTypes.array,
   onFolderCreated: PropTypes.func,
+  // Analyzes the given paths again (the analysis run's reanalyzeFiles).
+  onReanalyze: PropTypes.func,
+  isAnalyzing: PropTypes.bool,
   addNotification: PropTypes.func
 };
 

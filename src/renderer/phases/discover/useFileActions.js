@@ -13,7 +13,7 @@ import { mapErrorToNotification } from '../../utils/errorMapping';
 
 /**
  * Custom hook for file action operations
- * @param {{ setAnalysisResults: Function, setSelectedFiles: Function, setFileStates: Function, addNotification: Function, showConfirm: Function, phaseData: any, onFileRemoved?: Function }} options
+ * @param {{ setAnalysisResults: Function, setSelectedFiles: Function, setFileStates: Function, addNotification: Function, showConfirm: Function, phaseData: any, onFileRemoved?: Function, onReanalyze?: (filePaths: string[]) => unknown }} options
  * @returns {Record<string, any>} File action functions
  */
 export function useFileActions({
@@ -23,7 +23,8 @@ export function useFileActions({
   addNotification,
   showConfirm,
   phaseData,
-  onFileRemoved
+  onFileRemoved,
+  onReanalyze
 }) {
   /**
    * Handle file action (open, reveal, delete, reanalyze)
@@ -121,40 +122,15 @@ export function useFileActions({
             break;
           }
 
-          case 'reanalyze': {
-            if (!window.electronAPI?.embeddings?.reanalyzeFile) {
+          case 'reanalyze':
+            // The analysis run owns this: it analyzes the file again where
+            // it is and reports the outcome itself.
+            if (typeof onReanalyze !== 'function') {
               addNotification('Reanalysis unavailable', 'error', 3000, 'file-actions');
               return;
             }
-            const result = await window.electronAPI.embeddings.reanalyzeFile(filePath);
-            if (result?.success) {
-              addNotification(
-                `Reanalysis queued: ${filePath.split(/[\\/]/).pop()}`,
-                'success',
-                2500,
-                'file-actions'
-              );
-            } else if (result?.errorCode === 'NOT_IN_SMART_FOLDER') {
-              // The scope guard rejects files outside any configured Smart
-              // Folder root for security (see semantic.js:1723-1740). The
-              // generic "not eligible" copy didn't tell the user how to
-              // unblock — name the cause and the fix explicitly.
-              addNotification(
-                'This file is not inside a configured Smart Folder. Add its source folder as a Smart Folder destination to enable reanalysis.',
-                'warning',
-                6000,
-                'file-actions'
-              );
-            } else {
-              addNotification(
-                result?.error || 'Reanalysis not eligible for this file',
-                'warning',
-                4000,
-                'file-actions'
-              );
-            }
+            onReanalyze([filePath]);
             break;
-          }
 
           case 'delete': {
             const fileName = filePath.split(/[\\/]/).pop();
@@ -234,7 +210,8 @@ export function useFileActions({
       setFileStates,
       showConfirm,
       phaseData,
-      onFileRemoved
+      onFileRemoved,
+      onReanalyze
     ]
   );
 

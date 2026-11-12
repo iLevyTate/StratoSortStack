@@ -280,6 +280,7 @@ function DiscoverPhase() {
     cancelAnalysis,
     clearAnalysisQueue,
     retryFailedFiles,
+    reanalyzeFiles,
     pruneBatchResultsForPath,
     totalAnalysisFailure,
     setTotalAnalysisFailure
@@ -306,7 +307,8 @@ function DiscoverPhase() {
     addNotification,
     showConfirm,
     phaseData: stablePhaseData,
-    onFileRemoved: pruneBatchResultsForPath
+    onFileRemoved: pruneBatchResultsForPath,
+    onReanalyze: reanalyzeFiles
   });
 
   const handleFileDrop = useCallback(
