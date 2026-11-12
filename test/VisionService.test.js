@@ -375,6 +375,93 @@ describe('VisionService', () => {
       expect(service._isReady).toBe(true);
     });
 
+    describe('a model load that began after the caller checked for room', () => {
+      // The caller frees memory, then the runtime binary is looked up, then
+      // the memory is reserved. A text model that began to load in between
+      // was not seen: the reservation was made without asking, and both
+      // loaded onto a GPU with room for one.
+      const { ModelMemoryManager } = require('../src/main/services/ModelMemoryManager');
+
+      function realManager() {
+        const real = new ModelMemoryManager({ _models: {}, _contexts: {}, _loadModel: jest.fn() });
+        jest.spyOn(real, '_refreshMemoryBudget').mockImplementation(() => {});
+        real._maxMemoryUsage = 4.8 * GiB;
+        service._memoryManagerOverride = real;
+        return real;
+      }
+
+      function binaryLookupInProgress() {
+        let finish;
+        // The first lookup is held open; _spawnServer's gets the cached path.
+        service._ensureBinary = jest
+          .fn()
+          .mockResolvedValue('/mock/llama-server')
+          .mockImplementationOnce(
+            () =>
+              new Promise((resolve) => {
+                finish = () => resolve('/mock/llama-server');
+              })
+          );
+        return () => finish();
+      }
+
+      test('the runtime does not start beside it', async () => {
+        const real = realManager();
+        const { spawn } = require('child_process');
+        const binaryFound = binaryLookupInProgress();
+
+        const starting = service._startServer({ modelPath: '/models/vision.gguf' });
+        real.reserveLoad('text', 5.8 * GiB);
+        binaryFound();
+
+        await expect(starting).rejects.toMatchObject({
+          code: 'MODEL_MEMORY_BUDGET_EXCEEDED',
+          message: expect.stringContaining('memory budget exceeded')
+        });
+        expect(spawn).not.toHaveBeenCalled();
+        expect(real.getMemoryStatus().pendingLoads).toEqual(['text']);
+      });
+
+      test('with nothing else loading, the runtime reserves its memory and starts', async () => {
+        const real = realManager();
+        const { spawn } = require('child_process');
+        spawn.mockReturnValue(createFakeChild());
+        service._waitForHealth = jest.fn().mockResolvedValue(undefined);
+        const binaryFound = binaryLookupInProgress();
+
+        const starting = service._startServer({ modelPath: '/models/vision.gguf' });
+        binaryFound();
+        await starting;
+
+        expect(spawn).toHaveBeenCalledTimes(1);
+        expect(real.getMemoryStatus().loadedModels).toEqual(['vision-runtime']);
+      });
+
+      test('a restart is not refused over the runtime it replaces', async () => {
+        const real = realManager();
+        real.registerExternalConsumer({
+          type: 'vision-runtime',
+          sizeBytes: 5 * GiB,
+          dispose: jest.fn()
+        });
+
+        const endReservation = await service._reserveRuntimeMemory({ modelPath: '/m.gguf' });
+
+        expect(real.getMemoryStatus().pendingLoads).toEqual(['vision-runtime']);
+        endReservation();
+      });
+
+      test('an estimate that fails still lets the runtime start', async () => {
+        const real = realManager();
+        real.reserveLoad('text', 5.8 * GiB);
+        service.estimateRuntimeMemoryBytes = jest.fn().mockRejectedValue(new Error('stat failed'));
+
+        await expect(service._reserveRuntimeMemory({ modelPath: '/m.gguf' })).resolves.toEqual(
+          expect.any(Function)
+        );
+      });
+    });
+
     test('a child exit unregisters; shutdown unregisters', async () => {
       const child = await startReadyServer();
       child.emit('exit', 1, null);
@@ -764,6 +851,20 @@ describe('VisionService', () => {
       await expect(service.analyzeImage({ config: validConfig })).rejects.toThrow('spawn failed');
 
       expect(service._startupFailureAt).toBeGreaterThan(0);
+    });
+
+    test('a start refused for memory is not a startup failure', async () => {
+      // Another model holds the memory for now; the runtime is not broken,
+      // and the next image must not be turned away by the cooldown.
+      const refused = Object.assign(new Error('memory budget exceeded'), {
+        code: 'MODEL_MEMORY_BUDGET_EXCEEDED'
+      });
+      service._ensureServer = jest.fn().mockRejectedValue(refused);
+
+      await expect(service.analyzeImage({ config: validConfig })).rejects.toBe(refused);
+
+      expect(service._startupFailureAt).toBe(0);
+      expect(service._startupFailureStreak).toBe(0);
     });
 
     test('an exited-after-startup failure sets the latch', async () => {

@@ -103,23 +103,6 @@ describe('WatcherQueueStore', () => {
     ]);
   });
 
-  // forceReanalyzeAll marks every item `bulk: true` and the watcher's
-  // exclusion gates read that flag: a hand-picked single-file reanalyze is
-  // exempt from the user's exclusion rules, a bulk one is not. If the flag
-  // is dropped on the way to disk, every row of an interrupted bulk run comes
-  // back exempt after the restart and excluded files get an LLM pass.
-  test('round-trips the bulk flag so a restored bulk reanalyze is still not exempt', async () => {
-    const store = createWatcherQueueStore(path.join(dir, 'queue.json'));
-    await store.save([
-      { filePath: 'C:\\w\\bulk.psd', mtime: 1, eventType: 'reanalyze', bulk: true, queuedAt: 2 },
-      { filePath: 'C:\\w\\picked.psd', mtime: 1, eventType: 'reanalyze', queuedAt: 3 }
-    ]);
-    expect(await store.load()).toEqual([
-      { filePath: 'C:\\w\\bulk.psd', mtime: 1, eventType: 'reanalyze', bulk: true, queuedAt: 2 },
-      { filePath: 'C:\\w\\picked.psd', mtime: 1, eventType: 'reanalyze', queuedAt: 3 }
-    ]);
-  });
-
   test('load returns [] when the file is missing or corrupt', async () => {
     const p = path.join(dir, 'queue.json');
     const store = createWatcherQueueStore(p);

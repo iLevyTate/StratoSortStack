@@ -61,6 +61,29 @@ describe('PatternPersistence', () => {
     expect(fs.rename).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps the pattern key on feedback rows across a load, and accepts rows without one', async () => {
+    const withKey = {
+      timestamp: 2,
+      accepted: true,
+      file: { name: 'q1.pdf', type: 'pdf' },
+      suggestion: { folder: 'Finance' },
+      pattern: 'pdf:invoices:finance'
+    };
+    const withoutKey = {
+      timestamp: 1,
+      accepted: true,
+      file: { name: 'old.pdf', type: 'pdf' },
+      suggestion: { folder: 'Finance' }
+    };
+    fs.readFile.mockResolvedValueOnce(
+      JSON.stringify({ patterns: [], feedbackHistory: [withKey, withoutKey], folderUsageStats: [] })
+    );
+
+    const loaded = await new PatternPersistence().load();
+
+    expect(loaded.feedbackHistory).toEqual([withKey, withoutKey]);
+  });
+
   it('awaits deferred throttled save completion', async () => {
     jest.useFakeTimers();
     try {

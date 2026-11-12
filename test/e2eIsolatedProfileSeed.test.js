@@ -226,9 +226,12 @@ describe('openModelSetupWizardOffline', () => {
 
 describe('E2E specs stay network-free', () => {
   const E2E_DIR = path.join(__dirname, 'e2e');
+  // Specs live in per-area subfolders (test/e2e/<area>/*.spec.js), so scan recursively.
   const specSources = fs
-    .readdirSync(E2E_DIR)
+    .readdirSync(E2E_DIR, { recursive: true })
+    .map((name) => String(name).replace(/\\/g, '/'))
     .filter((name) => name.endsWith('.spec.js'))
+    .sort()
     .map((name) => [name, fs.readFileSync(path.join(E2E_DIR, name), 'utf8')]);
 
   // A spec auditing the wizard used to launch with allowModelAutoDownload,

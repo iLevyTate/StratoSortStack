@@ -309,6 +309,86 @@ describe('LlamaService: the batch pin and the GPU embedding model', () => {
   });
 });
 
+describe('LlamaService: the embedding model on the CPU beside a text model', () => {
+  // A 7B text model on a 6 GB card: the embedding model loads on the CPU
+  // while the text model loads. When that text load failed, the embedding
+  // model stayed on the CPU, with the GPU empty, until something unloaded it.
+  const MiB = 1024 * 1024;
+  let service;
+  let manager;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    service = new LlamaService();
+    service._initialized = true;
+    service._gpuBackend = 'cuda';
+    service._loadModel = jest.fn(async (type) => ({ ctx: type }));
+    manager = new ModelMemoryManager(service);
+    jest.spyOn(manager, '_refreshMemoryBudget').mockImplementation(() => {});
+    jest.spyOn(manager, '_disposeModelFn').mockResolvedValue(undefined);
+    manager._maxMemoryUsage = 5 * GiB;
+    manager._modelSizeEstimates.text = 5806 * MiB;
+    manager._modelSizeEstimates.embedding = 181 * MiB;
+    manager._pinnedResidentWaitMs = 0;
+    service._modelMemoryManager = manager;
+  });
+
+  const embed = async () => {
+    manager.acquireRef('embedding');
+    try {
+      return await service._ensureModelLoaded('embedding', { selfRef: true });
+    } finally {
+      manager.releaseRef('embedding');
+    }
+  };
+
+  test('goes back to the GPU on the next embedding once the text load has failed', async () => {
+    const endTextLoad = manager.reserveLoad('text', 5806 * MiB);
+    await embed();
+    expect(service._loadModel).toHaveBeenLastCalledWith(
+      'embedding',
+      expect.objectContaining({ gpuLayersOverride: 0 })
+    );
+    endTextLoad();
+
+    await embed();
+
+    expect(manager._disposeModelFn).toHaveBeenCalledWith('embedding');
+    expect(service._loadModel).toHaveBeenCalledTimes(2);
+    expect(service._loadModel).toHaveBeenLastCalledWith('embedding', {});
+    expect(manager.isOnCpuBeside('embedding')).toBe(false);
+  });
+
+  test('stays on the CPU while the text model is loading or loaded', async () => {
+    const endTextLoad = manager.reserveLoad('text', 5806 * MiB);
+    await embed();
+    await embed();
+    expect(service._loadModel).toHaveBeenCalledTimes(1);
+
+    // The text load succeeded: the model is resident and still fills the GPU.
+    manager._loadedModels.set('text', { context: {}, lastUsed: 1, sizeBytes: 5806 * MiB });
+    manager._currentMemoryUsage += 5806 * MiB;
+    endTextLoad();
+    await embed();
+
+    expect(service._loadModel).toHaveBeenCalledTimes(1);
+    expect(manager._disposeModelFn).not.toHaveBeenCalled();
+    expect(manager.isOnCpuBeside('embedding')).toBe(true);
+  });
+
+  test('is served from the CPU, without a wait, while another embedding uses it', async () => {
+    const endTextLoad = manager.reserveLoad('text', 5806 * MiB);
+    await embed();
+    endTextLoad();
+    manager.acquireRef('embedding');
+
+    await embed();
+
+    expect(service._loadModel).toHaveBeenCalledTimes(1);
+    expect(manager.isOnCpuBeside('embedding')).toBe(true);
+  });
+});
+
 describe('LlamaService: the text preload after a batch', () => {
   let service;
   let manager;

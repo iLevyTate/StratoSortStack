@@ -59,7 +59,9 @@ const feedbackEntrySchema = z.object({
       type: z.string().optional()
     })
     .optional(),
-  suggestion: z.object({}).passthrough().optional()
+  suggestion: z.object({}).passthrough().optional(),
+  // Key the row changed in userPatterns; absent on rows saved before it existed.
+  pattern: z.string().optional()
 });
 
 const patternsSchema = z.object({

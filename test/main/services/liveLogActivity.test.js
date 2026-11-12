@@ -299,17 +299,17 @@ const CASES = [
     expected: { kind: 'model', icon: 'cpu', tone: 'info', text: 'Unloading embedding model' }
   },
   {
-    rule: 'embedding-unloaded-for-vision',
+    rule: 'embedding-returning-to-gpu',
     record: {
       level: 'info',
       context: 'LlamaService',
-      msg: '[LlamaService] Unloaded the CPU embedding model from the vision batch'
+      msg: '[LlamaService] Unloaded the CPU embedding model; the next load uses the GPU'
     },
     expected: {
       kind: 'model',
       icon: 'cpu',
       tone: 'info',
-      text: 'Embedding model unloaded for the vision batch'
+      text: 'Embedding model moving back to the GPU'
     }
   },
   {
@@ -853,9 +853,9 @@ const SOURCES = {
     literals: ["'[Memory] Unloading model'"],
     context: 'ModelMemoryManager'
   },
-  'embedding-unloaded-for-vision': {
+  'embedding-returning-to-gpu': {
     file: 'src/main/services/LlamaService.js',
-    literals: ["'[LlamaService] Unloaded the CPU embedding model from the vision batch'"],
+    literals: ["'[LlamaService] Unloaded the CPU embedding model; the next load uses the GPU'"],
     context: 'LlamaService'
   },
   'embeddings-flushed': {

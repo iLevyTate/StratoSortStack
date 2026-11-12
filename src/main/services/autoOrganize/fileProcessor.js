@@ -133,6 +133,9 @@ async function processFilesWithoutAnalysis(files, smartFolders, _defaultLocation
 
 /**
  * Process files individually as fallback
+ *
+ * Plans moves only; learning is recorded where a move completes (see
+ * batchProcessor.processBatchResults).
  * @param {Array<any>} files - Files to process
  * @param {Array<any>} smartFolders - Smart folders
  * @param {Record<string, any>} options - Processing options (includes confidenceThreshold)
@@ -208,16 +211,6 @@ async function processFilesIndividually(files, smartFolders, options, results, s
           source: file.path,
           destination
         });
-
-        // Record feedback with proper error handling
-        try {
-          await suggestionService.recordFeedback(file, canonicalPrimary, true);
-        } catch (feedbackError) {
-          logger.warn('[AutoOrganize] Failed to record feedback (non-critical):', {
-            file: file.path,
-            error: feedbackError.message
-          });
-        }
       } else if (confidence >= effectiveThreshold && !canonicalPrimary) {
         // High confidence but unresolved folder => review only (never auto-create unknown destinations)
         results.needsReview.push({

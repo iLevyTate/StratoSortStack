@@ -5,7 +5,7 @@
  * Uses Playwright's Electron support via the _electron fixture.
  *
  * Usage:
- *   const { launchApp, closeApp, getMainWindow } = require('./helpers/electronApp');
+ *   const { launchApp, closeApp, getMainWindow } = require('../helpers/electronApp');
  *
  *   test('my test', async () => {
  *     const { app, window } = await launchApp();

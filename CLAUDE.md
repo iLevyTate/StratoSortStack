@@ -60,7 +60,7 @@ npm run test:e2e         # Playwright E2E tests
 npm run lint             # ESLint check
 npm run format:check     # Prettier check
 npm run ci               # format:check + lint + typecheck + audit:production + compliance:commercial:verify + test:coverage + verify:ipc-contracts + build, plus the full verify:* suite (channels, ipc handlers/schemas/enforcement, mcp + ai-provider contracts, analysis routing, electron fuses, env docs, version tag) — package.json is the authoritative list
-npm run local:gate       # verify:installed-electron + ci + verify:native-modules (one-shot pre-push convenience). GitHub Actions `CI` is configured for Windows + Ubuntu + macOS when Actions are enabled for the repo. Cloud CI has been off at the org/repo setting at times — `dependabot.yml` notes local gate as the only guaranteed gate. The e2e-smoke job is restricted to Windows + Ubuntu.
+npm run local:gate       # verify:installed-electron + ci + verify:native-modules (one-shot pre-push convenience). GitHub Actions `CI` runs Ubuntu + Windows on pull requests and adds macOS + the e2e-smoke job on pushes to main (trimmed 2026-11-11 to cut Actions minutes; required checks are `ci (ubuntu-latest)`, `ci (windows-latest)` and `CodeQL`), when Actions are enabled for the repo. Cloud CI has been off at the org/repo setting at times — `dependabot.yml` notes local gate as the only guaranteed gate. The e2e-smoke job is restricted to Windows + Ubuntu.
 npm run dist:win         # Build Windows installer
 ```
 
@@ -188,8 +188,10 @@ These are tracked gaps that the project slash commands help address:
   counts are the output of [`.github/workflows/ci.yml`](.github/workflows/ci.yml) — treat CI logs as
   source of truth rather than inline numbers here.
 - ~~Coverage not enforced in CI~~ - CI now runs `npm run test:coverage` (enforces thresholds).
-  Cross-platform matrix (Windows, macOS, Linux). Coverage artifacts uploaded.
-- ~~Single-platform CI~~ - CI runs on `windows-latest`, `ubuntu-latest`, and `macos-latest`.
+  Cross-platform matrix (Windows and Linux on pull requests; macOS added on pushes to main).
+  Coverage artifacts uploaded.
+- ~~Single-platform CI~~ - CI runs on `windows-latest` and `ubuntu-latest` for pull requests, plus
+  `macos-latest` on pushes to main.
 - ~~No IPC handler coverage check~~ - `npm run verify:ipc-handlers` statically verifies 100% of
   `IPC_CHANNELS` have registered handlers. `npm run ci` (run by every CI job) transitively invokes
   `npm run verify:ipc-contracts` — there is no standalone `ipc-contract-check` job.

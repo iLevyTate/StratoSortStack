@@ -149,7 +149,6 @@ const IPC_CHANNELS = {
     REBUILD_FILES: 'embeddings:rebuild-files',
     FULL_REBUILD: 'embeddings:full-rebuild',
     REANALYZE_ALL: 'embeddings:reanalyze-all',
-    REANALYZE_FILE: 'embeddings:reanalyze-file',
     GET_STATS: 'embeddings:get-stats',
     SEARCH: 'embeddings:search',
     SCORE_FILES: 'embeddings:score-files',
@@ -1983,8 +1982,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
       secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.FULL_REBUILD, options),
     reanalyzeAll: (/** @type {any} */ options) =>
       secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.REANALYZE_ALL, options),
-    reanalyzeFile: (/** @type {any} */ filePath, options = {}) =>
-      secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.REANALYZE_FILE, { filePath, ...options }),
     getStats: (/** @type {any} */ options = undefined) =>
       options === undefined
         ? secureIPC.safeInvoke(IPC_CHANNELS.EMBEDDINGS.GET_STATS)

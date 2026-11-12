@@ -1731,7 +1731,7 @@ class LlamaService extends EventEmitter {
       }
 
       if (modelType === 'embedding') {
-        await this._returnEmbeddingToGpuAfterBatch(selfRef);
+        await this._returnEmbeddingToGpu(selfRef);
       }
 
       // Stale-swap: a config change selected a different model for this type
@@ -2186,6 +2186,38 @@ class LlamaService extends EventEmitter {
       if (!drained) throw error;
     }
     await this._releaseMemoryForVisionRuntime('batch');
+  }
+
+  /**
+   * Send one image to the vision runtime, making room once more when the
+   * runtime refuses to start.
+   *
+   * analyzeImage frees memory before it gets here, but a text load can begin
+   * after that: nothing was loading when the image looked, so nothing was
+   * freed. The runtime checks the budget again just before it spawns
+   * (VisionService._reserveRuntimeMemory) and refuses to start beside that
+   * load. Memory is then freed the same way as before the first attempt,
+   * which waits for the load, and the image is sent once more. A second
+   * refusal is given to the caller.
+   * @param {{ analyzeImage: (request: any) => Promise<any> }} visionService
+   * @param {any} request
+   * @param {AbortSignal} [signal]
+   * @returns {Promise<any>}
+   * @private
+   */
+  async _analyzeOnVisionRuntime(visionService, request, signal) {
+    try {
+      return await visionService.analyzeImage(request);
+    } catch (error) {
+      if (/** @type {any} */ (error)?.code !== 'MODEL_MEMORY_BUDGET_EXCEEDED') throw error;
+      logger.info('[LlamaService] Vision runtime start refused for memory; making room again');
+      if (this._visionBatchMode) {
+        await this._releaseMemoryForBatchVisionRespawn(signal);
+      } else {
+        await this._releaseMemoryForVisionRuntime('single');
+      }
+      return visionService.analyzeImage(request);
+    }
   }
 
   async _waitForIdleOperations(
@@ -4236,26 +4268,34 @@ class LlamaService extends EventEmitter {
   }
 
   /**
-   * After a vision batch, put an embedding model that was loaded CPU-only for
-   * it back on the GPU. Runs under the embedding load lock. Never waits for
-   * other holders: if an embedding batch still uses the CPU model, this call
-   * is served by it and the next load tries again.
+   * Put an embedding model that runs on the CPU back on the GPU, by
+   * unloading it so the load that follows picks the GPU: after a vision
+   * batch it was loaded CPU-only for, or once the GPU has room again beside
+   * a text model (see _loadOptionsBesideText). That text model's load can
+   * fail and leave the GPU empty; the embedding model then stayed on the
+   * CPU until something else unloaded it. Runs under the embedding load
+   * lock. Never waits for other holders: if an embedding batch still uses
+   * the CPU model, this call is served by it and the next load tries again.
    * @param {boolean} selfRef - our caller holds one ref on 'embedding'
    * @returns {Promise<void>}
    * @private
    */
-  async _returnEmbeddingToGpuAfterBatch(selfRef) {
-    if (!this._embeddingCpuForBatch || this._visionRuntimePinned) return;
+  async _returnEmbeddingToGpu(selfRef) {
+    if (this._visionRuntimePinned) return;
+    const memory = this._modelMemoryManager;
+    const roomBesideText =
+      memory?.isOnCpuBeside?.('embedding') === true && memory.canLoadModel?.('embedding') === true;
+    if (!this._embeddingCpuForBatch && !roomBesideText) return;
     try {
-      const unloaded = await this._modelMemoryManager?.unloadModel?.('embedding', {
+      const unloaded = await memory?.unloadModel?.('embedding', {
         allowedRefs: selfRef ? 1 : 0,
         waitMs: 0
       });
       if (unloaded === false) return;
       this._embeddingCpuForBatch = false;
-      logger.info('[LlamaService] Unloaded the CPU embedding model from the vision batch');
+      logger.info('[LlamaService] Unloaded the CPU embedding model; the next load uses the GPU');
     } catch (error) {
-      logger.debug('[LlamaService] Could not unload the batch CPU embedding model', {
+      logger.debug('[LlamaService] Could not unload the CPU embedding model', {
         error: /** @type {any} */ (error)?.message
       });
     }
@@ -4287,7 +4327,7 @@ class LlamaService extends EventEmitter {
    * file evicted the text model to load the ~200 MB embedding model and then
    * reloaded the text model, about 4-5 s per file. The embedding model runs
    * on the CPU beside it instead, without the "running on CPU" warning; it
-   * moves to the GPU again the next time it loads with room to spare.
+   * moves to the GPU again once there is room for it (_returnEmbeddingToGpu).
    * @private
    * @param {string} modelType
    * @returns {Record<string, any> | undefined}
@@ -4510,7 +4550,11 @@ class LlamaService extends EventEmitter {
 
                 let result;
                 try {
-                  result = await visionService.analyzeImage(buildVisionRequest(baseRuntimeProfile));
+                  result = await this._analyzeOnVisionRuntime(
+                    visionService,
+                    buildVisionRequest(baseRuntimeProfile),
+                    signal
+                  );
                 } catch (visionError) {
                   const shouldRetryDegraded =
                     this._shouldUseConservativeVisionProfile() &&
@@ -4532,7 +4576,11 @@ class LlamaService extends EventEmitter {
                       error: visionError?.message
                     }
                   );
-                  result = await visionService.analyzeImage(buildVisionRequest(degradedProfile));
+                  result = await this._analyzeOnVisionRuntime(
+                    visionService,
+                    buildVisionRequest(degradedProfile),
+                    signal
+                  );
                 }
 
                 const visionDuration = Date.now() - startTime;

@@ -1759,21 +1759,46 @@ class VisionService {
   }
 
   /**
+   * Reserve the runtime's memory, unless another load took it first.
+   *
+   * The caller made room before it asked for the runtime (LlamaService
+   * _releaseMemoryForVisionRuntime), but the binary lookup and the estimate
+   * come between that and this reservation. A text model that began to load
+   * in between was not seen, and the two loaded together onto a GPU with
+   * room for one. The check and the reservation are one step here, with
+   * nothing awaited between them, so the start is refused instead; the
+   * caller makes room again and retries.
    * @param {any} config
    * @returns {Promise<() => void>} ends the reservation
+   * @throws {Error & { code: 'MODEL_MEMORY_BUDGET_EXCEEDED' }}
    */
   async _reserveRuntimeMemory(config) {
     const manager = this._getMemoryManager();
     if (!manager || typeof manager.reserveLoad !== 'function') return () => {};
+    let sizeBytes;
     try {
-      const sizeBytes = await this.estimateRuntimeMemoryBytes(config);
-      return manager.reserveLoad(VISION_RUNTIME_MEMORY_TYPE, sizeBytes);
+      sizeBytes = await this.estimateRuntimeMemoryBytes(config);
     } catch (error) {
       logger.debug('[VisionService] Memory reservation failed', {
         error: /** @type {any} */ (error)?.message
       });
       return () => {};
     }
+    if (
+      manager.canFitExternalLoad?.(sizeBytes, { excludeType: VISION_RUNTIME_MEMORY_TYPE }) === false
+    ) {
+      const budgetError = /** @type {Error & { code?: string }} */ (
+        new Error(
+          'Cannot start the vision runtime: memory budget exceeded by a model that loaded meanwhile'
+        )
+      );
+      budgetError.code = 'MODEL_MEMORY_BUDGET_EXCEEDED';
+      logger.info('[VisionService] Vision runtime start refused: another load took the memory', {
+        estimateMB: Math.round(sizeBytes / 1024 / 1024)
+      });
+      throw budgetError;
+    }
+    return manager.reserveLoad(VISION_RUNTIME_MEMORY_TYPE, sizeBytes);
   }
 
   async _spawnServer(/** @type {any} */ config) {
@@ -2151,6 +2176,9 @@ class VisionService {
     try {
       await this._ensureServer(config);
     } catch (err) {
+      // Refused for memory another model holds for now (_reserveRuntimeMemory):
+      // the runtime is not broken, and the caller retries once there is room.
+      if (/** @type {any} */ (err)?.code === 'MODEL_MEMORY_BUDGET_EXCEEDED') throw err;
       // _ensureServer wraps spawn / HTTP-probe / GPU-detection failures.
       // Surface these as a subsystem-down signal so users see "vision
       // analysis is offline" instead of every per-image call returning a

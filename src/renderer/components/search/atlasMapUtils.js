@@ -169,3 +169,46 @@ export function atlasIpcFailureMessage(value, context = 'Atlas') {
   }
   return `${context} failed`;
 }
+
+/** How many of a selection's commonest topics a new smart folder is seeded with. */
+export const ATLAS_FOLDER_KEYWORD_LIMIT = 12;
+
+/**
+ * Describe a smart folder made from an Atlas selection, so the folder knows
+ * what its files have in common: the keywords and tags the selected files
+ * share most often become the folder's keywords and are named in its
+ * description. Files without metadata still count towards the total.
+ *
+ * @param {Array<{ keywords?: unknown, tags?: unknown } | null | undefined>} metas
+ * @returns {{ description: string, keywords: string[] }}
+ */
+export function describeSelectionForFolder(metas) {
+  const list = Array.isArray(metas) ? metas : [];
+  /** @type {Map<string, { label: string, count: number }>} */
+  const topics = new Map();
+  for (const meta of list) {
+    const seen = new Set();
+    for (const source of [meta?.keywords, meta?.tags]) {
+      for (const raw of Array.isArray(source) ? source : []) {
+        const label = typeof raw === 'string' ? raw.trim() : '';
+        const key = label.toLowerCase();
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        const topic = topics.get(key);
+        if (topic) topic.count += 1;
+        else topics.set(key, { label, count: 1 });
+      }
+    }
+  }
+  // Map order is first-seen order and the sort is stable, so ties keep it.
+  const keywords = [...topics.values()]
+    .sort((a, b) => b.count - a.count)
+    .slice(0, ATLAS_FOLDER_KEYWORD_LIMIT)
+    .map((topic) => topic.label);
+  const count = list.length;
+  const base = `Created from an Atlas selection of ${count} file${count === 1 ? '' : 's'}`;
+  return {
+    description: keywords.length ? `${base}. Common topics: ${keywords.join(', ')}.` : base,
+    keywords
+  };
+}

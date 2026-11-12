@@ -250,6 +250,28 @@ function getAnalysisHistoryService() {
 }
 
 /**
+ * Stored analysis of a file that was just moved, so learning can key the move
+ * on the file's category. The history entry follows the file to `destPath`;
+ * `sourcePath` covers a path update that did not land.
+ * @param {string} sourcePath
+ * @param {string} destPath
+ * @returns {Promise<Record<string, any>|null>} Analysis, or null when the file was never analyzed
+ */
+async function getMovedFileAnalysis(sourcePath, destPath) {
+  const historyService = getAnalysisHistoryService();
+  if (!historyService?.getAnalysisByPath) return null;
+  try {
+    const entry =
+      (await historyService.getAnalysisByPath(destPath)) ||
+      (await historyService.getAnalysisByPath(sourcePath));
+    return entry?.analysis || null;
+  } catch (error) {
+    logger.debug('[FILE-OPS] Analysis lookup for learning failed:', error?.message);
+    return null;
+  }
+}
+
+/**
  * @param {{ sourcePath: string|null|undefined, destPath: string, log: import('../ipcWrappers').LoggerLike, context: string }} args
  */
 async function syncEmbeddingsBestEffort({ sourcePath, destPath, log, context }) {
@@ -700,7 +722,9 @@ async function moveOneFile(
       await learningService.recordFileMove(
         moveValidation.source,
         moveValidation.destination,
-        null, // No analysis available for manual moves
+        // Without the category the pattern is `<ext>:unknown:<folder>`, which
+        // an analyzed file's lookup never matches.
+        await getMovedFileAnalysis(moveValidation.source, moveValidation.destination),
         FEEDBACK_SOURCES.MANUAL_MOVE
       );
     }

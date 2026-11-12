@@ -361,8 +361,7 @@ describe('SmartFolderWatcher - Migration Tests', () => {
         filePath: '/file1.pdf',
         mtime: 1000,
         eventType: 'reanalyze',
-        applyNaming: true,
-        bulk: true
+        applyNaming: true
       });
       watcher._enqueueAnalysisItem({ filePath: '/file1.pdf', mtime: 2000, eventType: 'change' });
 
@@ -371,8 +370,7 @@ describe('SmartFolderWatcher - Migration Tests', () => {
         expect.objectContaining({
           mtime: 2000,
           eventType: 'reanalyze',
-          applyNaming: true,
-          bulk: true
+          applyNaming: true
         })
       );
     });

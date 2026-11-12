@@ -32,11 +32,12 @@ This repository is configured with automated dependency updates and release buil
 
 ### 3. CI (`.github/workflows/ci.yml`)
 
-- **Job (`ci`)**: on pull requests, `npm ci` then **`npm run ci`** on Ubuntu, Windows, and macOS
-  (format, lint, typecheck, production audit, commercial compliance verify, `test:coverage`,
-  `generate:channels:check`, the full `verify:*` suite, and `build` — see `package.json` for the
-  exact step list).
-- **Job (`e2e-smoke`)**: Playwright smoke specs on Ubuntu and Windows.
+- **Job (`ci`)**: `npm ci` then **`npm run ci`** (format, lint, typecheck, production audit,
+  commercial compliance verify, `test:coverage`, `generate:channels:check`, the full `verify:*`
+  suite, and `build` — see `package.json` for the exact step list). Pull requests run it on Ubuntu
+  and Windows; pushes add macOS.
+- **Job (`e2e-smoke`)**: Playwright smoke specs on Ubuntu and Windows, on pushes only. macOS and the
+  smoke are push-only to keep Actions minutes down, so run the smoke specs locally before pushing.
 - **Stricter local gate** (includes Electron-linked native check): `npm run local:gate` (=
   `verify:installed-electron` + `npm run ci` + `verify:native-modules`).
 - Triggered on pull requests and pushes to main/master/develop/RegressionFixes

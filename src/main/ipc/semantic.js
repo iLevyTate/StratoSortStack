@@ -37,7 +37,6 @@ const { createHandler, safeHandle, safeSend, z } = require('./ipcWrappers');
 const { whenFirstPaintGateReleased } = require('../core/firstPaintGate');
 const { schemas: validationSchemas } = require('./validationSchemas');
 const { cosineSimilarity, padOrTruncateVector } = require('../../shared/vectorMath');
-const { validateFileOperationPath } = require('../../shared/pathSanitization');
 const { categorizeModel } = require('../../shared/modelCategorization');
 const { chunkText } = require('../utils/textChunking');
 const { normalizeText } = require('../../shared/normalization');
@@ -2088,136 +2087,6 @@ async function handleGetStats({ safeEnsureInit, logger, getCustomFolders, getSer
   } catch (e) {
     return { success: false, error: e.message };
   }
-}
-
-/**
- * @param {SemanticHandlerDeps} deps
- * @param {IpcMainInvokeEvent} _event
- * @param {string|Record<string, any>} [payload]
- */
-async function handleReanalyzeFile({ logger, getServiceIntegration }, _event, payload = {}) {
-  const filePath = typeof payload === 'string' ? payload : payload?.filePath;
-  const applyNaming = /** @type {Record<string, any>} */ (payload)?.applyNaming;
-
-  if (!filePath) {
-    return {
-      success: false,
-      error: 'filePath is required',
-      errorCode: 'MISSING_FILE_PATH'
-    };
-  }
-
-  const validation = await validateFileOperationPath(filePath, { checkSymlinks: true });
-  if (!validation.valid) {
-    return {
-      success: false,
-      error: validation.error,
-      errorCode: 'INVALID_PATH'
-    };
-  }
-
-  const serviceIntegration =
-    typeof getServiceIntegration === 'function' ? getServiceIntegration() : null;
-  const smartFolderWatcher = serviceIntegration?.smartFolderWatcher;
-  if (!smartFolderWatcher) {
-    return {
-      success: false,
-      error: 'Smart folder watcher not available. Configure smart folders first.',
-      errorCode: 'WATCHER_NOT_AVAILABLE'
-    };
-  }
-
-  if (!smartFolderWatcher.isRunning) {
-    const started = await smartFolderWatcher.start();
-    if (!started) {
-      return {
-        success: false,
-        error: 'Failed to start smart folder watcher. Check smart folder configuration.',
-        errorCode: 'WATCHER_START_FAILED'
-      };
-    }
-  }
-
-  // SECURITY: scope creep guard for force:true reanalysis.
-  //
-  // The previous implementation always passed `force: true`, which let
-  // any renderer-supplied path (that passed generic sanitation) be
-  // pulled through extraction → LLM analysis → embedding → vector DB
-  // storage. That is effectively an on-demand file exfiltration
-  // primitive scoped only to "not a dangerous system directory".
-  //
-  // We restrict force:true to two obviously-in-scope roots:
-  //   1. Any currently watched smart folder (user explicitly opted in
-  //      to indexing these paths).
-  //   2. The app's userData directory (our own state, e.g. already-
-  //      imported files or fixtures).
-  //
-  // For anything else we pass `force: false`, which means
-  // reanalyzeFile will reject with NOT_IN_SMART_FOLDER — exactly the
-  // behavior a user-initiated "reanalyze" button should have when
-  // pointed outside the configured smart folders.
-  const normalized = validation.normalizedPath;
-  let inScope = false;
-  try {
-    const watchedPaths = smartFolderWatcher.watchedPaths;
-    if (watchedPaths && typeof watchedPaths[Symbol.iterator] === 'function') {
-      for (const rootRaw of watchedPaths) {
-        if (!rootRaw) continue;
-        const root = path.resolve(rootRaw);
-        const rel = path.relative(root, normalized);
-        if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) {
-          inScope = true;
-          break;
-        }
-        if (normalized === root) {
-          inScope = true;
-          break;
-        }
-      }
-    }
-  } catch (scopeErr) {
-    // Fail closed: if we can't determine scope, treat as out-of-scope.
-    inScope = false;
-    logger.warn?.('[EMB:REANALYZE] Smart-folder scope check failed', {
-      error: scopeErr?.message || String(scopeErr)
-    });
-  }
-
-  if (!inScope) {
-    try {
-      const { app } = require('electron');
-      const userData = app?.getPath?.('userData');
-      if (userData) {
-        const rel = path.relative(path.resolve(userData), normalized);
-        if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) {
-          inScope = true;
-        }
-      }
-    } catch {
-      // Electron unavailable (e.g. in test harness without app).
-    }
-  }
-
-  const result = await smartFolderWatcher.reanalyzeFile(validation.normalizedPath, {
-    applyNaming,
-    // Only allow the "outside smart folders" escape hatch when the
-    // path is demonstrably under a configured root or userData.
-    force: inScope
-  });
-  if (!result?.queued) {
-    return {
-      success: false,
-      error: result?.error || 'File not eligible for reanalysis',
-      errorCode: result?.errorCode || 'REANALYZE_FILE_SKIPPED'
-    };
-  }
-
-  return {
-    success: true,
-    queued: true,
-    filePath: validation.normalizedPath,
-    message: `Queued ${path.basename(validation.normalizedPath)} for reanalysis.`
-  };
 }
 
 /**
@@ -4362,21 +4231,6 @@ function registerEmbeddingsIpc(servicesOrParams) {
           _event,
           options
         )
-    })
-  );
-
-  /**
-   * Reanalyze File: Forces re-analysis of a single file in a smart folder.
-   */
-  safeHandle(
-    ipcMain,
-    IPC_CHANNELS.EMBEDDINGS.REANALYZE_FILE,
-    createHandler({
-      logger,
-      context,
-      schema: validationSchemas?.embeddingsReanalyzeFile,
-      handler: (_event, payload) =>
-        handleReanalyzeFile({ logger, getServiceIntegration }, _event, payload)
     })
   );
 

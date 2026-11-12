@@ -219,6 +219,61 @@ describe('File Operation Handlers', () => {
       expect(mockServiceIntegration.undoRedo.recordAction).toHaveBeenCalled();
     });
 
+    // A manual move is learned under the category the file was analyzed as;
+    // without it the pattern is `<ext>:unknown:<folder>` and never matches an
+    // analyzed file's lookup.
+    test('a manual move teaches learning with the moved file`s stored analysis', async () => {
+      const handler = getHandler(IPC_CHANNELS.FILES.PERFORM_OPERATION);
+      const learning = { recordFileMove: jest.fn().mockResolvedValue(true) };
+      require('../src/main/services/organization/learningFeedback').getInstance.mockReturnValue(
+        learning
+      );
+      const analysis = { category: 'Finance', subject: 'Q1 report' };
+      const history = {
+        getAnalysisByPath: jest.fn(async (p) => (p === '/src/doc.pdf' ? { analysis } : null))
+      };
+      const { container } = require('../src/main/services/ServiceContainer');
+      container.resolve.mockImplementation((id) =>
+        id === 'analysisHistory' ? history : mockFilePathCoordinator
+      );
+
+      const result = await handler(
+        {},
+        { type: 'move', source: '/src/doc.pdf', destination: '/dest/doc.pdf' }
+      );
+
+      expect(result.success).toBe(true);
+      expect(history.getAnalysisByPath.mock.calls).toEqual([['/dest/doc.pdf'], ['/src/doc.pdf']]);
+      expect(learning.recordFileMove).toHaveBeenCalledWith(
+        '/src/doc.pdf',
+        '/dest/doc.pdf',
+        analysis,
+        'manual_move'
+      );
+    });
+
+    test('a manual move of a file with no stored analysis still teaches learning', async () => {
+      const handler = getHandler(IPC_CHANNELS.FILES.PERFORM_OPERATION);
+      const learning = { recordFileMove: jest.fn().mockResolvedValue(true) };
+      require('../src/main/services/organization/learningFeedback').getInstance.mockReturnValue(
+        learning
+      );
+      const history = { getAnalysisByPath: jest.fn().mockRejectedValue(new Error('history down')) };
+      const { container } = require('../src/main/services/ServiceContainer');
+      container.resolve.mockImplementation((id) =>
+        id === 'analysisHistory' ? history : mockFilePathCoordinator
+      );
+
+      await handler({}, { type: 'move', source: '/src/doc.pdf', destination: '/dest/doc.pdf' });
+
+      expect(learning.recordFileMove).toHaveBeenCalledWith(
+        '/src/doc.pdf',
+        '/dest/doc.pdf',
+        null,
+        'manual_move'
+      );
+    });
+
     test('batch_move moves every file and records ONE MOVE_BATCH undo entry (UR-04)', async () => {
       const handler = getHandler(IPC_CHANNELS.FILES.PERFORM_OPERATION);
       fs.rename.mockImplementation(async (src) => {

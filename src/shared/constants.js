@@ -111,7 +111,6 @@ const IPC_CHANNELS = {
     REBUILD_FILES: 'embeddings:rebuild-files',
     FULL_REBUILD: 'embeddings:full-rebuild',
     REANALYZE_ALL: 'embeddings:reanalyze-all',
-    REANALYZE_FILE: 'embeddings:reanalyze-file',
     GET_STATS: 'embeddings:get-stats',
     SEARCH: 'embeddings:search',
     SCORE_FILES: 'embeddings:score-files',

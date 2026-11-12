@@ -134,7 +134,8 @@ describe('ChatService session management', () => {
         ]
       })),
       createConversation: jest.fn(),
-      addMessage: jest.fn()
+      addMessage: jest.fn(),
+      deleteAssistantMessagesAfterLastUser: jest.fn()
     };
     const service = new ChatService({
       llamaService: { analyzeText: jest.fn().mockResolvedValue({ success: true, response: '{}' }) },
@@ -151,6 +152,8 @@ describe('ChatService session management', () => {
 
     const roles = store.addMessage.mock.calls.map(([, msg]) => msg.role);
     expect(roles).toEqual(['assistant']);
+    // The answer being regenerated is removed, not kept next to the new one.
+    expect(store.deleteAssistantMessagesAfterLastUser).toHaveBeenCalledWith('regen');
   });
 
   test('reuses existing session instead of creating new', async () => {
@@ -175,6 +178,121 @@ describe('ChatService session management', () => {
 
     await service.resetSession('to-delete');
     expect(service._sessionLRU.has('to-delete')).toBe(false);
+  });
+});
+
+describe('ChatService regenerate and retry (skipSaveUserTurn)', () => {
+  const QUESTION = 'what does the lease say about pets?';
+
+  /** In-memory stand-in for ChatHistoryStore holding one conversation's rows. */
+  function createHistoryStore(messages) {
+    const conversations = new Map();
+    if (messages) conversations.set('chat', { id: 'chat', title: 'Chat', messages });
+    return {
+      conversations,
+      initialize: jest.fn().mockResolvedValue(undefined),
+      getConversation: jest.fn((id) => conversations.get(id) || null),
+      createConversation: jest.fn((title, documentScope, id) => {
+        conversations.set(id, { id, title, documentScope, messages: [] });
+      }),
+      addMessage: jest.fn((id, message) => {
+        conversations.get(id).messages.push(message);
+      }),
+      updateTitle: jest.fn(),
+      deleteAssistantMessagesAfterLastUser: jest.fn((id) => {
+        const rows = conversations.get(id).messages;
+        while (rows.length > 0 && rows[rows.length - 1].role === 'assistant') rows.pop();
+      })
+    };
+  }
+
+  function createStreamingService(store, generateTextStreaming) {
+    const service = new ChatService({
+      llamaService: { generateTextStreaming, analyzeText: jest.fn() },
+      chatHistoryStore: store
+    });
+    jest.spyOn(service, '_resolveGenerateBackend').mockReturnValue(null);
+    jest.spyOn(service, '_retrieveSources').mockResolvedValue({ sources: [], meta: {} });
+    return service;
+  }
+
+  const rolesOf = (store) => store.conversations.get('chat').messages.map((m) => m.role);
+
+  test('regenerate replaces the stored answer and keeps it out of the prompt', async () => {
+    const store = createHistoryStore([
+      { role: 'user', text: 'who signed the lease?' },
+      { role: 'assistant', text: 'EARLIER-ANSWER' },
+      { role: 'user', text: QUESTION },
+      { role: 'assistant', text: 'DISCARDED-ANSWER' }
+    ]);
+    const generateTextStreaming = jest.fn(async () => ({ response: 'One cat is allowed.' }));
+    const service = createStreamingService(store, generateTextStreaming);
+    const events = [];
+
+    await service.queryStreaming({
+      sessionId: 'chat',
+      requestId: 'r1',
+      query: QUESTION,
+      skipSaveUserTurn: true,
+      onEvent: (evt) => events.push(evt)
+    });
+
+    expect(events.some((evt) => evt.type === 'done')).toBe(true);
+    const { prompt } = generateTextStreaming.mock.calls[0][0];
+    expect(prompt).toContain('EARLIER-ANSWER');
+    expect(prompt).not.toContain('DISCARDED-ANSWER');
+    expect(rolesOf(store)).toEqual(['user', 'assistant', 'user', 'assistant']);
+    expect(JSON.stringify(store.conversations.get('chat').messages)).not.toContain(
+      'DISCARDED-ANSWER'
+    );
+  });
+
+  test('a retry that fails again leaves one error row, not two', async () => {
+    const store = createHistoryStore([
+      { role: 'user', text: QUESTION },
+      { role: 'assistant', text: '', modelAnswer: [{ text: 'Error: first failure.' }] }
+    ]);
+    const service = createStreamingService(
+      store,
+      jest.fn().mockRejectedValue(new Error('second failure'))
+    );
+    const events = [];
+
+    await service.queryStreaming({
+      sessionId: 'chat',
+      requestId: 'r2',
+      query: QUESTION,
+      skipSaveUserTurn: true,
+      onEvent: (evt) => events.push(evt)
+    });
+
+    expect(events.some((evt) => evt.type === 'error')).toBe(true);
+    const { messages } = store.conversations.get('chat');
+    expect(messages.map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(messages[1].modelAnswer[0].text).toContain('second failure');
+  });
+
+  test('a failed retry saves the question when no earlier attempt stored it', async () => {
+    const store = createHistoryStore(null);
+    const service = createStreamingService(
+      store,
+      jest.fn().mockRejectedValue(new Error('still failing'))
+    );
+
+    await service.queryStreaming({
+      sessionId: 'chat',
+      requestId: 'r3',
+      query: QUESTION,
+      skipSaveUserTurn: true,
+      onEvent: () => {}
+    });
+
+    const { messages } = store.conversations.get('chat');
+    expect(messages.map((m) => [m.role, m.text])).toEqual([
+      ['user', QUESTION],
+      ['assistant', '']
+    ]);
+    expect(store.deleteAssistantMessagesAfterLastUser).not.toHaveBeenCalled();
   });
 });
 

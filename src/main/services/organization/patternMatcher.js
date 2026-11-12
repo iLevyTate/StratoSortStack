@@ -11,6 +11,27 @@
 const { createLogger } = require('../../../shared/logger');
 
 const logger = createLogger('Organization:PatternMatcher');
+
+/**
+ * Fold two saved entries for the same pattern into one: the uses add up, and
+ * the folder comes from whichever was used last.
+ * @param {Record<string, any>} a
+ * @param {Record<string, any>} b
+ * @returns {Record<string, any>}
+ */
+function mergePatternData(a, b) {
+  const [older, newer] = (a.lastUsed || 0) <= (b.lastUsed || 0) ? [a, b] : [b, a];
+  const created = [a.createdAt, b.createdAt].filter(Number.isFinite);
+  return {
+    ...older,
+    ...newer,
+    count: (a.count || 0) + (b.count || 0),
+    confidence: Math.max(a.confidence || 0, b.confidence || 0),
+    lastUsed: Math.max(a.lastUsed || 0, b.lastUsed || 0),
+    createdAt: created.length > 0 ? Math.min(...created) : undefined
+  };
+}
+
 /**
  * Pattern Matcher class for learning from user decisions
  */
@@ -41,7 +62,16 @@ class PatternMatcher {
   loadPatterns(stored) {
     if (stored.patterns && Array.isArray(stored.patterns)) {
       try {
-        this.userPatterns = new Map(stored.patterns);
+        // Keys saved before extractPattern dropped the extension's dot
+        // (`.pdf:finance:finance`) are rewritten to the current form, so
+        // they keep matching and keep counting with their undotted twin.
+        const patterns = new Map();
+        for (const [key, data] of stored.patterns) {
+          const pattern = String(key).replace(/^\./, '');
+          const existing = patterns.get(pattern);
+          patterns.set(pattern, existing ? mergePatternData(existing, data) : data);
+        }
+        this.userPatterns = patterns;
         logger.info(`[PatternMatcher] Loaded ${this.userPatterns.size} user patterns`);
       } catch (e) {
         logger.warn('[PatternMatcher] Failed to load patterns, starting fresh:', e.message);
@@ -128,19 +158,24 @@ class PatternMatcher {
       }
     }
 
+    // The row keeps the key it changed: retractFeedback reverses that key,
+    // since its caller (undo) no longer has the category this was recorded with.
+    const pattern = suggestion ? this.extractPattern(file, suggestion) : undefined;
+
     // Add new feedback
     this.feedbackHistory.push({
       timestamp: now,
       file: { name: file.name, type: file.extension },
       suggestion,
-      accepted
+      accepted,
+      pattern
     });
 
-    if (suggestion) {
+    if (pattern) {
       if (accepted) {
-        this._updatePattern(file, suggestion, now);
+        this._updatePattern(pattern, suggestion, now);
       } else {
-        this._penalizePattern(file, suggestion);
+        this._penalizePattern(pattern);
       }
     }
 
@@ -156,9 +191,11 @@ class PatternMatcher {
    * Update pattern from accepted suggestion
    * @private
    */
-  _updatePattern(/** @type {any} */ file, /** @type {any} */ suggestion, /** @type {any} */ now) {
-    const pattern = this.extractPattern(file, suggestion);
-
+  _updatePattern(
+    /** @type {string} */ pattern,
+    /** @type {any} */ suggestion,
+    /** @type {any} */ now
+  ) {
     if (!this.userPatterns.has(pattern)) {
       // Check memory periodically
       this.patternCount++;
@@ -194,8 +231,7 @@ class PatternMatcher {
    * Removes the pattern entirely if confidence drops below a usable threshold.
    * @private
    */
-  _penalizePattern(/** @type {any} */ file, /** @type {any} */ suggestion) {
-    const pattern = this.extractPattern(file, suggestion);
+  _penalizePattern(/** @type {string} */ pattern) {
     const data = this.userPatterns.get(pattern);
     if (!data) return;
 
@@ -331,7 +367,9 @@ class PatternMatcher {
    */
   extractPattern(file, suggestion = null) {
     const parts = [
-      file.extension,
+      // No leading dot: callers pass `.pdf` (path.extname) and `pdf` (learning
+      // feedback) for the same file type.
+      String(file.extension || '').replace(/^\./, ''),
       // Either shape: analysis-bearing files, and the flat metadata learning
       // feedback records. Reading only `analysis.category` stored every
       // learned pattern as `<ext>:unknown:<folder>`, which a lookup for an
@@ -383,6 +421,8 @@ class PatternMatcher {
    * the most recent matching history row is removed and the pattern's
    * count/confidence step is reversed (pattern deleted when it reaches 0).
    * This is a retraction, not a rejection — no penalty is applied.
+   * The pattern reversed is the one the row recorded; rows saved before rows
+   * carried their key fall back to the key `file` + `suggestion` produce.
    * @param {any} file
    * @param {any} suggestion
    * @returns {{ retracted: boolean }}
@@ -404,9 +444,9 @@ class PatternMatcher {
       }
     }
     if (historyIndex === -1) return { retracted: false };
-    this.feedbackHistory.splice(historyIndex, 1);
+    const [row] = this.feedbackHistory.splice(historyIndex, 1);
 
-    const pattern = this.extractPattern(file, suggestion);
+    const pattern = row.pattern || this.extractPattern(file, suggestion);
     const data = this.userPatterns.get(pattern);
     if (data) {
       data.count = Math.max(0, (data.count || 0) - 1);

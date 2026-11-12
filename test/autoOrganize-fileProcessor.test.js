@@ -169,7 +169,8 @@ describe('AutoOrganize File Processor', () => {
 
       expect(results.organized).toHaveLength(1);
       expect(results.organized[0].method).toBe('automatic');
-      expect(mockSuggestionService.recordFeedback).toHaveBeenCalled();
+      // Learning belongs to the completed move, not the plan
+      expect(mockSuggestionService.recordFeedback).not.toHaveBeenCalled();
     });
 
     test('adds files to needsReview for medium confidence', async () => {
