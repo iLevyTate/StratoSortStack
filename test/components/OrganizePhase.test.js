@@ -2,7 +2,7 @@
  * @jest-environment jsdom
  */
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
 
 const mockAddNotification = jest.fn();
@@ -130,6 +130,11 @@ jest.mock('../../src/renderer/components/organize', () => ({
 jest.mock('../../src/renderer/components/ui/Modal', () => ({
   __esModule: true,
   default: ({ isOpen, children }) => (isOpen ? <div>{children}</div> : null)
+}));
+
+jest.mock('../../src/renderer/components/organize/OrganizePreviewModal', () => ({
+  __esModule: true,
+  default: ({ isOpen, plan }) => (isOpen ? <div>PREVIEW_MODAL:{plan.wouldMove.length}</div> : null)
 }));
 
 jest.mock('../../src/renderer/components/AnalysisDetails', () => ({
@@ -421,6 +426,104 @@ describe('OrganizePhase premium preflight copy', () => {
       .map(([updater]) => (typeof updater === 'function' ? updater(editingFiles) : updater))
       .pop();
     expect(pruned).toEqual({ '/tmp/invoice.pdf': { category: 'Receipts' } });
+  });
+});
+
+describe('OrganizePhase Preview button', () => {
+  const PLAN = {
+    success: true,
+    dryRun: true,
+    wouldMove: [{ source: '/tmp/invoice.pdf', destination: '/dest/finance/invoice.pdf' }],
+    skipped: [],
+    wouldCreateFolders: [],
+    sameDestination: []
+  };
+
+  const renderWithPreview = (handlePreviewOrganize) => {
+    const { useOrganization } = require('../../src/renderer/phases/organize/useOrganization');
+    useOrganization.mockReturnValue({
+      isOrganizing: false,
+      batchProgress: null,
+      organizePreview: [],
+      handleOrganizeFiles: jest.fn(),
+      handlePreviewOrganize,
+      organizeConflicts: []
+    });
+    render(<OrganizePhase />);
+    return screen.getByRole('button', { name: 'Preview' });
+  };
+
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  test('opens the plan for every file in the queue', async () => {
+    const handlePreviewOrganize = jest.fn().mockResolvedValue(PLAN);
+    fireEvent.click(renderWithPreview(handlePreviewOrganize));
+
+    expect(await screen.findByText('PREVIEW_MODAL:1')).toBeInTheDocument();
+    expect(handlePreviewOrganize.mock.calls[0][0].map((f) => f.path)).toEqual([
+      '/tmp/invoice.pdf',
+      '/tmp/notes.txt'
+    ]);
+    expect(mockAddNotification).not.toHaveBeenCalled();
+  });
+
+  // A large queue takes a moment to check on disk. Pressing again must not
+  // start a second request.
+  test('a second press while the plan is being built does not ask again', async () => {
+    let finish;
+    const handlePreviewOrganize = jest.fn(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        })
+    );
+    const preview = renderWithPreview(handlePreviewOrganize);
+
+    fireEvent.click(preview);
+    fireEvent.click(preview);
+    expect(handlePreviewOrganize).toHaveBeenCalledTimes(1);
+
+    await act(async () => finish(PLAN));
+    expect(screen.getByText('PREVIEW_MODAL:1')).toBeInTheDocument();
+
+    // Once the first request has finished, the button works again.
+    fireEvent.click(preview);
+    expect(handlePreviewOrganize).toHaveBeenCalledTimes(2);
+    await act(async () => finish(PLAN));
+  });
+
+  test('says why when the plan could not be built, and opens nothing', async () => {
+    const handlePreviewOrganize = jest
+      .fn()
+      .mockRejectedValue(new Error('Batch size exceeds maximum of 1000'));
+    fireEvent.click(renderWithPreview(handlePreviewOrganize));
+
+    await waitFor(() =>
+      expect(mockAddNotification).toHaveBeenCalledWith(
+        'The preview could not be built: Batch size exceeds maximum of 1000',
+        'error',
+        8000,
+        'organize-preview'
+      )
+    );
+    expect(screen.queryByText(/PREVIEW_MODAL/)).not.toBeInTheDocument();
+  });
+
+  test('says so when no file has a destination to preview', async () => {
+    const handlePreviewOrganize = jest.fn().mockResolvedValue(null);
+    fireEvent.click(renderWithPreview(handlePreviewOrganize));
+
+    await waitFor(() =>
+      expect(mockAddNotification).toHaveBeenCalledWith(
+        'None of these files has a destination yet, so there is nothing to preview.',
+        'info',
+        4000,
+        'organize-preview'
+      )
+    );
+    expect(screen.queryByText(/PREVIEW_MODAL/)).not.toBeInTheDocument();
   });
 });
 

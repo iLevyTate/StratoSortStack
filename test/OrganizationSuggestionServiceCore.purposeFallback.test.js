@@ -295,4 +295,28 @@ describe('_buildLlmCategorySuggestion: no high-confidence lift for fallback anal
     expect(result.folder).toBe('Reports');
     expect(result.score).toBeCloseTo(0.6, 5);
   });
+
+  // The matcher can reach a folder through its description or keywords. The
+  // lift is for a label that names the folder, and three letters apart is not
+  // a spelling of a three-letter name.
+  test('a short label that only resembles a short folder name keeps its own confidence', () => {
+    matchSpy.mockReturnValue('SEO');
+    const folders = [...SMART_FOLDERS, { id: 'seo', name: 'SEO', path: '/docs/SEO' }];
+
+    const result = service._buildLlmCategorySuggestion(
+      { analysis: { category: 'Web', confidence: 60, extractionMethod: 'pdf-text' } },
+      folders
+    );
+
+    expect(result.folder).toBe('SEO');
+    expect(result.score).toBeCloseTo(0.6, 5);
+  });
+
+  test('a folder name one letter off is still lifted', () => {
+    const result = service._buildLlmCategorySuggestion(
+      { analysis: { category: 'Raports', confidence: 60, extractionMethod: 'pdf-text' } },
+      SMART_FOLDERS
+    );
+    expect(result.score).toBeCloseTo(0.95, 5);
+  });
 });

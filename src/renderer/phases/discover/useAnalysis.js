@@ -2393,10 +2393,13 @@ export function useAnalysis(options = {}) {
       hasAttemptedResumeRef.current = true;
 
       if (remaining.length > 0) {
+        // Nobody pressed a button for this run, so say why it is running.
         addNotification(
-          `Resuming analysis of ${remaining.length} files...`,
+          `Continuing the analysis that was interrupted: ${remaining.length} ${
+            remaining.length === 1 ? 'file' : 'files'
+          } left`,
           'info',
-          3000,
+          6000,
           'analysis-resume'
         );
         if (analyzeFilesRef.current) {

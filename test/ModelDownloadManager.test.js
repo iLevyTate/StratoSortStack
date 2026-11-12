@@ -285,19 +285,89 @@ describe('ModelDownloadManager', () => {
     expect(cb).toHaveBeenCalledTimes(1);
   });
 
-  test('_calculateSpeed and _calculateETA handle elapsed time', () => {
-    const manager = new ModelDownloadManager();
-    const state = {
-      startTime: Date.now() - 2000,
-      downloadedBytes: 200,
-      totalBytes: 1000
+  // Speed is the rate over the last ten seconds, measured from the first
+  // byte. An average since the request was created counted the time spent
+  // connecting, so the first seconds produced estimates of days.
+  describe('download speed and time left', () => {
+    const T0 = 1_000_000;
+    /** Feed `bytesPerSecond` for `seconds`, one chunk every 250 ms. */
+    const feed = (manager, state, from, seconds, bytesPerSecond) => {
+      const steps = seconds * 4;
+      for (let i = 1; i <= steps; i += 1) {
+        state.downloadedBytes += bytesPerSecond / 4;
+        manager._recordSpeedSample(state, from + i * 250);
+      }
+      return from + seconds * 1000;
     };
+    const newState = (downloadedBytes = 0, totalBytes = 10_000_000) => ({
+      downloadedBytes,
+      totalBytes,
+      speedSamples: []
+    });
 
-    const speed = manager._calculateSpeed(state);
-    const eta = manager._calculateETA(state);
+    test('reports nothing before the first byte', () => {
+      const manager = new ModelDownloadManager();
+      const state = newState();
 
-    expect(speed).toBe(100);
-    expect(eta).toBe(8);
+      expect(manager._calculateSpeed(state, T0)).toBe(0);
+      expect(manager._calculateETA(state, T0)).toBe(Infinity);
+    });
+
+    test('waits for three seconds of data before giving a figure', () => {
+      const manager = new ModelDownloadManager();
+      const state = newState();
+      manager._recordSpeedSample(state, T0);
+
+      const at2s = feed(manager, state, T0, 2, 1000);
+      expect(manager._calculateSpeed(state, at2s)).toBe(0);
+      expect(manager._calculateETA(state, at2s)).toBe(Infinity);
+
+      const at3s = feed(manager, state, at2s, 1, 1000);
+      expect(manager._calculateSpeed(state, at3s)).toBe(1000);
+      expect(manager._calculateETA(state, at3s)).toBe((10_000_000 - 3000) / 1000);
+    });
+
+    test('follows the current rate, not the average since the start', () => {
+      const manager = new ModelDownloadManager();
+      const state = newState();
+      manager._recordSpeedSample(state, T0);
+
+      const slowEnd = feed(manager, state, T0, 20, 1000);
+      expect(manager._calculateSpeed(state, slowEnd)).toBe(1000);
+
+      const fastEnd = feed(manager, state, slowEnd, 10, 100_000);
+      expect(manager._calculateSpeed(state, fastEnd)).toBe(100_000);
+    });
+
+    test('a resumed download does not count the bytes already on disk', () => {
+      const manager = new ModelDownloadManager();
+      const state = newState(5_000_000);
+      state.downloadedBytes += 250;
+      manager._recordSpeedSample(state, T0);
+
+      const at4s = feed(manager, state, T0, 4, 1000);
+      expect(manager._calculateSpeed(state, at4s)).toBe(1000);
+    });
+
+    test('keeps only the samples the window needs', () => {
+      const manager = new ModelDownloadManager();
+      const state = newState();
+      manager._recordSpeedSample(state, T0);
+      const end = feed(manager, state, T0, 60, 1000);
+
+      expect(state.speedSamples.length).toBeLessThanOrEqual(42);
+      expect(end - state.speedSamples[0].time).toBe(10_000);
+    });
+
+    test('chunks that arrive within a quarter second share one sample', () => {
+      const manager = new ModelDownloadManager();
+      const state = newState();
+      manager._recordSpeedSample(state, T0);
+      manager._recordSpeedSample(state, T0 + 10);
+      manager._recordSpeedSample(state, T0 + 249);
+
+      expect(state.speedSamples).toHaveLength(1);
+    });
   });
 
   test('deleteModel removes files', async () => {

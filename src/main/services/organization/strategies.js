@@ -108,11 +108,21 @@ function matchesStrategyPattern(filename, pattern) {
  * @param {Record<string, any>} file - File object
  * @param {Record<string, any>} strategy - Strategy definition
  * @param {Array<any>} smartFolders - Available smart folders
- * @returns {Record<string, any>} Folder name and path
+ * @returns {Record<string, any>} Folder name and path, and what named the
+ *   folder (`namedBy`: 'category', 'fileType', 'purpose' or null)
  */
 function mapFileToStrategy(file, strategy, smartFolders) {
   const analysis = file.analysis || {};
   const { pattern } = strategy;
+
+  // The folder is the last part of the pattern, so that part's placeholder is
+  // what picks it. A suggestion is explained by this, not by the template's
+  // title: "Date-Based" names its folder after the analysis category.
+  const lastPart = pattern.split('/').pop();
+  let namedBy = null;
+  if (lastPart === '{category}' && analysis.category) namedBy = 'category';
+  else if (lastPart === '{file_type}') namedBy = 'fileType';
+  else if (lastPart === '{specific_folder}' && analysis.purpose) namedBy = 'purpose';
 
   // Replace pattern variables with actual values
   const folderPath = pattern
@@ -136,7 +146,8 @@ function mapFileToStrategy(file, strategy, smartFolders) {
 
   return {
     name: matchingFolder?.name || path.basename(folderPath),
-    path: matchingFolder?.path || folderPath
+    path: matchingFolder?.path || folderPath,
+    namedBy
   };
 }
 
@@ -162,6 +173,7 @@ function getStrategyBasedSuggestions(file, smartFolders, threshold = 0.3) {
         confidence: score,
         strategy: strategyId,
         strategyName: strategy.name,
+        namedBy: folder.namedBy,
         pattern: strategy.pattern,
         method: 'strategy_based'
       });

@@ -1509,7 +1509,9 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
                           ? 'Download failed'
                           : status === 'cancelled'
                             ? 'Download cancelled'
-                            : 'Starting…'}
+                            : downloadedBytes > 0
+                              ? 'Calculating speed…'
+                              : 'Starting…'}
                   </span>
                   <span className="tabular-nums">
                     {progress.etaSeconds ? `ETA ${formatDuration(progress.etaSeconds * 1000)}` : ''}

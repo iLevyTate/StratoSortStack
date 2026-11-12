@@ -174,6 +174,19 @@ describe('AnalysisCacheService Characterization Tests', () => {
       expect(key1).not.toBe(key2);
     });
 
+    test('generateKey() changes when a folder description is edited past its first 64 characters', () => {
+      const shared =
+        'Client contracts, signed agreements and statements of work for all accounts. ';
+      expect(shared.length).toBeGreaterThan(64);
+      const before = cache.generateKey('text', 'model', [
+        { name: 'Legal', description: `${shared}Invoices do not belong here.` }
+      ]);
+      const after = cache.generateKey('text', 'model', [
+        { name: 'Legal', description: `${shared}Invoices belong here too.` }
+      ]);
+      expect(after).not.toBe(before);
+    });
+
     test('generateKey() handles null/undefined inputs', () => {
       expect(() => cache.generateKey(null, null, null)).not.toThrow();
       expect(() => cache.generateKey(undefined, undefined, undefined)).not.toThrow();

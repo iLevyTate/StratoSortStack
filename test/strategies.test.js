@@ -223,6 +223,32 @@ describe('Organization Strategies', () => {
       expect(result.path).toBeDefined();
       expect(result.name).toBeDefined();
     });
+
+    test('reports which part of the file named the folder', () => {
+      const file = {
+        name: 'notes.md',
+        extension: 'md',
+        analysis: { category: 'SEO', purpose: 'Keyword research' }
+      };
+
+      expect(mapFileToStrategy(file, strategies['date-based'], [])).toMatchObject({
+        name: 'SEO',
+        namedBy: 'category'
+      });
+      expect(mapFileToStrategy(file, strategies['project-based'], []).namedBy).toBe('fileType');
+      expect(mapFileToStrategy(file, strategies.hierarchical, [])).toMatchObject({
+        name: 'Keyword research',
+        namedBy: 'purpose'
+      });
+    });
+
+    test('names no part when the folder is a placeholder default', () => {
+      const file = { name: 'notes.md', extension: 'md', analysis: {} };
+
+      expect(mapFileToStrategy(file, strategies['date-based'], []).namedBy).toBeNull();
+      expect(mapFileToStrategy(file, strategies.hierarchical, []).namedBy).toBeNull();
+      expect(mapFileToStrategy(file, strategies['type-based'], []).namedBy).toBeNull();
+    });
   });
 
   describe('getStrategyBasedSuggestions', () => {
@@ -250,6 +276,24 @@ describe('Organization Strategies', () => {
       const suggestions = getStrategyBasedSuggestions(file, [], 0.9);
 
       expect(suggestions).toHaveLength(0);
+    });
+
+    test('carries what named the folder alongside the template name', () => {
+      const file = {
+        name: 'notes.md',
+        extension: 'md',
+        analysis: { date: '2026-01-01', category: 'SEO' }
+      };
+
+      const dateBased = getStrategyBasedSuggestions(file, [], 0.3).find(
+        (s) => s.strategy === 'date-based'
+      );
+
+      expect(dateBased).toMatchObject({
+        folder: 'SEO',
+        strategyName: 'Date-Based',
+        namedBy: 'category'
+      });
     });
 
     test('sorts by score', () => {

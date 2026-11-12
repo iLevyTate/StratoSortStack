@@ -349,6 +349,7 @@ jobs:
             "- Tesseract OCR is auto-installed or uses bundled tesseract.js fallback.",
             "- Use **Download Base Models** after install to enable AI features.",
             '- **Windows:** the Setup installer is the recommended download and updates itself. The `-win-x64.zip` runs without installing: extract it once to a short folder such as `C:\StratoSort` and start `StratoSort Stack.exe`; it does not auto-update.',
+            ('- **macOS:** download `StratoSortStack-{0}-mac-arm64.dmg` for a Mac with Apple Silicon (M1 or later) or `StratoSortStack-{0}-mac-x64.dmg` for an Intel Mac. To check, open the Apple menu and choose **About This Mac**: "Chip" means Apple Silicon, "Processor" means Intel.' -f $version),
             $releaseIntegrityNote,
             $macIntegrityNote,
             "- See the [Install Guide](https://stratosort.com/docs/INSTALL_GUIDE.html) for Windows, Mac & Linux — one download, no CLI.",

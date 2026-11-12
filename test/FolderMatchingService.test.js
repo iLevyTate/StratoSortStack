@@ -119,13 +119,13 @@ describe('FolderMatchingService.matchCategoryToFolder — name matching pipeline
   });
 
   test('Levenshtein typo within threshold matches', () => {
-    // distance("lab co", "lab corp") = 2, threshold for 8-char name = 2
+    // distance("lab co", "lab corp") = 2, and an 8-char name allows 2 edits
     const folders = [{ name: 'Lab Corp' }];
     expect(FolderMatchingService.matchCategoryToFolder('lab co', folders)).toBe('Lab Corp');
   });
 
   test('prefix-subsumption: short variant matches longer folder name (forward)', () => {
-    // "Lab" → "Lab Corp" — Levenshtein distance 5 > threshold 2, but the
+    // "Lab" → "Lab Corp" — Levenshtein distance 5 > the 2 edits allowed, but the
     // canonical "lab" is a prefix of "lab corp" at a word boundary.
     const folders = [{ name: 'Lab Corp' }];
     expect(FolderMatchingService.matchCategoryToFolder('Lab', folders)).toBe('Lab Corp');
@@ -146,11 +146,11 @@ describe('FolderMatchingService.matchCategoryToFolder — name matching pipeline
     // (delta 9). Closest length wins to avoid drifting toward the longer
     // folder when the LLM gave a near-complete short form.
     const folders = [{ name: 'Lab Corporation' }, { name: 'Lab Corp' }, { name: 'Other Folder' }];
-    // Note: "lab co" → "lab corp" Levenshtein dist=2 ≤ threshold 2 already
+    // Note: "lab co" → "lab corp" Levenshtein dist=2 ≤ the 2 edits allowed already
     // matches Lab Corp, so this test mostly verifies Levenshtein still wins.
     // Use a case that bypasses Levenshtein:
     const result = FolderMatchingService.matchCategoryToFolder('Lab Cor', folders);
-    // distance("lab cor", "lab corp")=1 ≤ threshold 2 → Levenshtein matches
+    // distance("lab cor", "lab corp")=1 ≤ the 2 edits allowed → Levenshtein matches
     expect(result).toBe('Lab Corp');
   });
 
@@ -181,6 +181,32 @@ describe('FolderMatchingService.matchCategoryToFolder — name matching pipeline
     const folders = [{ name: 'Uncategorized' }, { name: 'Lab Corp' }];
     expect(FolderMatchingService.matchCategoryToFolder('documents', folders)).toBe('Uncategorized');
   });
+
+  test('a generic label with no Uncategorized folder matches nothing, not the first folder', () => {
+    const folders = [{ name: 'SEO' }, { name: 'Lab Corp' }];
+    expect(FolderMatchingService.matchCategoryToFolder('documents', folders)).toBeNull();
+  });
+
+  test('allows one edit per four characters of the longer name, at most three', () => {
+    expect(FolderMatchingService.allowedSpellingEdits('web', 'seo')).toBe(0);
+    expect(FolderMatchingService.allowedSpellingEdits('memo', 'seo')).toBe(1);
+    expect(FolderMatchingService.allowedSpellingEdits('lab co', 'lab corp')).toBe(2);
+    expect(FolderMatchingService.allowedSpellingEdits('presentation', 'presentations')).toBe(3);
+    expect(FolderMatchingService.allowedSpellingEdits('a'.repeat(40), 'b'.repeat(40))).toBe(3);
+  });
+
+  test.each(['Web', 'Dev', 'Geo', 'Memo'])(
+    'short label "%s" is not read as a misspelling of a short folder name',
+    (label) => {
+      expect(
+        FolderMatchingService.matchCategoryToFolder(label, [
+          { name: 'SEO' },
+          { name: 'Uncategorized' }
+        ])
+      ).toBe('Uncategorized');
+      expect(FolderMatchingService.matchCategoryToFolder(label, [{ name: 'SEO' }])).toBeNull();
+    }
+  );
 
   test('generic bucket word matches a real folder of that exact name (regression)', () => {
     // Default file-type taxonomy: "Documents"/"Images" are real folders, so an

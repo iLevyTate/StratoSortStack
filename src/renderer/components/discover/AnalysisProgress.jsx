@@ -1,7 +1,6 @@
 import React, { memo } from 'react';
 import PropTypes from 'prop-types';
 import { FolderOpen } from 'lucide-react';
-import { StatusBadge } from '../ui';
 import Card from '../ui/Card';
 import { Text } from '../ui/Typography';
 
@@ -22,28 +21,25 @@ const AnalysisProgress = memo(function AnalysisProgress({
 
   const Content = (
     <div className={`w-full ${className}`}>
-      <div className="flex items-center justify-between gap-default mb-4">
-        <div className="flex items-center gap-cozy">
-          <div className="relative h-10 w-10">
-            <div className="absolute inset-0 rounded-full border-2 border-stratosort-blue/25 border-t-stratosort-blue animate-spin" />
-            <div className="absolute inset-2 rounded-full bg-stratosort-blue/10 flex items-center justify-center">
-              <FolderOpen className="w-4 h-4 text-stratosort-blue" />
-            </div>
-          </div>
-          <div>
-            <Text variant="small" className="font-semibold text-system-gray-900">
-              {isDone
-                ? 'Analysis complete'
-                : hasTotals
-                  ? `Analyzing ${current} of ${total}`
-                  : 'Preparing analysis...'}
-            </Text>
-            <Text variant="tiny" className="text-system-gray-600">
-              {hasTotals ? `${percent}%` : 'This may take a moment'}
-            </Text>
+      <div className="flex items-center gap-cozy mb-4">
+        <div className="relative h-10 w-10">
+          <div className="absolute inset-0 rounded-full border-2 border-stratosort-blue/25 border-t-stratosort-blue animate-spin" />
+          <div className="absolute inset-2 rounded-full bg-stratosort-blue/10 flex items-center justify-center">
+            <FolderOpen className="w-4 h-4 text-stratosort-blue" />
           </div>
         </div>
-        {hasTotals && <StatusBadge variant="info">{percent}%</StatusBadge>}
+        <div>
+          <Text variant="small" className="font-semibold text-system-gray-900">
+            {isDone
+              ? 'Analysis complete'
+              : hasTotals
+                ? `Analyzing ${current} of ${total} ${total === 1 ? 'file' : 'files'}`
+                : 'Preparing analysis...'}
+          </Text>
+          <Text variant="tiny" className="text-system-gray-600">
+            {hasTotals ? `${percent}% complete` : 'This may take a moment'}
+          </Text>
+        </div>
       </div>
 
       <div className="space-y-3">
@@ -55,7 +51,7 @@ const AnalysisProgress = memo(function AnalysisProgress({
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={percent}
-            aria-valuetext={`${percent} percent`}
+            aria-valuetext={`${percent} percent complete`}
           >
             <div
               className="h-full bg-stratosort-blue transition-[width] duration-300 ease-out"

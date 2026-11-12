@@ -48,6 +48,38 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **A text model larger than the memory budget no longer unloads models that hold no GPU memory.**
   An embedding model on the CPU and Whisper on the CPU were unloaded to make room, which freed
   nothing, and were loaded again for the next file.
+- **A short category is no longer taken for a misspelling of a short Smart Folder name.** Any name
+  within two letters of a folder's name counted as that folder, so a file labeled "SEO" could be
+  sent to a folder named "Web" or "Dev". The allowance now grows with the length of the name: none
+  under four letters, one letter per four, three at most.
+- **A file with a generic category ("document", "file", "image") is no longer sent to the first
+  Smart Folder in the list when there is no Uncategorized folder.** It is left without a match, and
+  the other suggestions decide.
+- **A suggestion says what named its folder.** "Using Date-Based organization method" described a
+  folder that was named after the file's category, its type or its purpose; the explanation now says
+  which.
+- **Editing a Smart Folder's description past its first 64 characters is used by the next
+  analysis.** The saved answer for a file was looked up by the start of each description only, so a
+  change further in returned the answer for the old wording.
+- **Preview on the Organize screen says why when it cannot open.** A preview that failed or was
+  refused said only "Nothing to preview."; it now gives the reason. The button shows that it is
+  working, and pressing it twice no longer asks for two previews.
+- **Preview marks files that would get the same name in the same folder.** A move with such files
+  does not start; Preview now shows which files they are and keeps its Move button off until they
+  have different names.
+- **Analysis progress shows one figure for files and one for percent.** It read "Analyzing 3 of 10"
+  with the percentage twice; it now reads "Analyzing 3 of 10 files" and "30% complete".
+- **An analysis that continues after a restart says so.** The notice now reads "Continuing the
+  analysis that was interrupted" with the number of files left, and stays up for six seconds.
+- **Model download speed and time left follow the current speed.** They were averaged from the start
+  of the download and shown after the first second, so the first figures could be far off and a
+  change in speed took a long time to show. The speed is now measured over the last ten seconds and
+  shown once three seconds of data have arrived; until then the row reads "Calculating speed…".
+
+### Documentation
+
+- **The Install Guide, the README and each release's notes say which Mac file to download:**
+  `mac-arm64` for Apple Silicon, `mac-x64` for Intel, and how to check in About This Mac.
 
 ## [5.2.0] - 2026-11-10
 

@@ -1580,8 +1580,11 @@ export function useOrganization({
    * previewBatchOrganize which short-circuits the main-process handler
    * before any disk write.
    *
-   * Returns the main-process plan or null when the API surface is
-   * unavailable. Caller decides how to surface (notification, modal,
+   * Returns the main-process plan plus `sameDestination`, the files this
+   * batch sends to one name (the move refuses to start while any exist), or
+   * null when no file has a destination to preview. Throws when the request
+   * fails or is refused, so the caller can say why instead of reporting an
+   * empty preview. Caller decides how to surface (notification, modal,
    * etc.) — this hook intentionally doesn't push UI side-effects so
    * different phases can render the plan their own way.
    */
@@ -1593,7 +1596,7 @@ export function useOrganization({
           : unprocessedFiles || [];
       if (filesToProcess.length === 0) return null;
 
-      const { operations } = buildOperations({
+      const planInputs = {
         filesToProcess,
         unprocessedFiles,
         editingFiles,
@@ -1603,16 +1606,21 @@ export function useOrganization({
         defaultLocation,
         smartFolders,
         suggestionsByPath
-      });
+      };
+      const { operations } = buildOperations(planInputs);
 
       const validOps = operations.filter((/** @type {any} */ op) => op?.source && op?.destination);
       if (validOps.length === 0) return null;
 
       try {
-        return await previewBatchOrganize(validOps);
+        const plan = await previewBatchOrganize(validOps);
+        if (!plan || plan.success === false) {
+          throw new Error(plan?.error || 'The preview request was refused');
+        }
+        return { ...plan, sameDestination: buildPreview(planInputs).conflicts };
       } catch (error) {
         logger.warn('[ORGANIZE] Preview failed', { error: error?.message });
-        return null;
+        throw error;
       }
     },
     [

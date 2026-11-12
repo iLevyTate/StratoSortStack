@@ -1904,11 +1904,11 @@ describe('useAnalysis', () => {
         jest.advanceTimersByTime(100);
       });
 
-      // Should show resume notification
+      // Nobody pressed a button for this run, so the notice says why it runs.
       expect(mockAddNotification).toHaveBeenCalledWith(
-        expect.stringContaining('Resuming analysis'),
+        'Continuing the analysis that was interrupted: 1 file left',
         'info',
-        3000,
+        6000,
         'analysis-resume'
       );
     });
