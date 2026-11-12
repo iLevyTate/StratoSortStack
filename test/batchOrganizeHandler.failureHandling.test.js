@@ -8,6 +8,8 @@
  * destination's parent directory is missing. Covers:
  *  - one file's permission error (EPERM/EACCES) is a per-file failure, not a
  *    batch-wide rollback; repeated permission errors still roll back
+ *  - one file that fails the check after its move is a per-file failure too;
+ *    a run of them still rolls back
  *  - a destination folder removed mid-batch is recreated, and is never
  *    reported as a missing source
  *  - a cross-device move that loses the publish race walks to the next
@@ -25,6 +27,8 @@ const mockState = {
   dirs: new Set(),
   /** @type {((src: string, dest: string) => any) | null} */
   renameHook: null,
+  /** Runs once the rename has been applied. @type {((src: string, dest: string) => void) | null} */
+  afterRenameHook: null,
   /** @type {((src: string, dest: string) => void) | null} */
   copyHook: null,
   /** @type {Array<[string, string]>} */
@@ -78,6 +82,7 @@ jest.mock('fs', () => {
       // Real rename semantics: an occupied destination is REPLACED.
       mockState.files.set(d, mockState.files.get(s));
       mockState.files.delete(s);
+      if (mockState.afterRenameHook) mockState.afterRenameHook(s, d);
     }),
     copyFile: jest.fn(async (src, dest, mode) => {
       const s = mockNorm(src);
@@ -233,6 +238,7 @@ beforeEach(() => {
   mockState.files.clear();
   mockState.dirs.clear();
   mockState.renameHook = null;
+  mockState.afterRenameHook = null;
   mockState.copyHook = null;
   mockState.renames = [];
   mockState.mkdirs = [];
@@ -291,6 +297,135 @@ describe('one file with a permission error', () => {
     // doc3 must fail after doc1/doc2 completed.
     const { result } = await run([ops[0], ops[1]].concat([ops[2]]));
     expect(result.rolledBack).toBe(true);
+  });
+});
+
+describe('one file that fails the check after its move', () => {
+  // Something else (a sync client, an antivirus quarantine) takes the file
+  // right after it lands.
+  const vanishAfterMove = (shouldVanish) => {
+    mockState.afterRenameHook = (s, d) => {
+      if (s.startsWith(R('/src')) && shouldVanish(s)) mockState.files.delete(d);
+    };
+  };
+
+  test('a file missing from its destination fails alone; the rest stay moved and undoable', async () => {
+    const ops = makeOps(5);
+    vanishAfterMove((s) => s === R('/src/doc3.pdf'));
+
+    const { result, recordAction } = await run(ops);
+
+    expect(executeRollback).not.toHaveBeenCalled();
+    expect(result.rolledBack).toBeUndefined();
+    expect(result.successCount).toBe(4);
+    expect(result.failCount).toBe(1);
+    expect(resultFor(result, 3)).toMatchObject({
+      success: false,
+      errorCode: 'MOVE_VERIFICATION_DESTINATION_FAILED',
+      critical: false
+    });
+    expect(resultFor(result, 3).error).toBe(
+      `Move verification failed: destination does not exist after move: ${R('/dest/doc3.pdf')}. The file is no longer at its original location either.`
+    );
+    for (const k of [1, 2, 4, 5]) {
+      expect(mockState.files.get(R(`/dest/doc${k}.pdf`))).toBe(`DOC-${k}`);
+    }
+    // Undo covers the four confirmed moves and not the one that failed.
+    expect(recordAction).toHaveBeenCalledTimes(1);
+    expect(recordAction.mock.calls[0][1].operations.map((o) => o.originalPath).sort()).toEqual(
+      [1, 2, 4, 5].map((k) => R(`/src/doc${k}.pdf`))
+    );
+  });
+
+  test('a file still at its source after the move fails alone and says so', async () => {
+    const ops = makeOps(3);
+    mockState.afterRenameHook = (s) => {
+      if (s === R('/src/doc2.pdf')) mockState.files.set(s, 'DOC-2');
+    };
+
+    const { result } = await run(ops);
+
+    expect(executeRollback).not.toHaveBeenCalled();
+    expect(result.successCount).toBe(2);
+    expect(resultFor(result, 2)).toMatchObject({
+      success: false,
+      errorCode: 'MOVE_VERIFICATION_SOURCE_EXISTS',
+      critical: false
+    });
+    expect(resultFor(result, 2).error).toContain(R('/src/doc2.pdf'));
+  });
+
+  test('a destination that is missing while the source is back says the file is still there', async () => {
+    const ops = makeOps(1);
+    mockState.afterRenameHook = (s, d) => {
+      mockState.files.set(s, mockState.files.get(d));
+      mockState.files.delete(d);
+    };
+
+    const { result } = await run(ops);
+
+    expect(resultFor(result, 1).error).toMatch(/The file is still at its original location\.$/);
+    expect(result.successCount).toBe(0);
+    expect(result.failCount).toBe(1);
+  });
+
+  test('files vanishing from the destination several times in a row still roll the batch back', async () => {
+    const ops = makeOps(8);
+    vanishAfterMove((s) => s !== R('/src/doc1.pdf'));
+
+    const { result } = await run(ops);
+
+    expect(executeRollback).toHaveBeenCalledTimes(1);
+    expect(result.rolledBack).toBe(true);
+    // doc1 was confirmed and is returned by the rollback.
+    expect(mockState.files.get(R('/src/doc1.pdf'))).toBe('DOC-1');
+    expect(mockState.files.has(R('/dest/doc1.pdf'))).toBe(false);
+  });
+
+  test('a confirmed move between two failed checks keeps them per-file', async () => {
+    // A move whose source is another move's destination makes the batch run
+    // one file at a time, so the order below is the order on disk.
+    seedFile('/src/chain.pdf', 'CHAIN');
+    const chain = [
+      { source: '/src/chain.pdf', destination: '/stage/chain.pdf', type: 'move' },
+      { source: '/stage/chain.pdf', destination: '/dest/chain.pdf', type: 'move' }
+    ];
+    // doc1, doc3 and doc5 fail; doc2, doc4 and doc6 are confirmed in between.
+    vanishAfterMove((s) => /doc[135]\.pdf$/.test(s));
+
+    const { result } = await run(chain.concat(makeOps(6)));
+
+    expect(executeRollback).not.toHaveBeenCalled();
+    expect(result.successCount).toBe(5);
+    expect(result.failCount).toBe(3);
+  });
+
+  test('strict mode still rolls back on the first failed check', async () => {
+    const ops = makeOps(3);
+    vanishAfterMove((s) => s === R('/src/doc3.pdf'));
+
+    const { result } = await run(ops, { strict: true });
+
+    expect(result.rolledBack).toBe(true);
+    expect(resultFor(result, 3)).toMatchObject({ critical: false, strictModeTriggered: true });
+  });
+
+  test('a destination that cannot be read for another reason keeps its own code', async () => {
+    const fsPromises = require('fs').promises;
+    const ops = makeOps(3);
+    const realAccess = fsPromises.access.getMockImplementation();
+    fsPromises.access.mockImplementation(async (fp) => {
+      if (mockNorm(fp) === R('/dest/doc3.pdf')) throw mockErr('EIO', 'i/o error');
+      return realAccess(fp);
+    });
+
+    try {
+      const { result } = await run(ops);
+      expect(result.rolledBack).toBe(true);
+      expect(result.results.find((r) => r.errorCode === 'EIO')).toMatchObject({ critical: true });
+    } finally {
+      fsPromises.access.mockImplementation(realAccess);
+    }
   });
 });
 
