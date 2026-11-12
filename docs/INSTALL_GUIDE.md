@@ -45,6 +45,19 @@ download the single file that matches your operating system.
 Replace **X.X.X** with the version number shown on the Releases page (e.g. `5.2.0`). The Windows
 arm64 build ships without bundled FFmpeg, so audio/video analysis there needs FFmpeg on your `PATH`.
 
+### Mac -- Apple Silicon or Intel?
+
+Open the Apple menu and choose **About This Mac**.
+
+| About This Mac shows               | Your Mac is   | Download this file                    |
+| :--------------------------------- | :------------ | :------------------------------------ |
+| **Chip**: Apple M1, M2, M3, M4 ... | Apple Silicon | `StratoSortStack-X.X.X-mac-arm64.dmg` |
+| **Processor**: ... Intel Core ...  | Intel         | `StratoSortStack-X.X.X-mac-x64.dmg`   |
+
+The `arm64` file does not open on an Intel Mac. On an Apple Silicon Mac, take the `arm64` file: only
+that build runs the local AI on the Mac's GPU. The `.zip` files with the same names hold the same
+app and are what the in-app updater downloads; you do not need them for a first install.
+
 ### Windows -- installer vs zip
 
 | File                                  | What it does                                                                                              | Recommended?                                        |

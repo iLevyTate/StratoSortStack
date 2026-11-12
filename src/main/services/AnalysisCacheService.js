@@ -162,10 +162,10 @@ class AnalysisCacheService {
     hasher.update(String(model || ''));
     hasher.update('|');
     try {
+      // The whole description, not a prefix: the prompt reads past any prefix,
+      // so an edit further in must not return the answer to the old wording.
       const foldersKey = Array.isArray(smartFolders)
-        ? smartFolders
-            .map((f) => `${f?.name || ''}:${(f?.description || '').slice(0, 64)}`)
-            .join(',')
+        ? smartFolders.map((f) => `${f?.name || ''}:${f?.description || ''}`).join(',')
         : '';
       hasher.update(foldersKey);
     } catch {

@@ -329,16 +329,21 @@ export const createSettingsAction = (description, newSettings, oldSettings) => (
  * acquiring the batch lock or writing to disk. Backed by the
  * `operation.dryRun` short-circuit added to handleBatchOrganize on
  * the main side — see src/main/ipc/files/batchOrganizeHandler.js.
+ * A batch the handler refuses (empty, too large, an operation without a
+ * source or destination) comes back as `{ success: false, error, errorCode }`
+ * with no plan.
  *
  * @param {Array<{source: string, destination: string}>} operations
  * @returns {Promise<{
  *   success: boolean,
- *   dryRun: true,
- *   total: number,
- *   wouldMove: Array<{source: string, destination: string, originalDestination: string, collision: boolean}>,
- *   skipped: Array<{source: string, destination: string, reason: string}>,
- *   wouldCreateFolders: string[],
- *   conflicts: number
+ *   dryRun?: true,
+ *   total?: number,
+ *   wouldMove?: Array<{source: string, destination: string, originalDestination: string, collision: boolean}>,
+ *   skipped?: Array<{source: string, destination: string, reason: string}>,
+ *   wouldCreateFolders?: string[],
+ *   conflicts?: number,
+ *   error?: string,
+ *   errorCode?: string
  * }>}
  */
 export const previewBatchOrganize = async (operations) => {

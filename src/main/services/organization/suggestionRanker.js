@@ -45,6 +45,9 @@ function rankSuggestions(suggestions) {
       if (suggestion.confidence > existing.confidence) {
         existing.source = suggestion.source;
         existing.method = suggestion.method;
+        // The explanation is written from these, so they follow the source.
+        existing.strategyName = suggestion.strategyName;
+        existing.namedBy = suggestion.namedBy;
       }
 
       // Then update to max scores
@@ -115,11 +118,22 @@ function generateExplanation(suggestion, file) {
     return 'No clear match found. Consider creating a new folder.';
   }
 
+  // A strategy template names its folder after one part of the file. Say
+  // which part when it is known; the template's title describes none of them.
+  /** @type {Record<string, string>} */
+  const strategyFolderNamedBy = {
+    category: `The analysis labeled this file "${suggestion.folder}"`,
+    fileType: `"${suggestion.folder}" matches this file's type`,
+    purpose: `The analysis described this file as "${suggestion.folder}"`
+  };
+
   /** @type {Record<string, string>} */
   const explanations = {
     semantic: `This file's meaning matches "${suggestion.folder}"`,
     user_pattern: `You've organized similar files this way before`,
-    strategy: `Using ${suggestion.strategyName || 'your preferred'} organization method`,
+    strategy:
+      strategyFolderNamedBy[suggestion.namedBy] ||
+      `Using ${suggestion.strategyName || 'your preferred'} organization method`,
     llm: `Based on the file's content and purpose`,
     pattern: `This is where ${(file?.extension || 'these').toUpperCase()} files usually go`,
     llm_creative: suggestion.reasoning || 'Alternative way to organize this file',

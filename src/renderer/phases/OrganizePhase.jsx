@@ -89,6 +89,8 @@ function OrganizePhase() {
   const [showHistoryModal, setShowHistoryModal] = React.useState(false);
   const [focusFileIndex, setFocusFileIndex] = React.useState(null);
   const [previewPlan, setPreviewPlan] = React.useState(null);
+  const [isPreviewing, setIsPreviewing] = React.useState(false);
+  const previewInFlightRef = useRef(false);
   const { revealFile } = useFileActions();
 
   const {
@@ -462,6 +464,43 @@ function OrganizePhase() {
     }
   }, [selectedFiles.size, approveSelectedFiles, handleOrganizeFiles]);
 
+  // The plan checks every file on disk, so a large queue takes a moment: the
+  // button shows it is working, and a second press waits for the first.
+  const handlePreviewClick = useCallback(async () => {
+    if (previewInFlightRef.current) return;
+    previewInFlightRef.current = true;
+    setIsPreviewing(true);
+    try {
+      const filesToProcess =
+        selectedFiles.size > 0
+          ? unprocessedFiles.filter((f) => selectedFiles.has(toCanonicalPath(f.path)))
+          : unprocessedFiles;
+      const plan = await handlePreviewOrganize(filesToProcess);
+      if (!plan) {
+        addNotification(
+          'None of these files has a destination yet, so there is nothing to preview.',
+          'info',
+          4000,
+          'organize-preview'
+        );
+        return;
+      }
+      // Show each file's destination folder and new name — a count-only
+      // toast did not say where anything would go.
+      setPreviewPlan(plan);
+    } catch (error) {
+      addNotification(
+        `The preview could not be built: ${error?.message || 'unknown error'}`,
+        'error',
+        8000,
+        'organize-preview'
+      );
+    } finally {
+      previewInFlightRef.current = false;
+      setIsPreviewing(false);
+    }
+  }, [selectedFiles, unprocessedFiles, handlePreviewOrganize, addNotification]);
+
   // Refresh the smart-folder list after the user creates a folder inline.
   // useLoadInitialData only fetches when the list is empty; this fetches
   // unconditionally so a newly-created folder immediately becomes available
@@ -806,27 +845,13 @@ function OrganizePhase() {
               {!isOrganizing && !isPaused ? (
                 <div className="flex shrink-0 items-center gap-compact">
                   <Button
-                    onClick={async () => {
-                      const filesToProcess =
-                        selectedFiles.size > 0
-                          ? unprocessedFiles.filter((f) =>
-                              selectedFiles.has(toCanonicalPath(f.path))
-                            )
-                          : unprocessedFiles;
-                      const plan = await handlePreviewOrganize(filesToProcess);
-                      if (!plan) {
-                        addNotification('Nothing to preview.', 'info', 4000, 'organize-preview');
-                        return;
-                      }
-                      // Show each file's destination folder and new name — a
-                      // count-only toast did not say where anything would go.
-                      setPreviewPlan(plan);
-                    }}
+                    onClick={handlePreviewClick}
                     variant="secondary"
                     size="md"
                     disabled={
                       (selectedFiles.size === 0 ? readyFilesCount === 0 : false) || isOrganizing
                     }
+                    isLoading={isPreviewing}
                   >
                     Preview
                   </Button>

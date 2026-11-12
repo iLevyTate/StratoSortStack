@@ -58,7 +58,9 @@ no telemetry.
 ## Install
 
 1. **Download** the installer for your system from
-   [GitHub Releases](https://github.com/iLevyTate/StratoSortStack/releases).
+   [GitHub Releases](https://github.com/iLevyTate/StratoSortStack/releases). On a Mac, take
+   `…-mac-arm64.dmg` for Apple Silicon (M1 or later) or `…-mac-x64.dmg` for Intel; Apple menu →
+   **About This Mac** shows which one you have.
 2. **Launch it** and choose a model profile. StratoSort downloads its AI models once: about 7 GB for
    Base, or about 10 GB for Better Quality.
 3. **Add a folder** and review the suggestions.

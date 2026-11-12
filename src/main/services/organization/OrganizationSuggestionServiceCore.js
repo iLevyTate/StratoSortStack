@@ -587,14 +587,15 @@ class OrganizationSuggestionServiceCore {
     );
 
     // Verify match quality to avoid boosting fallbacks
-    // matchCategoryToFolder may return the first folder as a fallback if no match is found.
+    // matchCategoryToFolder can land on a folder through its description, its
+    // keywords or the Uncategorized fallback.
     // We only want to boost if the LLM output actually resembles the folder name.
     let isHighQualityMatch = false;
     if (folderMatch) {
       const rawLower = rawCategory.toLowerCase();
       const matchLower = matchedFolder.toLowerCase();
 
-      // Check for exact/partial match or reasonable edit distance
+      // Check for exact/partial match or a spelling variant of the name
       if (
         rawLower === matchLower ||
         rawLower.includes(matchLower) ||
@@ -603,9 +604,7 @@ class OrganizationSuggestionServiceCore {
         isHighQualityMatch = true;
       } else {
         const dist = FolderMatchingService.levenshteinDistance(rawLower, matchLower);
-        const len = Math.max(rawLower.length, matchLower.length);
-        // Allow ~30% difference or up to 3 chars
-        if (dist <= 3 || dist / len < 0.3) {
+        if (dist <= FolderMatchingService.allowedSpellingEdits(rawLower, matchLower)) {
           isHighQualityMatch = true;
         }
       }

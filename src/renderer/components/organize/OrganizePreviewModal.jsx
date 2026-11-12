@@ -24,12 +24,18 @@ function splitPath(p) {
  * Shows the dry-run plan from previewBatchOrganize before anything moves:
  * every file grouped under the folder it will land in, its new name when the
  * move renames it, folders that will be created, name clashes the move will
- * resolve with a numeric suffix, and files that are already in the folder
- * chosen for them and so do not change folder.
+ * resolve with a numeric suffix, files that are already in the folder
+ * chosen for them and so do not change folder, and files this batch sends to
+ * one name, which the move refuses to start with.
  */
 function OrganizePreviewModal({ isOpen, plan, onClose, onConfirm, redactPaths, isOrganizing }) {
-  const { groups, newFolders } = useMemo(() => {
+  const { groups, newFolders, sameNameCount } = useMemo(() => {
     const created = new Set(Array.isArray(plan?.wouldCreateFolders) ? plan.wouldCreateFolders : []);
+    const sameName = new Set(
+      (Array.isArray(plan?.sameDestination) ? plan.sameDestination : []).flatMap((clash) =>
+        (Array.isArray(clash?.files) ? clash.files : []).map((f) => f?.sourcePath)
+      )
+    );
     /** @type {Map<string, Array<any>>} */
     const byFolder = new Map();
     for (const item of Array.isArray(plan?.wouldMove) ? plan.wouldMove : []) {
@@ -42,6 +48,7 @@ function OrganizePreviewModal({ isOpen, plan, onClose, onConfirm, redactPaths, i
         fromName: src.name,
         toName: dest.name,
         collision: Boolean(item?.collision),
+        sameName: sameName.has(item?.source),
         staysInFolder:
           fromFolderKey !== null && fromFolderKey === toParentFolderKey(item?.destination)
       });
@@ -49,12 +56,19 @@ function OrganizePreviewModal({ isOpen, plan, onClose, onConfirm, redactPaths, i
     }
     return {
       groups: Array.from(byFolder.entries()).sort((a, b) => b[1].length - a[1].length),
-      newFolders: created
+      newFolders: created,
+      sameNameCount: sameName.size
     };
   }, [plan]);
 
   const moveCount = Array.isArray(plan?.wouldMove) ? plan.wouldMove.length : 0;
   const skipped = Array.isArray(plan?.skipped) ? plan.skipped : [];
+  const summary =
+    moveCount === 0
+      ? 'None of these files will move.'
+      : `${moveCount} file${moveCount !== 1 ? 's' : ''} into ${groups.length} folder${
+          groups.length !== 1 ? 's' : ''
+        }. Nothing has moved yet.`;
   const folderLabel = (folder) =>
     redactPaths ? formatDisplayPath(folder, { redact: true, segments: 1 }) : folder;
   const nameLabel = (name) => formatDisplayFileName(name, { redact: redactPaths });
@@ -64,9 +78,7 @@ function OrganizePreviewModal({ isOpen, plan, onClose, onConfirm, redactPaths, i
       isOpen={isOpen}
       onClose={onClose}
       title="Preview: where your files will go"
-      description={`${moveCount} file${moveCount !== 1 ? 's' : ''} into ${groups.length} folder${
-        groups.length !== 1 ? 's' : ''
-      }. Nothing has moved yet.`}
+      description={summary}
       size="lg"
       dataTestId="organize-preview-modal"
       footer={
@@ -78,7 +90,7 @@ function OrganizePreviewModal({ isOpen, plan, onClose, onConfirm, redactPaths, i
             onClick={onConfirm}
             variant="success"
             size="sm"
-            disabled={moveCount === 0 || isOrganizing}
+            disabled={moveCount === 0 || sameNameCount > 0 || isOrganizing}
           >
             <FolderInput className="w-4 h-4 mr-2" />
             {`Move ${moveCount} file${moveCount !== 1 ? 's' : ''}`}
@@ -87,6 +99,18 @@ function OrganizePreviewModal({ isOpen, plan, onClose, onConfirm, redactPaths, i
       }
     >
       <div className="flex flex-col gap-default max-h-[60vh] overflow-y-auto modern-scrollbar">
+        {sameNameCount > 0 && (
+          <div
+            role="alert"
+            className="flex items-start gap-compact rounded-xl border border-stratosort-warning/30 bg-stratosort-warning/12 px-3 py-2"
+          >
+            <AlertTriangle className="w-4 h-4 text-stratosort-warning shrink-0 mt-0.5" />
+            <Text variant="tiny" className="text-system-gray-700">
+              {sameNameCount} files would get the same name in the same folder, so the move will not
+              start. Close this preview, give the marked files different names, then preview again.
+            </Text>
+          </div>
+        )}
         {groups.map(([folder, files]) => (
           <section key={folder} aria-label={`Destination ${folderLabel(folder)}`}>
             <div className="flex items-center gap-compact mb-1.5 min-w-0">
@@ -134,8 +158,13 @@ function OrganizePreviewModal({ isOpen, plan, onClose, onConfirm, redactPaths, i
                         </Text>
                       </>
                     )}
-                    {(f.staysInFolder || f.collision) && (
+                    {(f.staysInFolder || f.collision || f.sameName) && (
                       <span className="ml-auto flex shrink-0 items-center gap-compact">
+                        {f.sameName && (
+                          <StatusBadge variant="warning" size="sm">
+                            Same name as another file
+                          </StatusBadge>
+                        )}
                         {f.staysInFolder && (
                           <StatusBadge variant="info" size="sm">
                             {renamed ? 'Already in this folder' : 'Already here — no change'}
@@ -194,7 +223,13 @@ OrganizePreviewModal.propTypes = {
     skipped: PropTypes.arrayOf(
       PropTypes.shape({ source: PropTypes.string, reason: PropTypes.string })
     ),
-    wouldCreateFolders: PropTypes.arrayOf(PropTypes.string)
+    wouldCreateFolders: PropTypes.arrayOf(PropTypes.string),
+    sameDestination: PropTypes.arrayOf(
+      PropTypes.shape({
+        destination: PropTypes.string,
+        files: PropTypes.arrayOf(PropTypes.shape({ sourcePath: PropTypes.string }))
+      })
+    )
   }),
   onClose: PropTypes.func.isRequired,
   onConfirm: PropTypes.func.isRequired,

@@ -65,6 +65,49 @@ describe('Suggestion Ranker', () => {
       expect(result[0].confidence).toBe(0.7);
     });
 
+    test('a duplicate that takes over the source brings what its explanation is written from', () => {
+      const result = rankSuggestions([
+        { folder: 'SEO', score: 0.4, confidence: 0.4, source: 'semantic', method: 'semantic' },
+        {
+          folder: 'seo',
+          score: 0.6,
+          confidence: 0.6,
+          source: 'strategy',
+          method: 'strategy_based',
+          strategyName: 'Date-Based',
+          namedBy: 'category'
+        }
+      ]);
+
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({
+        folder: 'SEO',
+        source: 'strategy',
+        strategyName: 'Date-Based',
+        namedBy: 'category'
+      });
+    });
+
+    test('a weaker duplicate leaves the source and its explanation fields alone', () => {
+      const result = rankSuggestions([
+        {
+          folder: 'SEO',
+          score: 0.6,
+          confidence: 0.6,
+          source: 'strategy',
+          strategyName: 'Date-Based',
+          namedBy: 'category'
+        },
+        { folder: 'seo', score: 0.4, confidence: 0.4, source: 'semantic' }
+      ]);
+
+      expect(result[0]).toMatchObject({
+        source: 'strategy',
+        strategyName: 'Date-Based',
+        namedBy: 'category'
+      });
+    });
+
     test('sorts by weighted score', () => {
       const suggestions = [
         { folder: 'Low', score: 0.5, confidence: 0.5, source: 'strategy' },
@@ -215,6 +258,22 @@ describe('Suggestion Ranker', () => {
         { extension: '.pdf' }
       );
       expect(explanation).toContain('Project-Based');
+    });
+
+    test('explains a strategy suggestion by what named its folder, not by the template title', () => {
+      const file = { extension: '.md' };
+      const strategy = { source: 'strategy', strategyName: 'Date-Based', folder: 'SEO' };
+
+      const byCategory = generateExplanation({ ...strategy, namedBy: 'category' }, file);
+      expect(byCategory).toBe('The analysis labeled this file "SEO"');
+      expect(byCategory).not.toContain('Date-Based');
+
+      expect(
+        generateExplanation({ ...strategy, folder: 'Documents', namedBy: 'fileType' }, file)
+      ).toBe('"Documents" matches this file\'s type');
+      expect(
+        generateExplanation({ ...strategy, folder: 'Keyword research', namedBy: 'purpose' }, file)
+      ).toBe('The analysis described this file as "Keyword research"');
     });
 
     test('generates llm explanation', () => {

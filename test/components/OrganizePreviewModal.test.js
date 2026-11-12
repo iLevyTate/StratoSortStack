@@ -130,6 +130,82 @@ describe('OrganizePreviewModal', () => {
     });
   });
 
+  // Two files in one batch that end up with the same name in the same folder:
+  // the move refuses to start, so the preview says so instead of offering it.
+  describe('files this batch sends to one name', () => {
+    const clashPlan = {
+      wouldMove: [
+        {
+          source: 'C:\\Downloads\\scan 1.pdf',
+          destination: 'C:\\Docs\\Finance\\invoice.pdf',
+          collision: false
+        },
+        {
+          source: 'C:\\Downloads\\scan 2.pdf',
+          destination: 'C:\\Docs\\Finance\\invoice-1.pdf',
+          collision: true
+        },
+        {
+          source: 'C:\\Downloads\\budget.xlsx',
+          destination: 'C:\\Docs\\Finance\\budget.xlsx',
+          collision: false
+        }
+      ],
+      skipped: [],
+      wouldCreateFolders: [],
+      conflicts: 1,
+      sameDestination: [
+        {
+          destination: 'C:\\Docs\\Finance\\invoice.pdf',
+          files: [
+            { fileName: 'invoice.pdf', sourcePath: 'C:\\Downloads\\scan 1.pdf' },
+            { fileName: 'invoice.pdf', sourcePath: 'C:\\Downloads\\scan 2.pdf' }
+          ]
+        }
+      ]
+    };
+
+    test('are marked, with a notice that the move will not start', () => {
+      renderModal({ plan: clashPlan });
+
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        '2 files would get the same name in the same folder, so the move will not start.'
+      );
+      expect(screen.getAllByText('Same name as another file')).toHaveLength(2);
+    });
+
+    test('the move button is off until they are renamed', () => {
+      const { onConfirm } = renderModal({ plan: clashPlan });
+
+      const move = screen.getByRole('button', { name: /Move 3 files/ });
+      expect(move).toBeDisabled();
+      fireEvent.click(move);
+      expect(onConfirm).not.toHaveBeenCalled();
+    });
+
+    test('a plan without any shows no notice', () => {
+      renderModal({ plan: { ...clashPlan, sameDestination: [] } });
+
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      expect(screen.queryByText('Same name as another file')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Move 3 files/ })).toBeEnabled();
+    });
+  });
+
+  test('says that no file will move when every file is skipped', () => {
+    renderModal({
+      plan: {
+        wouldMove: [],
+        skipped: [{ source: 'C:\\Downloads\\gone.pdf', reason: 'source-missing' }],
+        wouldCreateFolders: [],
+        conflicts: 0
+      }
+    });
+
+    expect(screen.getByText('None of these files will move.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Move 0 files/ })).toBeDisabled();
+  });
+
   test('the move button commits and reports the count', () => {
     const { onConfirm } = renderModal();
 

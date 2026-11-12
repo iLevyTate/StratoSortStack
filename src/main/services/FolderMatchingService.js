@@ -1740,11 +1740,25 @@ class FolderMatchingService {
   }
 
   /**
+   * How many edits two names may differ by and still count as one name
+   * misspelled: one per four characters of the longer name, at most three.
+   * A fixed allowance treats short names as typos of each other ("Web", "Dev"
+   * and "Geo" are each two edits from "SEO").
+   * @param {string} a - First string
+   * @param {string} b - Second string
+   * @returns {number} Allowed edit distance (0 for names under four characters)
+   */
+  static allowedSpellingEdits(a, b) {
+    return Math.min(3, Math.floor(Math.max(a.length, b.length) / 4));
+  }
+
+  /**
    * Match a category string to a smart folder using fuzzy matching logic
    * (Static helper to allow usage without instantiation)
    * @param {string} category - The raw category string from LLM
    * @param {any[]} smartFolders - List of available smart folders
-   * @returns {string} The matched folder name
+   * @returns {string|null} The matched folder name, or null when nothing
+   *   matches and there is no Uncategorized folder
    */
   static matchCategoryToFolder(category, smartFolders) {
     const folders = Array.isArray(smartFolders) ? smartFolders : [];
@@ -1814,18 +1828,19 @@ class FolderMatchingService {
       normalizedRaw === 'images' ||
       normalizedRaw === 'default'
     ) {
-      return uncategorized?.name || folders[0].name;
+      return uncategorized?.name || null;
     }
 
-    // Levenshtein distance check for typos (allow 2 edits for short strings, 3 for long)
+    // Levenshtein distance check for typos
     let bestLevenshtein = null;
     let minDistance = Infinity;
 
     for (const f of folders) {
       const name = String(f?.name || '').trim();
       if (!name) continue;
-      const dist = FolderMatchingService.levenshteinDistance(normalizedRaw, name.toLowerCase());
-      const threshold = name.length > 10 ? 3 : 2;
+      const lowerName = name.toLowerCase();
+      const dist = FolderMatchingService.levenshteinDistance(normalizedRaw, lowerName);
+      const threshold = FolderMatchingService.allowedSpellingEdits(normalizedRaw, lowerName);
 
       if (dist <= threshold && dist < minDistance) {
         minDistance = dist;

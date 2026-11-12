@@ -250,6 +250,74 @@ describe('ModelSetupWizard', () => {
     expect(screen.queryByText('The operation was aborted')).not.toBeInTheDocument();
   });
 
+  test('says the speed is being calculated until the download reports one', async () => {
+    const baseProfile = INSTALL_MODEL_PROFILES?.BASE_SMALL?.models || {};
+    const embeddingModel = baseProfile.EMBEDDING;
+    const textModel = baseProfile.TEXT_ANALYSIS;
+    const visionModel = baseProfile.IMAGE_ANALYSIS;
+
+    let progressListener;
+    window.electronAPI = {
+      llama: {
+        getConfig: jest.fn(async () => ({ embeddingModel, textModel, visionModel })),
+        getModels: jest.fn(async () => ({ models: [] })),
+        getDownloadStatus: jest.fn(async () => ({ status: { downloads: [] } })),
+        downloadModel: jest.fn(async () => ({ success: true, started: true })),
+        cancelDownload: jest.fn(async () => ({ success: true }))
+      },
+      events: {
+        onOperationProgress: jest.fn((cb) => {
+          progressListener = cb;
+          return jest.fn();
+        })
+      }
+    };
+
+    render(<ModelSetupWizard onComplete={jest.fn()} onSkip={jest.fn()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Choose AI Models/i)).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Download Models/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/Downloading Models/i)).toBeInTheDocument();
+    });
+
+    // No bytes yet: every row is still starting.
+    expect(screen.queryByText('Calculating speed…')).not.toBeInTheDocument();
+    expect(screen.getAllByText('Starting…').length).toBeGreaterThan(0);
+
+    // Bytes are arriving, but the manager has no speed to report yet.
+    await act(async () => {
+      progressListener({
+        type: 'model-download',
+        model: textModel,
+        percent: 1,
+        downloadedBytes: 5 * 1024 * 1024,
+        totalBytes: 500 * 1024 * 1024,
+        speedBps: 0,
+        etaSeconds: 0
+      });
+    });
+    expect(screen.getByText('Calculating speed…')).toBeInTheDocument();
+    expect(screen.queryByText(/^ETA /)).not.toBeInTheDocument();
+
+    await act(async () => {
+      progressListener({
+        type: 'model-download',
+        model: textModel,
+        percent: 4,
+        downloadedBytes: 20 * 1024 * 1024,
+        totalBytes: 500 * 1024 * 1024,
+        speedBps: 4 * 1024 * 1024,
+        etaSeconds: 120
+      });
+    });
+    expect(screen.queryByText('Calculating speed…')).not.toBeInTheDocument();
+    expect(screen.getByText(/\/s$/)).toBeInTheDocument();
+    expect(screen.getByText(/^ETA /)).toBeInTheDocument();
+  });
+
   test('leaving the downloading step while a download runs dismisses instead of skipping', async () => {
     const baseProfile = INSTALL_MODEL_PROFILES?.BASE_SMALL?.models || {};
     const embeddingModel = baseProfile.EMBEDDING;

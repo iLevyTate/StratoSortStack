@@ -25,6 +25,12 @@ const DEFAULT_DOWNLOAD_MAX_RETRIES = 2;
 const RETRY_BASE_DELAY_MS = 500;
 const REQUIRED_SHA256_REGEX = /^[a-f0-9]{64}$/i;
 const ALLOWED_MODEL_DOWNLOAD_HOSTS = Object.freeze(['huggingface.co', 'hf.co']);
+// Download speed is the rate over the last SPEED_WINDOW_MS, measured from the
+// first byte. It is not reported until SPEED_MIN_SPAN_MS of data has arrived:
+// an estimate from the first second can be off by orders of magnitude.
+const SPEED_WINDOW_MS = 10_000;
+const SPEED_MIN_SPAN_MS = 3_000;
+const SPEED_SAMPLE_INTERVAL_MS = 250;
 
 class ModelDownloadManager {
   constructor() {
@@ -310,8 +316,8 @@ class ModelDownloadManager {
       url: validatedDownloadUrl,
       totalBytes: modelInfo.size,
       downloadedBytes: startByte,
-      startByte, // Track initial byte offset for accurate speed calculation
-      startTime: Date.now(),
+      /** @type {Array<{ time: number, bytes: number }>} */
+      speedSamples: [],
       status: 'downloading',
       abortController: internalAbortController
     };
@@ -522,7 +528,6 @@ class ModelDownloadManager {
           logger.info('[Download] Server ignored range request, restarting from beginning');
           startByte = 0;
           downloadState.downloadedBytes = 0;
-          downloadState.startByte = 0;
           isResume = false;
         }
 
@@ -548,6 +553,7 @@ class ModelDownloadManager {
         response.on('data', (chunk) => {
           downloaded += chunk.length;
           downloadState.downloadedBytes = downloaded;
+          this._recordSpeedSample(downloadState);
 
           const progress = {
             filename,
@@ -906,16 +912,33 @@ class ModelDownloadManager {
     return wrapped;
   }
 
-  _calculateSpeed(/** @type {any} */ state) {
-    const elapsed = (Date.now() - state.startTime) / 1000;
-    if (elapsed < 1) return 0;
-    // Subtract startByte to only measure bytes downloaded in THIS session
-    const sessionBytes = state.downloadedBytes - (state.startByte || 0);
-    return Math.round(sessionBytes / elapsed);
+  /**
+   * Note how many bytes have arrived by now. Samples older than the speed
+   * window are dropped, except the newest of them: it is where the window
+   * starts.
+   */
+  _recordSpeedSample(/** @type {any} */ state, now = Date.now()) {
+    const samples = state.speedSamples;
+    const last = samples[samples.length - 1];
+    if (last && now - last.time < SPEED_SAMPLE_INTERVAL_MS) return;
+    samples.push({ time: now, bytes: state.downloadedBytes });
+    while (samples.length > 1 && now - samples[1].time >= SPEED_WINDOW_MS) samples.shift();
   }
 
-  _calculateETA(/** @type {any} */ state) {
-    const speed = this._calculateSpeed(state);
+  /**
+   * Bytes per second over the speed window, or 0 while there is too little
+   * data to tell (the screen then shows no speed and no time left).
+   */
+  _calculateSpeed(/** @type {any} */ state, now = Date.now()) {
+    const windowStart = state.speedSamples[0];
+    if (!windowStart) return 0;
+    const span = now - windowStart.time;
+    if (span < SPEED_MIN_SPAN_MS) return 0;
+    return Math.round(((state.downloadedBytes - windowStart.bytes) * 1000) / span);
+  }
+
+  _calculateETA(/** @type {any} */ state, now = Date.now()) {
+    const speed = this._calculateSpeed(state, now);
     if (speed === 0) return Infinity;
     const remaining = state.totalBytes - state.downloadedBytes;
     return Math.round(remaining / speed);
