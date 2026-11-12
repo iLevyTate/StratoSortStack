@@ -11,6 +11,10 @@ jest.mock('../../src/renderer/contexts/NotificationContext', () => ({
   useNotification: jest.fn(() => ({ addNotification: mockAddNotification }))
 }));
 
+jest.mock('../../src/renderer/phases/discover/AnalysisRunProvider', () => ({
+  useAnalysisRun: () => ({ reanalyzeFiles: jest.fn() })
+}));
+
 jest.mock('../../src/renderer/components/UndoRedoSystem', () => ({
   UndoRedoToolbar: () => <div>UNDO_REDO</div>,
   useUndoRedo: jest.fn(() => ({ executeAction: jest.fn() }))

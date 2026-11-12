@@ -197,6 +197,28 @@ describe('Preload Coverage', () => {
       );
     });
 
+    test('a reanalysis carries bypassCache to the handler', async () => {
+      await electronAPI.files.analyze('C:\\docs\\report.pdf', { bypassCache: true });
+      expect(mockInvoke).toHaveBeenCalledWith(
+        'analysis:analyze-document',
+        { filePath: 'C:\\docs\\report.pdf', bypassCache: true },
+        IPC_META_ENVELOPE
+      );
+    });
+
+    test('bypassCache travels with naming settings', async () => {
+      const namingSettings = { convention: 'subject-date' };
+      await electronAPI.files.analyze('C:\\photos\\test.jpg', {
+        namingSettings,
+        bypassCache: true
+      });
+      expect(mockInvoke).toHaveBeenCalledWith(
+        'analysis:analyze-image',
+        { filePath: 'C:\\photos\\test.jpg', namingSettings, bypassCache: true },
+        IPC_META_ENVELOPE
+      );
+    });
+
     test('rejects empty file path', async () => {
       await expect(electronAPI.files.analyze('')).rejects.toThrow('Invalid file path');
     });

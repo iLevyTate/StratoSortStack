@@ -371,6 +371,35 @@ describe('useFileActions', () => {
     });
   });
 
+  describe('reanalyze action', () => {
+    test('hands the file to the analysis run', async () => {
+      const onReanalyze = jest.fn();
+      const { result } = renderHook(() => useFileActions(createMockOptions({ onReanalyze })));
+
+      await act(async () => {
+        await result.current.handleFileAction('reanalyze', '/path/to/file.txt');
+      });
+
+      expect(onReanalyze).toHaveBeenCalledWith(['/path/to/file.txt']);
+      expect(mockAddNotification).not.toHaveBeenCalled();
+    });
+
+    test('says reanalysis is unavailable when no run is wired in', async () => {
+      const { result } = renderHook(() => useFileActions(createMockOptions()));
+
+      await act(async () => {
+        await result.current.handleFileAction('reanalyze', '/path/to/file.txt');
+      });
+
+      expect(mockAddNotification).toHaveBeenCalledWith(
+        'Reanalysis unavailable',
+        'error',
+        3000,
+        'file-actions'
+      );
+    });
+  });
+
   describe('unknown action', () => {
     test('shows error for unknown action', async () => {
       const { result } = renderHook(() => useFileActions(createMockOptions()));

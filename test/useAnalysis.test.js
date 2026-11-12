@@ -251,6 +251,139 @@ describe('useAnalysis', () => {
     });
   });
 
+  // Reanalyze in Discover and Organize: the file is analyzed again where it
+  // is. It used to go to the Smart Folder watcher, which refuses any file
+  // outside a Smart Folder, which is where Discover's files are.
+  describe('reanalyzeFiles', () => {
+    const { useStore } = require('react-redux');
+    let storeState;
+    const analyzed = { path: '/in/report.pdf', name: 'report.pdf', analysis: { category: 'old' } };
+
+    beforeEach(() => {
+      storeState = { analysis: { isAnalyzing: false } };
+      useStore.mockReturnValue({ getState: () => storeState });
+    });
+
+    afterEach(() => {
+      useStore.mockReset();
+      useStore.mockImplementation(() => ({
+        getState: jest.fn(() => ({ analysis: { isAnalyzing: false, progress: null } }))
+      }));
+    });
+
+    const reanalyze = async (result, paths) => {
+      let outcome;
+      await act(async () => {
+        outcome = result.current.reanalyzeFiles(paths);
+        await jest.advanceTimersByTimeAsync(500);
+      });
+      return outcome;
+    };
+    const messages = () => mockAddNotification.mock.calls.map((call) => call[0]);
+
+    test('analyzes the file again without the cached result', async () => {
+      const { result } = renderHook(() =>
+        useAnalysis(createMockOptions({ selectedFiles: [], analysisResults: [analyzed] }))
+      );
+
+      const outcome = await reanalyze(result, ['/in/report.pdf']);
+
+      expect(outcome).toEqual({ started: true });
+      expect(mockElectronAPI.files.analyze).toHaveBeenCalledWith(
+        '/in/report.pdf',
+        expect.objectContaining({ bypassCache: true })
+      );
+      expect(messages()).toContain('Reanalyzed 1 file');
+    });
+
+    test('finds the file whichever slash or case its path was recorded with', async () => {
+      const recorded = { ...analyzed, path: 'C:\\In\\Report.pdf' };
+      const { result } = renderHook(() =>
+        useAnalysis(createMockOptions({ selectedFiles: [], analysisResults: [recorded] }))
+      );
+
+      await reanalyze(result, ['c:/in/report.pdf']);
+
+      expect(mockElectronAPI.files.analyze).toHaveBeenCalledWith(
+        'C:\\In\\Report.pdf',
+        expect.objectContaining({ bypassCache: true })
+      );
+    });
+
+    test('leaves the user on the screen they asked from', async () => {
+      const { result } = renderHook(() =>
+        useAnalysis(
+          createMockOptions({
+            selectedFiles: [],
+            analysisResults: [analyzed],
+            getCurrentPhase: () => 'discover'
+          })
+        )
+      );
+
+      await reanalyze(result, ['/in/report.pdf']);
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(2500);
+      });
+
+      expect(mockActions.advancePhase).not.toHaveBeenCalled();
+    });
+
+    test('a failed reanalysis is reported as that, not as a failed analysis run', async () => {
+      mockElectronAPI.files.analyze.mockRejectedValue(new Error('model unavailable'));
+      const { result } = renderHook(() =>
+        useAnalysis(createMockOptions({ selectedFiles: [], analysisResults: [analyzed] }))
+      );
+
+      await act(async () => {
+        result.current.reanalyzeFiles(['/in/report.pdf']);
+        await jest.advanceTimersByTimeAsync(60000);
+      });
+
+      expect(messages()).toContain('Reanalysis failed for 1 file');
+      expect(mockActions.setPhaseData).not.toHaveBeenCalledWith('totalAnalysisFailure', true);
+    });
+
+    test('sends a recording through the per-file request, which carries bypassCache', async () => {
+      const recording = { path: '/in/call.mp3', name: 'call.mp3', analysis: {} };
+      const { result } = renderHook(() =>
+        useAnalysis(createMockOptions({ selectedFiles: [], analysisResults: [recording] }))
+      );
+
+      await reanalyze(result, ['/in/call.mp3']);
+
+      expect(mockElectronAPI.analysis.batch).not.toHaveBeenCalled();
+      expect(mockElectronAPI.files.analyze).toHaveBeenCalledWith(
+        '/in/call.mp3',
+        expect.objectContaining({ bypassCache: true })
+      );
+    });
+
+    test('is refused while an analysis is running', async () => {
+      storeState.analysis.isAnalyzing = true;
+      const { result } = renderHook(() =>
+        useAnalysis(createMockOptions({ selectedFiles: [], analysisResults: [analyzed] }))
+      );
+
+      const outcome = await reanalyze(result, ['/in/report.pdf']);
+
+      expect(outcome).toEqual({ started: false, reason: 'busy' });
+      expect(mockElectronAPI.files.analyze).not.toHaveBeenCalled();
+      expect(messages()).toContain('Analysis is still running. Reanalyze when it finishes.');
+    });
+
+    test('says so when none of the paths is in the list', async () => {
+      const { result } = renderHook(() =>
+        useAnalysis(createMockOptions({ selectedFiles: [], analysisResults: [analyzed] }))
+      );
+
+      const outcome = await reanalyze(result, ['/elsewhere/other.pdf']);
+
+      expect(outcome).toEqual({ started: false, reason: 'empty' });
+      expect(mockElectronAPI.files.analyze).not.toHaveBeenCalled();
+    });
+  });
+
   describe('initialization', () => {
     test('returns analyzeFiles function', () => {
       const { result } = renderHook(() => useAnalysis(createMockOptions()));

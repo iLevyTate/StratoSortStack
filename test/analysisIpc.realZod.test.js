@@ -307,6 +307,50 @@ describe('registerAnalysisIpc (real Zod)', () => {
     });
   });
 
+  describe('single-file analyze payload with bypassCache', () => {
+    const analyzerOptions = (mock) => mock.mock.calls[0][2];
+
+    test('ANALYZE_DOCUMENT passes bypassCache to the analyzer', async () => {
+      await handlers[ANALYSIS_CHANNELS.ANALYZE_DOCUMENT](
+        {},
+        { filePath: '/x/report.pdf', bypassCache: true }
+      );
+
+      expect(analyzerOptions(mockAnalyzeDocumentFile)).toEqual(
+        expect.objectContaining({ bypassCache: true })
+      );
+    });
+
+    test('ANALYZE_IMAGE passes bypassCache to the analyzer', async () => {
+      await handlers[ANALYSIS_CHANNELS.ANALYZE_IMAGE](
+        {},
+        { filePath: '/x/photo.jpg', bypassCache: true }
+      );
+
+      expect(analyzerOptions(mockAnalyzeImageFile)).toEqual(
+        expect.objectContaining({ bypassCache: true })
+      );
+    });
+
+    test('an ordinary analysis still uses the cache', async () => {
+      await handlers[ANALYSIS_CHANNELS.ANALYZE_DOCUMENT]({}, '/x/report.pdf');
+
+      expect(analyzerOptions(mockAnalyzeDocumentFile)).toEqual(
+        expect.objectContaining({ bypassCache: false })
+      );
+    });
+
+    test('a bypassCache that is not a boolean is rejected', async () => {
+      const result = await handlers[ANALYSIS_CHANNELS.ANALYZE_DOCUMENT](
+        {},
+        { filePath: '/x/report.pdf', bypassCache: 'yes' }
+      );
+
+      expect(mockAnalyzeDocumentFile).not.toHaveBeenCalled();
+      expect(result?.success).toBe(false);
+    });
+  });
+
   describe('CANCEL_BATCH validation', () => {
     test('rejects payloads missing batchId', async () => {
       const result = await handlers[ANALYSIS_CHANNELS.CANCEL_BATCH]({}, {});
