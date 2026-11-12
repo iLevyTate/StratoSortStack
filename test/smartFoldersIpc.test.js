@@ -91,7 +91,8 @@ jest.mock('../src/main/utils/jsonRepair', () => ({
 }));
 
 jest.mock('../src/shared/pathSanitization', () => ({
-  validateFileOperationPathSync: jest.fn((p) => ({ valid: true, normalizedPath: p }))
+  validateFileOperationPathSync: jest.fn((p) => ({ valid: true, normalizedPath: p })),
+  validateFileOperationPath: jest.fn(async (p) => ({ valid: true, normalizedPath: p }))
 }));
 
 jest.mock('../src/shared/crossPlatformUtils', () => ({
@@ -397,6 +398,53 @@ describe('Smart Folders IPC', () => {
       expect(result).toEqual(expect.objectContaining({ success: true }));
     });
 
+    test('a folder on another drive is put to the destination policy and registered once it agrees', async () => {
+      const handler = getHandler(IPC_CHANNELS.SMART_FOLDERS.ADD);
+      const { enhanceSmartFolderWithLLM } = require('../src/main/services/SmartFoldersLLMService');
+      enhanceSmartFolderWithLLM.mockResolvedValueOnce(null);
+      mockAuthorizeSmartFolderRoot.mockResolvedValueOnce({ allowed: true, reason: 'confirmed' });
+      fs.stat
+        .mockResolvedValueOnce({ isDirectory: () => true })
+        .mockRejectedValueOnce({ code: 'ENOENT' })
+        .mockResolvedValueOnce({ isDirectory: () => true });
+      fs.mkdir.mockResolvedValue();
+      fs.writeFile.mockResolvedValue();
+      fs.unlink.mockResolvedValue();
+
+      const result = await handler({}, { name: 'Invoices', path: 'F:\\Sorted\\Invoices' });
+
+      expect(result).toEqual(expect.objectContaining({ success: true }));
+      expect(mockAuthorizeSmartFolderRoot).toHaveBeenCalledWith(
+        'F:\\Sorted\\Invoices',
+        expect.any(Object)
+      );
+      const savedFolders = mockFoldersService.setCustomFolders.mock.calls[0][0];
+      expect(savedFolders.map((f) => f.path)).toContain('F:\\Sorted\\Invoices');
+    });
+
+    test('a path that fails the check is refused before the destination policy is asked', async () => {
+      const { validateFileOperationPath } = require('../src/shared/pathSanitization');
+      validateFileOperationPath.mockResolvedValueOnce({
+        valid: false,
+        normalizedPath: '',
+        error: 'Invalid path: access to system directories is not allowed'
+      });
+
+      const result = await getHandler(IPC_CHANNELS.SMART_FOLDERS.ADD)(
+        {},
+        { name: 'System', path: 'F:\\System Volume Information' }
+      );
+
+      expect(result).toEqual({
+        success: false,
+        error: 'Invalid path: access to system directories is not allowed',
+        errorCode: 'SECURITY_PATH_VIOLATION'
+      });
+      expect(mockAuthorizeSmartFolderRoot).not.toHaveBeenCalled();
+      expect(mockFoldersService.saveCustomFolders).not.toHaveBeenCalled();
+      expect(fs.mkdir).not.toHaveBeenCalled();
+    });
+
     test('validates folder name characters', async () => {
       const handler = getHandler(IPC_CHANNELS.SMART_FOLDERS.ADD);
       const invalidFolder = { name: 'Bad:Name', path: 'C:\\Test' };
@@ -556,6 +604,57 @@ describe('Smart Folders IPC', () => {
       expect(result.success).toBe(true);
       expect(result.files).toHaveLength(1);
       expect(result.files[0].name).toBe('doc.pdf');
+    });
+
+    test('scans a folder on another drive', async () => {
+      mockFoldersService.scanDirectory.mockResolvedValue([
+        { type: 'file', name: 'scan.pdf', path: 'F:\\Strato Input\\scan.pdf', size: 100 }
+      ]);
+
+      const result = await getHandler(IPC_CHANNELS.SMART_FOLDERS.SCAN_STRUCTURE)(
+        {},
+        'F:\\Strato Input'
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.files).toHaveLength(1);
+      expect(mockFoldersService.scanDirectory).toHaveBeenCalledWith(
+        'F:\\Strato Input',
+        undefined,
+        expect.any(Object)
+      );
+    });
+
+    test('a path that fails the check is not scanned, and the reason is passed on', async () => {
+      const { validateFileOperationPath } = require('../src/shared/pathSanitization');
+      validateFileOperationPath.mockResolvedValueOnce({
+        valid: false,
+        normalizedPath: '',
+        error: 'Invalid path: access to system directories is not allowed'
+      });
+
+      const result = await getHandler(IPC_CHANNELS.SMART_FOLDERS.SCAN_STRUCTURE)(
+        {},
+        'C:\\Windows\\System32'
+      );
+
+      expect(result).toEqual({
+        success: false,
+        error: 'Invalid path: access to system directories is not allowed',
+        errorCode: 'SECURITY_PATH_VIOLATION'
+      });
+      expect(mockFoldersService.scanDirectory).not.toHaveBeenCalled();
+    });
+
+    test('a scan that fails reports the failure instead of an empty folder', async () => {
+      mockFoldersService.scanDirectory.mockRejectedValue(new Error('EIO: i/o error, scandir'));
+
+      const result = await getHandler(IPC_CHANNELS.SMART_FOLDERS.SCAN_STRUCTURE)(
+        {},
+        'F:\\Unplugged'
+      );
+
+      expect(result).toEqual({ success: false, error: 'EIO: i/o error, scandir' });
     });
   });
 

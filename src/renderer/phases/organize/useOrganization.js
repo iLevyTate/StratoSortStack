@@ -7,7 +7,7 @@
  * @module organize/useOrganization
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { IPC_CHANNELS, PHASES } from '../../../shared/constants';
 import { createLogger } from '../../../shared/logger';
 import { extractExtension } from '../../../shared/namingConventions';
@@ -42,15 +42,144 @@ function countOf(count, noun = 'file') {
   return `${count} ${count === 1 ? noun : `${noun}s`}`;
 }
 
-const ROLLBACK_NAMES_SHOWN = 3;
+/**
+ * True for a row main reports as done without a move: the destination already
+ * held the same content, so the source was removed instead.
+ * @param {any} row
+ * @returns {boolean}
+ */
+function isDuplicateSkip(row) {
+  return Boolean(row && row.success && row.skipped && row.reason === 'duplicate');
+}
 
 /**
- * The one message for a batch the main process rolled back after a critical
- * error. Restored rows come back `success: false, rolledBack: true`; a row
- * whose restore failed keeps `success: true, rollbackFailed: true` because
- * that file is still at its destination, and those files are named so the
- * user can find them. Main deletes the recovery manifest when every restore
- * worked, so its path is only shown when something was left behind.
+ * One sentence on the files that were removed as duplicates instead of
+ * moved, or '' when there were none.
+ * @param {any[]} duplicateRows
+ * @returns {string}
+ */
+function describeDuplicates(duplicateRows) {
+  const count = duplicateRows.length;
+  if (count === 0) return '';
+  const one = count === 1;
+  const where = duplicateRows.every((r) => r.sourceRemoval === 'trashed')
+    ? `${one ? 'It is' : 'They are'} in the system Trash.`
+    : `${one ? 'It was' : 'They were'} removed.`;
+  return `${one ? '1 identical copy was' : `${count} identical copies were`} not moved: the destination already had the same content. ${where}`;
+}
+
+/**
+ * How the last organize run ended, for the banner on the Organize screen.
+ * `count` is the number of files moved; a duplicate that was removed instead
+ * is not one of them.
+ * @typedef {object} OrganizeSummary
+ * @property {'moved' | 'partial' | 'none' | 'rolledBack'} outcome
+ * @property {number} count
+ * @property {string} headline
+ * @property {string} detail
+ */
+
+// Main keeps an interrupted batch's journal open and OrganizeResumeService
+// replays it at the next launch.
+const INTERRUPTED_REASON =
+  'The run was interrupted. The remaining moves resume the next time StratoSort starts.';
+
+/**
+ * The toast and the banner for a run main did not roll back, or null when the
+ * run left nothing to report. A row that never started is not a failure: the
+ * cancel and pause messages cover the ones the user stopped, and an
+ * interrupted run is reported as unfinished.
+ * @param {object} run
+ * @param {any[]} run.rows - the batch's per-op results
+ * @param {number} run.movedCount
+ * @param {any[]} run.duplicateRows
+ * @param {string} [run.batchError] - the error that ended the batch early
+ * @param {boolean} [run.interrupted] - stopped by a timeout or shutdown
+ * @returns {{ summary: OrganizeSummary, toast: string, severity: string, duration: number } | null}
+ */
+function describeFinishedRun({ rows, movedCount, duplicateRows, batchError, interrupted }) {
+  const failedCount = rows.filter((r) => r && !r.success && !r.cancelled && !r.interrupted).length;
+  const duplicateNote = describeDuplicates(duplicateRows);
+  const tail = duplicateNote ? ` ${duplicateNote}` : '';
+
+  if (failedCount > 0 || batchError || interrupted) {
+    const reason =
+      failedCount === 0 && !batchError
+        ? INTERRUPTED_REASON
+        : describeFirstFailure(
+            batchError ? [...rows, { success: false, error: batchError }] : rows
+          );
+    if (movedCount === 0) {
+      return {
+        summary: {
+          outcome: 'none',
+          count: 0,
+          headline: 'No files were organized',
+          detail: `${reason}${tail}`
+        },
+        toast: `No files were organized. ${reason}${tail}`,
+        severity: 'error',
+        duration: 9000
+      };
+    }
+    const shortfall =
+      failedCount > 0 ? `${failedCount} could not be moved` : 'the run did not finish';
+    return {
+      summary: {
+        outcome: 'partial',
+        count: movedCount,
+        headline: `Moved ${countOf(movedCount)}; ${shortfall}`,
+        detail: `${reason}${tail} Files that were not moved are still listed.`
+      },
+      toast:
+        failedCount > 0
+          ? `Organized ${countOf(movedCount)} with ${countOf(failedCount, 'failure')}. ${reason}${tail}`
+          : `Organized ${countOf(movedCount)}, but the run did not finish. ${reason}${tail}`,
+      severity: 'warning',
+      duration: 8000
+    };
+  }
+
+  if (movedCount > 0) {
+    return {
+      summary: {
+        outcome: 'moved',
+        count: movedCount,
+        headline: `Moved ${countOf(movedCount)} to ${movedCount === 1 ? 'its destination' : 'their destinations'}`,
+        detail: duplicateNote
+      },
+      toast: `Organized ${countOf(movedCount)}${duplicateNote ? `.${tail}` : ''}`,
+      severity: 'success',
+      duration: duplicateNote ? 10000 : 7000
+    };
+  }
+  if (duplicateRows.length > 0) {
+    return {
+      summary: {
+        outcome: 'moved',
+        count: 0,
+        headline: 'No files needed moving',
+        detail: duplicateNote
+      },
+      toast: `No files needed moving. ${duplicateNote}`,
+      severity: 'info',
+      duration: 10000
+    };
+  }
+  return null;
+}
+
+const ROLLBACK_NAMES_SHOWN = 3;
+const ROLLED_BACK_HEADLINE = 'Organization was rolled back';
+
+/**
+ * What a batch the main process rolled back after a critical error left
+ * behind, to follow ROLLED_BACK_HEADLINE. Restored rows come back
+ * `success: false, rolledBack: true`; a row whose restore failed keeps
+ * `success: true, rollbackFailed: true` because that file is still at its
+ * destination, and those files are named so the user can find them. Main
+ * deletes the recovery manifest when every restore worked, so its path is
+ * only shown when something was left behind.
  * @param {any} result - the batch handler's rollback outcome
  * @param {any[]} rows - its per-op results
  * @returns {string}
@@ -65,9 +194,8 @@ function describeRolledBackBatch(result, rows) {
     leftBehind.length,
     Number.isInteger(result?.rollbackFailCount) ? result.rollbackFailCount : 0
   );
-  const head = `Organization was rolled back. ${reason}`;
   if (leftBehindCount === 0) {
-    return `${head} Files already moved were returned to their original locations.`;
+    return `${reason} Files already moved were returned to their original locations.`;
   }
   const names = leftBehind
     .map((r) =>
@@ -84,10 +212,10 @@ function describeRolledBackBatch(result, rows) {
     typeof result?.recoveryPath === 'string' && result.recoveryPath
       ? ` Recovery details: ${result.recoveryPath}`
       : '';
-  return `${head} ${leftBehindCount} ${fileWord} could not be returned and remain in the destination folder${named}.${recovery}`;
+  return `${reason} ${leftBehindCount} ${fileWord} could not be returned and remain in the destination folder${named}.${recovery}`;
 }
 
-import { toCanonicalPath } from '../../utils/canonicalPath';
+import { toCanonicalPath, toFolderKey, toParentFolderKey } from '../../utils/canonicalPath';
 import { resolveOrganizeDestination, suggestionForOperation } from './organizeDestination';
 
 const logger = createLogger('OrganizePhase-Organization');
@@ -122,7 +250,11 @@ function collectPathsToUnmarkAfterUndo(
   }
   return Array.from(paths);
 }
-/** Auto-clear inline organize success banner (FI-02) */
+/**
+ * Auto-clear the inline organize banner (FI-02) after a clean run. A run that
+ * left something unmoved keeps its banner until it is dismissed or the next
+ * run starts.
+ */
 const LAST_ORGANIZE_SUMMARY_CLEAR_MS = 12000;
 /**
  * Hook for progress tracking
@@ -358,6 +490,17 @@ const joinPath = (root, ...parts) => {
   return [cleanRoot, ...cleanParts].join(separator);
 };
 
+const UNCATEGORIZED = 'Uncategorized';
+
+/**
+ * Where a smart folder's files go: its own path, or a folder of its name
+ * under the default location when it has none.
+ * @param {any} folder
+ * @param {string} defaultLocation
+ */
+const folderDestinationDir = (folder, defaultLocation) =>
+  folder?.path || joinPath(defaultLocation, folder?.name || UNCATEGORIZED);
+
 const sanitizeDestinationFileName = (/** @type {any} */ value, fallback = 'untitled') => {
   const toSafeBaseName = (/** @type {any} */ input) => {
     if (typeof input !== 'string') return '';
@@ -408,13 +551,11 @@ function processFileForOrganization({
   // Only a fall-through to Uncategorized is a "category changed" notice: a
   // folder the engine or name matching picked is already shown on the card.
   const categoryChanged = !smartFolder && Boolean(originalCategory);
-  const currentCategory = smartFolder ? smartFolder.name : 'Uncategorized';
+  const currentCategory = smartFolder ? smartFolder.name : UNCATEGORIZED;
 
   // Always use a validated smart folder path; never build a path from a raw category.
-  const resolvedFolder = smartFolder || findSmartFolderForCategory('Uncategorized');
-  const destinationDir = resolvedFolder
-    ? resolvedFolder.path || joinPath(defaultLocation, resolvedFolder.name || 'Uncategorized')
-    : joinPath(defaultLocation, 'Uncategorized');
+  const resolvedFolder = smartFolder || findSmartFolderForCategory(UNCATEGORIZED);
+  const destinationDir = folderDestinationDir(resolvedFolder, defaultLocation);
 
   const suggestedName = edits.suggestedName || fileWithEdits.analysis?.suggestedName || file.name;
   const safeSuggestedName = sanitizeDestinationFileName(suggestedName, file.name);
@@ -431,11 +572,63 @@ function processFileForOrganization({
   return {
     newName,
     normalized,
+    destinationDir,
     categoryChanged,
     originalCategory,
     finalCategory: currentCategory,
     suggestion: suggestionForOperation(destination, smartFolders)
   };
+}
+
+/**
+ * A file the plan leaves in the folder it is already in, because that folder
+ * is also the smart folder chosen for it. The run renames it there, or leaves
+ * it as it is when its name does not change either, and reports it as moved.
+ * @typedef {object} InPlaceMove
+ * @property {string} sourcePath
+ * @property {string} fileName
+ * @property {string} folderName - the smart folder it stays in
+ * @property {boolean} renamed - whether the run gives it a new name
+ */
+
+/**
+ * The files whose destination folder is the folder that holds them now.
+ * @param {Omit<ProcessParams, 'file'> & { files: any[] }} params
+ * @returns {InPlaceMove[]}
+ */
+export function findInPlaceMoves({ files, smartFolders = [], defaultLocation, ...planParams }) {
+  // This runs while the screen renders; without a default location there is
+  // no plan to describe yet.
+  if (typeof defaultLocation !== 'string' || !defaultLocation) return [];
+  // Only a file that sits directly in a folder the plan can send files to can
+  // stay where it is. In most queues that is none of them, so the per-file
+  // destination is only worked out for those.
+  const targetKeys = new Set(
+    [
+      ...smartFolders.map((folder) => folderDestinationDir(folder, defaultLocation)),
+      joinPath(defaultLocation, UNCATEGORIZED)
+    ].map(toFolderKey)
+  );
+  /** @type {InPlaceMove[]} */
+  const inPlace = [];
+  for (const file of Array.isArray(files) ? files : []) {
+    const parentKey = toParentFolderKey(file?.path);
+    if (parentKey === null || !targetKeys.has(parentKey)) continue;
+    const { newName, destinationDir, finalCategory } = processFileForOrganization({
+      ...planParams,
+      file,
+      smartFolders,
+      defaultLocation
+    });
+    if (toFolderKey(destinationDir) !== parentKey) continue;
+    inPlace.push({
+      sourcePath: file.path,
+      fileName: file.name,
+      folderName: finalCategory,
+      renamed: newName !== file.name
+    });
+  }
+  return inPlace;
 }
 
 /**
@@ -587,13 +780,16 @@ export function useOrganization({
     chunkedResultsRef,
     resetChunkedResults
   } = useProgressTracking();
-  /** Inline success banner on Organize (FI-02); cleared on new run or after timeout */
-  const [lastOrganizeSummary, setLastOrganizeSummary] = useState(null);
+  /** Inline outcome banner on Organize (FI-02); cleared when a new run starts */
+  const [lastOrganizeSummary, setLastOrganizeSummary] = useState(
+    /** @type {OrganizeSummary | null} */ (null)
+  );
   useEffect(() => {
-    if (!lastOrganizeSummary) return undefined;
+    if (lastOrganizeSummary?.outcome !== 'moved') return undefined;
     const id = setTimeout(() => setLastOrganizeSummary(null), LAST_ORGANIZE_SUMMARY_CLEAR_MS);
     return () => clearTimeout(id);
   }, [lastOrganizeSummary]);
+  const dismissOrganizeSummary = useCallback(() => setLastOrganizeSummary(null), []);
   const currentPhaseRef = useRef(currentPhase);
   useEffect(() => {
     currentPhaseRef.current = currentPhase;
@@ -693,6 +889,7 @@ export function useOrganization({
         setIsOrganizing(true);
         setOrganizingState(true);
         setOrganizeConflicts([]);
+        setLastOrganizeSummary(null);
         resetChunkedResults();
 
         const filesToProcess = resumeInfo
@@ -844,6 +1041,8 @@ export function useOrganization({
           logger.warn('[ORGANIZE] Preview generation failed (non-fatal):', previewError.message);
         }
 
+        // How onExecute reported this run, once it has.
+        const reported = { outcome: /** @type {OrganizeSummary['outcome'] | null} */ (null) };
         const stateCallbacks = {
           onExecute: (/** @type {any} */ result) => {
             try {
@@ -903,9 +1102,27 @@ export function useOrganization({
                       (r.destination || operationMap.get(r.source) || '').split(/[\\/]/).pop() ||
                       '',
                     smartFolder: actualSmartFolder,
-                    organizedAt: new Date().toISOString()
+                    organizedAt: new Date().toISOString(),
+                    // Not moved: `path` is the identical copy that was kept.
+                    ...(isDuplicateSkip(r)
+                      ? { duplicateRemoval: r.sourceRemoval === 'trashed' ? 'trashed' : 'deleted' }
+                      : {})
                   };
                 });
+              const duplicateRows = resArray.filter(
+                (/** @type {any} */ r) => !r.rolledBack && isDuplicateSkip(r)
+              );
+              const report = rolledBackBatch
+                ? null
+                : describeFinishedRun({
+                    rows: resArray,
+                    movedCount: uiResults.length - duplicateRows.length,
+                    duplicateRows,
+                    batchError: result?.partialFailure
+                      ? String(result.error || 'The batch stopped early')
+                      : undefined,
+                    interrupted: result?.interrupted === true
+                  });
               const successfulMoves = resArray
                 .filter((/** @type {any} */ r) => r.success && !r.rolledBack && r.source)
                 .map((/** @type {any} */ r) => ({
@@ -919,6 +1136,43 @@ export function useOrganization({
                 dispatch(updateResultPathsAfterMove({ oldPaths, newPaths }));
                 dispatch(updateFilePathsAfterMove({ oldPaths, newPaths }));
               }
+
+              // One toast and one banner per run. The reason a file was
+              // refused is logged in main and shown nowhere else.
+              if (rolledBackBatch) {
+                logger.warn('[ORGANIZE] Batch rolled back by main', {
+                  batchId: result?.batchId,
+                  rollbackFailCount: result?.rollbackFailCount
+                });
+                const detail = describeRolledBackBatch(result, resArray);
+                addNotification(`${ROLLED_BACK_HEADLINE}. ${detail}`, 'error', 12000);
+                setLastOrganizeSummary({
+                  outcome: 'rolledBack',
+                  count: uiResults.length,
+                  headline: ROLLED_BACK_HEADLINE,
+                  detail
+                });
+                reported.outcome = 'rolledBack';
+              } else if (report) {
+                if (report.summary.outcome !== 'moved') {
+                  logger.warn('[ORGANIZE] Batch left files unmoved', {
+                    outcome: report.summary.outcome,
+                    movedCount: report.summary.count,
+                    duplicateCount: duplicateRows.length,
+                    error: result?.error
+                  });
+                }
+                // A run the user stopped gets its count from the cancel or
+                // pause message; a second toast would only repeat it.
+                const stoppedByUser =
+                  cancelledRef.current || Boolean(result?.cancelled || result?.paused);
+                if (report.summary.outcome !== 'moved' || !stoppedByUser) {
+                  addNotification(report.toast, report.severity, report.duration);
+                }
+                setLastOrganizeSummary(report.summary);
+                reported.outcome = report.summary.outcome;
+              }
+
               if (uiResults.length > 0) {
                 addOrganizedFiles(uiResults);
 
@@ -926,25 +1180,6 @@ export function useOrganization({
                 organizedFilesRef.current = [...organizedFilesRef.current, ...uiResults];
 
                 markFilesAsProcessed(collectPathsForProcessedTracking(uiResults));
-
-                // When some files fail during batch operation, warn user about partial completion
-                const failedCount = resArray.filter((/** @type {any} */ r) => !r.success).length;
-                if (rolledBackBatch) {
-                  // Reported once, after this block.
-                } else if (result?.partialFailure || failedCount > 0) {
-                  addNotification(
-                    `Organized ${countOf(uiResults.length)} with ${countOf(failedCount, 'failure')}. ${describeFirstFailure(resArray)}`,
-                    'warning',
-                    8000
-                  );
-                  logger.warn('[ORGANIZE] Partial failure in batch operation', {
-                    successCount: uiResults.length,
-                    failCount: failedCount,
-                    error: result?.error
-                  });
-                } else {
-                  addNotification(`Organized ${countOf(uiResults.length)}`, 'success', 7000);
-                }
 
                 // Files moved on disk but the search index / history / undo
                 // stack could not be fully synced. Without surfacing this,
@@ -965,14 +1200,6 @@ export function useOrganization({
                   });
                 }
 
-                if (!rolledBackBatch) {
-                  setLastOrganizeSummary({
-                    count: uiResults.length,
-                    partial: Boolean(result?.partialFailure || failedCount > 0),
-                    failedCount: failedCount || 0
-                  });
-                }
-
                 // Only a run that got through every file fills the bar. A
                 // cancelled, paused, interrupted or rolled-back run keeps the
                 // count it reached, so it is not shown as done.
@@ -989,22 +1216,6 @@ export function useOrganization({
                 }
               } else if (!rolledBackBatch) {
                 logger.warn('[ORGANIZE] onExecute: No successful results to process');
-                if (resArray.length > 0) {
-                  // Every file was refused. The reason was logged in main and
-                  // never shown; the first refusal names the rule.
-                  addNotification(
-                    `No files were organized. ${describeFirstFailure(resArray)}`,
-                    'error',
-                    9000
-                  );
-                }
-              }
-              if (rolledBackBatch) {
-                logger.warn('[ORGANIZE] Batch rolled back by main', {
-                  batchId: result?.batchId,
-                  rollbackFailCount: result?.rollbackFailCount
-                });
-                addNotification(describeRolledBackBatch(result, resArray), 'error', 12000);
               }
             } catch (callbackError) {
               logger.error('[ORGANIZE] onExecute callback failed:', callbackError.message);
@@ -1293,11 +1504,18 @@ export function useOrganization({
             );
             return;
           }
+          // Some files were left where they were. Stay on Organize, where the
+          // banner says why and those files are still listed; Complete has
+          // no place for either.
+          if (reported.outcome === 'partial' || reported.outcome === 'none') return;
           actions.advancePhase(PHASES?.COMPLETE ?? 'complete');
-        } else {
+        } else if (reported.outcome === null) {
+          // onExecute had nothing to report, so this is the only message.
           logger.warn('[ORGANIZE] No successful operations - phase will not advance');
           addNotification(
-            'No files were organized successfully. Check the logs for details.',
+            cancelledRef.current || result?.cancelled
+              ? 'Organization cancelled before any file was moved.'
+              : 'No files were organized successfully. Check the logs for details.',
             'warning'
           );
         }
@@ -1414,6 +1632,32 @@ export function useOrganization({
     [handleOrganizeFiles]
   );
 
+  // Ready files the plan leaves in the folder they are in, so the screen can
+  // say so before the run reports them as moved.
+  const inPlaceMoves = useMemo(
+    () =>
+      findInPlaceMoves({
+        files: (unprocessedFiles || []).filter((/** @type {any} */ f) => f && f.analysis),
+        editingFiles,
+        getFileWithEdits,
+        findSmartFolderForCategory,
+        findSmartFolderForFile,
+        defaultLocation,
+        smartFolders,
+        suggestionsByPath
+      }),
+    [
+      unprocessedFiles,
+      editingFiles,
+      getFileWithEdits,
+      findSmartFolderForCategory,
+      findSmartFolderForFile,
+      defaultLocation,
+      smartFolders,
+      suggestionsByPath
+    ]
+  );
+
   return {
     isOrganizing,
     batchProgress,
@@ -1422,7 +1666,9 @@ export function useOrganization({
     handlePreviewOrganize,
     setBatchProgress,
     organizeConflicts,
+    inPlaceMoves,
     lastOrganizeSummary,
+    dismissOrganizeSummary,
     cancelOrganize,
     isCancelling,
     pauseOrganize,

@@ -115,12 +115,44 @@ async function statSafe(/** @type {any} */ filePath) {
 function pathsAreSameFilePath(a, b) {
   if (a === b) return true;
   if (typeof a !== 'string' || typeof b !== 'string') return false;
-  const na = path.normalize(a);
-  const nb = path.normalize(b);
-  if (isCaseInsensitiveFileSystem()) {
-    return na.toLowerCase() === nb.toLowerCase();
+  return filePathKey(a) === filePathKey(b);
+}
+
+/**
+ * Comparison key for a path: separators normalized, Unicode composed (macOS
+ * can list a name decomposed while the app holds it composed), case folded
+ * where the filesystem ignores case. Errs toward "same" for the reason given
+ * above.
+ * @param {string} filePath
+ * @returns {string}
+ */
+function filePathKey(filePath) {
+  const normalized = path.normalize(filePath).normalize('NFC');
+  return isCaseInsensitiveFileSystem() ? normalized.toLowerCase() : normalized;
+}
+
+/** @type {WeakMap<object, Set<string>>} */
+const pendingSourceKeyCache = new WeakMap();
+
+/**
+ * Whether `filePath` is one of the files the caller's batch has still to
+ * move. Keys are built once per `pendingSources` array, so a batch passes the
+ * same array for every move.
+ * @param {string[] | null | undefined} pendingSources
+ * @param {string} filePath
+ * @returns {boolean}
+ */
+function isPendingSource(pendingSources, filePath) {
+  if (!Array.isArray(pendingSources) || pendingSources.length === 0) return false;
+  let keys = pendingSourceKeyCache.get(pendingSources);
+  if (!keys) {
+    keys = new Set();
+    for (const source of pendingSources) {
+      if (typeof source === 'string' && source) keys.add(filePathKey(source));
+    }
+    pendingSourceKeyCache.set(pendingSources, keys);
   }
-  return na === nb;
+  return keys.has(filePathKey(filePath));
 }
 
 /**
@@ -183,6 +215,7 @@ function isDirectoryStat(/** @type {any} */ stat) {
  * @param {number} [params.maxCandidates]
  * @param {number} [params.maxDirEntries]
  * @param {any} [params.logger]
+ * @param {string[]} [params.pendingSources] - see handleDuplicateMove
  * @returns {Promise<string|null>} Path to duplicate if found.
  */
 /** @param {any} params */
@@ -194,7 +227,8 @@ async function findDuplicateInDirectory({
   maxDirEntries = DEFAULTS.maxDirEntries,
   logger,
   returnSourceHash = false,
-  hashCache = resolveHashCache()
+  hashCache = resolveHashCache(),
+  pendingSources
 }) {
   if (!sourcePath || !destinationDir) return null;
   const sourceStat = await statSafe(sourcePath);
@@ -222,6 +256,7 @@ async function findDuplicateInDirectory({
     if (!entry.isFile()) continue;
     const fullPath = path.join(destinationDir, entry.name);
     if (pathsAreSameFilePath(fullPath, sourcePath)) continue;
+    if (isPendingSource(pendingSources, fullPath)) continue;
 
     const stat = await statSafe(fullPath);
     if (!isFileStat(stat)) continue;
@@ -278,6 +313,7 @@ async function findDuplicateInDirectory({
  * @param {any} [params.logger]
  * @param {number} [params.maxCandidates]
  * @param {number} [params.maxDirEntries]
+ * @param {string[]} [params.pendingSources] - see handleDuplicateMove
  * @returns {Promise<string|null>}
  */
 /** @param {any} params */
@@ -289,7 +325,8 @@ async function findDuplicateForDestination({
   maxCandidates,
   maxDirEntries,
   returnSourceHash = false,
-  hashCache = resolveHashCache()
+  hashCache = resolveHashCache(),
+  pendingSources
 }) {
   if (!sourcePath || !destinationPath) return null;
 
@@ -303,7 +340,11 @@ async function findDuplicateForDestination({
   if (!isFileStat(sourceStat)) return null;
 
   const destStat = await statSafe(destinationPath);
-  if (isFileStat(destStat) && !isSameFileByStat(destStat, sourceStat)) {
+  if (
+    isFileStat(destStat) &&
+    !isSameFileByStat(destStat, sourceStat) &&
+    !isPendingSource(pendingSources, destinationPath)
+  ) {
     try {
       const [sourceHash, destHash] = await Promise.all([
         checksumFn(sourcePath, statForChecksum(sourceStat, hashCache)),
@@ -324,6 +365,12 @@ async function findDuplicateForDestination({
   }
 
   const destinationDir = path.dirname(destinationPath);
+  // A rename within one folder adds nothing to that folder, so an identical
+  // file elsewhere in it is no reason to remove the source: the user would
+  // lose one of two files they already kept side by side. Two identical
+  // files renamed in place in one batch each took the other for the kept
+  // copy and both went to the trash.
+  if (pathsAreSameFilePath(destinationDir, path.dirname(sourcePath))) return null;
   const dirStat = await statSafe(destinationDir);
   if (!isDirectoryStat(dirStat)) return null;
 
@@ -335,11 +382,24 @@ async function findDuplicateForDestination({
     maxDirEntries,
     logger,
     returnSourceHash,
-    hashCache
+    hashCache,
+    pendingSources
   });
 }
 
-/** @param {any} params */
+/**
+ * Remove the source instead of moving it when identical content is already
+ * at the destination (the exact path, or any file in its folder).
+ *
+ * `pendingSources` lists the sources the caller's batch has still to move.
+ * None of them counts as a copy already at the destination: it may be moved
+ * or renamed away later in the same batch, leaving nothing where the removed
+ * source was said to be. Pass the same array for every move of the batch.
+ *
+ * @param {any} params
+ * @returns {Promise<{ skipped: true, destination: string, reason: 'duplicate', sourceRemoval: string } | null>}
+ *   null when the caller should move the file.
+ */
 async function handleDuplicateMove({
   sourcePath,
   destinationPath,
@@ -349,7 +409,8 @@ async function handleDuplicateMove({
   dedupContext = 'unknown',
   removeEmbeddings,
   unlinkFn,
-  hashCache = resolveHashCache()
+  hashCache = resolveHashCache(),
+  pendingSources
 }) {
   const duplicateMatch = await findDuplicateForDestination({
     sourcePath,
@@ -357,7 +418,8 @@ async function handleDuplicateMove({
     checksumFn,
     logger,
     returnSourceHash: true,
-    hashCache
+    hashCache,
+    pendingSources
   });
   const duplicatePath = duplicateMatch?.path;
   if (!duplicatePath) return null;

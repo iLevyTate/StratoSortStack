@@ -770,6 +770,36 @@ describe('Batch Organize Handler', () => {
     );
   });
 
+  test('a duplicate skip whose kept copy is missing is one failed row that names the trash', async () => {
+    fileDedup.handleDuplicateMove.mockResolvedValueOnce({
+      skipped: true,
+      destination: '/vanished/kept.pdf',
+      reason: 'duplicate',
+      sourceRemoval: 'trashed'
+    });
+    fs.access.mockImplementation(async (p) => {
+      if (p.includes('vanished') || p.includes('src')) throw { code: 'ENOENT' };
+    });
+    params.operation.operations = [
+      { source: '/src/doc1.pdf', destination: '/dest/doc1.pdf', type: 'move' }
+    ];
+
+    const result = await handleBatchOrganize(params);
+
+    // The row used to be pushed as a success before the check ran, so the
+    // file was counted as organized next to its own failure.
+    const rows = result.results.filter((row) => row.source === '/src/doc1.pdf');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ success: false });
+    expect(rows[0].error).toContain('destination does not exist after move: /vanished/kept.pdf');
+    expect(rows[0].error).toContain('Trash / Recycle Bin');
+    expect(result.successCount).toBe(0);
+    expect(result.failCount).toBe(1);
+    expect(
+      mockLogger.info.mock.calls.filter(([msg]) => msg === '[FILE-OPS] Move skipped (duplicate)')
+    ).toEqual([]);
+  });
+
   test('handles non-Error thrown values without crashing', async () => {
     validateFileOperationPath.mockImplementationOnce(() => {
       throw 'path-validation-failed';

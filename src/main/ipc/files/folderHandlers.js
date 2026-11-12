@@ -9,15 +9,13 @@
 
 const path = require('path');
 const fs = require('fs').promises;
-const os = require('os');
 const { app } = require('electron');
 const { createHandler, safeHandle, z } = require('../ipcWrappers');
 const { createLogger } = require('../../../shared/logger');
 const {
   validateFileOperationPath,
   resolveCanonicalPath,
-  isPathDangerous,
-  isPathWithinAllowed
+  isPathDangerous
 } = require('../../../shared/pathSanitization');
 const {
   isNotFoundError,
@@ -33,13 +31,13 @@ const logger = createLogger('IPC:Files:Folders');
 const schemaFilePath = z ? z.string().min(1) : null;
 const { IpcServiceContext, createFromLegacyParams } = require('../IpcServiceContext');
 
-// Returned when the folder's spelling is inside an allowed location but a
-// symlink or junction along it leads outside. The renderer shows the message
-// as is: the code avoids the substrings (PATH, FOLDER, FILE, ...) that its
-// error mapping would replace with generic copy.
-const LINK_OUTSIDE_ALLOWED = 'LINK_OUTSIDE_ALLOWED';
-const LINK_OUTSIDE_ALLOWED_MESSAGE =
-  'That folder is inside a link that points outside your allowed locations. Choose the real folder instead.';
+// Returned when the folder's spelling is acceptable but a symlink, junction or
+// 8.3 short name along it leads into a system directory. The renderer shows
+// the message as is: the code avoids the substrings (PATH, FOLDER, FILE, ...)
+// that its error mapping would replace with generic copy.
+const LINK_INTO_SYSTEM = 'LINK_INTO_SYSTEM';
+const LINK_INTO_SYSTEM_MESSAGE =
+  'That folder leads into a system folder through a link or short name. Choose a different folder.';
 // Only runs after a refusal; bounded because a link can lead to a network
 // mount whose realpath hangs.
 const LINK_RESOLVE_TIMEOUT_MS = 2000;
@@ -47,20 +45,18 @@ const LINK_RESOLVE_TIMEOUT_MS = 2000;
 /**
  * Was this create-folder path refused only because of where a link along it
  * leads? True when the path as spelled passes every lexical check, but its
- * real location (links and junctions followed) is a different place that is
- * outside the allowed bases or a system directory. False for anything else,
- * including a check that timed out, so those keep the generic refusal.
+ * real location (links, junctions and short names resolved) is a different
+ * place inside a system directory. False for anything else, including a
+ * check that timed out, so those keep the generic refusal.
  *
  * @param {string} normalizedPath
- * @param {string[]|null} allowedBasePaths
  * @returns {Promise<boolean>}
  */
-async function wasRefusedForLinkTarget(normalizedPath, allowedBasePaths) {
+async function wasRefusedForLinkTarget(normalizedPath) {
   /** @type {ReturnType<typeof setTimeout>|undefined} */
   let timer;
   try {
     const asSpelled = await validateFileOperationPath(normalizedPath, {
-      allowedBasePaths,
       checkSymlinks: false,
       disallowUNC: false
     });
@@ -80,8 +76,7 @@ async function wasRefusedForLinkTarget(normalizedPath, allowedBasePaths) {
     const fold = (/** @type {string} */ p) => (caseInsensitive ? p.toLowerCase() : p);
     if (fold(path.resolve(real)) === fold(normalizedPath)) return false;
 
-    if (isPathDangerous(real)) return true;
-    return Boolean(allowedBasePaths) && !isPathWithinAllowed(real, allowedBasePaths || []);
+    return isPathDangerous(real);
   } catch {
     return false;
   } finally {
@@ -126,8 +121,8 @@ function registerFolderHandlers(servicesOrParams) {
           // Reject relative paths up front. `path.resolve(relative)` would
           // otherwise silently mix in `process.cwd()` (the Electron
           // install directory on packaged builds, or wherever the app
-          // was spawned from), letting a caller reach files outside the
-          // allowed base paths if cwd happens to sit under one.
+          // was spawned from), so the folder would land somewhere the
+          // caller never named.
           if (!path.isAbsolute(fullPath)) {
             logger.warn('[FILE-OPS] Folder creation rejected - non-absolute path', {
               path: fullPath
@@ -141,55 +136,50 @@ function registerFolderHandlers(servicesOrParams) {
 
           const normalizedPath = path.resolve(fullPath);
 
-          // Validate path is within allowed directories to prevent path traversal
-          const allowedPaths = [
-            os.homedir(),
-            app.getPath('documents'),
-            app.getPath('downloads'),
-            app.getPath('desktop')
-          ];
-
           const isUNC = isUNCPath(normalizedPath);
 
+          // Any drive passes, an external one included. The path must not be
+          // a system directory, as spelled or once links and short names are
+          // resolved; where the folder may go is the destination policy's
+          // decision, below.
           const validation = await validateFileOperationPath(normalizedPath, {
-            allowedBasePaths: isUNC ? null : allowedPaths,
             checkSymlinks: true,
             disallowUNC: false
           });
 
           if (!validation.valid) {
-            // A folder inside a link (symlink or junction) that leads outside
-            // the allowed locations is refused on its real location. Say so,
+            // A folder inside a link (symlink or junction) that leads into a
+            // system directory is refused on its real location. Say so,
             // instead of the generic refusal that reads like a typo. The log
             // keeps the spelled path only (the logger reduces it to its
             // name), never the link's target.
-            if (await wasRefusedForLinkTarget(normalizedPath, isUNC ? null : allowedPaths)) {
-              logger.warn('[FILE-OPS] Folder creation blocked - link leads outside allowed', {
+            if (await wasRefusedForLinkTarget(normalizedPath)) {
+              logger.warn('[FILE-OPS] Folder creation blocked - link leads into a system folder', {
                 path: normalizedPath,
-                errorCode: LINK_OUTSIDE_ALLOWED
+                errorCode: LINK_INTO_SYSTEM
               });
               return {
                 success: false,
-                error: LINK_OUTSIDE_ALLOWED_MESSAGE,
-                errorCode: LINK_OUTSIDE_ALLOWED
+                error: LINK_INTO_SYSTEM_MESSAGE,
+                errorCode: LINK_INTO_SYSTEM
               };
             }
-            logger.warn('[FILE-OPS] Folder creation blocked - path traversal attempt', {
+            logger.warn('[FILE-OPS] Folder creation blocked - path failed validation', {
               path: fullPath,
               normalized: normalizedPath,
               error: validation.error
             });
             return {
               success: false,
-              error: validation.error || 'Path is outside allowed directories',
+              error: validation.error || 'That folder path cannot be used',
               errorCode: 'PATH_NOT_ALLOWED'
             };
           }
 
-          // The allowlist above spans the whole home directory. The parent
-          // the folder goes into is held to the destination policy as a
-          // file would be: Documents and the trusted roots need no prompt, a
-          // startup folder is refused, anywhere else is confirmed by the user.
+          // The parent the folder goes into is held to the destination policy
+          // as a file would be: Documents and the trusted roots need no
+          // prompt, a startup folder is refused, anywhere else is confirmed
+          // by the user.
           /** @type {string[]} */
           const knownRoots = [];
           try {

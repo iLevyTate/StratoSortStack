@@ -292,17 +292,18 @@ Then run a small batch first and review outcomes before scaling up.
 - Review naming defaults in **Settings -> Default Locations**.
 - Confirm convention/date/case/separator values.
 
-### "That folder is inside a link that points outside your allowed locations."
+### "That folder leads into a system folder through a link or short name."
 
-You can see this when you use **Create directory** on a Smart Folder marked **Missing** in Setup. On
-this computer, StratoSort creates folders only inside your home folder, Documents, Downloads or
-Desktop, and never inside a system folder. It goes by where the folder really is, not by the path as
-written. If the path runs through a shortcut-style link (a symbolic link, or a junction on Windows)
-that leads somewhere outside those places, or into a system folder, the folder is refused.
+You can see this when you use **Create directory** on a Smart Folder marked **Missing** in Setup.
+StratoSort creates folders on any drive, an external one included, but never inside a system folder.
+It goes by where the folder really is, not by the path as written. If the path runs through a
+shortcut-style link (a symbolic link, or a junction on Windows) or a Windows short name that leads
+into a system folder, the folder is refused.
 
-- Edit the Smart Folder to use the real folder the link points to.
-- If that real folder is outside those places, create it yourself in File Explorer or Finder, then
-  choose it as the Smart Folder's location with **Browse**.
+- Edit the Smart Folder to use a folder outside the system folders.
+
+A folder that is not inside one of your Smart Folders or Documents is created after you confirm it
+in a prompt. If the path runs through a link, the prompt names the folder the link really leads to.
 
 ### Need to see logs
 

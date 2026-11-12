@@ -28,6 +28,8 @@ import {
   TargetFolderList,
   BulkOperations,
   OrganizeProgress,
+  OrganizeSummaryBanner,
+  InPlaceMoveNotice,
   VirtualizedFileGrid,
   VirtualizedProcessedFiles,
   UncategorizedActionsBar
@@ -227,7 +229,9 @@ function OrganizePhase() {
     handleOrganizeFiles,
     handlePreviewOrganize,
     organizeConflicts,
+    inPlaceMoves,
     lastOrganizeSummary,
+    dismissOrganizeSummary,
     cancelOrganize,
     isCancelling,
     pauseOrganize,
@@ -599,30 +603,7 @@ function OrganizePhase() {
       </Inline>
 
       {lastOrganizeSummary && (
-        <div
-          className="flex items-center gap-cozy rounded-xl border px-4 py-3 text-sm bg-stratosort-success/10 border-stratosort-success/25 text-system-gray-800"
-          role="status"
-          aria-live="polite"
-        >
-          <CheckCircle2
-            className="w-5 h-5 text-stratosort-success flex-shrink-0"
-            aria-hidden="true"
-          />
-          <div className="min-w-0">
-            <Text as="span" variant="small" className="font-medium text-system-gray-900">
-              {lastOrganizeSummary.partial
-                ? `Moved ${lastOrganizeSummary.count} file${
-                    lastOrganizeSummary.count !== 1 ? 's' : ''
-                  } (${lastOrganizeSummary.failedCount} could not be completed)`
-                : `Moved ${lastOrganizeSummary.count} file${
-                    lastOrganizeSummary.count !== 1 ? 's' : ''
-                  } to their destinations`}
-            </Text>
-            <Text as="div" variant="tiny" className="text-system-gray-600 mt-0.5">
-              You can review organized files in the status panel or continue with the next batch.
-            </Text>
-          </div>
-        </div>
+        <OrganizeSummaryBanner summary={lastOrganizeSummary} onDismiss={dismissOrganizeSummary} />
       )}
 
       {/* Main Content */}
@@ -789,6 +770,9 @@ function OrganizePhase() {
                   </div>
                 </div>
               </div>
+            )}
+            {!isOrganizing && !isPaused && (
+              <InPlaceMoveNotice moves={inPlaceMoves} className="mb-4" />
             )}
             {(isOrganizing || isPaused || progressLinger) && (
               <div className="mb-4" data-testid="organize-progress-panel">

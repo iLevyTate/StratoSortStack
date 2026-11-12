@@ -93,6 +93,43 @@ describe('OrganizePreviewModal', () => {
     expect(screen.getByText('File is no longer at its original location')).toBeInTheDocument();
   });
 
+  describe('a file that is already in its destination folder', () => {
+    const stayPlan = (destination, collision = false) => ({
+      wouldMove: [{ source: 'C:\\Docs\\Finance\\budget.xlsx', destination, collision }],
+      skipped: [],
+      wouldCreateFolders: [],
+      conflicts: collision ? 1 : 0
+    });
+
+    test('is marked as staying, with its new name', () => {
+      renderModal({ plan: stayPlan('c:/docs/finance/Budget 2025.xlsx') });
+
+      expect(screen.getByText('Already in this folder')).toBeInTheDocument();
+      expect(screen.getByText('Budget 2025.xlsx')).toBeInTheDocument();
+      expect(screen.queryByText(/Name taken/)).not.toBeInTheDocument();
+    });
+
+    test('is marked as unchanged when its name stays too', () => {
+      renderModal({ plan: stayPlan('C:\\Docs\\Finance\\budget.xlsx') });
+
+      expect(screen.getByText('Already here — no change')).toBeInTheDocument();
+      expect(screen.queryByText('Already in this folder')).not.toBeInTheDocument();
+    });
+
+    test('keeps the name-taken mark when its new name belongs to another file', () => {
+      renderModal({ plan: stayPlan('C:\\Docs\\Finance\\report_1.xlsx', true) });
+
+      expect(screen.getByText('Already in this folder')).toBeInTheDocument();
+      expect(screen.getByText(/Name taken/)).toBeInTheDocument();
+    });
+
+    test('a file arriving from another folder is not marked', () => {
+      renderModal();
+
+      expect(screen.queryByText(/^Already/)).not.toBeInTheDocument();
+    });
+  });
+
   test('the move button commits and reports the count', () => {
     const { onConfirm } = renderModal();
 

@@ -41,12 +41,15 @@ const DEFAULT_ICONS = {
  * @param {React.ElementType} icon - Override the default icon for the variant
  * @param {React.ReactNode} children - Alert content (text or elements)
  * @param {string} className - Additional CSS classes
+ * @param {'alert'|'status'} role - 'status' for standing advice that should not
+ *   interrupt a screen reader; the default announces at once
  */
 const AlertBox = memo(function AlertBox({
   variant = 'info',
   icon: IconOverride,
   children,
-  className = ''
+  className = '',
+  role = 'alert'
 }) {
   const styles = VARIANT_STYLES[variant] || VARIANT_STYLES.info;
   const Icon = IconOverride || DEFAULT_ICONS[variant] || Info;
@@ -54,7 +57,7 @@ const AlertBox = memo(function AlertBox({
   return (
     <div
       className={`flex items-start gap-compact p-3 rounded-lg border ${styles.container} ${className}`.trim()}
-      role="alert"
+      role={role}
     >
       <Icon className={`w-4 h-4 mt-0.5 flex-shrink-0 ${styles.icon}`} />
       <Text as="div" variant="tiny" className={`leading-tight ${styles.text}`}>
@@ -68,7 +71,8 @@ AlertBox.propTypes = {
   variant: PropTypes.oneOf(['info', 'warning', 'danger', 'success']),
   icon: PropTypes.elementType,
   children: PropTypes.node.isRequired,
-  className: PropTypes.string
+  className: PropTypes.string,
+  role: PropTypes.oneOf(['alert', 'status'])
 };
 
 export default AlertBox;

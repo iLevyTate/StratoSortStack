@@ -60,6 +60,20 @@ const buildMissingPathWarning = (/** @type {any} */ count) =>
   `Skipped ${count} item${count > 1 ? 's' : ''} because no stable absolute path was available`;
 
 /**
+ * A folder scan that main refuses, or that fails, resolves with
+ * `success: false` and no `files`; it does not reject. Give the reason to show
+ * for such a result, or null when the scan ran (an empty folder is a scan that
+ * ran).
+ * @param {any} scanResult
+ * @returns {string | null}
+ */
+const getScanFailureReason = (scanResult) => {
+  if (scanResult?.success !== false) return null;
+  return mapErrorToNotification({ error: scanResult.error, errorCode: scanResult.errorCode })
+    .message;
+};
+
+/**
  * The file picker offers "All Files", and main leaves unsupported, oversized
  * and unreadable picks out of `files`, listing them in `skippedFiles` with a
  * reason. Summarize them as e.g. "1 unsupported file type, 1 over the 200 MB
@@ -413,6 +427,17 @@ export function useFileHandlers({
             if (scanTimeoutId) clearTimeout(scanTimeoutId);
           });
 
+          const failureReason = getScanFailureReason(scanResult);
+          if (failureReason) {
+            addNotification(
+              `Dropped folder not scanned: ${dir.name || 'Selected folder'}. ${failureReason}`,
+              'error',
+              5000,
+              'drop-folder-error'
+            );
+            continue;
+          }
+
           if (scanResult?.partial) {
             addNotification(
               'Folder scan returned partial results (slow drive or too many files). Try a smaller folder.',
@@ -614,6 +639,17 @@ export function useFileHandlers({
         ]).finally(() => {
           if (scanTimeoutId) clearTimeout(scanTimeoutId);
         });
+
+        const failureReason = getScanFailureReason(scanResult);
+        if (failureReason) {
+          addNotification(
+            `The selected folder was not scanned. ${failureReason}`,
+            'error',
+            5000,
+            'folder-scan-error'
+          );
+          return;
+        }
 
         if (scanResult?.partial) {
           addNotification(

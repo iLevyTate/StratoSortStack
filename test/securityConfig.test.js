@@ -112,24 +112,6 @@ describe('securityConfig', () => {
     });
   });
 
-  describe('ALLOWED_APP_PATHS', () => {
-    test('includes userData', () => {
-      expect(securityConfig.ALLOWED_APP_PATHS).toContain('userData');
-    });
-
-    test('includes documents', () => {
-      expect(securityConfig.ALLOWED_APP_PATHS).toContain('documents');
-    });
-
-    test('includes downloads', () => {
-      expect(securityConfig.ALLOWED_APP_PATHS).toContain('downloads');
-    });
-
-    test('includes home', () => {
-      expect(securityConfig.ALLOWED_APP_PATHS).toContain('home');
-    });
-  });
-
   describe('SETTINGS_VALIDATION', () => {
     test('has allowedKeys as a Set', () => {
       expect(securityConfig.SETTINGS_VALIDATION.allowedKeys).toBeInstanceOf(Set);

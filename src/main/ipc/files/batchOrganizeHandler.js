@@ -586,6 +586,13 @@ async function handleBatchOrganize(params) {
         }
         const batchOperationTotal = batch.operations.length;
         const limit = pLimit(effectiveConcurrency);
+        // Files this batch has still to move. The duplicate check must not
+        // take one of them for a copy that is already filed: it may be moved
+        // or renamed away later in this batch. Built here because each
+        // operation rewrites its paths to the validated form once it starts.
+        const pendingSources = batch.operations
+          .filter((op) => op.status !== 'done' && typeof op.source === 'string')
+          .map((op) => op.source);
 
         // Abort reasons the USER deliberately triggered (renderer buttons).
         // Anything else on the signal — 'ipc-timeout', 'shutdown' (abortAll),
@@ -814,7 +821,13 @@ async function handleBatchOrganize(params) {
               const { signal } = abortController;
               if (signal.aborted) startGrace();
               else signal.addEventListener('abort', startGrace, { once: true });
-              const movePromise = performFileMove(op, log, computeFileChecksum, signal);
+              const movePromise = performFileMove(
+                op,
+                log,
+                computeFileChecksum,
+                signal,
+                pendingSources
+              );
               try {
                 const outcome = await Promise.race([movePromise, abandoned]);
                 if (outcome !== MOVE_ABANDONED) return outcome;
@@ -909,31 +922,24 @@ async function handleBatchOrganize(params) {
             }
 
             if (moveResult && moveResult.skipped) {
-              skippedCount++;
               const resolvedDestination = moveResult.destination || op.destination;
               const currentFileName = path.basename(op.source);
-              results.push({
-                success: true,
-                source: op.source,
-                destination: resolvedDestination,
-                operation: op.type || 'move',
-                skipped: true,
-                reason: moveResult.reason
-              });
 
-              // One info line per skipped file in every build: the Live
-              // Activity feed shows "Skipped <name> (already in place)". File
-              // names only, never folders or content: the logger's POSIX path
-              // redaction stops at the first space, so a full path could leak
-              // folder names such as "Medical Records" into the log.
-              log.info('[FILE-OPS] Move skipped (duplicate)', {
-                batchId,
-                source: path.basename(op.source),
-                destination: path.basename(resolvedDestination)
-              });
-
-              // Verify state is consistent (dest exists, source gone)
-              await verifyMoveCompletion(op.source, resolvedDestination, log);
+              // Verify state is consistent (dest exists, source gone) before
+              // anything reports the file as filed.
+              try {
+                await verifyMoveCompletion(op.source, resolvedDestination, log);
+              } catch (verifyError) {
+                // The source was removed as a duplicate and the copy it
+                // duplicated cannot be confirmed. Rollback has nothing to
+                // copy back, so the message is where the user learns that the
+                // file is in the trash.
+                if (moveResult.sourceRemoval === 'trashed' && verifyError instanceof Error) {
+                  verifyError.message +=
+                    '. The original was moved to the system Trash / Recycle Bin as a duplicate and can be restored from there.';
+                }
+                throw verifyError;
+              }
 
               consecutivePermissionFailures = 0;
               // A duplicate skip still mutates disk state by deleting the source file.
@@ -946,6 +952,34 @@ async function handleBatchOrganize(params) {
                 rollbackAction: 'restore_duplicate_source'
               });
               renewBatchLock(batchId);
+
+              // One info line per skipped file in every build: the Live
+              // Activity feed shows "Skipped <name> (already in place)". File
+              // names only, never folders or content: the logger's POSIX path
+              // redaction stops at the first space, so a full path could leak
+              // folder names such as "Medical Records" into the log.
+              log.info('[FILE-OPS] Move skipped (duplicate)', {
+                batchId,
+                source: path.basename(op.source),
+                destination: path.basename(resolvedDestination)
+              });
+
+              // Rollback started while this skip was being verified: it
+              // restores the source and reports the row (see the same check
+              // on the move path below).
+              if (shouldRollback) return;
+
+              skippedCount++;
+              results.push({
+                success: true,
+                source: op.source,
+                destination: resolvedDestination,
+                operation: op.type || 'move',
+                skipped: true,
+                reason: moveResult.reason,
+                // 'trashed' or 'deleted': where the source went.
+                sourceRemoval: moveResult.sourceRemoval
+              });
 
               // Not awaited (see the success path below for why).
               void processingState?.markOrganizeOpDone?.(batchId, i, {
@@ -1629,8 +1663,11 @@ function reconcileRolledBackResults(rollbackOutcome, completedOperations, rollba
  * @param {LoggerLike} log
  * @param {typeof computeFileChecksum} checksumFn
  * @param {AbortSignal|null} [abortSignal]
+ * @param {string[]} [pendingSources] - Every source the caller's batch has
+ *   still to move (the same array for each call), so the duplicate check does
+ *   not count one of them as a copy already at the destination.
  */
-async function performFileMove(op, log, checksumFn, abortSignal = null) {
+async function performFileMove(op, log, checksumFn, abortSignal = null, pendingSources) {
   // This prevents creating numbered copies of files that already exist.
   const duplicateResult = await handleDuplicateMove({
     sourcePath: op.source,
@@ -1639,7 +1676,8 @@ async function performFileMove(op, log, checksumFn, abortSignal = null) {
     logger: log,
     logPrefix: '[FILE-OPS]',
     dedupContext: 'batchOrganize',
-    removeEmbeddings: removeEmbeddingsForPathBestEffort
+    removeEmbeddings: removeEmbeddingsForPathBestEffort,
+    pendingSources
   });
   if (duplicateResult) return duplicateResult;
 
@@ -2431,9 +2469,15 @@ async function previewBatchOrganize({ operation, log }) {
     // PREVIEW_MAX_NUMERIC_ATTEMPTS so the preview stays snappy even when the
     // destination directory is densely packed. The real executor still
     // walks up to MAX_NUMERIC_RETRIES on collision before UUID-fallback.
+    //
+    // A file that is already at its destination (same path, or the same name
+    // in another case where the filesystem ignores case) occupies that path
+    // itself, so the executor's move does not collide with anything.
     let finalDestination = op.destination;
     let collision = false;
-    if (await pathExistsSilent(op.destination)) {
+    const alreadyAtDestination =
+      _canonicalizeForOverlapCheck(op.source) === _canonicalizeForOverlapCheck(op.destination);
+    if (!alreadyAtDestination && (await pathExistsSilent(op.destination))) {
       collision = true;
       conflicts += 1;
       const ext = path.extname(op.destination);

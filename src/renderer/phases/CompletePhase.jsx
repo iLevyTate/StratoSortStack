@@ -1,7 +1,7 @@
 import React, { memo, useCallback, useMemo } from 'react';
 import PropTypes from 'prop-types';
 import { motion, useReducedMotion } from 'framer-motion';
-import { CheckCircle2, Check, ArrowLeft, FolderOpen, FilePlus } from 'lucide-react';
+import { CheckCircle2, Check, Copy, ArrowLeft, FolderOpen, FilePlus } from 'lucide-react';
 import { PHASES } from '../../shared/constants';
 import { useAppSelector, useAppDispatch } from '../store/hooks';
 import { setPhase, resetUi } from '../store/slices/uiSlice';
@@ -20,6 +20,7 @@ import { logger } from '../../shared/logger';
 import { toCanonicalPath } from '../utils/canonicalPath';
 import { collectOrganizedPathKeys, mergeOrganizedPathIndex } from '../utils/organizedPathIndex';
 import { useFileActions } from '../hooks/useFileActions';
+import { describeDuplicateRemoval, isRemovedDuplicate } from '../utils/duplicateRemoval';
 
 /**
  * Pick a folder path safe to hand to shell.openPath — prefers `newLocation`
@@ -62,23 +63,40 @@ const FileRow = memo(function FileRow({ file, index, redactPaths, onReveal }) {
       : 'Organized';
   // Say where the file went and, when the move renamed it, what it is called
   // now — the original name alone does not tell the user what to look for.
-  const destinationLine =
-    renamed && !redactPaths ? `Renamed to ${newName} · in ${displayFolder}` : displayFolder;
-  const rowTitle = redactPaths
-    ? `${displayName} -> ${displayFolder}`
-    : `${originalName} → ${filePath || displayFolder}`;
+  // A removed duplicate never went anywhere: `path` is the copy that was kept.
+  const duplicate = isRemovedDuplicate(file);
+  const destinationLine = duplicate
+    ? `Not moved: an identical copy is already in ${
+        redactPaths ? 'the destination' : displayFolder
+      }. ${describeDuplicateRemoval(file)}`
+    : renamed && !redactPaths
+      ? `Renamed to ${newName} · in ${displayFolder}`
+      : displayFolder;
+  const rowTitle = duplicate
+    ? displayName
+    : redactPaths
+      ? `${displayName} -> ${displayFolder}`
+      : `${originalName} → ${filePath || displayFolder}`;
 
   return (
     <div
       className="group flex items-center py-2.5 px-4 gap-cozy border-b border-border-soft/30 last:border-0"
       aria-label={`Organized file ${index + 1}`}
     >
-      <Check className="w-4 h-4 text-stratosort-success flex-shrink-0" />
+      {duplicate ? (
+        <Copy className="w-4 h-4 text-system-gray-500 flex-shrink-0" />
+      ) : (
+        <Check className="w-4 h-4 text-stratosort-success flex-shrink-0" />
+      )}
       <div className="flex-1 min-w-0">
         <Text variant="small" className="text-system-gray-800 truncate" title={rowTitle}>
           {displayName}
         </Text>
-        <Text variant="tiny" className="text-system-gray-500 truncate">
+        <Text
+          variant="tiny"
+          className="text-system-gray-500 truncate"
+          title={duplicate ? destinationLine : undefined}
+        >
           {destinationLine}
         </Text>
       </div>
@@ -88,8 +106,12 @@ const FileRow = memo(function FileRow({ file, index, redactPaths, onReveal }) {
           variant="ghost"
           size="sm"
           className="flex-shrink-0"
-          aria-label={`Show ${displayName} in its folder`}
-          title="Show this file in its folder"
+          aria-label={
+            duplicate
+              ? `Show the kept copy of ${displayName} in its folder`
+              : `Show ${displayName} in its folder`
+          }
+          title={duplicate ? 'Show the kept copy in its folder' : 'Show this file in its folder'}
         >
           <FolderOpen className="w-4 h-4" />
         </Button>
@@ -116,44 +138,59 @@ function CompletePhase() {
     [organizedPathIndex, organizedFiles]
   );
 
-  const { filesToRender, overflowCount, destinationCount, totalFiles, primaryDestination } =
-    useMemo(() => {
-      const safeFiles = Array.isArray(organizedFiles) ? organizedFiles : [];
-      const destinations = new Set();
-      // Track folder counts separately from the destination set so the
-      // "Open organized folder" CTA can pick a real directory path, even if
-      // some entries fall back to the synthetic 'Organized' placeholder.
-      const folderCounts = new Map();
-      safeFiles.forEach((file) => {
-        if (!file || typeof file !== 'object') return;
-        // A destination is a folder. Counting file paths made every file its
-        // own destination.
-        const folder = pickOpenableFolder(file);
+  const {
+    filesToRender,
+    overflowCount,
+    destinationCount,
+    totalFiles,
+    movedCount,
+    duplicateCount,
+    primaryDestination
+  } = useMemo(() => {
+    const safeFiles = Array.isArray(organizedFiles) ? organizedFiles : [];
+    const destinations = new Set();
+    // Track folder counts separately from the destination set so the
+    // "Open organized folder" CTA can pick a real directory path, even if
+    // some entries fall back to the synthetic 'Organized' placeholder.
+    const folderCounts = new Map();
+    let duplicates = 0;
+    safeFiles.forEach((file) => {
+      if (!file || typeof file !== 'object') return;
+      // A destination is a folder. Counting file paths made every file its
+      // own destination.
+      const folder = pickOpenableFolder(file);
+      if (isRemovedDuplicate(file)) {
+        // Nothing was moved there, so it is not a destination of this run.
+        duplicates += 1;
+      } else {
         destinations.add(folder ? toCanonicalPath(folder) : file.smartFolder || 'Organized');
-        if (folder) {
-          folderCounts.set(folder, (folderCounts.get(folder) || 0) + 1);
-        }
-      });
+      }
+      if (folder) {
+        folderCounts.set(folder, (folderCounts.get(folder) || 0) + 1);
+      }
+    });
 
-      let topFolder = null;
-      let topCount = 0;
-      folderCounts.forEach((count, folder) => {
-        if (count > topCount) {
-          topCount = count;
-          topFolder = folder;
-        }
-      });
+    let topFolder = null;
+    let topCount = 0;
+    folderCounts.forEach((count, folder) => {
+      if (count > topCount) {
+        topCount = count;
+        topFolder = folder;
+      }
+    });
 
-      const displayed = safeFiles.slice(0, 12);
-      return {
-        filesToRender: displayed,
-        overflowCount: Math.max(organizedCount - displayed.length, 0),
-        destinationCount: destinations.size,
-        // Same source as Dashboard "Organized" (selectOrganizedCount).
-        totalFiles: organizedCount,
-        primaryDestination: topFolder
-      };
-    }, [organizedFiles, organizedCount]);
+    const displayed = safeFiles.slice(0, 12);
+    return {
+      filesToRender: displayed,
+      overflowCount: Math.max(organizedCount - displayed.length, 0),
+      destinationCount: destinations.size,
+      // Same source as Dashboard "Organized" (selectOrganizedCount).
+      totalFiles: organizedCount,
+      movedCount: Math.max(organizedCount - duplicates, 0),
+      duplicateCount: duplicates,
+      primaryDestination: topFolder
+    };
+  }, [organizedFiles, organizedCount]);
 
   // Analyzed files still waiting to organize — exclude already-moved paths so
   // the Complete screen does not treat remapped results as "skipped"/unmoved.
@@ -176,10 +213,17 @@ function CompletePhase() {
       return 'This session did not move any files.';
     }
 
-    return `${totalFiles} file${totalFiles !== 1 ? 's' : ''} moved into ${destinationCount} destination${
-      destinationCount !== 1 ? 's' : ''
-    }.`;
-  }, [destinationCount, totalFiles]);
+    const moved =
+      movedCount > 0
+        ? `${movedCount} file${movedCount !== 1 ? 's' : ''} moved into ${destinationCount} destination${
+            destinationCount !== 1 ? 's' : ''
+          }.`
+        : 'No files needed moving.';
+    if (duplicateCount === 0) return moved;
+    return `${moved} ${
+      duplicateCount === 1 ? '1 identical copy was' : `${duplicateCount} identical copies were`
+    } removed instead of moved.`;
+  }, [destinationCount, duplicateCount, movedCount, totalFiles]);
 
   const actions = useMemo(
     () => ({
@@ -235,6 +279,15 @@ function CompletePhase() {
       ? `Opens ${redactPaths ? 'the folder' : primaryDestination} — it received the most files. Use the folder button on a row to see any other file.`
       : `Opens ${redactPaths ? 'the folder these files were moved to' : primaryDestination}`;
 
+  const listCaption = [
+    movedCount > 0 ? `${movedCount} file${movedCount !== 1 ? 's' : ''} organized` : '',
+    duplicateCount > 0
+      ? `${duplicateCount} duplicate${duplicateCount !== 1 ? 's' : ''} removed`
+      : ''
+  ]
+    .filter(Boolean)
+    .join(', ');
+
   const showCelebration = totalFiles > 0 && !shouldReduceMotion;
 
   return (
@@ -288,11 +341,13 @@ function CompletePhase() {
           className="max-w-xl mx-auto"
         >
           <Text variant="lead">
-            {totalFiles > 0
-              ? `Your reviewed batch is complete. ${totalFiles} ${
-                  totalFiles === 1 ? 'file is' : 'files are'
+            {movedCount > 0
+              ? `Your reviewed batch is complete. ${movedCount} ${
+                  movedCount === 1 ? 'file is' : 'files are'
                 } now in place.`
-              : 'No files were organized in this session.'}
+              : totalFiles > 0
+                ? 'Your reviewed batch is complete. Every file already had an identical copy in its destination folder.'
+                : 'No files were organized in this session.'}
           </Text>
         </motion.div>
       </Stack>
@@ -344,10 +399,16 @@ function CompletePhase() {
       >
         <Inline className="justify-between pt-2" gap="cozy">
           <Inline gap="relaxed">
-            {totalFiles > 0 && (
+            {movedCount > 0 && (
               <StatusBadge variant="success">
                 <CheckCircle2 className="w-3.5 h-3.5" />
-                {totalFiles} file{totalFiles !== 1 ? 's' : ''} moved
+                {movedCount} file{movedCount !== 1 ? 's' : ''} moved
+              </StatusBadge>
+            )}
+            {duplicateCount > 0 && (
+              <StatusBadge variant="neutral">
+                <Copy className="w-3.5 h-3.5" />
+                {duplicateCount} duplicate{duplicateCount !== 1 ? 's' : ''} removed
               </StatusBadge>
             )}
             {analyzedCount > 0 && (
@@ -371,9 +432,9 @@ function CompletePhase() {
             <Heading as="h2" variant="h5">
               Session summary
             </Heading>
-            {totalFiles > 0 && (
+            {listCaption && (
               <Text variant="tiny" className="text-system-gray-500">
-                {totalFiles} file{totalFiles !== 1 ? 's' : ''} organized
+                {listCaption}
               </Text>
             )}
           </div>
@@ -465,7 +526,8 @@ FileRow.propTypes = {
     path: PropTypes.string,
     newName: PropTypes.string,
     newLocation: PropTypes.string,
-    destination: PropTypes.string
+    destination: PropTypes.string,
+    duplicateRemoval: PropTypes.oneOf(['trashed', 'deleted'])
   }),
   index: PropTypes.number.isRequired,
   redactPaths: PropTypes.bool,

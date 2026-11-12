@@ -44,14 +44,14 @@ describe('errorMapping: file operation codes', () => {
     expect(mapped.message).toMatch(/Network folders/);
   });
 
-  describe('LINK_OUTSIDE_ALLOWED (create folder through a link that leads outside)', () => {
+  describe('LINK_INTO_SYSTEM (create folder through a link that leads into a system folder)', () => {
     const HANDLER_MESSAGE =
-      'That folder is inside a link that points outside your allowed locations. Choose the real folder instead.';
+      'That folder leads into a system folder through a link or short name. Choose a different folder.';
 
     test('shows the handler message as is, as a warning', () => {
       const mapped = mapErrorToNotification({
         error: HANDLER_MESSAGE,
-        errorCode: 'LINK_OUTSIDE_ALLOWED'
+        errorCode: 'LINK_INTO_SYSTEM'
       });
       expect(mapped).toMatchObject({ severity: 'warning', message: HANDLER_MESSAGE });
     });
@@ -59,14 +59,14 @@ describe('errorMapping: file operation codes', () => {
     test('a newer handler wording wins over the copy kept here', () => {
       const mapped = mapErrorToNotification({
         error: 'That folder is reached through a link. Choose the real folder.',
-        errorCode: 'LINK_OUTSIDE_ALLOWED'
+        errorCode: 'LINK_INTO_SYSTEM'
       });
       expect(mapped.message).toBe('That folder is reached through a link. Choose the real folder.');
       expect(mapped.severity).toBe('warning');
     });
 
     test('without a handler message it still says what to do', () => {
-      expect(mapErrorToNotification({ errorCode: 'LINK_OUTSIDE_ALLOWED' })).toMatchObject({
+      expect(mapErrorToNotification({ errorCode: 'LINK_INTO_SYSTEM' })).toMatchObject({
         severity: 'warning',
         message: HANDLER_MESSAGE
       });
@@ -74,11 +74,33 @@ describe('errorMapping: file operation codes', () => {
 
     test('read from the result envelope too', () => {
       const mapped = mapErrorToNotification({
-        error: { success: false, error: HANDLER_MESSAGE, errorCode: 'LINK_OUTSIDE_ALLOWED' }
+        error: { success: false, error: HANDLER_MESSAGE, errorCode: 'LINK_INTO_SYSTEM' }
       });
       // The envelope carries its text in `error`, not `message`; the mapped
       // copy is the same sentence.
       expect(mapped.message).toBe(HANDLER_MESSAGE);
+    });
+  });
+
+  describe('SECURITY_PATH_VIOLATION (a folder path main refused)', () => {
+    test('shows which rule the path broke, as an error', () => {
+      const mapped = mapErrorToNotification({
+        error: 'Invalid path: access to system directories is not allowed',
+        errorCode: 'SECURITY_PATH_VIOLATION'
+      });
+      expect(mapped).toEqual(
+        expect.objectContaining({
+          severity: 'error',
+          message: 'Invalid path: access to system directories is not allowed'
+        })
+      );
+    });
+
+    test('without a handler message it still says the location was refused', () => {
+      expect(mapErrorToNotification({ errorCode: 'SECURITY_PATH_VIOLATION' })).toMatchObject({
+        severity: 'error',
+        message: 'Refused: that location cannot be used.'
+      });
     });
   });
 
