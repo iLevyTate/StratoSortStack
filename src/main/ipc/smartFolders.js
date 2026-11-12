@@ -23,12 +23,7 @@ const {
   enrichFileTextForEmbedding
 } = require('../analysis/semanticExtensionMap');
 
-// Import centralized security configuration
-const { ALLOWED_APP_PATHS } = require('../../shared/securityConfig');
-const {
-  validateFileOperationPathSync,
-  validateFileOperationPath
-} = require('../../shared/pathSanitization');
+const { validateFileOperationPath } = require('../../shared/pathSanitization');
 const { renameNoReplace } = require('../../shared/atomicFileOperations');
 const { authorizeSmartFolderRoot } = require('./files/destinationPolicy');
 const { buildFolderRenamePathChanges } = require('../utils/folderRenamePathChanges');
@@ -311,77 +306,40 @@ async function syncSmartFolderEmbeddings({
 }
 
 /**
- * CRITICAL SECURITY FIX: Sanitize and validate folder paths to prevent path traversal attacks
- * @param {string} inputPath - User-provided path to validate
- * @returns {string} - Sanitized, validated path
- * @throws {Error} - If path is invalid or violates security constraints
+ * Check a folder path from the renderer before it is scanned or saved as a
+ * smart folder. The path must be absolute, free of traversal, not a URL or a
+ * Windows device path, and not a system directory, either as spelled or once
+ * the links and 8.3 short names along it are resolved.
+ *
+ * Any drive passes, so a folder on an external or secondary drive is as good
+ * as one under the home directory. Whether a location may become a smart
+ * folder is decided afterwards by the destination policy
+ * ({@link vetSmartFolderRoot}), not here.
+ *
+ * @param {string} inputPath - Path from the renderer
+ * @returns {Promise<string>} The normalized path, in the caller's spelling
+ * @throws {Error} When the path fails a check
  */
-function sanitizeFolderPath(inputPath) {
-  // Get allowed base paths from centralized config
-  const ALLOWED_BASE_PATHS = ALLOWED_APP_PATHS.map((appPath) => {
-    try {
-      return app.getPath(/** @type {Parameters<typeof app.getPath>[0]} */ (appPath));
-    } catch {
-      return null;
-    }
-  }).filter(Boolean);
-
-  // Network shares are exempt from the allowed-base containment below, so a
-  // DOS device path (`\\.\C:\Temp`, `\\?\C:\Temp`) must not be mistaken for
-  // one: it would name any local drive while skipping containment entirely.
+async function sanitizeFolderPath(inputPath) {
+  // A DOS device path (`\\.\C:\Temp`, `\\?\C:\Temp`) names a local drive in
+  // the shape of a network share. Shares skip the real-location check below,
+  // so the device form is refused outright.
   if (isWindowsDeviceNamespacePath(inputPath)) {
     throw new Error('Invalid path: Windows device namespace paths are not allowed');
   }
 
-  const isUNC = isUNCPath(inputPath);
-
-  const validation = validateFileOperationPathSync(
-    inputPath,
-    isUNC ? null : ALLOWED_BASE_PATHS, // Bypass allowed base paths for UNC
-    {
-      requireAbsolute: true,
-      disallowUNC: false, // Allow UNC paths
-      disallowUrlSchemes: true
-    }
-  );
-
-  if (validation.valid) {
-    return validation.normalizedPath;
+  const validation = await validateFileOperationPath(inputPath, {
+    requireAbsolute: true,
+    disallowUNC: false,
+    disallowUrlSchemes: true,
+    // A share is judged as spelled: resolving one that is offline hangs until
+    // the check times out, and a timed-out check refuses the path.
+    checkSymlinks: !isUNCPath(inputPath)
+  });
+  if (!validation.valid) {
+    throw new Error(validation.error || 'Invalid path');
   }
-
-  // Cross-platform fallback: allow POSIX-style paths on Windows in test/mocked environments.
-  if (
-    process.platform === 'win32' &&
-    typeof inputPath === 'string' &&
-    inputPath.startsWith('/') &&
-    ALLOWED_BASE_PATHS.some((base) => typeof base === 'string' && base.startsWith('/'))
-  ) {
-    const normalized = path.posix.normalize(inputPath);
-    if (!path.posix.isAbsolute(normalized)) {
-      throw new Error('Invalid path: must be absolute');
-    }
-    const parts = normalized.split('/').filter(Boolean);
-    if (parts.some((part) => part === '..')) {
-      throw new Error('Invalid path: path traversal detected');
-    }
-    const allowed = ALLOWED_BASE_PATHS.some((base) => {
-      if (!base || !base.startsWith('/')) return false;
-      const baseNormalized = path.posix.normalize(base);
-      if (normalized === baseNormalized) return true;
-      return normalized.startsWith(`${baseNormalized}/`);
-    });
-    if (!allowed) {
-      throw new Error(
-        'Invalid path: must be within allowed directories (Documents, Downloads, Desktop, Pictures, Videos, Music, or Home)'
-      );
-    }
-    return normalized;
-  }
-
-  throw new Error(
-    validation.error ||
-      'Invalid path: must be within allowed directories (Documents, Downloads, Desktop, Pictures, Videos, Music, or Home)'
-  );
+  return validation.normalizedPath;
 }
 
 const { IpcServiceContext, createFromLegacyParams } = require('./IpcServiceContext');
@@ -642,7 +600,7 @@ async function handleSmartFoldersScanStructure({ logger, scanDirectory }, event,
     // CRITICAL SECURITY FIX: Sanitize path to prevent directory traversal
     let sanitizedPath;
     try {
-      sanitizedPath = sanitizeFolderPath(rootPath);
+      sanitizedPath = await sanitizeFolderPath(rootPath);
     } catch (securityError) {
       return {
         success: false,
@@ -797,7 +755,7 @@ async function handleSmartFoldersAdd(
       // CRITICAL SECURITY FIX: Sanitize path before any operations
       let normalizedPath;
       try {
-        normalizedPath = sanitizeFolderPath(folder.path);
+        normalizedPath = await sanitizeFolderPath(folder.path);
         if (isUNCPath(normalizedPath)) {
           logger.info('[SMART-FOLDERS] UNC path accepted for new folder:', normalizedPath);
         }
@@ -1509,7 +1467,7 @@ async function handleSmartFoldersEdit(
     if (updatedFolder.path) {
       try {
         // CRITICAL SECURITY FIX: Sanitize path before any operations
-        const normalizedPath = sanitizeFolderPath(updatedFolder.path);
+        const normalizedPath = await sanitizeFolderPath(updatedFolder.path);
         if (isUNCPath(normalizedPath)) {
           logger.info('[SMART-FOLDERS] UNC path accepted for folder update:', normalizedPath);
         }
@@ -1775,7 +1733,7 @@ async function handleSmartFoldersUpdateCustom(
     for (const folder of folders) {
       if (folder.path) {
         try {
-          folder.path = sanitizeFolderPath(folder.path);
+          folder.path = await sanitizeFolderPath(folder.path);
         } catch (sanitizeError) {
           return {
             success: false,
@@ -1890,7 +1848,7 @@ async function handleSmartFoldersSave(
     for (const folder of folders) {
       if (folder.path) {
         try {
-          folder.path = sanitizeFolderPath(folder.path);
+          folder.path = await sanitizeFolderPath(folder.path);
         } catch (sanitizeError) {
           return {
             success: false,

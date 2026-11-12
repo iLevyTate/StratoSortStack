@@ -85,6 +85,18 @@ describe('UI primitives accessibility (axe)', () => {
         await expectNoA11yViolations(<AlertBox variant={variant}>Heads up</AlertBox>);
       }
     );
+
+    test('announces at once by default, and politely as role="status"', async () => {
+      await expectNoA11yViolations(
+        <>
+          <AlertBox>Now</AlertBox>
+          <AlertBox role="status">Standing advice</AlertBox>
+        </>
+      );
+
+      expect(document.querySelector('[role="alert"]').textContent).toBe('Now');
+      expect(document.querySelector('[role="status"]').textContent).toBe('Standing advice');
+    });
   });
 
   describe('StatusBadge', () => {

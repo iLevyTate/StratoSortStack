@@ -6,6 +6,7 @@ import { Button, StatusBadge } from '../ui';
 import { Text } from '../ui/Typography';
 import { Inline } from '../layout';
 import { formatDisplayFileName, formatDisplayPath } from '../../utils/pathDisplay';
+import { toParentFolderKey } from '../../utils/canonicalPath';
 
 const SKIP_REASONS = {
   'source-missing': 'File is no longer at its original location',
@@ -22,8 +23,9 @@ function splitPath(p) {
 /**
  * Shows the dry-run plan from previewBatchOrganize before anything moves:
  * every file grouped under the folder it will land in, its new name when the
- * move renames it, folders that will be created, and name clashes the move
- * will resolve with a numeric suffix.
+ * move renames it, folders that will be created, name clashes the move will
+ * resolve with a numeric suffix, and files that are already in the folder
+ * chosen for them and so do not change folder.
  */
 function OrganizePreviewModal({ isOpen, plan, onClose, onConfirm, redactPaths, isOrganizing }) {
   const { groups, newFolders } = useMemo(() => {
@@ -34,11 +36,14 @@ function OrganizePreviewModal({ isOpen, plan, onClose, onConfirm, redactPaths, i
       const dest = splitPath(item?.destination);
       const src = splitPath(item?.source);
       const list = byFolder.get(dest.folder) || [];
+      const fromFolderKey = toParentFolderKey(item?.source);
       list.push({
         key: item?.source || `${dest.folder}|${dest.name}`,
         fromName: src.name,
         toName: dest.name,
-        collision: Boolean(item?.collision)
+        collision: Boolean(item?.collision),
+        staysInFolder:
+          fromFolderKey !== null && fromFolderKey === toParentFolderKey(item?.destination)
       });
       byFolder.set(dest.folder, list);
     }
@@ -129,10 +134,19 @@ function OrganizePreviewModal({ isOpen, plan, onClose, onConfirm, redactPaths, i
                         </Text>
                       </>
                     )}
-                    {f.collision && (
-                      <StatusBadge variant="warning" size="sm" className="shrink-0 ml-auto">
-                        Name taken — number added
-                      </StatusBadge>
+                    {(f.staysInFolder || f.collision) && (
+                      <span className="ml-auto flex shrink-0 items-center gap-compact">
+                        {f.staysInFolder && (
+                          <StatusBadge variant="info" size="sm">
+                            {renamed ? 'Already in this folder' : 'Already here — no change'}
+                          </StatusBadge>
+                        )}
+                        {f.collision && (
+                          <StatusBadge variant="warning" size="sm">
+                            Name taken — number added
+                          </StatusBadge>
+                        )}
+                      </span>
                     )}
                   </li>
                 );

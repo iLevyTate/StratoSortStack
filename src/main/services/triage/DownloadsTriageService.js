@@ -1178,6 +1178,12 @@ class DownloadsTriageService {
           .filter((p) => typeof p === 'string' && p.length > 0)
           .map((p) => path.resolve(p));
 
+        // Every file this action still has to move: the duplicate check must
+        // not count one of them as a copy already in its destination folder.
+        const pendingSources = filesInSession
+          .map((f) => f?.path)
+          .filter((p) => typeof p === 'string' && p.length > 0);
+
         for (const f of filesInSession) {
           const srcRaw = f?.path;
           const destDirRaw = f?.suggestedFolderPath;
@@ -1253,7 +1259,7 @@ class DownloadsTriageService {
             await fs.mkdir(path.dirname(op.destination), { recursive: true });
 
             const moveResult = await withTimeout(
-              performFileMove(op, logger, computeFileChecksum),
+              performFileMove(op, logger, computeFileChecksum, null, pendingSources),
               TIMEOUTS.FILE_COPY || 120000,
               `Triage organize ${path.basename(op.source)}`
             );

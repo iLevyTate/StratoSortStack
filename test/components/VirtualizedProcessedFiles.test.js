@@ -93,4 +93,66 @@ describe('VirtualizedProcessedFiles', () => {
     expect(container.querySelector('.truncate')).toBeInTheDocument();
     expect(container.querySelector('.overflow-hidden')).toBeInTheDocument();
   });
+
+  // A file whose destination already held an identical copy is removed, not
+  // moved, and must not read as "Organized".
+  describe('a duplicate that was removed instead of moved', () => {
+    const duplicate = {
+      originalPath: '/in/report (1).pdf',
+      originalName: 'report (1).pdf',
+      newName: 'report.pdf',
+      smartFolder: 'Finance',
+      organizedAt: '2026-03-24T00:00:00.000Z',
+      duplicateRemoval: 'trashed'
+    };
+    const movedFile = (n) => ({
+      originalPath: `/in/file-${n}.pdf`,
+      originalName: `file-${n}.pdf`,
+      newName: `file-${n}.pdf`,
+      smartFolder: 'Finance',
+      organizedAt: '2026-03-24T00:00:00.000Z'
+    });
+    const duplicateLine =
+      /^Not moved: an identical copy is already in Finance\. This copy is in the system Trash\. \| /;
+
+    test('says so in a short list', () => {
+      selectRedactPaths.mockReturnValue(false);
+
+      render(<VirtualizedProcessedFiles files={[movedFile(1), duplicate]} />);
+
+      expect(screen.getByText('Duplicate')).toBeInTheDocument();
+      expect(screen.getByText('report (1).pdf')).toBeInTheDocument();
+      expect(screen.getByText(duplicateLine)).toBeInTheDocument();
+      expect(screen.getByText('Not moved')).toBeInTheDocument();
+      // The file that did move still reads as before.
+      expect(screen.getByText('file-1.pdf -> file-1.pdf')).toBeInTheDocument();
+      expect(screen.getAllByText('Organized')).toHaveLength(1);
+    });
+
+    test('says so in a long, virtualized list', () => {
+      selectRedactPaths.mockReturnValue(false);
+      const many = Array.from({ length: 31 }, (_, n) => movedFile(n));
+
+      render(<VirtualizedProcessedFiles files={[...many, duplicate]} />);
+
+      expect(screen.getByText(/virtualized for performance/)).toBeInTheDocument();
+      expect(screen.getByText(duplicateLine)).toBeInTheDocument();
+      expect(screen.getAllByText('Not moved')).toHaveLength(1);
+      expect(screen.getAllByText('Organized')).toHaveLength(31);
+    });
+
+    test('reports a copy that did not go to the Trash as removed, with the folder hidden under redaction', () => {
+      selectRedactPaths.mockReturnValue(true);
+
+      render(<VirtualizedProcessedFiles files={[{ ...duplicate, duplicateRemoval: 'deleted' }]} />);
+
+      expect(
+        screen.getByText(
+          /^Not moved: an identical copy is already in the destination\. This copy was removed\. \| /
+        )
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/Finance/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/report/)).not.toBeInTheDocument();
+    });
+  });
 });

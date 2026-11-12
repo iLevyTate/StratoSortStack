@@ -398,6 +398,64 @@ describe('useFileHandlers', () => {
       );
     });
 
+    // Main answers a refused or failed scan with `success: false` and no
+    // `files`. That is not an empty folder, and must not read like one.
+    test('a folder main refuses to scan shows the refusal, not "no files"', async () => {
+      mockElectronAPI.files.selectDirectory.mockResolvedValue({
+        success: true,
+        path: 'C:\\Windows\\System32'
+      });
+      mockElectronAPI.smartFolders.scanStructure.mockResolvedValue({
+        success: false,
+        error: 'Invalid path: access to system directories is not allowed',
+        errorCode: 'SECURITY_PATH_VIOLATION'
+      });
+
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      await act(async () => {
+        await result.current.handleFolderSelection();
+      });
+
+      expect(mockAddNotification).toHaveBeenCalledTimes(1);
+      expect(mockAddNotification).toHaveBeenCalledWith(
+        'The selected folder was not scanned. Invalid path: access to system directories is not allowed',
+        'error',
+        5000,
+        'folder-scan-error'
+      );
+      expect(mockAddSelectedFiles).not.toHaveBeenCalled();
+      expect(mockAnalyzeFiles).not.toHaveBeenCalled();
+      expect(result.current.isScanning).toBe(false);
+    });
+
+    test('a scan that fails shows the failure, not "no files"', async () => {
+      mockElectronAPI.files.selectDirectory.mockResolvedValue({
+        success: true,
+        path: 'F:\\Unplugged'
+      });
+      mockElectronAPI.smartFolders.scanStructure.mockResolvedValue({
+        success: false,
+        error: 'The drive could not be read'
+      });
+
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      await act(async () => {
+        await result.current.handleFolderSelection();
+      });
+
+      expect(mockAddNotification).toHaveBeenCalledTimes(1);
+      expect(mockAddNotification).toHaveBeenCalledWith(
+        expect.stringMatching(/^The selected folder was not scanned\. \S/),
+        'error',
+        5000,
+        'folder-scan-error'
+      );
+      expect(mockAddSelectedFiles).not.toHaveBeenCalled();
+      expect(result.current.isScanning).toBe(false);
+    });
+
     test('handles folder selection errors', async () => {
       mockElectronAPI.files.selectDirectory.mockRejectedValue(new Error('Folder error'));
 
@@ -570,6 +628,58 @@ describe('useFileHandlers', () => {
       created: new Date().toISOString(),
       modified: new Date().toISOString(),
       isDirectory: true
+    });
+
+    test('a dropped folder main refuses to scan is named with the reason', async () => {
+      mockElectronAPI.files.getStats.mockResolvedValueOnce(directoryStats());
+      mockElectronAPI.smartFolders.scanStructure.mockResolvedValueOnce({
+        success: false,
+        error: 'Invalid path: access to system directories is not allowed',
+        errorCode: 'SECURITY_PATH_VIOLATION'
+      });
+
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      await act(async () => {
+        await result.current.handleFileDrop([{ path: '/dropped-folder', name: 'dropped-folder' }]);
+      });
+
+      expect(mockAddNotification).toHaveBeenCalledWith(
+        'Dropped folder not scanned: dropped-folder. Invalid path: access to system directories is not allowed',
+        'error',
+        5000,
+        'drop-folder-error'
+      );
+      expect(mockAddSelectedFiles).not.toHaveBeenCalled();
+      expect(mockAnalyzeFiles).not.toHaveBeenCalled();
+    });
+
+    test('a refused folder does not stop the files dropped with it', async () => {
+      mockElectronAPI.files.getStats.mockResolvedValueOnce(directoryStats());
+      mockElectronAPI.smartFolders.scanStructure.mockResolvedValueOnce({
+        success: false,
+        error: 'Invalid path: access to system directories is not allowed',
+        errorCode: 'SECURITY_PATH_VIOLATION'
+      });
+
+      const { result } = renderHook(() => useFileHandlers(createMockOptions()));
+
+      await act(async () => {
+        await result.current.handleFileDrop([
+          { path: '/dropped-folder', name: 'dropped-folder' },
+          { path: '/dropped.txt', name: 'dropped.txt' }
+        ]);
+      });
+
+      expect(mockAddNotification).toHaveBeenCalledWith(
+        expect.stringContaining('Dropped folder not scanned: dropped-folder.'),
+        'error',
+        5000,
+        'drop-folder-error'
+      );
+      expect(mockAnalyzeFiles).toHaveBeenCalledWith([
+        expect.objectContaining({ path: '/dropped.txt' })
+      ]);
     });
 
     test('dropping a folder whose files are all queued adds and analyzes nothing', async () => {

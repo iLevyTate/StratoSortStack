@@ -14,6 +14,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Two identical files in one folder are no longer both sent to the trash when one run renames or
+  moves them.** Each was taken for a copy of the other that was already in place, so both were
+  removed instead of moved, and the run could then fail and be undone with the two files missing
+  from the folder. A file the same run has still to move no longer counts as a copy already in
+  place, and renaming a file inside its own folder never removes it. A file removed this way went to
+  the system trash.
+- **An organize run that did not move everything says so and stays on the Organize screen.** A
+  banner above the file list says how many files moved, how many did not and why, or that the whole
+  run was undone and the files are back where they were. Before, a run that failed part-way or was
+  undone could move on to the Complete screen as if it had worked. An identical copy that was
+  removed instead of moved is listed as a duplicate, with the copy that was kept, and is no longer
+  counted as a moved file.
+- **Files that are already in the folder chosen for them are pointed out before the run.** When a
+  folder you sort from is also one of your Smart Folders, files matched to it stay where they are
+  (or are renamed there). A notice on the Organize screen and a mark in Preview now say which, so a
+  run no longer reports files as organized while nothing appears anywhere new.
+- **A folder on an external or second drive can be a Smart Folder, can be scanned and can have
+  folders created in it.** These were refused for any folder outside your user folder, with a
+  message about a link or short name. Folders inside system folders, or reached through a link that
+  leads into one, are still refused. A folder that is not inside a Smart Folder or Documents and was
+  not picked in a file dialog is confirmed once in a prompt.
+- **A folder the app will not scan, or cannot read, gives the reason.** Choosing or dropping such a
+  folder on the Discover screen said that no files were found.
 - **An image that arrives just as a text model starts loading no longer starts the vision runtime
   beside it.** The image looked for a loading model before the load began and found none. The vision
   runtime now checks the memory budget again at the moment it starts; if a load began meanwhile, the

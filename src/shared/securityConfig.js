@@ -167,21 +167,6 @@ function _getWindowsDriveLetters() {
 const PROTOTYPE_POLLUTION_KEYS = ['__proto__', 'constructor', 'prototype'];
 
 /**
- * Allowed Electron app paths for file operations
- * Used to determine what user directories are safe to access
- */
-const ALLOWED_APP_PATHS = [
-  'userData', // App data directory
-  'documents', // User documents
-  'downloads', // Downloads
-  'desktop', // Desktop
-  'pictures', // Pictures
-  'videos', // Videos
-  'music', // Music
-  'home' // Home directory
-];
-
-/**
  * Settings validation configuration
  */
 const SETTINGS_VALIDATION = {
@@ -504,7 +489,6 @@ module.exports = {
   DANGEROUS_PATHS,
   getDangerousPaths,
   PROTOTYPE_POLLUTION_KEYS,
-  ALLOWED_APP_PATHS,
 
   // Shell security
   EXECUTABLE_EXTENSIONS,

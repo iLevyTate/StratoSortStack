@@ -48,8 +48,8 @@ jest.mock('../../src/renderer/store/middleware/persistenceMiddleware', () => ({
 }));
 
 jest.mock('../../src/renderer/components/ui', () => ({
-  Button: ({ children, className, onClick }) => (
-    <button className={className} onClick={onClick}>
+  Button: ({ children, className, onClick, 'aria-label': ariaLabel }) => (
+    <button className={className} onClick={onClick} aria-label={ariaLabel}>
       {children}
     </button>
   ),
@@ -111,6 +111,7 @@ jest.mock('framer-motion', () => ({
 jest.mock('lucide-react', () => ({
   CheckCircle2: () => <span />,
   Check: () => <span />,
+  Copy: () => <span />,
   FilePlus: () => <span />,
   ArrowLeft: () => <span />,
   FolderOpen: () => <span />
@@ -310,6 +311,110 @@ describe('CompletePhase premium finish', () => {
 
       expect(
         screen.getByText('Your reviewed batch is complete. 2 files are now in place.')
+      ).toBeInTheDocument();
+    });
+  });
+
+  // A file whose destination already held an identical copy is removed, not
+  // moved. `path` on its entry is the copy that was kept.
+  describe('duplicates that were removed instead of moved', () => {
+    const { useAppSelector } = require('../../src/renderer/store/hooks');
+    const { selectOrganizedCount } = require('../../src/renderer/store/selectors');
+    const defaultSelector = useAppSelector.getMockImplementation();
+
+    const movedFile = {
+      originalName: 'report.pdf',
+      path: 'C:\\Docs\\Finance\\report.pdf',
+      smartFolder: 'Finance'
+    };
+    const duplicateOf = (name, duplicateRemoval = 'trashed') => ({
+      originalName: name,
+      path: 'C:\\Docs\\Archive\\report.pdf',
+      smartFolder: 'Archive',
+      duplicateRemoval
+    });
+
+    const renderWithOrganized = (organizedFiles, { redact = false } = {}) => {
+      selectRedactPaths.mockReturnValue(redact);
+      selectOrganizedCount.mockReturnValue(organizedFiles.length);
+      useAppSelector.mockImplementation((selector) =>
+        selector({
+          files: { organizedFiles, organizedPathIndex: [] },
+          analysis: { results: [] }
+        })
+      );
+      render(<CompletePhase />);
+    };
+
+    afterEach(() => {
+      useAppSelector.mockImplementation(defaultSelector);
+      selectOrganizedCount.mockReturnValue(2);
+      selectRedactPaths.mockReturnValue(false);
+    });
+
+    test('are not counted as moved files or as destinations', () => {
+      renderWithOrganized([movedFile, duplicateOf('report (1).pdf')]);
+
+      expect(
+        screen.getByText(
+          '1 file moved into 1 destination. 1 identical copy was removed instead of moved.'
+        )
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText('Your reviewed batch is complete. 1 file is now in place.')
+      ).toBeInTheDocument();
+      expect(screen.getByText('1 file organized, 1 duplicate removed')).toBeInTheDocument();
+      expect(screen.queryByText(/\d+ destinations$/)).not.toBeInTheDocument();
+    });
+
+    test('the row says the file was not moved and where its copy went', () => {
+      mockRevealFile.mockClear();
+      renderWithOrganized([movedFile, duplicateOf('report (1).pdf')]);
+
+      expect(
+        screen.getByText(
+          'Not moved: an identical copy is already in C:\\Docs\\Archive. This copy is in the system Trash.'
+        )
+      ).toBeInTheDocument();
+      const reveal = screen.getByRole('button', {
+        name: 'Show the kept copy of report (1).pdf in its folder'
+      });
+      fireEvent.click(reveal);
+      expect(mockRevealFile).toHaveBeenCalledWith('C:\\Docs\\Archive\\report.pdf');
+    });
+
+    test('a copy that did not go to the Trash is reported as removed', () => {
+      renderWithOrganized([movedFile, duplicateOf('report (1).pdf', 'deleted')]);
+
+      expect(screen.getByText(/This copy was removed\.$/)).toBeInTheDocument();
+      expect(screen.queryByText(/system Trash/)).not.toBeInTheDocument();
+    });
+
+    test('a session of nothing but duplicates does not claim a move', () => {
+      renderWithOrganized([duplicateOf('report (1).pdf'), duplicateOf('report (2).pdf')]);
+
+      expect(
+        screen.getByText(
+          'No files needed moving. 2 identical copies were removed instead of moved.'
+        )
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          'Your reviewed batch is complete. Every file already had an identical copy in its destination folder.'
+        )
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/files? moved$/)).not.toBeInTheDocument();
+      expect(screen.getByText('2 duplicates removed', { selector: 'span' })).toBeInTheDocument();
+      expect(screen.queryByText(/0 files/)).not.toBeInTheDocument();
+    });
+
+    test('the destination stays hidden when privacy redaction is on', () => {
+      renderWithOrganized([duplicateOf('report (1).pdf')], { redact: true });
+
+      expect(
+        screen.getByText(
+          'Not moved: an identical copy is already in the destination. This copy is in the system Trash.'
+        )
       ).toBeInTheDocument();
     });
   });

@@ -94,14 +94,14 @@ const FILE_OPERATION_CODE_MAP = {
     severity: 'warning',
     message: 'The operation was cancelled before it finished.'
   },
-  // Create folder (folderHandlers.js): the path is inside an allowed location
-  // as spelled, but a symlink or junction along it leads outside. The handler
-  // writes the copy, so its message is shown as is; the text here is the same
-  // sentence for a result that arrives without one.
-  LINK_OUTSIDE_ALLOWED: {
+  // Create folder (folderHandlers.js): the path is acceptable as spelled, but
+  // a symlink, junction or short name along it leads into a system folder.
+  // The handler writes the copy, so its message is shown as is; the text here
+  // is the same sentence for a result that arrives without one.
+  LINK_INTO_SYSTEM: {
     severity: 'warning',
     message:
-      'That folder is inside a link that points outside your allowed locations. Choose the real folder instead.',
+      'That folder leads into a system folder through a link or short name. Choose a different folder.',
     useHandlerMessage: true
   }
 };
@@ -278,9 +278,12 @@ const ERROR_CODE_MAP = {
     message: 'Cannot access the parent folder.'
   },
   // ── Security ──
+  // A folder path main refused: a system folder, a path with `..`, a device
+  // path, or a location check that timed out. The handler says which.
   [AI_ERROR_CODES.SECURITY_PATH_VIOLATION]: {
     severity: 'error',
-    message: 'Refused: that path is outside the permitted locations.'
+    message: 'Refused: that location cannot be used.',
+    useHandlerMessage: true
   },
   // ── Smart folder operations ──
   [AI_ERROR_CODES.SAVE_FAILED]: {

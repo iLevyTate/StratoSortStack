@@ -83,7 +83,8 @@ jest.mock('../src/main/utils/jsonRepair', () => ({
 }));
 
 jest.mock('../src/shared/pathSanitization', () => ({
-  validateFileOperationPathSync: jest.fn((p) => ({ valid: true, normalizedPath: p }))
+  validateFileOperationPathSync: jest.fn((p) => ({ valid: true, normalizedPath: p })),
+  validateFileOperationPath: jest.fn(async (p) => ({ valid: true, normalizedPath: p }))
 }));
 
 jest.mock('../src/shared/crossPlatformUtils', () => ({

@@ -115,6 +115,13 @@ jest.mock('../../src/renderer/components/organize', () => ({
   TargetFolderList: () => <div>TARGET_FOLDER_LIST</div>,
   BulkOperations: () => <div>BULK_OPERATIONS</div>,
   OrganizeProgress: () => <div>ORGANIZE_PROGRESS</div>,
+  OrganizeSummaryBanner: ({ summary, onDismiss }) => (
+    <button type="button" onClick={onDismiss}>
+      SUMMARY_BANNER:{summary.outcome}
+    </button>
+  ),
+  InPlaceMoveNotice: ({ moves }) =>
+    moves?.length ? <div>IN_PLACE_NOTICE:{moves.length}</div> : null,
   VirtualizedFileGrid: () => <div>FILE_GRID</div>,
   VirtualizedProcessedFiles: () => <div>PROCESSED_FILES</div>,
   UncategorizedActionsBar: () => <div>UNCATEGORIZED_ACTIONS_BAR</div>
@@ -320,6 +327,69 @@ describe('OrganizePhase premium preflight copy', () => {
     rerender(<OrganizePhase />);
 
     expect(await screen.findByText('ORGANIZE_PROGRESS')).toBeInTheDocument();
+  });
+
+  test('shows how the last run ended, and lets the user dismiss it', () => {
+    const { useOrganization } = require('../../src/renderer/phases/organize/useOrganization');
+    const dismissOrganizeSummary = jest.fn();
+    const hookValue = {
+      isOrganizing: false,
+      batchProgress: null,
+      organizePreview: [],
+      handleOrganizeFiles: jest.fn(),
+      organizeConflicts: [],
+      lastOrganizeSummary: null,
+      dismissOrganizeSummary
+    };
+    useOrganization.mockReturnValue(hookValue);
+
+    const { rerender } = render(<OrganizePhase />);
+    expect(screen.queryByText(/SUMMARY_BANNER/)).not.toBeInTheDocument();
+
+    useOrganization.mockReturnValue({
+      ...hookValue,
+      lastOrganizeSummary: {
+        outcome: 'partial',
+        count: 1,
+        headline: 'Moved 1 file; 1 could not be moved',
+        detail: 'EEXIST: destination exists'
+      }
+    });
+    rerender(<OrganizePhase />);
+
+    fireEvent.click(screen.getByText('SUMMARY_BANNER:partial'));
+    expect(dismissOrganizeSummary).toHaveBeenCalledTimes(1);
+  });
+
+  test('says which files stay in their folder, but not while a run is under way', () => {
+    const { useOrganization } = require('../../src/renderer/phases/organize/useOrganization');
+    const hookValue = {
+      isOrganizing: false,
+      isPaused: false,
+      batchProgress: null,
+      organizePreview: [],
+      handleOrganizeFiles: jest.fn(),
+      organizeConflicts: [],
+      inPlaceMoves: [
+        { sourcePath: '/in/a.csv', fileName: 'a.csv', folderName: 'Strato Input', renamed: false }
+      ]
+    };
+    useOrganization.mockReturnValue(hookValue);
+
+    const { rerender } = render(<OrganizePhase />);
+    expect(screen.getByText('IN_PLACE_NOTICE:1')).toBeInTheDocument();
+
+    useOrganization.mockReturnValue({ ...hookValue, isOrganizing: true });
+    rerender(<OrganizePhase />);
+    expect(screen.queryByText(/IN_PLACE_NOTICE/)).not.toBeInTheDocument();
+
+    useOrganization.mockReturnValue({ ...hookValue, isPaused: true });
+    rerender(<OrganizePhase />);
+    expect(screen.queryByText(/IN_PLACE_NOTICE/)).not.toBeInTheDocument();
+
+    useOrganization.mockReturnValue({ ...hookValue, inPlaceMoves: [] });
+    rerender(<OrganizePhase />);
+    expect(screen.queryByText(/IN_PLACE_NOTICE/)).not.toBeInTheDocument();
   });
 
   test('keeps edits for files hidden only while their move is in flight (L11)', () => {

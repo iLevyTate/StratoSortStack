@@ -337,6 +337,11 @@ async function resumeBatch(
   }
 
   const total = batch.operations.length;
+  // Files this replay has still to move: the duplicate check must not count
+  // one of them as a copy already in its destination folder.
+  const pendingSources = batch.operations
+    .filter((/** @type {any} */ op) => op.status !== 'done' && typeof op.source === 'string')
+    .map((/** @type {any} */ op) => op.source);
   for (let i = 0; i < total; i += 1) {
     const op = batch.operations[i];
     if (op.status === 'done') {
@@ -479,7 +484,8 @@ async function resumeBatch(
         logger,
         logPrefix: '[RESUME]',
         dedupContext: 'organizeResume',
-        removeEmbeddings: removeEmbeddingsForPathBestEffort
+        removeEmbeddings: removeEmbeddingsForPathBestEffort,
+        pendingSources
       });
       if (duplicateResult) {
         finalDestination = duplicateResult.destination;

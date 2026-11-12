@@ -146,7 +146,15 @@ describe('useOrganization: rolled-back batch (fileops-organize-2)', () => {
     expect(options.dispatch).not.toHaveBeenCalled();
     expect(options.markFilesAsProcessed).not.toHaveBeenCalled();
     expect(options.actions.advancePhase).not.toHaveBeenCalled();
-    expect(hook.current.lastOrganizeSummary).toBeNull();
+    // The banner repeats the toast and stays after the toast is gone.
+    expect(hook.current.lastOrganizeSummary).toMatchObject({
+      outcome: 'rolledBack',
+      count: 0,
+      headline: 'Organization was rolled back'
+    });
+    expect(message).toBe(
+      `Organization was rolled back. ${hook.current.lastOrganizeSummary.detail}`
+    );
   });
 
   test('partially restored batch: names files left at their destination and the recovery file', async () => {
