@@ -149,6 +149,14 @@ describe('constants', () => {
       expect(constants.FILE_SYSTEM_ERROR_CODES.CHECKSUM_MISMATCH).toBeDefined();
       expect(constants.FILE_SYSTEM_ERROR_CODES.SIZE_MISMATCH).toBeDefined();
     });
+
+    // The main process keeps its own copy of this table next to the error
+    // class that uses it; a code added to one and not the other would reach
+    // the renderer without a mapping.
+    test('is the same table FileSystemError uses', () => {
+      const { FILE_SYSTEM_ERROR_CODES } = require('../src/main/errors/FileSystemError');
+      expect(constants.FILE_SYSTEM_ERROR_CODES).toEqual(FILE_SYSTEM_ERROR_CODES);
+    });
   });
 
   describe('ACTION_TYPES', () => {

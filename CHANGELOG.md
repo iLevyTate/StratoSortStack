@@ -31,6 +31,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   failed this check stopped the run and sent every file already moved back. It is now listed as not
   moved, with whether it is still at its original location, and the other files stay moved. Three
   such failures in a row, with no confirmed move between them, still undo the run.
+- **A move to another drive that loses its temporary copy no longer says the original was not
+  found.** Such a move copies the file to a temporary name in the destination folder and renames it
+  into place. When another program removed or held that copy, the failure read "File not found" with
+  the path of the original, which was still there. It now names the destination folder, says the
+  temporary copy was removed or could not be read or renamed, and says the original was not moved.
+  Three of these in a row, with no confirmed move between them, undo the run, as failed move checks
+  do.
 - **Files that are already in the folder chosen for them are pointed out before the run.** When a
   folder you sort from is also one of your Smart Folders, files matched to it stay where they are
   (or are renamed there). A notice on the Organize screen and a mark in Preview now say which, so a

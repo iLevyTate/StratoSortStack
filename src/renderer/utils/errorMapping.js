@@ -116,6 +116,16 @@ const FILE_OPERATION_CODE_MAP = {
     severity: 'error',
     message: 'The move could not be confirmed: the file is still at its original location.',
     useHandlerMessage: true
+  },
+  // A move between drives (atomicFileOperations.js crossDeviceMove): the
+  // temporary copy in the destination folder was removed or held before it
+  // could be renamed into place. The message names that folder and the
+  // original, which was not moved, so it is shown as is.
+  STAGED_COPY_FAILED: {
+    severity: 'error',
+    message:
+      'The copy made in the destination folder was removed or blocked before the move finished. The original file was not moved.',
+    useHandlerMessage: true
   }
 };
 

@@ -64,6 +64,10 @@ const FILE_SYSTEM_ERROR_CODES = {
   ATOMIC_OPERATION_FAILED: 'ATOMIC_OPERATION_FAILED',
   ROLLBACK_FAILED: 'ROLLBACK_FAILED',
   TRANSACTION_TIMEOUT: 'TRANSACTION_TIMEOUT',
+  // A move between drives lost the temporary copy it makes in the destination
+  // folder (removed, or held, by something else) before renaming it into
+  // place. The source has not been touched at that point.
+  STAGED_COPY_FAILED: 'STAGED_COPY_FAILED',
 
   // I/O errors
   IO_ERROR: 'IO_ERROR',
@@ -171,12 +175,28 @@ class FileSystemError extends Error {
       [FILE_SYSTEM_ERROR_CODES.ATOMIC_OPERATION_FAILED]: `Atomic operation failed: ${this.metadata.operation || 'unknown'}`,
       [FILE_SYSTEM_ERROR_CODES.ROLLBACK_FAILED]: 'Failed to rollback file operation',
       [FILE_SYSTEM_ERROR_CODES.TRANSACTION_TIMEOUT]: 'File operation transaction timed out',
+      [FILE_SYSTEM_ERROR_CODES.STAGED_COPY_FAILED]: this.describeStagedCopyFailure(),
       [FILE_SYSTEM_ERROR_CODES.IO_ERROR]: `I/O error occurred: ${this.metadata.path || 'unknown'}`,
       [FILE_SYSTEM_ERROR_CODES.NETWORK_ERROR]: `Network error accessing file: ${this.metadata.path || 'unknown'}`,
       [FILE_SYSTEM_ERROR_CODES.UNKNOWN_ERROR]: `Unknown file system error: ${this.metadata.originalError || 'unknown'}`
     };
 
     return messages[this.code] || `File system error: ${this.code}`;
+  }
+
+  /**
+   * Message for STAGED_COPY_FAILED. `metadata.path` is the temporary copy, so
+   * `metadata.directory` is the destination folder; `metadata.source` is the
+   * file being moved, which is still where it was.
+   */
+  describeStagedCopyFailure() {
+    const { directory, originalCode, source } = /** @type {Record<string, any>} */ (this.metadata);
+    const where = directory ? `in ${directory}` : 'in the destination folder';
+    const what =
+      originalCode === 'ENOENT'
+        ? 'was removed before the move finished'
+        : `could not be read or renamed${originalCode ? ` (${originalCode})` : ''}`;
+    return `The temporary copy ${where} ${what}. The original was not moved: ${source || 'unknown'}`;
   }
 
   /**
@@ -244,6 +264,8 @@ class FileSystemError extends Error {
         'Failed to undo the file operation. Some files may need manual recovery.',
       [FILE_SYSTEM_ERROR_CODES.TRANSACTION_TIMEOUT]:
         'The operation took too long and was cancelled.',
+      [FILE_SYSTEM_ERROR_CODES.STAGED_COPY_FAILED]:
+        'The copy made in the destination folder was removed or blocked before the move finished. The original file was not moved.',
       [FILE_SYSTEM_ERROR_CODES.IO_ERROR]:
         'A hardware or disk error occurred. Check your disk health.',
       [FILE_SYSTEM_ERROR_CODES.NETWORK_ERROR]:
@@ -298,6 +320,11 @@ class FileSystemError extends Error {
         'Try the operation again',
         'Check disk for errors',
         'Verify the source file is not corrupted'
+      ],
+      [FILE_SYSTEM_ERROR_CODES.STAGED_COPY_FAILED]: [
+        'Try the move again',
+        'Check whether a sync client or security tool removes or locks new files in the destination folder',
+        'Choose a destination folder that other programs do not manage'
       ],
       [FILE_SYSTEM_ERROR_CODES.IO_ERROR]: [
         'Check your disk health',

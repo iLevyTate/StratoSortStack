@@ -67,6 +67,9 @@ const path = require('path');
 const realOs = jest.requireActual('os');
 
 const { handleBatchOrganize } = require('../src/main/ipc/files/batchOrganizeHandler');
+const sendOperationProgress = /** @type {jest.Mock} */ (
+  require('../src/main/ipc/files/batchProgressReporter').sendOperationProgress
+);
 
 const silentLog = { info() {}, warn() {}, error() {}, debug() {} };
 
@@ -244,6 +247,79 @@ describe('a file that is not where it should be after its move (real filesystem)
     const after = await tree(root);
     expect(after).toContain('Input/doc1.txt');
     expect(after.filter((file) => file.startsWith('Sorted/'))).toEqual([]);
+    expect(await fsp.readFile(moves[0].source, 'utf8')).toBe('DOC-1');
+  });
+});
+
+/**
+ * The same other program, one step earlier. A move to another drive copies
+ * the file to a temporary name in the destination folder and renames that
+ * into place; here the temporary copy is what gets taken. Input and Sorted
+ * share a drive in the temp dir, so the first rename is refused with EXDEV to
+ * send the handler down that path; everything after it is real.
+ * @param {(name: string) => boolean | Promise<boolean>} takes - Whether the
+ *   other program takes the temporary copy of the file with this name
+ */
+function betweenDrives(takes) {
+  const realRename = fsp.rename.bind(fsp);
+  jest.spyOn(fsp, 'rename').mockImplementation(async (from, to) => {
+    const folders = [from, to].map((file) => path.basename(path.dirname(String(file))));
+    if (folders[0] === 'Input' && folders[1] === 'Sorted') {
+      throw Object.assign(new Error('EXDEV: cross-device link not permitted'), { code: 'EXDEV' });
+    }
+    return realRename(from, to);
+  });
+  const realCopy = fsp.copyFile.bind(fsp);
+  jest.spyOn(fsp, 'copyFile').mockImplementation(async (from, to, mode) => {
+    await realCopy(from, to, mode);
+    if (await takes(path.basename(String(from)))) await fsp.unlink(to);
+  });
+}
+
+describe('a temporary copy taken during a move to another drive (real filesystem)', () => {
+  test('the file fails alone, is reported as not moved, and the others stay moved', async () => {
+    const root = await makeRoot();
+    const moves = await seedMoves(root, 5);
+    betweenDrives((name) => name === 'doc3.txt');
+
+    const result = await organize(moves);
+
+    expect(result.rolledBack).toBeFalsy();
+    expect(result.successCount).toBe(4);
+    expect(result.failCount).toBe(1);
+    expect(rowFor(result, 'doc3.txt')).toMatchObject({
+      success: false,
+      errorCode: 'STAGED_COPY_FAILED',
+      critical: false
+    });
+    expect(rowFor(result, 'doc3.txt').error).toBe(
+      `The temporary copy in ${path.join(root, 'Sorted')} was removed before the move finished. ` +
+        `The original was not moved: ${moves[2].source}`
+    );
+    expect(await tree(root)).toEqual([
+      'Input/doc3.txt',
+      'Sorted/doc1.txt',
+      'Sorted/doc2.txt',
+      'Sorted/doc4.txt',
+      'Sorted/doc5.txt'
+    ]);
+    expect(await fsp.readFile(moves[2].source, 'utf8')).toBe('DOC-3');
+  });
+
+  test('a destination that keeps taking them is rolled back, and the moved file returns', async () => {
+    const root = await makeRoot();
+    const moves = await seedMoves(root, 8);
+    // The other program starts once the first file is confirmed, so the run
+    // has a move to undo whatever order the rest are tried in.
+    const firstConfirmed = new Promise((resolve) => {
+      sendOperationProgress.mockImplementationOnce(() => resolve(true));
+    });
+    betweenDrives((name) => name !== 'doc1.txt' && firstConfirmed);
+
+    const result = await organize(moves);
+
+    expect(result.rolledBack).toBe(true);
+    expect(await tree(root)).toEqual(moves.map((move) => `Input/${path.basename(move.source)}`));
     expect(await fsp.readFile(moves[0].source, 'utf8')).toBe('DOC-1');
   });
 });

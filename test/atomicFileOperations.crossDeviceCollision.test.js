@@ -212,3 +212,174 @@ describe('cross-device move aborted by its caller', () => {
     await expectNothingMoved();
   });
 });
+
+/**
+ * A cross-device move copies to a temporary name in the destination folder
+ * and renames that into place. When something else removes or holds the
+ * temporary copy (a sync client, a scanner), the failure is about that copy:
+ * the error must say so and say the source was not moved, not report the
+ * source as missing.
+ */
+describe('cross-device move losing its temporary copy', () => {
+  /** @type {string} */
+  let root;
+  /** @type {string} */
+  let source;
+  /** @type {string} */
+  let destination;
+
+  beforeEach(async () => {
+    root = await fsp.mkdtemp(path.join(realOs.tmpdir(), 'ss-exdev-staging-'));
+    source = path.join(root, 'vol1', 'scan.pdf');
+    destination = path.join(root, 'vol2', 'scan.pdf');
+    await fsp.mkdir(path.dirname(source), { recursive: true });
+    await fsp.mkdir(path.dirname(destination), { recursive: true });
+    await fsp.writeFile(source, 'MINE');
+  });
+
+  afterEach(async () => {
+    jest.restoreAllMocks();
+    await fsp.rm(root, { recursive: true, force: true });
+  });
+
+  const failure = () => crossDeviceMove(source, destination).catch((e) => e);
+
+  async function expectNothingMoved() {
+    expect(await fsp.readFile(source, 'utf8')).toBe('MINE');
+    expect(await fsp.readdir(path.dirname(destination))).toEqual([]);
+  }
+
+  const removedMessage = () =>
+    `The temporary copy in ${path.dirname(destination)} was removed before the move finished. ` +
+    `The original was not moved: ${source}`;
+
+  test('removed right after the copy: says so and that the original was not moved', async () => {
+    const realCopy = fsp.copyFile.bind(fsp);
+    jest.spyOn(fsp, 'copyFile').mockImplementation(async (from, to, mode) => {
+      await realCopy(from, to, mode);
+      await fsp.unlink(to);
+    });
+
+    const error = await failure();
+
+    expect(error).toMatchObject({ code: 'STAGED_COPY_FAILED', isFileSystemError: true });
+    expect(error.message).toBe(removedMessage());
+    expect(error.message).not.toMatch(/not found/i);
+    expect(error.metadata).toMatchObject({
+      originalCode: 'ENOENT',
+      source,
+      destination,
+      directory: path.dirname(destination)
+    });
+    await expectNothingMoved();
+  });
+
+  test('removed while its checksum is read: same report', async () => {
+    const checksumFn = async (/** @type {string} */ file) => {
+      if (file.endsWith('.tmp')) await fsp.unlink(file);
+      return fsp.readFile(file, 'utf8');
+    };
+
+    const error = await crossDeviceMove(source, destination, { checksumFn }).catch((e) => e);
+
+    expect(error).toMatchObject({ code: 'STAGED_COPY_FAILED' });
+    expect(error.message).toBe(removedMessage());
+    await expectNothingMoved();
+  });
+
+  test('removed between the check and the rename into place: same report', async () => {
+    const realRename = fsp.rename.bind(fsp);
+    jest.spyOn(fsp, 'rename').mockImplementation(async (from, to) => {
+      await fsp.unlink(from);
+      return realRename(from, to);
+    });
+
+    const error = await failure();
+
+    expect(error).toMatchObject({ code: 'STAGED_COPY_FAILED' });
+    expect(error.message).toBe(removedMessage());
+    await expectNothingMoved();
+  });
+
+  test('held by another program: names the code and cleans the copy up', async () => {
+    jest.spyOn(fsp, 'rename').mockImplementation(async (from, to) => {
+      throw Object.assign(
+        new Error(`EPERM: operation not permitted, rename '${from}' -> '${to}'`),
+        {
+          code: 'EPERM',
+          syscall: 'rename',
+          path: from,
+          dest: to
+        }
+      );
+    });
+
+    const error = await failure();
+
+    expect(error).toMatchObject({ code: 'STAGED_COPY_FAILED' });
+    expect(error.metadata.originalCode).toBe('EPERM');
+    expect(error.message).toBe(
+      `The temporary copy in ${path.dirname(destination)} could not be read or renamed (EPERM). ` +
+        `The original was not moved: ${source}`
+    );
+    await expectNothingMoved();
+  });
+
+  test('a destination name that cannot be probed is reported as the destination', async () => {
+    const realAccess = fsp.access.bind(fsp);
+    jest.spyOn(fsp, 'access').mockImplementation(async (target, mode) => {
+      if (String(target) === destination) {
+        throw Object.assign(new Error(`EACCES: permission denied, access '${target}'`), {
+          code: 'EACCES',
+          syscall: 'access',
+          path: target
+        });
+      }
+      return realAccess(target, mode);
+    });
+
+    const error = await failure();
+
+    expect(error).toMatchObject({ code: 'FILE_ACCESS_DENIED' });
+    expect(error.metadata.path).toBe(destination);
+    await expectNothingMoved();
+  });
+
+  test('a source that really is missing is still reported as the source', async () => {
+    await fsp.unlink(source);
+
+    const error = await failure();
+
+    expect(error).toMatchObject({ code: 'FILE_NOT_FOUND' });
+    expect(error.metadata.path).toBe(source);
+    expect(await fsp.readdir(path.dirname(destination))).toEqual([]);
+  });
+
+  test('atomicMove reports it once instead of trying another name', async () => {
+    const ops = new AtomicFileOperations();
+    const realRename = fsp.rename.bind(fsp);
+    jest.spyOn(fsp, 'rename').mockImplementation(async (from, to) => {
+      if (String(from) === source) {
+        throw Object.assign(new Error('EXDEV: cross-device link not permitted'), {
+          code: 'EXDEV'
+        });
+      }
+      return realRename(from, to);
+    });
+    const realCopy = fsp.copyFile.bind(fsp);
+    const copySpy = jest.spyOn(fsp, 'copyFile').mockImplementation(async (from, to, mode) => {
+      await realCopy(from, to, mode);
+      await fsp.unlink(to);
+    });
+
+    try {
+      await expect(ops.atomicMove(source, destination)).rejects.toMatchObject({
+        code: 'STAGED_COPY_FAILED'
+      });
+      expect(copySpy).toHaveBeenCalledTimes(1);
+      await expectNothingMoved();
+    } finally {
+      ops.shutdown();
+    }
+  });
+});
