@@ -19,7 +19,7 @@ import {
 } from '../components/discover';
 import { FileListSkeleton } from '../components/ui/LoadingSkeleton';
 import { useAppSelector } from '../store/hooks';
-import { selectOrganizedCount } from '../store/selectors';
+import { selectOrganizedCount, selectSmartFolders } from '../store/selectors';
 import { toCanonicalPath } from '../utils/canonicalPath';
 import {
   useDiscoverState,
@@ -34,12 +34,15 @@ const normalizeForComparison = toCanonicalPath;
 const logger = createLogger('DiscoverPhase');
 function DiscoverPhase() {
   const organizedCount = useAppSelector(selectOrganizedCount);
+  // Compared with a folder picked for sorting, to warn when they overlap.
+  const smartFolders = useAppSelector(selectSmartFolders);
   const {
     selectedFiles,
     analysisResults,
     isAnalyzing,
     analysisProgress,
     currentAnalysisFile,
+    analysisRunOrigin,
     fileStates,
     namingConvention,
     dateFormat,
@@ -297,7 +300,8 @@ function DiscoverPhase() {
     addSelectedFiles,
     updateFileState,
     addNotification,
-    analyzeFiles
+    analyzeFiles,
+    smartFolders
   });
 
   const { handleFileAction } = useFileActions({
@@ -433,8 +437,7 @@ function DiscoverPhase() {
           Discover & <span className="text-gradient">Analyze</span>
         </Heading>
         <Text variant="lead" className="max-w-xl mx-auto">
-          Add files, confirm the naming approach, and prepare everything for review before any move
-          happens.
+          Pick the files or the folder you want sorted. Nothing moves until you review it.
         </Text>
       </Stack>
 
@@ -550,7 +553,7 @@ function DiscoverPhase() {
             <Text variant="small" className="max-w-sm mb-6">
               {isDragging
                 ? 'Release to add these files to your analysis queue.'
-                : 'Select documents or scan folders to let AI analyze your content and suggest the perfect organization structure.'}
+                : 'Pick files, or a folder to sort. Your Smart Folders are where they go, so pick a different folder.'}
             </Text>
 
             <SelectionControls
@@ -573,6 +576,7 @@ function DiscoverPhase() {
                       <AnalysisProgress
                         progress={analysisProgress}
                         currentFile={currentAnalysisFile}
+                        origin={analysisRunOrigin}
                         surface="none"
                       />
                     </div>

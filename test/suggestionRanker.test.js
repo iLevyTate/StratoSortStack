@@ -38,6 +38,32 @@ describe('Suggestion Ranker', () => {
   });
 
   describe('rankSuggestions', () => {
+    // An improvement candidate carries a +0.2 fit bonus. Merged into a real
+    // match for the same folder it took that match's source, and the primary
+    // filter then threw the folder out.
+    test('an improvement candidate never replaces a real match for the same folder', () => {
+      const result = rankSuggestions([
+        { folder: 'GSC', score: 0.55, confidence: 0.55, source: 'semantic' },
+        { folder: 'gsc', score: 0.65, confidence: 0.45, source: 'improvement' }
+      ]);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].source).toBe('semantic');
+      expect(result[0].score).toBe(0.55);
+      expect(result[0].confidence).toBe(0.55);
+    });
+
+    test('a real match arriving after an improvement candidate replaces it', () => {
+      const result = rankSuggestions([
+        { folder: 'GSC', score: 0.65, confidence: 0.45, source: 'improvement' },
+        { folder: 'gsc', score: 0.5, confidence: 0.5, source: 'cluster' }
+      ]);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].source).toBe('cluster');
+      expect(result[0].score).toBe(0.5);
+    });
+
     test('deduplicates by folder name', () => {
       const suggestions = [
         { folder: 'Documents', score: 0.8, confidence: 0.7 },
@@ -106,6 +132,21 @@ describe('Suggestion Ranker', () => {
         strategyName: 'Date-Based',
         namedBy: 'category'
       });
+    });
+
+    test('a lower-scored learned folder keeps its source when a content match agrees', () => {
+      // Four corrections taught GSC; the content match also leans to GSC,
+      // slightly below Bing. That agreement must not hand the folder to Bing.
+      const input = [
+        { folder: 'Bing', score: 0.62, confidence: 0.62, source: 'semantic' },
+        { folder: 'GSC', score: 0.61, confidence: 0.61, source: 'semantic' },
+        { folder: 'GSC', score: 0.6, confidence: 0.6, source: 'user_pattern' }
+      ];
+      for (const order of [input, [...input].reverse()]) {
+        const result = rankSuggestions(order);
+        expect(result[0]).toMatchObject({ folder: 'GSC', source: 'user_pattern' });
+        expect(result[0].score).toBe(0.61);
+      }
     });
 
     test('sorts by weighted score', () => {
@@ -236,6 +277,12 @@ describe('Suggestion Ranker', () => {
     test('returns default message for null suggestion', () => {
       const explanation = generateExplanation(null, {});
       expect(explanation).toContain('No clear match');
+    });
+
+    test('the catch-all fallback says nothing matched', () => {
+      expect(generateExplanation({ source: 'default', folder: 'Uncategorized' }, {})).toBe(
+        'No Smart Folder matched what this file contains'
+      );
     });
 
     test('generates semantic explanation', () => {

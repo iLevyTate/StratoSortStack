@@ -52,6 +52,11 @@ const AI_DEFAULTS = {
     MODEL: DEFAULT_AI_MODELS.TEXT_ANALYSIS,
     GPU_LAYERS: -1,
     TEMPERATURE: 0.7,
+    // Document classification (category, name, keywords) samples low and with
+    // a fixed seed, so the same file gets the same folder on a rerun. Chat and
+    // other text calls keep TEMPERATURE.
+    CLASSIFICATION_TEMPERATURE: 0.2,
+    CLASSIFICATION_SEED: 42,
     MAX_TOKENS: 8192,
     CONTEXT_SIZE: 8192,
     MAX_CONTENT_LENGTH: 32000,
@@ -168,6 +173,16 @@ function recommendInstallProfile(facts = {}) {
     return {
       profile: 'base',
       reason: `${ramGB} GB of RAM, GPU with ${vramGB} GB: the larger profile wants 8 GB of GPU memory.`,
+      facts: normalized
+    };
+  }
+  // Apple Silicon shares one pool of memory between the processor and the
+  // graphics; the GPU figure is the part Metal may use, not extra memory.
+  // "24 GB of RAM and Apple M4 Pro (18 GB)" read as 24 + 18 GB to a tester.
+  if (typeof facts?.gpuName === 'string' && /^Apple\b/.test(facts.gpuName.trim())) {
+    return {
+      profile: 'quality',
+      reason: `${ramGB} GB of memory, shared by the processor and graphics (${facts.gpuName.trim()}): the larger models fit. Close other large apps while StratoSort analyzes files.`,
       facts: normalized
     };
   }

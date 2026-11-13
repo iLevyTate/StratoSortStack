@@ -402,11 +402,10 @@ const AnalysisResultRow = memo(function AnalysisResultRow({ index, style, data }
                 className="text-system-gray-400 font-medium whitespace-nowrap hidden sm:inline"
                 title={`Embedding policy: ${policyLabel}`}
               >
-                {embeddingPolicy === 'embed'
-                  ? 'Embed: Local'
-                  : embeddingPolicy === 'web_only'
-                    ? 'Embed: Web-only'
-                    : 'Embed: Off'}
+                {/* Plain words on the card; the title keeps the setting name.
+                    Every analyzed file is found by its words; only 'embed'
+                    also stores it for search by meaning. */}
+                {embeddingPolicy === 'embed' ? 'Search by meaning' : 'Keyword search only'}
               </Text>
             </div>
           </div>

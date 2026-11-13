@@ -74,9 +74,12 @@ describe('extractTextFromCsv byte cap', () => {
 
     expect(readFileSpy.mock.calls.map(([target]) => target)).not.toContain(csvPath);
     expect(openSpy.mock.calls.map(([target]) => target)).toContain(csvPath);
-    expect(text).toContain('id name amount');
+    expect(text).toContain('Columns: id | name | amount');
     expect(text).not.toContain('item200');
-    expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(64);
+    // The header is rewritten as a "Columns:" line; the data rows after it
+    // must still come from the 64-byte head.
+    const dataRows = text.split('\n').slice(1).join('\n');
+    expect(Buffer.byteLength(dataRows, 'utf8')).toBeLessThanOrEqual(64 - 'id,name,amount\n'.length);
   });
 
   test('drops the row the cap cut in half', async () => {

@@ -10,17 +10,15 @@
  * them carry `isDefault`, so `isDefault` is not the test).
  */
 
+import { isUncategorizedFolder } from '../../shared/uncategorizedFolder';
+
 /**
- * The catch-all folder: `category: 'uncategorized'` on the canonical one, or
- * named Uncategorized.
- * @param {{ category?: unknown, name?: unknown } | null | undefined} folder
- * @returns {boolean}
+ * The catch-all folder: named Uncategorized, or the seeded default
+ * (`isDefault`) with `category: 'uncategorized'`. The same test main uses, so
+ * both sides agree on which folder it is even after an older build let it be
+ * renamed.
  */
-export function isUncategorizedBucket(folder) {
-  const category = typeof folder?.category === 'string' ? folder.category.toLowerCase() : '';
-  const name = typeof folder?.name === 'string' ? folder.name.trim().toLowerCase() : '';
-  return category === 'uncategorized' || name === 'uncategorized';
-}
+export const isUncategorizedBucket = isUncategorizedFolder;
 
 /**
  * Number of smart folders that are real destinations (everything except the
@@ -30,7 +28,7 @@ export function isUncategorizedBucket(folder) {
  */
 export function countDestinationFolders(folders) {
   if (!Array.isArray(folders)) return 0;
-  return folders.filter((folder) => folder && !isUncategorizedBucket(folder)).length;
+  return folders.filter((folder) => folder && !isUncategorizedFolder(folder)).length;
 }
 
 /**
@@ -40,6 +38,6 @@ export function countDestinationFolders(folders) {
  */
 export function hasDestinationFolder(folders) {
   return (
-    Array.isArray(folders) && folders.some((folder) => folder && !isUncategorizedBucket(folder))
+    Array.isArray(folders) && folders.some((folder) => folder && !isUncategorizedFolder(folder))
   );
 }

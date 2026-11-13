@@ -11,6 +11,10 @@ const { findEquivalentFolderGroups } = require('../../shared/smartFolderNameVali
 const { scoreFolderNameForDedup } = require('../../shared/categoryFolderMatching');
 const { withTimeout } = require('../../shared/promiseUtils');
 const { TIMEOUTS } = require('../../shared/performanceConstants');
+const {
+  isUncategorizedFolder,
+  UNCATEGORIZED_FOLDER_NAME
+} = require('../../shared/uncategorizedFolder');
 
 const logger = createLogger('CustomFolders');
 const CUSTOM_FOLDERS_FILENAME = 'custom-folders.json';
@@ -213,11 +217,58 @@ function normalizeFolderPaths(/** @type {any} */ folders) {
  * folder structure. The full defaults are only applied via "Reset to Defaults".
  */
 async function ensureUncategorizedFolder(/** @type {any} */ folders) {
-  const safeFolders = Array.isArray(folders) ? folders : [];
+  let safeFolders = Array.isArray(folders) ? folders : [];
   const baseDir = getDefaultFoldersBaseDir();
-  const uncategorizedIndex = safeFolders.findIndex(
+  let uncategorizedIndex = safeFolders.findIndex(
     (folder) => normalizeName(folder?.name) === 'uncategorized'
   );
+
+  let repaired = false;
+
+  // Older builds let the catch-all be renamed. It keeps its category and its
+  // default flag, so it is still the catch-all: give it its name back (main
+  // and the matcher look it up by name) rather than adding a second
+  // Uncategorized beside it.
+  if (uncategorizedIndex < 0) {
+    const renamedIndex = safeFolders.findIndex((folder) => isUncategorizedFolder(folder));
+    if (renamedIndex >= 0) {
+      const restored = [...safeFolders];
+      restored[renamedIndex] = { ...restored[renamedIndex], name: UNCATEGORIZED_FOLDER_NAME };
+      logger.info('[STORAGE] Restored the name of the Uncategorized folder', {
+        previousName: safeFolders[renamedIndex]?.name
+      });
+      safeFolders = restored;
+      uncategorizedIndex = renamedIndex;
+      repaired = true;
+    }
+  }
+
+  // Only one folder may carry the catch-all category. Two ways to get more:
+  // an older build that looked the catch-all up by name only re-added
+  // Uncategorized beside a renamed one, and the AI enhancement for a new
+  // folder could pick the category. Both become ordinary folders the user
+  // can rename or delete.
+  /** @type {string[]} */
+  const demotedNames = [];
+  safeFolders = safeFolders.map((folder, index) => {
+    if (index === uncategorizedIndex || normalizeName(folder?.category) !== 'uncategorized') {
+      return folder;
+    }
+    demotedNames.push(folder?.name);
+    return { ...folder, category: 'general', isDefault: false };
+  });
+  if (demotedNames.length > 0) {
+    logger.info('[STORAGE] Made extra catch-all folders ordinary', { names: demotedNames });
+    repaired = true;
+  }
+
+  if (repaired) {
+    try {
+      await saveCustomFolders(safeFolders);
+    } catch (error) {
+      logger.error('[STORAGE] Failed to persist the repaired Uncategorized folder:', error);
+    }
+  }
 
   if (uncategorizedIndex >= 0) {
     const existingFolder = safeFolders[uncategorizedIndex] || {};
@@ -447,9 +498,7 @@ function shouldPruneLegacyDefaultBundle(
 
 async function pruneToUncategorizedOnly(/** @type {any} */ folders) {
   const safeFolders = Array.isArray(folders) ? folders : [];
-  const uncategorizedOnly = safeFolders.filter(
-    (folder) => normalizeName(folder?.name) === 'uncategorized'
-  );
+  const uncategorizedOnly = safeFolders.filter((folder) => isUncategorizedFolder(folder));
   const prunedInput = uncategorizedOnly.length > 0 ? [uncategorizedOnly[0]] : [];
   const ensured = await ensureUncategorizedFolder(prunedInput);
   await saveCustomFolders(ensured);

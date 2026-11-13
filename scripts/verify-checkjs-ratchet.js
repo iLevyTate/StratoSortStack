@@ -43,7 +43,7 @@ const COVERED_DIRS = [
   'src/renderer/utils',
   'src/renderer/components'
 ];
-const GLOBAL_DIRECTIVE_FLOOR = 498;
+const GLOBAL_DIRECTIVE_FLOOR = 506;
 // ────────────────────────────────────────────────────────────────────────
 
 const DIRECTIVE_SCAN_LINES = 5;

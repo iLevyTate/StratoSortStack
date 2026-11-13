@@ -126,6 +126,13 @@ const FILE_OPERATION_CODE_MAP = {
     message:
       'The copy made in the destination folder was removed or blocked before the move finished. The original file was not moved.',
     useHandlerMessage: true
+  },
+  // The folder chosen on Discover could not be opened (on a Mac: access was
+  // declined). Main's message says where to allow it.
+  FOLDER_NOT_READABLE: {
+    severity: 'error',
+    message: 'StratoSort cannot open this folder.',
+    useHandlerMessage: true
   }
 };
 
@@ -292,9 +299,12 @@ const ERROR_CODE_MAP = {
     severity: 'warning',
     message: 'That folder already exists.'
   },
+  // Main says why: a read-only drive, a folder macOS blocks under Privacy &
+  // Security, or plain no permission (smartFolders.js describeUnwritableFolder).
   [AI_ERROR_CODES.PARENT_NOT_WRITABLE]: {
     severity: 'error',
-    message: 'Parent folder is not writable. Check permissions or choose another location.'
+    message: 'StratoSort cannot write to this folder.',
+    useHandlerMessage: true
   },
   [AI_ERROR_CODES.PARENT_NOT_ACCESSIBLE]: {
     severity: 'error',

@@ -51,6 +51,10 @@ export function useDiscoverState() {
   const currentAnalysisFile = useAppSelector(
     (/** @type {any} */ state) => state.analysis.currentAnalysisFile
   );
+  // Why the current run started; the progress card shows it.
+  const analysisRunOrigin = useAppSelector(
+    (/** @type {any} */ state) => state.analysis.runOrigin ?? null
+  );
   const fileStates = useAppSelector((/** @type {any} */ state) => state.files.fileStates);
   const namingConventionState = useAppSelector(
     (/** @type {any} */ state) => state.files.namingConvention
@@ -137,14 +141,18 @@ export function useDiscoverState() {
   );
 
   const setIsAnalyzing = useCallback(
-    (/** @type {any} */ val, /** @type {{ total?: number }} */ { total } = {}) => {
+    (
+      /** @type {any} */ val,
+      /** @type {{ total?: number, origin?: string }} */ { total, origin } = {}
+    ) => {
       if (val) {
         // Prefer the explicit batch total from the caller. The ref fallback is
         // stale within the dispatching event handler (refs sync on render),
         // so relying on it zeroed the progress total at analysis start.
         dispatch(
           startAnalysisAction({
-            total: typeof total === 'number' ? total : analysisProgressRef.current.total
+            total: typeof total === 'number' ? total : analysisProgressRef.current.total,
+            origin
           })
         );
       } else {
@@ -316,6 +324,7 @@ export function useDiscoverState() {
     isAnalyzing,
     analysisProgress,
     currentAnalysisFile,
+    analysisRunOrigin,
     fileStates,
     namingConventionState,
     namingConvention,

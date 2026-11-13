@@ -716,7 +716,7 @@ describe('documentExtractors', () => {
         2,
         '0'
       )}-${String(dueDate.getDate()).padStart(2, '0')}`;
-      expect(result).toContain('Invoice Due Amount');
+      expect(result).toContain('Columns: Invoice | Due | Amount');
       expect(result).toContain(`ACME Corp ${expectedDay} 1250.5`);
       expect(result).toContain('#REF! true');
       expect(result).not.toContain('46096');
@@ -812,8 +812,8 @@ describe('documentExtractors', () => {
       const result = await extractTextFromXlsx(mockFilePath);
 
       expect(result).toBeDefined();
-      // Should not process all 15000 rows
-      const rowCount = result.split('\n').length;
+      // Should not process all 15000 rows (the sheet's heading line is not a row)
+      const rowCount = result.split('\n').filter((line) => !line.startsWith('## Sheet:')).length;
       expect(rowCount).toBeLessThanOrEqual(10000);
     });
 

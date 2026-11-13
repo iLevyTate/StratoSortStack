@@ -50,7 +50,8 @@ const IPC_CHANNELS = {
     OPEN_FOLDER: 'files:open-folder',
     DELETE_FOLDER: 'files:delete-folder',
     CLEANUP_ANALYSIS: 'files:cleanup-analysis',
-    ADD_TAGS: 'files:add-tags'
+    ADD_TAGS: 'files:add-tags',
+    EXPORT_ORGANIZE_REPORT: 'files:export-organize-report'
   },
 
   // SMART_FOLDERS
@@ -1768,6 +1769,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
       secureIPC.safeInvoke(IPC_CHANNELS.FILES.COPY_FILE, sourcePath, destinationPath),
     openFolder: (/** @type {any} */ folderPath) =>
       secureIPC.safeInvoke(IPC_CHANNELS.FILES.OPEN_FOLDER, folderPath),
+    // Save an organize run's file list as CSV; main opens the save dialog.
+    exportOrganizeReport: (/** @type {{ rows: any[] }} */ payload) =>
+      secureIPC.safeInvoke(IPC_CHANNELS.FILES.EXPORT_ORGANIZE_REPORT, payload),
     deleteFolder: (/** @type {any} */ folderPath) =>
       secureIPC.safeInvoke(IPC_CHANNELS.FILES.DELETE_FOLDER, folderPath),
     analyze: (/** @type {any} */ filePath, /** @type {any} */ options) => {

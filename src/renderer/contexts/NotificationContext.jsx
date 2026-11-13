@@ -59,8 +59,9 @@ export function NotificationProvider({ children }) {
   );
 
   const addNotification = useCallback(
-    (message, severity = 'info', duration = 5200, groupKey = null) => {
-      const toastId = addToast(message, severity, duration, groupKey);
+    // meta.details: extra text the toast's Copy button adds after the message.
+    (message, severity = 'info', duration = 5200, groupKey = null, meta = null) => {
+      const toastId = addToast(message, severity, duration, groupKey, meta);
       const notificationId = createUniqueNotificationId();
       dispatch(
         addSystemNotification({
@@ -121,7 +122,8 @@ export function NotificationProvider({ children }) {
           duration = 6000,
           type,
           data,
-          groupKey = null
+          groupKey = null,
+          details
         } = event.detail || {};
         if (!message) return;
 
@@ -131,21 +133,22 @@ export function NotificationProvider({ children }) {
         // explicit groupKey, only collapse identical repeats of the same message.
         const resolvedGroupKey = groupKey || `ipc:${type || 'notification'}:${message}`;
 
-        const activationMeta = ACTIVATABLE_NOTIFICATION_TYPES.has(type)
-          ? { actionable: true, type, data }
-          : null;
+        const hasDetails = typeof details === 'string' && details.length > 0;
+        const toastMeta =
+          ACTIVATABLE_NOTIFICATION_TYPES.has(type) || hasDetails
+            ? {
+                ...(ACTIVATABLE_NOTIFICATION_TYPES.has(type)
+                  ? { actionable: true, type, data }
+                  : {}),
+                ...(hasDetails ? { details } : {})
+              }
+            : null;
 
         const toastSeverity =
           severity === 'success' || severity === 'error' || severity === 'warning'
             ? severity
             : 'info';
-        const toastId = addToast(
-          message,
-          toastSeverity,
-          duration,
-          resolvedGroupKey,
-          activationMeta
-        );
+        const toastId = addToast(message, toastSeverity, duration, resolvedGroupKey, toastMeta);
         bindToastToNotification(toastId, notificationId);
         reconcileEvictedToasts();
       } catch (e) {

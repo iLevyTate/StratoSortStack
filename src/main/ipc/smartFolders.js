@@ -39,6 +39,7 @@ const {
   validateSmartFolderName,
   namesAreEquivalent
 } = require('../../shared/smartFolderNameValidation');
+const { isUncategorizedFolder } = require('../../shared/uncategorizedFolder');
 
 /** @typedef {import('./ipcWrappers').LoggerLike} LoggerLike */
 /**
@@ -342,6 +343,67 @@ async function sanitizeFolderPath(inputPath) {
   return validation.normalizedPath;
 }
 
+/**
+ * Can StratoSort put files in this Smart Folder? The test file goes inside
+ * the folder when it exists, because the root of an external drive
+ * (/Volumes/SSD) is writable while its parent (/Volumes) is not, and in the
+ * parent when the folder does not exist yet and will be created there.
+ *
+ * @param {string} folderPath
+ * @param {string} parentDir
+ * @returns {Promise<string|null>} null when writable, otherwise the error code
+ */
+async function probeFolderWritable(folderPath, parentDir) {
+  const probeName = `.stratotest_${Date.now()}`;
+  for (const dir of [folderPath, parentDir]) {
+    const probe = path.join(dir, probeName);
+    try {
+      await fs.writeFile(probe, 'test');
+      await fs.unlink(probe);
+      return null;
+    } catch (error) {
+      const code = /** @type {any} */ (error)?.code;
+      // The folder is not there yet (or a file sits at its path, which the
+      // folder check below reports): test the parent instead.
+      if (dir === folderPath && (code === 'ENOENT' || code === 'ENOTDIR')) continue;
+      return typeof code === 'string' && code ? code : 'UNKNOWN';
+    }
+  }
+  return 'UNKNOWN';
+}
+
+/**
+ * Plain-words reason a folder cannot be written to, for the person adding it.
+ *
+ * @param {string|undefined|null} code - fs error code (EROFS, EPERM, EACCES, ...)
+ * @param {string} [platform]
+ * @returns {string}
+ */
+function describeUnwritableFolder(code, platform = process.platform) {
+  const isMac = platform === 'darwin';
+  if (code === 'EROFS') {
+    return isMac
+      ? 'This drive is read-only, so StratoSort cannot put files on it. A drive formatted for Windows (NTFS) is read-only on a Mac. Choose a folder on another drive.'
+      : 'This drive is read-only, so StratoSort cannot put files on it. Choose a folder on another drive.';
+  }
+  if (isMac && (code === 'EPERM' || code === 'EACCES')) {
+    return 'StratoSort is not allowed to write to this folder. Open System Settings > Privacy & Security > Files and Folders, allow StratoSort, then try again.';
+  }
+  return 'StratoSort cannot write to this folder. Choose another folder.';
+}
+
+/**
+ * Plain-words reason the folder the person chose could not be opened at all.
+ *
+ * @param {string} [platform]
+ * @returns {string}
+ */
+function describeUnreadableFolder(platform = process.platform) {
+  return platform === 'darwin'
+    ? 'StratoSort is not allowed to open this folder. Open System Settings > Privacy & Security > Files and Folders, allow StratoSort, then choose the folder again.'
+    : 'StratoSort cannot open this folder. Check that your account can read it.';
+}
+
 const { IpcServiceContext, createFromLegacyParams } = require('./IpcServiceContext');
 
 // Named handler bodies extracted from registerSmartFoldersIpc.
@@ -382,7 +444,7 @@ async function handleSmartFoldersDelete(
       };
 
     const folderToDelete = customFolders[folderIndex];
-    if (folderToDelete.isDefault && folderToDelete.name?.toLowerCase() === 'uncategorized') {
+    if (isUncategorizedFolder(folderToDelete)) {
       logger.warn('[SMART-FOLDERS] Rejecting deletion of Uncategorized folder');
       return {
         success: false,
@@ -649,6 +711,19 @@ async function handleSmartFoldersScanStructure({ logger, scanDirectory }, event,
       perDirectoryTimeoutMs: TIMEOUTS.FILE_READ || 5000
     });
     const scanMeta = items && items.__scanMeta ? items.__scanMeta : null;
+    // The chosen folder itself could not be opened (on a Mac: access was
+    // declined). Report it, so Discover does not say "No files found".
+    if (scanMeta?.rootError) {
+      logger.warn('[FOLDER-SCAN] Folder could not be opened', {
+        path: sanitizedPath,
+        code: scanMeta.rootError
+      });
+      return {
+        success: false,
+        errorCode: 'FOLDER_NOT_READABLE',
+        error: describeUnreadableFolder()
+      };
+    }
     // Flatten file-like items with basic filtering similar to prior inline implementation
     /** @type {(nodes: any[]) => Record<string, any>[]} */
     const flatten = (nodes) => {
@@ -839,15 +914,17 @@ async function handleSmartFoldersAdd(
         }
       }
 
-      // Test write permission in parent directory
-      const tempFile = path.join(parentDir, `.stratotest_${Date.now()}`);
-      try {
-        await fs.writeFile(tempFile, 'test');
-        await fs.unlink(tempFile);
-      } catch {
+      // Test that files can be put in the folder (or its parent, when the
+      // folder does not exist yet) and say in plain words why not.
+      const writeErrorCode = await probeFolderWritable(normalizedPath, parentDir);
+      if (writeErrorCode) {
+        logger.warn('[SMART-FOLDERS] Folder is not writable', {
+          path: normalizedPath,
+          code: writeErrorCode
+        });
         return {
           success: false,
-          error: `No write permission in parent directory "${parentDir}"`,
+          error: describeUnwritableFolder(writeErrorCode),
           errorCode: ERROR_CODES.PARENT_NOT_WRITABLE
         };
       }
@@ -931,11 +1008,15 @@ async function handleSmartFoldersAdd(
                       )
                     : 0.8;
 
-                  const categoryFromLlm =
+                  const suggestedCategory =
                     typeof llmAnalysis.suggestedCategory === 'string' &&
                     llmAnalysis.suggestedCategory.trim()
                       ? llmAnalysis.suggestedCategory.trim().toLowerCase().slice(0, 60)
                       : 'general';
+                  // 'uncategorized' marks the catch-all; on a user's folder it
+                  // would hide that folder from the analysis prompt.
+                  const categoryFromLlm =
+                    suggestedCategory === 'uncategorized' ? 'general' : suggestedCategory;
 
                   const originalFoldersSnapshot = [...currentFolders];
                   /** @type {Record<string, any>} */
@@ -1441,6 +1522,27 @@ async function handleSmartFoldersEdit(
         error: 'Folder not found',
         errorCode: ERROR_CODES.FOLDER_NOT_FOUND
       };
+    // The catch-all keeps its name: main and the matcher find it by name, and
+    // a renamed one read as an ordinary folder (deletable, and re-added on the
+    // next launch). Its location and description can still change.
+    if (
+      isUncategorizedFolder(customFolders[folderIndex]) &&
+      typeof updatedFolder.name === 'string'
+    ) {
+      const requestedName = updatedFolder.name.trim().toLowerCase();
+      const currentName = String(customFolders[folderIndex].name || '')
+        .trim()
+        .toLowerCase();
+      if (requestedName !== 'uncategorized' && requestedName !== currentName) {
+        logger.warn('[SMART-FOLDERS] Rejecting rename of the Uncategorized folder');
+        return {
+          success: false,
+          error:
+            'Uncategorized holds files that fit no other folder. You can change where it is kept, but not its name.',
+          errorCode: ERROR_CODES.INVALID_FOLDER_DATA
+        };
+      }
+    }
     if (updatedFolder.name) {
       if (updatedFolder.name.includes(' > ')) {
         updatedFolder.name = updatedFolder.name.split(' > ')[0].trim();
@@ -1718,9 +1820,7 @@ async function handleSmartFoldersUpdateCustom(
       };
     }
 
-    const hasUncategorized = folders.some(
-      (f) => f.isDefault && f.name?.toLowerCase() === 'uncategorized'
-    );
+    const hasUncategorized = folders.some((f) => isUncategorizedFolder(f));
     if (!hasUncategorized) {
       logger.warn('[SMART-FOLDERS] Rejecting update without Uncategorized folder');
       return {
@@ -1833,9 +1933,7 @@ async function handleSmartFoldersSave(
       };
     }
 
-    const hasUncategorized = folders.some(
-      (f) => f.isDefault && f.name?.toLowerCase() === 'uncategorized'
-    );
+    const hasUncategorized = folders.some((f) => isUncategorizedFolder(f));
     if (!hasUncategorized) {
       logger.warn('[SMART-FOLDERS] Rejecting save without Uncategorized folder');
       return {
@@ -2432,3 +2530,4 @@ function registerSmartFoldersIpc(servicesOrParams) {
 
 module.exports = registerSmartFoldersIpc;
 module.exports.sanitizeFolderPath = sanitizeFolderPath;
+module.exports.describeUnwritableFolder = describeUnwritableFolder;

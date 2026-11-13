@@ -15,7 +15,14 @@ describe('smartFolderDestinations', () => {
   test('recognizes the catch-all by category or by name', () => {
     expect(isUncategorizedBucket(UNCATEGORIZED)).toBe(true);
     expect(isUncategorizedBucket({ name: '  uncategorized ' })).toBe(true);
-    expect(isUncategorizedBucket({ name: 'Misc', category: 'Uncategorized' })).toBe(true);
+    expect(
+      isUncategorizedBucket({ name: 'Misc', category: 'Uncategorized', isDefault: true })
+    ).toBe(true);
+    // A user's folder that was given the category is not the catch-all.
+    expect(isUncategorizedBucket({ name: 'Other', category: 'uncategorized' })).toBe(false);
+    expect(
+      isUncategorizedBucket({ name: 'Other', category: 'uncategorized', isDefault: false })
+    ).toBe(false);
     expect(isUncategorizedBucket({ name: 'Receipts' })).toBe(false);
     expect(isUncategorizedBucket(null)).toBe(false);
   });

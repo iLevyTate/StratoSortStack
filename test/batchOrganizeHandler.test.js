@@ -1,7 +1,10 @@
 /**
  * @jest-environment node
  */
-const { handleBatchOrganize } = require('../src/main/ipc/files/batchOrganizeHandler');
+const {
+  handleBatchOrganize,
+  previewBatchOrganize
+} = require('../src/main/ipc/files/batchOrganizeHandler');
 const { ERROR_CODES } = require('../src/shared/errorHandlingUtils');
 const { validateFileOperationPath } = require('../src/shared/pathSanitization');
 
@@ -411,6 +414,108 @@ describe('Batch Organize Handler', () => {
       container.has.mockImplementation(hasImpl);
       container.resolve.mockImplementation(resolveImpl);
     }
+  });
+
+  // macOS hands back names with decomposed accents (a + U+0308) while the
+  // app's own paths are composed (U+00E4). APFS treats both spellings as the
+  // same name, so the same-path checks must too.
+  describe('composed and decomposed spellings of one name on macOS', () => {
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+    const decomposed = '/dest/Ma\u0308rz.pdf';
+    const composed = '/dest/M\u00e4rz.pdf';
+
+    beforeEach(() => {
+      Object.defineProperty(process, 'platform', { value: 'darwin' });
+    });
+    afterEach(() => {
+      Object.defineProperty(process, 'platform', originalPlatform);
+    });
+
+    test('a rename between the two spellings is not failed as "source still exists"', async () => {
+      // APFS finds the file under either spelling after the rename.
+      fs.access.mockImplementation(async () => undefined);
+
+      const result = await handleBatchOrganize({
+        ...params,
+        operation: { operations: [{ source: decomposed, destination: composed, type: 'move' }] }
+      });
+
+      expect(result.results[0]).toEqual(expect.objectContaining({ success: true }));
+    });
+
+    test('the preview does not report the file as colliding with itself', async () => {
+      fs.access.mockImplementation(async () => undefined);
+
+      const preview = await previewBatchOrganize({
+        operation: { operations: [{ source: decomposed, destination: composed }] }
+      });
+
+      expect(preview.conflicts).toBe(0);
+    });
+  });
+
+  // The files are already in their new folders when the search index is
+  // updated, so one failed index update must not throw away what the run
+  // teaches. It used to: any coordinator error skipped learning for the run.
+  describe('learning when the search-index update fails', () => {
+    const learning = require('../src/main/services/organization/learningFeedback');
+    const { container } = require('../src/main/services/ServiceContainer');
+    let mockLearning;
+    let spy;
+    let hasImpl;
+    let resolveImpl;
+
+    beforeEach(() => {
+      mockLearning = {
+        getSmartFolders: () => [{ name: 'Finance', path: '/dest' }],
+        recordFileMove: jest.fn().mockResolvedValue(true),
+        recordCorrection: jest.fn().mockResolvedValue(false)
+      };
+      hasImpl = container.has.getMockImplementation();
+      resolveImpl = container.resolve.getMockImplementation();
+      container.has.mockImplementation(
+        (id) => id === 'filePathCoordinator' || id === 'learningFeedback'
+      );
+      container.resolve.mockImplementation((id) =>
+        id === 'learningFeedback' ? mockLearning : mockCoordinator
+      );
+      spy = jest.spyOn(learning, 'getInstance').mockReturnValue(mockLearning);
+    });
+
+    afterEach(() => {
+      spy.mockRestore();
+      container.has.mockImplementation(hasImpl);
+      container.resolve.mockImplementation(resolveImpl);
+    });
+
+    test('one failed system: still learns from every move', async () => {
+      mockCoordinator.batchPathUpdate.mockResolvedValueOnce({
+        success: false,
+        errors: [{ system: 'processingState', error: 'x' }],
+        summary: {},
+        divergences: []
+      });
+
+      const result = await handleBatchOrganize(params);
+
+      expect(result.pathIndexUpdated).toBe(false);
+      expect(mockLearning.recordFileMove).toHaveBeenCalledTimes(2);
+      expect(mockLearning.recordFileMove).toHaveBeenCalledWith(
+        '/src/doc1.pdf',
+        '/dest/doc1.pdf',
+        { category: 'Finance' },
+        learning.FEEDBACK_SOURCES.AUTO_ORGANIZE_CONFIRMED
+      );
+    });
+
+    test('the update throws: still learns, and the run still succeeds', async () => {
+      mockCoordinator.batchPathUpdate.mockRejectedValueOnce(new Error('index closed'));
+
+      const result = await handleBatchOrganize(params);
+
+      expect(result.success).toBe(true);
+      expect(mockLearning.recordFileMove).toHaveBeenCalledTimes(2);
+    });
   });
 
   // D1: Organize sends what it suggested with each op. The suggestion, not

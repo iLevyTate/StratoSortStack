@@ -28,7 +28,7 @@ The MCP server inherits StratoSort's privacy-first defaults:
 
 | Property           | Value                                                                                                                                                                                                                                 |
 | :----------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Default state**  | Off. Must be explicitly enabled in Settings.                                                                                                                                                                                          |
+| **Default state**  | Off. You turn it on by ticking **Enable MCP server** in Settings; it then starts with StratoSort until you untick the box.                                                                                                            |
 | **Bind address**   | `127.0.0.1` only. Never reachable from another machine.                                                                                                                                                                               |
 | **Authentication** | Bearer token, generated locally, constant-time compared.                                                                                                                                                                              |
 | **Origin guard**   | Deny-by-default. Accepts requests with **no** `Origin` header or an `Origin` prefixed by `claude://`, `cursor://`, `zed://`, or `vscode-webview://`. Literal `Origin: null` and browser origins are rejected (DNS-rebinding defense). |
@@ -37,24 +37,27 @@ The MCP server inherits StratoSort's privacy-first defaults:
 | **Telemetry**      | None. Zero outbound calls.                                                                                                                                                                                                            |
 | **Inference**      | Local-only. `chat_with_documents` always uses the on-device model, even when a cloud provider is enabled for in-app chat.                                                                                                             |
 
-If the bearer token leaks, you can rotate it from Settings → MCP without reinstalling clients
-(though they'll need the new token).
+If the bearer token leaks, click **Rotate** next to **Bearer token** in Settings → MCP Server. You
+do not need to reinstall clients, but each one needs the new token (copy its config again).
 
 ---
 
 ## Quick start
 
 1. Open StratoSort → **Settings → MCP Server**.
-2. Click **Enable**. StratoSort generates a 32-byte token and starts the server on
+2. Tick **Enable MCP server**. StratoSort generates a 32-byte token and starts the server on
    `http://127.0.0.1:53827/mcp`. If that port is already taken, the server binds an OS-assigned
-   ephemeral port (`listen(0)`) and Settings shows the actual port.
-3. Click **Copy Claude Desktop config** (or the snippet for whatever client you use).
+   ephemeral port (`listen(0)`) and Settings shows the actual port. It starts with StratoSort while
+   the box is ticked; untick it to stop the server and keep it off.
+3. Click **Copy Claude Desktop config** (or **Copy Cursor config** / **Copy Zed config**).
 4. Paste it into your client's config file. Restart the client.
 5. The client now sees four StratoSort tools: `search_documents`, `chat_with_documents`,
    `get_document_summary`, `list_smart_folders`.
 
-To verify, click **Test connection** in Settings — it issues a `tools/list` round-trip and reports
-the four tools back.
+**Test connection** (next to **Status** in Settings) checks that StratoSort's server answers with
+your current token: it runs a `tools/list` round-trip and reports the four tools back. It does not
+check your MCP app's config file. After pasting the snippet, restart that app and ask it to list
+StratoSort's tools.
 
 ### Client config snippets
 
@@ -96,6 +99,17 @@ from there rather than from this doc.
 ---
 
 ## Tools exposed (v1)
+
+All four tools only read. None moves, renames or deletes files.
+
+Settings → MCP Server → **Tools exposed** describes them in plain words:
+
+| Tool                   | Settings says                                                  |
+| :--------------------- | :------------------------------------------------------------- |
+| `search_documents`     | Find documents by meaning or by exact words.                   |
+| `chat_with_documents`  | Answer a question from your documents and name the files used. |
+| `get_document_summary` | Read the saved summary of one document.                        |
+| `list_smart_folders`   | List your smart folders and where they are.                    |
 
 All four tools share these conventions:
 
@@ -269,13 +283,21 @@ folder cannot be read.
 
 ### Lifecycle
 
-- The server starts lazily when you enable it. It does not run by default.
-- Disabling closes every live MCP session first (ending any open SSE streams), then terminates
-  remaining connections and closes the HTTP socket. The close is bounded to 10 s; if it fails or
-  times out (rare — usually only when the OS hasn't released the port), Settings shows an **error**
-  state with the underlying message instead of pretending it stopped, and a later **Enable** still
-  works.
-- The token persists across restarts. **Rotate token** generates a new 32-byte token and persists it
+- The server does not run by default. It starts when you tick **Enable MCP server**, and again each
+  time StratoSort opens while the box stays ticked. Quitting StratoSort stops the server but keeps
+  the choice; unticking the box turns it off for later launches too. The choice is stored in
+  `userData/mcp-server.json` (`{ "enabled": true }`), next to the token and outside `settings.json`,
+  so importing a settings file never turns the server on. A missing or damaged file means off.
+- A start on launch never holds up or breaks StratoSort's own startup. If it fails (for example the
+  port is taken and no fallback port could be bound), **Status** reads _Not running. Untick the box,
+  then tick it again to retry._ and the reason is in the log. After a start on launch, **Show
+  start** (the first four characters of the token) appears once you tick the box again or click
+  **Rotate**.
+- Unticking the box closes every live MCP session first (ending any open SSE streams), then
+  terminates remaining connections and closes the HTTP socket. The close is bounded to 10 s; if it
+  fails or times out (rare — usually only when the OS hasn't released the port), Settings shows an
+  **error** state instead of pretending it stopped, and ticking the box again still works.
+- The token persists across restarts. **Rotate** generates a new 32-byte token and persists it
   atomically — if the persist write fails, the in-memory state rolls back so your existing clients
   keep working.
 - If the stored token can no longer be read (for example the OS secret store that encrypted it is no
@@ -348,10 +370,16 @@ refills automatically.
 **`FILE_NOT_ANALYZED`:** The file at that path hasn't been analyzed yet. Open StratoSort, drop the
 file onto the analyze dropzone (or wait for Smart Folder Watcher to pick it up), then retry.
 
-**Server stuck in `error` state:** Settings shows `lastError` text. Common causes: another process
-holding the port (kill it or restart StratoSort to claim a fresh port), or filesystem lock during
-token rotation. Check the StratoSort log (`%APPDATA%\StratoSort Stack\logs\stratosort-*.log` on
-Windows) for the full stack.
+**Status says "Not running. Untick the box, then tick it again to retry.":** the server could not
+start or stop cleanly. When the toggle itself failed, Settings also shows the reason under the
+section. Common causes: another process holding the port (close it, or restart StratoSort to claim a
+fresh port), or a filesystem lock during token rotation. Check the StratoSort log
+(`~/Library/Application Support/StratoSort Stack/logs/` on macOS,
+`%APPDATA%\StratoSort Stack\logs\stratosort-*.log` on Windows) for details.
+
+**Your MCP app cannot connect after you restarted StratoSort:** open Settings → MCP Server and check
+that **Enable MCP server** is ticked and **Status** shows _Running on …_. If the port changed (the
+default was taken), copy the config again and restart your MCP app.
 
 ---
 

@@ -66,7 +66,14 @@ const FALLBACK_SCAN_DEFAULT_IGNORES = Object.freeze([
   'desktop.ini',
   '.git',
   'node_modules',
-  '__pycache__'
+  '__pycache__',
+  '.Spotlight-V100',
+  '.Trashes',
+  '.fseventsd',
+  '.TemporaryItems',
+  '.DocumentRevisions-V100',
+  '$RECYCLE.BIN',
+  'System Volume Information'
 ]);
 
 /**

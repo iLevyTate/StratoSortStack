@@ -7,8 +7,21 @@
 
 const { randomUUID } = require('crypto');
 const { normalizePathForIndex } = require('../../../shared/pathSanitization');
+const { ALL_SUPPORTED_EXTENSIONS } = require('../../../shared/constants');
 
 const MAX_TEXT_LENGTH = 500;
+
+/** File types a rule may name without a dot ("CSV files go to Bing"). */
+const KNOWN_EXTENSIONS = new Set(
+  ALL_SUPPORTED_EXTENSIONS.map((ext) => String(ext).replace(/^\./, '').toLowerCase())
+);
+
+/** "CSV files", "files csv", or the whole left side ("xlsx", "all xlsx"). */
+const BARE_EXTENSION_PATTERNS = [
+  /\b([a-z0-9]{2,5})\s+files?\b/i,
+  /\bfiles?\s+([a-z0-9]{2,5})\b/i,
+  /^(?:all\s+)?([a-z0-9]{2,5})$/i
+];
 
 function normalizeText(/** @type {any} */ text) {
   return String(text || '')
@@ -37,7 +50,32 @@ function extractTargetFolder(/** @type {any} */ value) {
     .trim();
 }
 
-function parseRuleFromText(/** @type {any} */ text) {
+/**
+ * The file type the left side of a rule names, or null. A dotted ".pdf" or an
+ * explicit "extension pdf" is taken as written. A bare word ("CSV files",
+ * "xlsx") counts only when it is a file type StratoSort knows, so "Client
+ * files" and "Files like ..." name none.
+ * @param {string} left
+ * @returns {string|null}
+ */
+function findRuleExtension(left) {
+  const explicit =
+    left.match(/(?:\.[a-z0-9]{2,6})/i) || left.match(/(?:extension|file type)\s+([a-z0-9]{2,6})/i);
+  if (explicit) return extractExtension(explicit[1] || explicit[0]);
+
+  for (const pattern of BARE_EXTENSION_PATTERNS) {
+    const token = left.match(pattern)?.[1]?.toLowerCase();
+    if (token && KNOWN_EXTENSIONS.has(token)) return token;
+  }
+  return null;
+}
+
+/**
+ * @param {any} text
+ * @param {{ allowRules?: boolean }} [options] - false for text StratoSort
+ *   wrote itself (correction notes): only what the user typed becomes a rule.
+ */
+function parseRuleFromText(text, { allowRules = true } = {}) {
   const normalized = normalizeText(text);
   if (!normalized) return { rules: [], targetFolder: null };
 
@@ -52,11 +90,7 @@ function parseRuleFromText(/** @type {any} */ text) {
   const right = ruleMatch[2].trim();
   const targetFolder = extractTargetFolder(right);
 
-  const extensionMatch =
-    left.match(/(?:\.[a-z0-9]{2,6})/i) ||
-    left.match(/(?:extension|file type|files)\s+([a-z0-9]{2,6})/i);
-  const extensionToken = extensionMatch ? extensionMatch[1] || extensionMatch[0] : null;
-  const extension = extractExtension(extensionToken);
+  const extension = allowRules ? findRuleExtension(left) : null;
 
   if (extension && targetFolder) {
     return {
@@ -84,7 +118,9 @@ function buildMemoryEntry(text, metadata = {}) {
   if (!normalized) {
     return null;
   }
-  const { rules, targetFolder } = parseRuleFromText(normalized);
+  const { rules, targetFolder } = parseRuleFromText(normalized, {
+    allowRules: (metadata.source || 'manual') === 'manual'
+  });
   const now = new Date().toISOString();
   // Provenance (F-202): a correction memory records which file it was about,
   // so undoing that file's organize can remove it again.

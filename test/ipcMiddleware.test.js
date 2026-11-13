@@ -238,10 +238,65 @@ describe('ipcMiddleware', () => {
             notificationId: expect.any(String),
             message: 'Disk full',
             severity: 'error',
-            groupKey: 'app-error'
+            groupKey: 'app-error:Disk full'
           })
         })
       );
+    });
+
+    // A grouped toast keeps its first message, so one fixed key for every
+    // app error hid the text of a second, different error behind a count.
+    test('two different app errors get different group keys', () => {
+      ipcMiddleware(mockStore);
+      markStoreReady();
+
+      appErrorHandler({ message: 'Could not read folder A' });
+      appErrorHandler({ message: 'Could not read folder B' });
+
+      const keys = mockDispatch.mock.calls
+        .map(([action]) => action)
+        .filter((action) => action?.type === 'system/addNotification')
+        .map((action) => action.payload.groupKey);
+      expect(keys).toEqual([
+        'app-error:Could not read folder A',
+        'app-error:Could not read folder B'
+      ]);
+    });
+
+    test('app:error carries the code and raw error as copyable details', () => {
+      ipcMiddleware(mockStore);
+      markStoreReady();
+
+      appErrorHandler({ message: 'Could not save', error: 'EPERM: not permitted', code: 'E_SAVE' });
+      appErrorHandler({ message: 'Plain' });
+
+      const payloads = mockDispatch.mock.calls
+        .map(([action]) => action)
+        .filter((action) => action?.type === 'system/addNotification')
+        .map((action) => action.payload);
+      expect(payloads[0].details).toBe('Code: E_SAVE\nEPERM: not permitted');
+      expect(payloads[1]).not.toHaveProperty('details');
+    });
+
+    test('app:error with type warning or info keeps that severity', () => {
+      ipcMiddleware(mockStore);
+      markStoreReady();
+
+      appErrorHandler({ message: 'Slow disk', type: 'warning' });
+      appErrorHandler({ message: 'Heads up', type: 'info' });
+      appErrorHandler({ message: 'Odd type', type: 'question' });
+      appErrorHandler({ message: 'Critical', severity: 'critical' });
+
+      const severities = mockDispatch.mock.calls
+        .map(([action]) => action)
+        .filter((action) => action?.type === 'system/addNotification')
+        .map((action) => [action.payload.message, action.payload.severity]);
+      expect(severities).toEqual([
+        ['Slow disk', 'warning'],
+        ['Heads up', 'info'],
+        ['Odd type', 'error'],
+        ['Critical', 'error']
+      ]);
     });
 
     test('adds beforeunload event listener', () => {

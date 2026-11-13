@@ -124,6 +124,13 @@
     "gatekeeperAssess": false,
     "entitlements": "assets/entitlements.mac.plist",
     "entitlementsInherit": "assets/entitlements.mac.plist",
+    "extendInfo": {
+      "NSRemovableVolumesUsageDescription": "StratoSort Stack reads and organizes files on external drives that you choose as Smart Folders or add for sorting.",
+      "NSNetworkVolumesUsageDescription": "StratoSort Stack reads and organizes files on network drives that you choose as Smart Folders or add for sorting.",
+      "NSDocumentsFolderUsageDescription": "StratoSort Stack reads and organizes files in Documents when you choose a folder there.",
+      "NSDesktopFolderUsageDescription": "StratoSort Stack reads and organizes files on the Desktop when you choose a folder there.",
+      "NSDownloadsFolderUsageDescription": "StratoSort Stack reads and organizes files in Downloads when you choose a folder there or turn on download sorting."
+    },
     "target": ["dmg", "zip"]
   },
   "dmg": {

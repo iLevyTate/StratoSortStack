@@ -53,6 +53,20 @@ describe('recommendInstallProfile', () => {
     expect(out.profile).toBe('quality');
   });
 
+  test('an Apple Silicon Mac is described as one shared pool of memory', () => {
+    const out = recommendInstallProfile({
+      totalMemMB: 24 * 1024,
+      vramMB: 18 * 1024,
+      hasGpu: true,
+      gpuName: 'Apple M4 Pro'
+    });
+    expect(out.profile).toBe('quality');
+    expect(out.reason).toBe(
+      '24 GB of memory, shared by the processor and graphics (Apple M4 Pro): the larger models fit. Close other large apps while StratoSort analyzes files.'
+    );
+    expect(out.reason).not.toMatch(/18 GB/);
+  });
+
   test('a 16 GB PC reporting 15.7 GB and an 8 GB card reporting 8188 MiB qualify', () => {
     // os.totalmem() leaves out firmware-reserved memory and nvidia-smi
     // rounds down; compared raw, the reason read "16 GB of RAM: needs 16 GB".

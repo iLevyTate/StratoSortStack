@@ -310,6 +310,16 @@ describe('useAnalysis', () => {
       );
     });
 
+    test('the progress card is told the run is a reanalysis', async () => {
+      const { result } = renderHook(() =>
+        useAnalysis(createMockOptions({ selectedFiles: [], analysisResults: [analyzed] }))
+      );
+
+      await reanalyze(result, ['/in/report.pdf']);
+
+      expect(mockSetIsAnalyzing).toHaveBeenCalledWith(true, { total: 1, origin: 'reanalyze' });
+    });
+
     test('leaves the user on the screen they asked from', async () => {
       const { result } = renderHook(() =>
         useAnalysis(
@@ -469,7 +479,10 @@ describe('useAnalysis', () => {
           jest.advanceTimersByTime(20);
         });
 
-        expect(mockSetIsAnalyzing).toHaveBeenCalledWith(true, { total: files.length });
+        expect(mockSetIsAnalyzing).toHaveBeenCalledWith(true, {
+          total: files.length,
+          origin: 'added'
+        });
       } finally {
         useStore.mockImplementation(defaultStore);
       }
@@ -489,8 +502,12 @@ describe('useAnalysis', () => {
         jest.advanceTimersByTime(20);
       });
 
-      // Carries the real batch total so startAnalysis doesn't zero progress
-      expect(mockSetIsAnalyzing).toHaveBeenCalledWith(true, { total: files.length });
+      // Carries the real batch total so startAnalysis doesn't zero progress,
+      // and why the run started (files the person added) for the progress card.
+      expect(mockSetIsAnalyzing).toHaveBeenCalledWith(true, {
+        total: files.length,
+        origin: 'added'
+      });
     });
 
     test('updates file state to analyzing', async () => {
@@ -964,6 +981,15 @@ describe('useAnalysis', () => {
         expect(await firstCall).toEqual({ started: true });
         const sent = mockElectronAPI.analysis.batch.mock.calls.map((call) => call[0].filePaths[0]);
         expect(sent).toEqual(['/first/file-0.txt', '/second/file-0.txt']);
+        // The progress card says the second run is files added during the first.
+        const started = mockSetIsAnalyzing.mock.calls.filter((call) => call[0] === true);
+        expect(started.map((call) => call[1].origin)).toEqual(['added', 'queued']);
+        expect(mockAddNotification).toHaveBeenCalledWith(
+          'Analysis already running. These files start when it finishes.',
+          'info',
+          expect.any(Number),
+          'analysis-queued'
+        );
       } finally {
         mockElectronAPI.analysis.batch.mockReset();
       }
@@ -2391,7 +2417,7 @@ describe('useAnalysis — a run aborted during start-up', () => {
     test('is the only one that reports an analysis as started', () => {
       const started = opts.setters.setIsAnalyzing.mock.calls.filter((call) => call[0] === true);
 
-      expect(started).toEqual([[true, { total: files.length }]]);
+      expect(started).toEqual([[true, { total: files.length, origin: 'resume' }]]);
     });
 
     test('keeps its heartbeat', async () => {

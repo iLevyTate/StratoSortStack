@@ -3889,10 +3889,13 @@ class LlamaService extends EventEmitter {
   }
 
   /**
-   * Generate text response
+   * Generate text response.
+   * `seed` (an integer) fixes the sampler so the same prompt gets the same
+   * answer; callers that leave it out keep varied sampling.
    */
   async generateText(/** @type {any} */ options) {
-    const { prompt, systemPrompt, maxTokens = 2048, temperature = 0.7, signal } = options;
+    const { prompt, systemPrompt, maxTokens = 2048, temperature = 0.7, signal, seed } = options;
+    const fixedSeed = Number.isInteger(seed) ? seed : undefined;
     const requestedMaxTokens = Number.isFinite(Number(maxTokens))
       ? Math.max(1, Math.floor(Number(maxTokens)))
       : 2048;
@@ -3986,6 +3989,7 @@ class LlamaService extends EventEmitter {
 
                 /** @type {Record<string, any>} */
                 const promptOptions = { maxTokens: safeMaxTokens, temperature };
+                if (fixedSeed !== undefined) promptOptions.seed = fixedSeed;
                 if (signal) promptOptions.signal = signal;
                 return await promptWithStopReason(session, prompt, promptOptions);
               };
@@ -4030,6 +4034,7 @@ class LlamaService extends EventEmitter {
                   maxTokens: safeMaxTokens,
                   requestedMaxTokens,
                   temperature,
+                  seed: fixedSeed,
                   gpu: this._gpuBackend !== 'cpu',
                   truncated
                 });

@@ -35,6 +35,20 @@ describe('electron-builder.json security config', () => {
     expect(builderConfig.mac.hardenedRuntime).toBe(true);
   });
 
+  // Without these Info.plist strings macOS shows a bare access prompt (or none)
+  // when a Smart Folder lives on an external SSD or in Documents/Desktop/Downloads.
+  test.each([
+    'NSRemovableVolumesUsageDescription',
+    'NSNetworkVolumesUsageDescription',
+    'NSDocumentsFolderUsageDescription',
+    'NSDesktopFolderUsageDescription',
+    'NSDownloadsFolderUsageDescription'
+  ])('macOS Info.plist explains %s access', (key) => {
+    expect(builderConfig.mac.extendInfo[key]).toEqual(
+      expect.stringMatching(/^StratoSort Stack reads and organizes files /)
+    );
+  });
+
   test('browser-process-specific V8 snapshot fuse is disabled', () => {
     expect(builderConfig.electronFuses.loadBrowserProcessSpecificV8Snapshot).toBe(false);
   });

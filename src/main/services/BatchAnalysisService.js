@@ -26,6 +26,20 @@ const {
   isMediaFile: routingIsMediaFile
 } = require('./analysisRouting');
 
+/**
+ * Median, 90th percentile and longest of a section's per-file analysis times
+ * (nearest rank), or null when no file finished.
+ * @param {number[]} durations milliseconds
+ * @returns {{ p50: number, p90: number, max: number } | null}
+ */
+function durationPercentiles(durations) {
+  const sorted = durations.filter((d) => Number.isFinite(d)).sort((a, b) => a - b);
+  if (sorted.length === 0) return null;
+  const at = (/** @type {number} */ q) =>
+    Math.round(sorted[Math.min(sorted.length - 1, Math.ceil(q * sorted.length) - 1)]);
+  return { p50: at(0.5), p90: at(0.9), max: Math.round(sorted[sorted.length - 1]) };
+}
+
 function getSectionKeys(/** @type {any} */ section) {
   switch (section) {
     case 'images':
@@ -60,6 +74,7 @@ const { analysisQueue } = require('../analysis/embeddingQueue/stageQueues');
 const embeddingQueueManager = require('../analysis/embeddingQueue/queueManager');
 const path = require('path');
 const os = require('os');
+const { getAvailableMemoryBytes, peekAvailableMemoryBytes } = require('../utils/systemMemory');
 const { get: getConfig } = require('../../shared/config/index');
 const { getInstance: getLlamaService } = require('./LlamaService');
 const { getRecommendedConcurrency } = require('./PerformanceService');
@@ -123,7 +138,8 @@ class BatchAnalysisService {
    */
   calculateOptimalConcurrency() {
     const cpuCores = os.cpus().length;
-    const freeMem = os.freemem();
+    // Available, not free: on macOS free pages alone look like pressure.
+    const freeMem = peekAvailableMemoryBytes();
     const totalMem = os.totalmem();
     const memUsage = totalMem > 0 ? Math.max(0, Math.min(1, 1 - freeMem / totalMem)) : 0.5;
 
@@ -330,9 +346,27 @@ class BatchAnalysisService {
     };
     /** @type {Record<string, any>} */
     const sectionStats = {
-      documents: { total: partitioned.documents.length, durationMs: 0, successful: 0, failed: 0 },
-      images: { total: partitioned.images.length, durationMs: 0, successful: 0, failed: 0 },
-      media: { total: partitioned.media.length, durationMs: 0, successful: 0, failed: 0 }
+      documents: {
+        total: partitioned.documents.length,
+        durationMs: 0,
+        successful: 0,
+        failed: 0,
+        fileMs: null
+      },
+      images: {
+        total: partitioned.images.length,
+        durationMs: 0,
+        successful: 0,
+        failed: 0,
+        fileMs: null
+      },
+      media: {
+        total: partitioned.media.length,
+        durationMs: 0,
+        successful: 0,
+        failed: 0,
+        fileMs: null
+      }
     };
     const embeddingStats = {
       startQueueSize: analysisQueue.getStats().queueLength,
@@ -432,6 +466,9 @@ class BatchAnalysisService {
           sectionStats[section].durationMs = Date.now() - sectionStart;
           sectionStats[section].successful = sectionResult.successful;
           sectionStats[section].failed = sectionResult.errors.length;
+          sectionStats[section].memoryWaitMs = Number(sectionResult.memoryWaitMs) || 0;
+          sectionStats[section].backpressureWaitMs = Number(sectionResult.backpressureWaitMs) || 0;
+          sectionStats[section].fileMs = sectionResult.fileMs || null;
 
           if (stopOnError && sectionResult.errors.length > 0) {
             logger.warn('[BATCH-ANALYSIS] Stopping early after section error', {
@@ -535,26 +572,40 @@ class BatchAnalysisService {
     const MEMORY_WAIT_TIMEOUT_MS = 8000;
     const MEMORY_WAIT_POLL_MS = 1000;
 
+    // AVAILABLE memory (systemMemory.js): on macOS os.freemem() counts free
+    // pages only and sits under the floor on a healthy machine, which made
+    // every file start wait the full timeout. memoryWaitMs adds up the time
+    // file starts spent here, so a slow run shows whether this was the cause.
+    const toMB = (/** @type {number} */ bytes) => Math.round(bytes / (1024 * 1024));
+    let memoryWaitMs = 0;
     const waitForMemoryHeadroom = async () => {
-      if (os.freemem() >= MEMORY_FLOOR_BYTES) return true;
+      let available = await getAvailableMemoryBytes();
+      if (available >= MEMORY_FLOOR_BYTES) return true;
       const start = Date.now();
       logger.warn('[BATCH-ANALYSIS] Pausing next file: system memory near capacity', {
-        freeMemMB: Math.round(os.freemem() / (1024 * 1024)),
-        floorMB: Math.round(MEMORY_FLOOR_BYTES / (1024 * 1024))
+        availableMemMB: toMB(available),
+        floorMB: toMB(MEMORY_FLOOR_BYTES)
       });
-      while (os.freemem() < MEMORY_FLOOR_BYTES) {
-        if (typeof isCancelled === 'function' && isCancelled()) return false;
-        if (Date.now() - start >= MEMORY_WAIT_TIMEOUT_MS) {
-          logger.warn('[BATCH-ANALYSIS] Memory-pressure wait timed out; proceeding anyway', {
-            freeMemMB: Math.round(os.freemem() / (1024 * 1024))
-          });
-          break;
+      try {
+        while (available < MEMORY_FLOOR_BYTES) {
+          if (typeof isCancelled === 'function' && isCancelled()) return false;
+          if (Date.now() - start >= MEMORY_WAIT_TIMEOUT_MS) {
+            logger.warn('[BATCH-ANALYSIS] Memory-pressure wait timed out; proceeding anyway', {
+              availableMemMB: toMB(available)
+            });
+            break;
+          }
+          await delay(MEMORY_WAIT_POLL_MS);
+          available = await getAvailableMemoryBytes();
         }
-        await delay(MEMORY_WAIT_POLL_MS);
+        return true;
+      } finally {
+        memoryWaitMs += Date.now() - start;
       }
-      return true;
     };
 
+    // Time file starts spent waiting for the embedding queue to drain.
+    let backpressureWaitMs = 0;
     const checkBackpressure = async () => {
       if (typeof isCancelled === 'function' && isCancelled()) {
         return false;
@@ -664,7 +715,9 @@ class BatchAnalysisService {
           });
       }
 
+      const waitStartedAt = Date.now();
       const canProceed = await this._backpressureWaitPromise;
+      backpressureWaitMs += Date.now() - waitStartedAt;
       return canProceed !== false;
     };
 
@@ -826,7 +879,14 @@ class BatchAnalysisService {
           isCancelled() &&
           normalizedResults.length < filePaths.length),
       successful,
-      errors: normalizedErrors
+      errors: normalizedErrors,
+      memoryWaitMs,
+      backpressureWaitMs,
+      fileMs: durationPercentiles(
+        normalizedResults
+          .filter((/** @type {any} */ r) => r?.durationMs > 0)
+          .map((/** @type {any} */ r) => r.durationMs)
+      )
     };
   }
 

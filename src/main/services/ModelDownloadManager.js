@@ -252,37 +252,8 @@ class ModelDownloadManager {
     const filePath = path.join(modelPath, filename);
     const partialPath = filePath + '.partial';
 
-    // Check disk space — aggregated across every other in-flight download.
-    // Without the aggregate, N concurrent downloads each pass an individual
-    // check while jointly exceeding free space and failing mid-stream.
-    let pendingBytes = 0;
-    for (const [name, state] of this._downloads) {
-      if (name === filename) continue;
-      if (
-        state.status === 'downloading' ||
-        state.status === 'redirecting' ||
-        state.status === 'retrying'
-      ) {
-        pendingBytes += Math.max(0, (state.totalBytes || 0) - (state.downloadedBytes || 0));
-      }
-    }
-    const spaceCheck = await this.checkDiskSpace(modelInfo.size + pendingBytes);
-    if (!spaceCheck.sufficient) {
-      if (spaceCheck.checkFailed) {
-        throw new Error(
-          `Cannot verify free disk space (${spaceCheck.error || 'unknown error'}); ` +
-            `refusing to start a ${Math.round(modelInfo.size / 1024 / 1024 / 1024)}GB download`
-        );
-      }
-      const neededGb = Math.round((modelInfo.size + pendingBytes) / 1024 / 1024 / 1024);
-      throw new Error(
-        `Insufficient disk space. Need ${neededGb}GB` +
-          (pendingBytes > 0 ? ' (including in-progress downloads)' : '') +
-          `, have ${Math.round(spaceCheck.available / 1024 / 1024 / 1024)}GB`
-      );
-    }
-
-    // Check for existing partial download
+    // Check for existing partial download. Done before the space check so a
+    // resume only has to find room for the bytes still to come.
     let startByte = 0;
     try {
       const partialStats = await fs.stat(partialPath);
@@ -299,6 +270,38 @@ class ModelDownloadManager {
       }
     } catch {
       // No partial file, start fresh
+    }
+
+    // Check disk space — aggregated across every other in-flight download.
+    // Without the aggregate, N concurrent downloads each pass an individual
+    // check while jointly exceeding free space and failing mid-stream.
+    let pendingBytes = 0;
+    for (const [name, state] of this._downloads) {
+      if (name === filename) continue;
+      if (
+        state.status === 'downloading' ||
+        state.status === 'redirecting' ||
+        state.status === 'retrying'
+      ) {
+        pendingBytes += Math.max(0, (state.totalBytes || 0) - (state.downloadedBytes || 0));
+      }
+    }
+    // The bytes already in the partial are on disk; only the rest needs room.
+    const neededBytes = Math.max(0, modelInfo.size - startByte) + pendingBytes;
+    const spaceCheck = await this.checkDiskSpace(neededBytes);
+    if (!spaceCheck.sufficient) {
+      if (spaceCheck.checkFailed) {
+        throw new Error(
+          `Cannot verify free disk space (${spaceCheck.error || 'unknown error'}); ` +
+            `refusing to start a ${Math.round(modelInfo.size / 1024 / 1024 / 1024)}GB download`
+        );
+      }
+      const neededGb = Math.round(neededBytes / 1024 / 1024 / 1024);
+      throw new Error(
+        `Insufficient disk space. Need ${neededGb}GB` +
+          (pendingBytes > 0 ? ' (including in-progress downloads)' : '') +
+          `, have ${Math.round(spaceCheck.available / 1024 / 1024 / 1024)}GB`
+      );
     }
 
     // Use redirect URL if provided (for following HTTP redirects), with a max redirect limit
@@ -515,6 +518,25 @@ class ModelDownloadManager {
           })
             .then(finalizeSuccess)
             .catch((err) => finalizeFailure(err));
+          return;
+        }
+
+        // 416 to a Range request: the server will not resume from the saved
+        // partial (typically because it already holds every byte, e.g. the
+        // app closed during the checksum). Left as a plain error it was not
+        // retried and the partial stayed, so every later attempt hit the same
+        // 416 and Setup could never finish. Drop the partial and retry from
+        // byte 0 ('incomplete' is retryable).
+        if (response.statusCode === 416 && startByte > 0) {
+          response.resume();
+          logger.warn(`[Download] Server would not resume ${filename}; starting again`, {
+            startByte
+          });
+          finalizeFailure(
+            new Error('The saved part of the download could not be resumed'),
+            'incomplete',
+            true
+          );
           return;
         }
 

@@ -110,10 +110,43 @@ function ReadyFileItem({
         ? `Your choice (suggested: ${engine.folder})`
         : 'Your choice';
     }
-    if (routing.source === 'name') return 'Matched by folder name';
+    if (routing.source === 'name') {
+      // A name match is either the analysis label or the file's own name/type.
+      const fromLabel =
+        typeof category === 'string' &&
+        category.trim().toLowerCase() ===
+          String(routing.folder?.name || '')
+            .trim()
+            .toLowerCase();
+      return fromLabel
+        ? 'Matched by the label the analysis gave this file'
+        : 'Matched by folder name';
+    }
     return null;
-  }, [routing, engine]);
-  const showConfidence = computedConfidence !== null;
+  }, [routing, engine, category]);
+  // A changed suggestion is learned from the move, but only for files of the
+  // same type and label, and only after a few (the engine weighs it against
+  // what the file contains). Say so, so the user knows what to expect.
+  const learningNote = useMemo(() => {
+    if (routing?.source !== 'user' || !engine?.folder) return null;
+    const chosen = routing.folder?.name;
+    if (!chosen || engine.folder === chosen) return null;
+    const dot = String(file?.name || '').lastIndexOf('.');
+    const ext =
+      dot > 0
+        ? String(file.name)
+            .slice(dot + 1)
+            .toUpperCase()
+        : '';
+    const similar = ext ? `similar ${ext} files` : 'similar files';
+    return `StratoSort remembers this after the move. Once a few ${similar} go to ${chosen}, it suggests ${chosen} for them too.`;
+  }, [routing, engine, file?.name]);
+  // A percentage only where it measures how well the folder fits: not the
+  // label's self-rating behind a name match, not the catch-all fallback.
+  const showConfidence =
+    computedConfidence !== null &&
+    routing?.source !== 'name' &&
+    !(routedByEngine && engine?.source === 'default');
   const fileKey = toCanonicalPath(file?.path) || file?.path || '';
   const handleToggle = useCallback(() => onToggleSelected(fileKey), [onToggleSelected, fileKey]);
   const handleEditName = useCallback(
@@ -252,6 +285,15 @@ function ReadyFileItem({
               data-testid="organize-routing-note"
             >
               {routingNote}
+            </Text>
+          )}
+          {learningNote && (
+            <Text
+              variant="tiny"
+              className="-mt-2 text-system-gray-500"
+              data-testid="organize-learning-note"
+            >
+              {learningNote}
             </Text>
           )}
 

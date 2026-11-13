@@ -81,3 +81,122 @@ describe('renameNoReplace case-only rename on darwin', () => {
     expect(fs.rename).not.toHaveBeenCalled();
   });
 });
+
+// macOS returns decomposed accents (a + U+0308) while the app builds composed
+// names (U+00E4). APFS treats both as one name, so a rename between the two
+// spellings finds the source itself at the destination, exactly like a
+// case-only rename.
+describe('renameNoReplace between accent spellings on darwin', () => {
+  let renameNoReplace;
+  let withPathLock;
+  const source = path.resolve('/vol/docs/Ma\u0308rz.pdf');
+  const dest = path.resolve('/vol/docs/M\u00e4rz.pdf');
+
+  beforeEach(() => {
+    jest.resetModules();
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    ({ renameNoReplace, withPathLock } = require('../src/shared/atomicFileOperations'));
+    jest.spyOn(fs, 'rename').mockResolvedValue(undefined);
+    // access() finds the source under either spelling, as APFS does.
+    jest.spyOn(fs, 'access').mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    Object.defineProperty(process, 'platform', originalPlatform);
+  });
+
+  function mockStats(byPath) {
+    jest.spyOn(fs, 'stat').mockImplementation(async (p) => {
+      const entry = byPath[path.resolve(String(p)).normalize('NFC')];
+      if (!entry) throw errorWithCode('ENOENT');
+      return { dev: entry.dev, ino: entry.ino, isFile: () => true };
+    });
+  }
+
+  test('the other spelling is the source itself, so the rename runs', async () => {
+    mockStats({ [dest.normalize('NFC')]: { dev: 1, ino: 100 } });
+
+    await renameNoReplace(source, dest);
+
+    expect(fs.rename).toHaveBeenCalledWith(source, dest);
+  });
+
+  test('a different file under the other spelling is EEXIST, not replaced', async () => {
+    jest.spyOn(fs, 'stat').mockImplementation(async (p) => {
+      const ino = String(p) === source ? 100 : 200;
+      return { dev: 1, ino, isFile: () => true };
+    });
+
+    await expect(renameNoReplace(source, dest)).rejects.toMatchObject({ code: 'EEXIST' });
+    expect(fs.rename).not.toHaveBeenCalled();
+  });
+
+  test('both spellings contend on one path lock', async () => {
+    const order = [];
+    let releaseFirst;
+    const first = withPathLock(source, async () => {
+      order.push('first-start');
+      await new Promise((resolve) => {
+        releaseFirst = resolve;
+      });
+      order.push('first-end');
+    });
+    const second = withPathLock(dest, async () => {
+      order.push('second');
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    releaseFirst();
+    await Promise.all([first, second]);
+
+    expect(order).toEqual(['first-start', 'first-end', 'second']);
+  });
+});
+
+// NTFS keeps decomposed and composed spellings as two names, so on Windows
+// they do not share a path lock (case still does).
+describe('path locks on win32', () => {
+  let withPathLock;
+
+  beforeEach(() => {
+    jest.resetModules();
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    ({ withPathLock } = require('../src/shared/atomicFileOperations'));
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    Object.defineProperty(process, 'platform', originalPlatform);
+  });
+
+  async function runsWhileHeld(firstPath, secondPath) {
+    const order = [];
+    let releaseFirst;
+    const first = withPathLock(firstPath, async () => {
+      order.push('first-start');
+      await new Promise((resolve) => {
+        releaseFirst = resolve;
+      });
+      order.push('first-end');
+    });
+    const second = withPathLock(secondPath, async () => {
+      order.push('second');
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    releaseFirst();
+    await Promise.all([first, second]);
+    return order[1] === 'second';
+  }
+
+  test('the two accent spellings do not contend on one lock', async () => {
+    const a = path.resolve('/vol/docs/Ma\u0308rz.pdf');
+    const b = path.resolve('/vol/docs/M\u00e4rz.pdf');
+    expect(await runsWhileHeld(a, b)).toBe(true);
+  });
+
+  test('a case-only difference still contends on one lock', async () => {
+    const a = path.resolve('/vol/docs/Report.pdf');
+    const b = path.resolve('/vol/docs/REPORT.pdf');
+    expect(await runsWhileHeld(a, b)).toBe(false);
+  });
+});

@@ -378,6 +378,49 @@ describe('Smart Folders IPC', () => {
       );
     });
 
+    test('the AI enhancement never gives a new folder the catch-all category', async () => {
+      const handler = getHandler(IPC_CHANNELS.SMART_FOLDERS.ADD);
+      const { enhanceSmartFolderWithLLM } = require('../src/main/services/SmartFoldersLLMService');
+      let resolveEnhancement;
+      const enhancementDone = new Promise((resolve) => {
+        resolveEnhancement = resolve;
+      });
+      const folderState = [...mockFoldersService.getCustomFolders()];
+      mockFoldersService.getCustomFolders.mockImplementation(() => folderState);
+      mockFoldersService.setCustomFolders.mockImplementation((nextFolders) => {
+        folderState.splice(0, folderState.length, ...nextFolders);
+      });
+      enhanceSmartFolderWithLLM.mockReturnValueOnce(enhancementDone);
+      fs.stat
+        .mockResolvedValueOnce({ isDirectory: () => true })
+        .mockRejectedValueOnce({ code: 'ENOENT' })
+        .mockResolvedValueOnce({ isDirectory: () => true });
+      fs.mkdir.mockResolvedValue();
+      fs.writeFile.mockResolvedValue();
+      fs.unlink.mockResolvedValue();
+
+      const result = await handler(
+        {},
+        { name: 'Other', path: 'C:\\Users\\Test\\Documents\\Other', description: 'Anything else' }
+      );
+      expect(result.success).toBe(true);
+
+      resolveEnhancement({
+        improvedDescription: 'Anything else',
+        suggestedCategory: 'Uncategorized'
+      });
+      await enhancementDone;
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        if (mockFoldersService.setCustomFolders.mock.calls.length > 1) break;
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+
+      expect(mockFoldersService.setCustomFolders.mock.calls.length).toBeGreaterThan(1);
+      const saved = mockFoldersService.setCustomFolders.mock.calls.at(-1)[0];
+      const other = saved.find((f) => f.name === 'Other');
+      expect(other.category).toBe('general');
+    });
+
     test('a watcher that is missing or throws never fails the add', async () => {
       const handler = getHandler(IPC_CHANNELS.SMART_FOLDERS.ADD);
       const { enhanceSmartFolderWithLLM } = require('../src/main/services/SmartFoldersLLMService');

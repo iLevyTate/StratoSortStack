@@ -109,6 +109,8 @@ const logger = createLogger('AtomicFileOperations');
  * Transaction journal directory name (alongside backup directory)
  */
 const JOURNAL_DIR_NAME = 'stratosort-journals';
+/** Longest file name (one path segment) the common file systems accept. */
+const MAX_FILE_NAME_BYTES = 255;
 
 /**
  * Error codes that indicate a transient Windows filesystem race (AV scanner,
@@ -159,12 +161,25 @@ const pathLocks = new Map();
  * Canonical lock key for a path: host-normalized and, on case-insensitive
  * filesystems (win32, default darwin), case-folded, so `Report_1.pdf` and
  * `report_1.pdf` contend on one lock exactly as they contend on one file.
+ * On macOS accents are composed (NFC) first: it returns decomposed names and
+ * APFS treats both spellings as one name.
  * @param {string} filePath
  * @returns {string}
  */
 function pathLockKey(filePath) {
   const normalized = path.resolve(resolveFsPath(filePath));
-  return isCaseInsensitiveFileSystem() ? normalized.toLowerCase() : normalized;
+  return isCaseInsensitiveFileSystem() ? foldPathForCompare(normalized) : normalized;
+}
+
+/**
+ * Same-name key on a case-insensitive filesystem: lower case, and on macOS
+ * composed accents too (NTFS keeps the two accent spellings as two names).
+ * A comparison key only; never pass it to fs.
+ * @param {string} p
+ * @returns {string}
+ */
+function foldPathForCompare(p) {
+  return (process.platform === 'darwin' ? p.normalize('NFC') : p).toLowerCase();
 }
 
 /**
@@ -1837,8 +1852,26 @@ async function crossDeviceMove(source, dest, options = {}) {
   // write to app-owned dirs) would NOT be ignored here and a partial copy
   // could be picked up for auto-analysis. The `stratosort` marker makes a
   // crash orphan identifiable for manual cleanup.
-  const stagingPath =
-    `${normalizedDest}.stratosort-${Date.now()}-` + `${crypto.randomBytes(4).toString('hex')}.tmp`;
+  //
+  // Length: names are capped at 255 bytes (APFS, exFAT, ext4; NTFS counts
+  // 255 UTF-16 units, which 255 UTF-8 bytes never exceed). The suffix adds
+  // 38 characters, so a long destination name is shortened, by whole
+  // characters, in the staging name only; the publish rename still lands on
+  // the full name. Without this the copy failed with ENAMETOOLONG, which
+  // counts as critical and rolled the whole run back.
+  const stagingSuffix =
+    `.stratosort-${Date.now()}-` + `${crypto.randomBytes(4).toString('hex')}.tmp`;
+  const stagingNameChars = Array.from(path.basename(normalizedDest));
+  while (
+    stagingNameChars.length > 0 &&
+    Buffer.byteLength(stagingNameChars.join('') + stagingSuffix) > MAX_FILE_NAME_BYTES
+  ) {
+    stagingNameChars.pop();
+  }
+  const stagingPath = path.join(
+    path.dirname(normalizedDest),
+    stagingNameChars.join('') + stagingSuffix
+  );
 
   try {
     const destinationDir = path.dirname(normalizedDest);
@@ -2033,10 +2066,12 @@ async function renameNoReplace(source, dest) {
   const normalizedDest = resolveFsPath(dest);
 
   const identicalPath = normalizedSource === normalizedDest;
+  // "Case-only" also covers a change of accent encoding only (macOS NFD vs
+  // NFC); either way the stat check below decides whether it is the same file.
   const caseOnlyRename =
     !identicalPath &&
     isCaseInsensitiveFileSystem() &&
-    normalizedSource.toLowerCase() === normalizedDest.toLowerCase();
+    foldPathForCompare(normalizedSource) === foldPathForCompare(normalizedDest);
 
   await withPathLock(normalizedDest, async () => {
     if (!identicalPath) {

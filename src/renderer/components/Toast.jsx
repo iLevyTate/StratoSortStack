@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import PropTypes from 'prop-types';
-import { CheckCircle2, XCircle, AlertTriangle, Info, X, Bell } from 'lucide-react';
+import { CheckCircle2, XCircle, AlertTriangle, Info, X, Bell, Copy, Check } from 'lucide-react';
 import { createLogger } from '../../shared/logger';
 import { TIMEOUTS } from '../../shared/performanceConstants';
 import { IconButton } from './ui';
@@ -12,7 +12,73 @@ const generateSecureId = () =>
     ? crypto.randomUUID()
     : `toast-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const MAX_TOASTS = 4;
+// Errors stay until dismissed. Only the newest few stay open, so there is
+// always room for one other toast (a run's result, a warning).
+const MAX_STICKY_ERRORS = 3;
 const GROUP_WINDOW_MS = 2000; // merge toasts with same groupKey within 2s
+// A warning needs time to be read; shorter requests are raised to this.
+const MIN_WARNING_DURATION_MS = 10000;
+const COPIED_FEEDBACK_MS = 2000;
+
+/**
+ * How long a toast of this severity stays. An error (often naming a path the
+ * user needs to act on) stays until it is dismissed, whatever the caller
+ * asked for; a warning stays at least MIN_WARNING_DURATION_MS unless it was
+ * already asked to stay (0). Info and success keep the caller's duration.
+ */
+const durationForSeverity = (severity, duration) => {
+  if (severity === 'error') return 0;
+  if (severity === 'warning') {
+    if (duration === 0) return 0;
+    return Math.max(Number(duration) || 0, MIN_WARNING_DURATION_MS);
+  }
+  return duration;
+};
+
+/**
+ * Apply the toast caps to `toasts` in place and return the evicted ids. The
+ * toast `keepId` (the one just added or merged) is never evicted. Older
+ * errors past MAX_STICKY_ERRORS go first, oldest first; then, while over
+ * MAX_TOASTS, the oldest toast that is not an error, or else the oldest one.
+ * @param {Array<{id: string, severity?: string}>} toasts
+ * @param {string} keepId
+ * @returns {string[]}
+ */
+const capToasts = (toasts, keepId) => {
+  const evicted = [];
+  const evictAt = (index) => {
+    const [removed] = toasts.splice(index, 1);
+    if (removed) evicted.push(removed.id);
+  };
+  const isError = (toast) => toast.severity === 'error';
+  while (toasts.filter(isError).length > MAX_STICKY_ERRORS) {
+    const index = toasts.findIndex((toast) => isError(toast) && toast.id !== keepId);
+    if (index === -1) break;
+    evictAt(index);
+  }
+  while (toasts.length > MAX_TOASTS) {
+    let index = toasts.findIndex((toast) => !isError(toast) && toast.id !== keepId);
+    if (index === -1) index = toasts.findIndex((toast) => toast.id !== keepId);
+    if (index === -1) break;
+    evictAt(index);
+  }
+  return evicted;
+};
+
+/** Plain text of a toast message, or '' when it is a React element. */
+const messageToText = (message) => {
+  if (React.isValidElement(message)) return '';
+  if (message && typeof message === 'object') {
+    const readable = message.message || message.text || message.title;
+    if (typeof readable === 'string') return readable;
+    try {
+      return JSON.stringify(message);
+    } catch {
+      return String(message);
+    }
+  }
+  return message == null ? '' : String(message);
+};
 const getHighestSeverity = (a, b) => {
   const order = { error: 3, warning: 2, success: 1, info: 0 };
   const aScore = order[a] ?? 0;
@@ -28,11 +94,19 @@ function Toast({
   onActivate,
   actionable = false,
   show = true,
-  mergeCount = 0
+  mergeCount = 0,
+  details = null
 }) {
   const [isVisible, setIsVisible] = useState(show);
+  // The auto-dismiss timer waits while the pointer is over the toast or
+  // focus is inside it, and starts again from the full duration after.
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const paused = hovered || focused;
   const closeTimerRef = useRef(null);
   const animationTimerRef = useRef(null);
+  const copiedTimerRef = useRef(null);
   const onCloseRef = useRef(onClose);
 
   // Keep onClose ref in sync
@@ -54,11 +128,15 @@ function Toast({
         clearTimeout(animationTimerRef.current);
         animationTimerRef.current = null;
       }
+      if (copiedTimerRef.current) {
+        clearTimeout(copiedTimerRef.current);
+        copiedTimerRef.current = null;
+      }
     };
   }, []);
 
   useEffect(() => {
-    if (show && duration > 0) {
+    if (show && duration > 0 && !paused) {
       closeTimerRef.current = setTimeout(() => {
         closeTimerRef.current = null;
         setIsVisible(false);
@@ -68,20 +146,19 @@ function Toast({
         );
       }, duration);
 
+      // Only the pending close is cancelled: an exit animation that already
+      // started (the toast is sliding out) finishes and removes the toast,
+      // even if the pointer reaches it on the way out. Unmount clears both.
       return () => {
         if (closeTimerRef.current) {
           clearTimeout(closeTimerRef.current);
           closeTimerRef.current = null;
         }
-        if (animationTimerRef.current) {
-          clearTimeout(animationTimerRef.current);
-          animationTimerRef.current = null;
-        }
       };
     }
 
     return undefined;
-  }, [show, duration]);
+  }, [show, duration, paused]);
 
   const handleClose = () => {
     setIsVisible(false);
@@ -97,6 +174,34 @@ function Toast({
       animationTimerRef.current = null;
       onCloseRef.current?.();
     }, TIMEOUTS.ANIMATION_MEDIUM);
+  };
+
+  const copyText = [messageToText(message), typeof details === 'string' ? details : '']
+    .filter(Boolean)
+    .join('\n\n');
+  const canCopy = (severity === 'error' || severity === 'warning') && copyText.length > 0;
+
+  const handleCopy = async (event) => {
+    event.stopPropagation();
+    const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : undefined;
+    if (!clipboard || typeof clipboard.writeText !== 'function') return;
+    try {
+      await clipboard.writeText(copyText);
+      setCopied(true);
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = setTimeout(() => {
+        copiedTimerRef.current = null;
+        setCopied(false);
+      }, COPIED_FEEDBACK_MS);
+    } catch (error) {
+      logger.warn('Could not copy toast text', { error: error?.message });
+    }
+  };
+
+  const handleBlur = (event) => {
+    // Moving focus between the toast's own buttons keeps it paused.
+    if (event.currentTarget.contains(event.relatedTarget)) return;
+    setFocused(false);
   };
 
   const handleActivate = () => {
@@ -155,20 +260,8 @@ function Toast({
   if (!show && !isVisible) return null;
 
   const renderMessageContent = () => {
-    if (React.isValidElement(message)) {
-      return message;
-    }
-
-    if (message && typeof message === 'object') {
-      try {
-        const readableType = message.message || message.text || message.title;
-        if (typeof readableType === 'string') return readableType;
-        return JSON.stringify(message);
-      } catch {
-        return String(message);
-      }
-    }
-
+    if (React.isValidElement(message)) return message;
+    if (message && typeof message === 'object') return messageToText(message);
     return message;
   };
 
@@ -179,11 +272,14 @@ function Toast({
         actionable ? 'cursor-pointer hover:brightness-[0.98]' : ''
       }`}
       style={fallbackStyle}
-      role={actionable ? 'button' : 'alert'}
-      aria-live="polite"
+      role={actionable ? 'button' : severity === 'error' ? 'alert' : 'status'}
       tabIndex={actionable ? 0 : -1}
       onClick={actionable ? handleActivate : undefined}
       onKeyDown={handleKeyDown}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={handleBlur}
       title={actionable ? 'Open in StratoSort' : undefined}
     >
       {/* eslint-enable jsx-a11y/no-static-element-interactions, jsx-a11y/no-noninteractive-tabindex */}
@@ -205,6 +301,23 @@ function Toast({
             </Text>
           )}
         </Text>
+        {canCopy && (
+          <IconButton
+            onClick={handleCopy}
+            icon={
+              copied ? (
+                <Check className="w-3.5 h-3.5" aria-hidden="true" />
+              ) : (
+                <Copy className="w-3.5 h-3.5" aria-hidden="true" />
+              )
+            }
+            size="sm"
+            variant="ghost"
+            className="ml-1 h-6 w-6 text-current/70 hover:text-current hover:bg-current/10"
+            aria-label={copied ? 'Copied' : 'Copy message'}
+            title={copied ? 'Copied' : 'Copy message'}
+          />
+        )}
         <IconButton
           onClick={(event) => {
             event.stopPropagation();
@@ -229,7 +342,8 @@ Toast.propTypes = {
   onActivate: PropTypes.func,
   actionable: PropTypes.bool,
   show: PropTypes.bool,
-  mergeCount: PropTypes.number
+  mergeCount: PropTypes.number,
+  details: PropTypes.string
 };
 
 // Toast Container for managing multiple toasts - compact design
@@ -283,6 +397,7 @@ export function ToastContainer({ toasts = [], onRemoveToast, onActivateToast }) 
 
   return (
     <div
+      role="region"
       aria-live="polite"
       aria-label="Notifications"
       className="z-toast pointer-events-none"
@@ -342,6 +457,7 @@ export function ToastContainer({ toasts = [], onRemoveToast, onActivateToast }) 
                 onActivate={() => onActivateToast?.(toast)}
                 onClose={() => onRemoveToast?.(toast.id)}
                 mergeCount={toast.mergeCount || 0}
+                details={toast.details ?? null}
               />
             </div>
           ))}
@@ -398,14 +514,18 @@ export const useToast = () => {
         if (idx !== -1) {
           const existing = previousToasts[idx];
           const mergeCount = (existing.mergeCount || 1) + 1;
+          const mergedSeverity = getHighestSeverity(
+            existing.severity || 'info',
+            severity || 'info'
+          );
           const updated = {
             ...existing,
             id: existing.id, // keep id stable for animation
             message: existing.originalMessage || existing.message,
             originalMessage: existing.originalMessage || existing.message,
             mergeCount,
-            severity: getHighestSeverity(existing.severity || 'info', severity || 'info'),
-            duration: duration ?? existing.duration,
+            severity: mergedSeverity,
+            duration: durationForSeverity(mergedSeverity, duration ?? existing.duration),
             createdAt: existing.createdAt || now
           };
           nextToasts = previousToasts.slice();
@@ -420,20 +540,24 @@ export const useToast = () => {
             id: toastId,
             message,
             severity,
-            duration,
+            duration: durationForSeverity(severity, duration),
             show: true,
             groupKey: groupKey || null,
             createdAt: now,
             actionable: Boolean(meta?.actionable),
             activationType: meta?.type || null,
-            activationData: meta?.data ?? null
+            activationData: meta?.data ?? null,
+            // Extra text the Copy button adds after the message (an error
+            // code, the full path), for a bug report.
+            details: typeof meta?.details === 'string' && meta.details ? meta.details : null
           }
         ];
-        // Cap visible toasts - track evicted IDs for caller cleanup
-        while (nextToasts.length > MAX_TOASTS) {
-          const evicted = nextToasts.shift();
-          if (evicted) evictedIdsRef.current.push(evicted.id);
-        }
+      }
+      // Cap the stack (see capToasts) and track evicted IDs for caller
+      // cleanup. A burst of info toasts cannot push an unread error off, and
+      // the toast just added or merged always stays.
+      if (nextToasts !== previousToasts) {
+        evictedIdsRef.current.push(...capToasts(nextToasts, toastId));
       }
 
       toastsRef.current = nextToasts;
@@ -460,9 +584,9 @@ export const useToast = () => {
     [addToast]
   );
   const showError = useCallback(
-    (message, duration = 6200, meta = null) => addToast(message, 'error', duration, null, meta),
+    (message, duration = 0, meta = null) => addToast(message, 'error', duration, null, meta),
     [addToast]
-  ); // Errors stay longer
+  ); // Errors stay until dismissed (durationForSeverity)
   const showWarning = useCallback(
     (message, duration = 5200, meta = null) => addToast(message, 'warning', duration, null, meta),
     [addToast]

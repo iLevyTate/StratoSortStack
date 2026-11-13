@@ -141,12 +141,19 @@ async function embedFileChunks({
       return { persisted: 0, skipped: 'no_store' };
     }
 
+    const embedStartedAt = performance.now();
     const { payloads, aborted } = await buildFileChunkPayloads({
       fileId,
       filePath,
       text,
       embedText,
       signal
+    });
+    // Extension only: the timing log never names the file.
+    logger.info('[CHUNK-TIMING]', {
+      ext: path.extname(String(filePath || '')).toLowerCase(),
+      chunks: payloads.length,
+      embedMs: Math.round(performance.now() - embedStartedAt)
     });
     if (aborted) return { persisted: 0, skipped: 'aborted' };
     if (payloads.length === 0) return { persisted: 0, skipped: 'no_embeddings' };

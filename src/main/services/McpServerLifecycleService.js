@@ -13,6 +13,13 @@
  * strict — out-of-range or non-integer values for `STRATOSORT_MCP_PORT`
  * log a warning and fall back to the default instead of failing later
  * with a cryptic EACCES.
+ *
+ * The user's on/off choice is remembered in `mcp-server.json` next to the
+ * token, so a server left on starts again with the app. Only the user's own
+ * toggle writes it (`{ remember: true }`); the quit-time disable() leaves it
+ * alone. It is kept out of settings.json on purpose: the Settings panel saves
+ * its whole form, which would put back the value it loaded when it opened,
+ * and a settings file imported from elsewhere must not start a server.
  */
 'use strict';
 
@@ -27,6 +34,7 @@ const { readEncryptionMarker, serializeEncryptionMarker } = require('./encryptio
 const TOKEN_FILENAME = 'mcp-token.bin';
 const TOKEN_MARKER_FILENAME = 'mcp-token.enc';
 const TOKEN_PATTERN = /^[0-9a-f]{64}$/;
+const ENABLED_PREF_FILENAME = 'mcp-server.json';
 // Bounds disable() so a transport close that never settles can't wedge the
 // lifecycle mutex for the rest of the process.
 const HTTP_CLOSE_TIMEOUT_MS = 10_000;
@@ -137,10 +145,18 @@ class McpServerLifecycleService extends EventEmitter {
     return next;
   }
 
-  async enable() {
+  /**
+   * @param {{ remember?: boolean }} [options] remember: save "on" so the
+   *   server starts with the app next time (the user's own toggle). Saved
+   *   only after the server is actually running.
+   */
+  async enable({ remember = false } = {}) {
     return this._runLifecycle(async () => {
       this._enabled = true;
-      if (this._status === 'running') return { port: this._port, token: this._token };
+      if (this._status === 'running') {
+        if (remember) await this._saveEnabledPreference(true);
+        return { port: this._port, token: this._token };
+      }
       this._status = 'starting';
       this._emitStatus();
       try {
@@ -152,19 +168,27 @@ class McpServerLifecycleService extends EventEmitter {
           : [];
         this._status = 'running';
         this._emitStatus();
-        return { port: this._port, token: this._token };
       } catch (err) {
         this._status = 'error';
         this._lastError = err.message;
         this._emitStatus();
         throw err;
       }
+      if (remember) await this._saveEnabledPreference(true);
+      return { port: this._port, token: this._token };
     });
   }
 
-  async disable() {
+  /**
+   * @param {{ remember?: boolean }} [options] remember: save "off" (the
+   *   user's own toggle). The quit-time call omits it so a server left on
+   *   starts again next launch. Saved before closing, so a failed close
+   *   still keeps the user's choice.
+   */
+  async disable({ remember = false } = {}) {
     return this._runLifecycle(async () => {
       this._enabled = false;
+      if (remember) await this._saveEnabledPreference(false);
       let closeError = null;
       if (this._httpHandle?.close) {
         try {
@@ -230,6 +254,49 @@ class McpServerLifecycleService extends EventEmitter {
 
   getToolNames() {
     return this._toolNames;
+  }
+
+  /**
+   * Whether the user left the server on. Missing, unreadable or hand-edited
+   * files read as off: starting a listening server is opt-in only.
+   * @returns {Promise<boolean>}
+   */
+  async getRememberedEnabled() {
+    const file = path.join(app.getPath('userData'), ENABLED_PREF_FILENAME);
+    let raw;
+    try {
+      raw = await fs.promises.readFile(file, 'utf8');
+    } catch (err) {
+      if (err?.code !== 'ENOENT') {
+        this._logger?.warn?.('[mcp] could not read the saved on/off choice', {
+          error: err?.message
+        });
+      }
+      return false;
+    }
+    try {
+      return JSON.parse(String(raw))?.enabled === true;
+    } catch {
+      this._logger?.warn?.('[mcp] saved on/off choice is damaged; treating as off');
+      return false;
+    }
+  }
+
+  /**
+   * Best-effort: a failed write must not undo a working enable/disable.
+   * @param {boolean} enabled
+   */
+  async _saveEnabledPreference(enabled) {
+    try {
+      const dir = app.getPath('userData');
+      await fs.promises.mkdir(dir, { recursive: true });
+      await _writeFileAtomic(path.join(dir, ENABLED_PREF_FILENAME), JSON.stringify({ enabled }));
+    } catch (err) {
+      this._logger?.warn?.('[mcp] could not save the on/off choice', {
+        enabled,
+        error: err?.message
+      });
+    }
   }
 
   // Back-compat alias.

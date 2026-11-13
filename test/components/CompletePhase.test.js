@@ -119,7 +119,12 @@ jest.mock('lucide-react', () => ({
   Copy: () => <span />,
   FilePlus: () => <span />,
   ArrowLeft: () => <span />,
-  FolderOpen: () => <span />
+  FolderOpen: () => <span />,
+  AlertCircle: () => <span />,
+  AlertTriangle: () => <span />,
+  Clock: () => <span />,
+  Download: () => <span />,
+  Undo2: () => <span />
 }));
 
 const mockRevealFile = jest.fn();
@@ -136,9 +141,11 @@ jest.mock('../../src/renderer/contexts/NotificationContext', () => ({
   })
 }));
 
+const mockExportOrganizeReport = jest.fn().mockResolvedValue({ success: false, canceled: true });
 jest.mock('../../src/renderer/services/ipc', () => ({
   filesIpc: {
-    openFolder: jest.fn().mockResolvedValue(undefined)
+    openFolder: jest.fn().mockResolvedValue(undefined),
+    exportOrganizeReport: (...args) => mockExportOrganizeReport(...args)
   }
 }));
 
@@ -223,7 +230,7 @@ describe('CompletePhase premium finish', () => {
     }
   });
 
-  test('a renamed file shows its new name and folder, and can be shown in its folder', () => {
+  test('a renamed file shows its full new location, and can be shown in its folder', () => {
     selectRedactPaths.mockReturnValue(false);
     mockRevealFile.mockClear();
     const { useAppSelector } = require('../../src/renderer/store/hooks');
@@ -245,10 +252,11 @@ describe('CompletePhase premium finish', () => {
     try {
       render(<CompletePhase />);
       expect(
-        screen.getByText('Renamed to transaction-log.xlsx · in C:\\Docs\\Finance')
+        screen.getByText('Now at C:\\Docs\\Finance\\transaction-log.xlsx')
       ).toBeInTheDocument();
-      const row = screen.getByLabelText('Organized file 1');
-      fireEvent.click(row.querySelector('button'));
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Show Tiller Template (3).xlsx in its folder' })
+      );
       expect(mockRevealFile).toHaveBeenCalledWith('C:\\Docs\\Finance\\transaction-log.xlsx');
     } finally {
       useAppSelector.mockImplementation(defaultSelector);
@@ -362,7 +370,7 @@ describe('CompletePhase premium finish', () => {
       expect(
         screen.getByText('Your reviewed batch is complete. 1 file is now in place.')
       ).toBeInTheDocument();
-      expect(screen.getByText('1 file organized, 1 duplicate removed')).toBeInTheDocument();
+      expect(screen.getByText('1 moved · 1 duplicate removed')).toBeInTheDocument();
       expect(screen.queryByText(/\d+ destinations$/)).not.toBeInTheDocument();
     });
 
@@ -372,7 +380,7 @@ describe('CompletePhase premium finish', () => {
 
       expect(
         screen.getByText(
-          'Not moved: an identical copy is already in C:\\Docs\\Archive. This copy is in the system Trash.'
+          'Not moved: an identical copy is already at C:\\Docs\\Archive\\report.pdf. This copy is in the system Trash.'
         )
       ).toBeInTheDocument();
       const reveal = screen.getByRole('button', {
@@ -403,7 +411,10 @@ describe('CompletePhase premium finish', () => {
         )
       ).toBeInTheDocument();
       expect(screen.queryByText(/files? moved$/)).not.toBeInTheDocument();
-      expect(screen.getByText('2 duplicates removed', { selector: 'span' })).toBeInTheDocument();
+      // The list's totals and its "Where files went" line both say it.
+      expect(
+        screen.getAllByText('2 duplicates removed', { selector: 'span' }).length
+      ).toBeGreaterThan(0);
       expect(screen.queryByText(/0 files/)).not.toBeInTheDocument();
     });
 

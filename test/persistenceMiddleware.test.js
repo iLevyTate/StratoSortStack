@@ -791,8 +791,8 @@ describe('persistenceMiddleware', () => {
   });
 
   describe('state serialization', () => {
-    test('limits selectedFiles to 200 items', () => {
-      const largeFilesList = Array(300)
+    test('limits selectedFiles to 400 items', () => {
+      const largeFilesList = Array(500)
         .fill()
         .map((_, i) => ({ path: `/file${i}.txt` }));
 
@@ -820,12 +820,12 @@ describe('persistenceMiddleware', () => {
       jest.advanceTimersByTime(1000);
 
       const savedData = JSON.parse(mockLocalStorage.setItem.mock.calls[0][1]);
-      expect(savedData.files.selectedFiles.length).toBeLessThanOrEqual(200);
+      expect(savedData.files.selectedFiles.length).toBeLessThanOrEqual(400);
     });
 
     test('keeps the newest selectedFiles and results when capping (SW-72)', () => {
-      const largeFilesList = Array.from({ length: 300 }, (_, i) => ({ path: `/file${i}.txt` }));
-      const largeResults = Array.from({ length: 300 }, (_, i) => ({ path: `/result${i}.txt` }));
+      const largeFilesList = Array.from({ length: 500 }, (_, i) => ({ path: `/file${i}.txt` }));
+      const largeResults = Array.from({ length: 500 }, (_, i) => ({ path: `/result${i}.txt` }));
 
       mockStore.getState.mockReturnValue({
         ui: { currentPhase: 'discover', sidebarOpen: true, showSettings: false },
@@ -851,8 +851,8 @@ describe('persistenceMiddleware', () => {
       jest.advanceTimersByTime(1000);
 
       const savedData = JSON.parse(mockLocalStorage.setItem.mock.calls[0][1]);
-      expect(savedData.files.selectedFiles).toEqual(largeFilesList.slice(-200));
-      expect(savedData.analysis.results).toEqual(largeResults.slice(-200));
+      expect(savedData.files.selectedFiles).toEqual(largeFilesList.slice(-400));
+      expect(savedData.analysis.results).toEqual(largeResults.slice(-400));
       expect(savedData.files.selectedFiles[0].path).toBe('/file100.txt');
       expect(savedData.analysis.results[0].path).toBe('/result100.txt');
     });
@@ -897,7 +897,7 @@ describe('persistenceMiddleware', () => {
         require('../src/renderer/store/middleware/persistenceMiddleware').buildStateSnapshot;
       expect(typeof buildStateSnapshot).toBe('function');
 
-      const organizedFiles = Array.from({ length: 450 }, (_, i) => ({
+      const organizedFiles = Array.from({ length: 1200 }, (_, i) => ({
         originalPath: `C:\\Downloads\\file-${i}.pdf`,
         path: `C:\\Docs\\file-${i}.pdf`,
         organizedAt: new Date().toISOString()
@@ -942,7 +942,7 @@ describe('persistenceMiddleware', () => {
       });
 
       // Rich history stays capped for localStorage budget…
-      expect(snapshot.files.organizedFiles).toHaveLength(200);
+      expect(snapshot.files.organizedFiles).toHaveLength(1000);
       // …but the compact index retains the full organize set so Discover
       // does not resurrect already-moved files as "waiting" after restart.
       expect(snapshot.files.organizedPathIndex.length).toBe(organizedPathIndex.length);
@@ -950,8 +950,8 @@ describe('persistenceMiddleware', () => {
         expect.arrayContaining([
           'c:/downloads/file-0.pdf',
           'c:/docs/file-0.pdf',
-          'c:/downloads/file-449.pdf',
-          'c:/docs/file-449.pdf'
+          'c:/downloads/file-1199.pdf',
+          'c:/docs/file-1199.pdf'
         ])
       );
     });
@@ -1151,6 +1151,33 @@ describe('persistenceMiddleware', () => {
       );
       expect(saves()).toHaveLength(1);
       expect(saves()[0].files.lastOrganizeRun).toBeNull();
+    });
+
+    // "See every file" after a restart: the run's per-file rows travel with a
+    // summary that is kept, and only then.
+    test('the file list of a kept run is saved with its summary', () => {
+      const rows = [
+        { name: 'a.xlsx', outcome: 'moved', originalPath: '/in/a.xlsx', finalPath: '/out/a.xlsx' },
+        { name: 'b.csv', outcome: 'failed', originalPath: '/in/b.csv', reason: 'Locked' }
+      ];
+      const state = withRun(summaryOf('partial'));
+      dispatchWith({ ...state, files: { ...state.files, lastOrganizeRunFiles: rows } });
+
+      expect(saves()).toHaveLength(1);
+      expect(saves()[0].files.lastOrganizeRunFiles.map((r) => r.name)).toEqual(['a.xlsx', 'b.csv']);
+    });
+
+    test('the file list of a run that moved everything causes no save', () => {
+      const state = withRun(summaryOf('moved'));
+      dispatchWith({
+        ...state,
+        files: {
+          ...state.files,
+          lastOrganizeRunFiles: [{ name: 'a.xlsx', outcome: 'moved', originalPath: '/in/a.xlsx' }]
+        }
+      });
+
+      expect(saves()).toHaveLength(0);
     });
 
     test('a saved summary is not saved again until it changes', () => {

@@ -351,6 +351,46 @@ describe('Image Analysis Behavior', () => {
     expect(result.category).toBe('Finance');
   });
 
+  test('the folder list in the vision prompt is sized to the vision context and keeps the catch-all', async () => {
+    const visionContextSize = 4608;
+    mockLlamaService.getConfig.mockResolvedValue({
+      visionModel: 'test-vision-model',
+      visionContextSize
+    });
+    mockLlamaService.analyzeImage.mockResolvedValue({
+      response: JSON.stringify({ category: 'Uncategorized', keywords: ['x'], confidence: 60 })
+    });
+    const folders = [
+      ...Array.from({ length: 20 }, (_, i) => ({
+        name: `Client project ${i + 1}`,
+        path: `/out/client-${i + 1}`,
+        description: `Photos, scans and receipts for client project ${i + 1}. `.repeat(6),
+        isDefault: false
+      })),
+      {
+        name: 'Uncategorized',
+        path: '/out/Uncategorized',
+        category: 'uncategorized',
+        isDefault: true,
+        description: "Default folder for files that don't match any smart folder"
+      }
+    ];
+
+    await analyzeImageFile('/photos/budget-test.jpg', folders);
+
+    const prompt = mockLlamaService.analyzeImage.mock.calls
+      .map((call) => String(call[0]?.prompt || ''))
+      .find((p) => p.includes('Available smart folders'));
+    expect(prompt).toBeDefined();
+    const start = prompt.indexOf('Available smart folders');
+    const end = prompt.indexOf('Use category EXACTLY');
+    expect(start).toBeGreaterThanOrEqual(0);
+    const block = prompt.slice(start, end);
+    expect(block.length / 3).toBeLessThan(visionContextSize * 0.25);
+    expect(block).toContain('"Uncategorized"');
+    expect(block).toContain('Photos, scans and receipts');
+  });
+
   describe('an image whose preprocessing fails', () => {
     const sharp = require('sharp');
     let workingSharp;

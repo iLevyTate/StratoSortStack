@@ -13,6 +13,7 @@
  */
 
 const path = require('path');
+const { isUncategorizedFolder } = require('../../shared/uncategorizedFolder');
 // Use shared semantic extension mapping
 const {
   getSemanticExtensionScore,
@@ -78,9 +79,7 @@ const normalizeCategoryToSmartFolders =
               .trim()
               .toLowerCase() === normalized
         );
-        const uncategorized = folders.find(
-          (f) => String(f?.name || '').toLowerCase() === 'uncategorized'
-        );
+        const uncategorized = folders.find((f) => isUncategorizedFolder(f));
         return match?.name || uncategorized?.name || folders[0]?.name || 'Uncategorized';
       };
 

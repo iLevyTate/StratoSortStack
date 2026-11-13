@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo, useRef, useCallback, useLayoutEffect } from 'react';
 import { PHASES } from '../../shared/constants';
-import { TIMEOUTS } from '../../shared/performanceConstants';
+import { TIMEOUTS, TRUNCATION } from '../../shared/performanceConstants';
 import { createLogger } from '../../shared/logger';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { setSmartFolders as setSmartFoldersAction } from '../store/slices/filesSlice';
@@ -16,6 +16,7 @@ import {
   StatusBadge
 } from '../components/ui';
 import { Heading, Text } from '../components/ui/Typography';
+import AlertBox from '../components/ui/AlertBox';
 import WatcherStatusLine from '../components/setup/WatcherStatusLine';
 import { ActionBar, Inline, Stack } from '../components/layout';
 import { SmartFolderSkeleton } from '../components/ui/LoadingSkeleton';
@@ -25,9 +26,13 @@ import { filesIpc, settingsIpc, smartFoldersIpc } from '../services/ipc';
 import { normalizePathValue } from '../utils/pathNormalization';
 import { mapErrorToNotification } from '../utils/errorMapping';
 import { countDestinationFolders } from '../utils/smartFolderDestinations';
+import { findNestedDestinations } from '../utils/folderOverlap';
+import { toFolderKey } from '../utils/canonicalPath';
 
 const logger = createLogger('SetupPhase');
 const FALLBACK_ONLY_NOTE_ID = 'setup-fallback-only-note';
+// Nested-folder notes past this many collapse into "and N more".
+const NESTED_NOTES_SHOWN = 3;
 const normalizePathWithFallback = (value, fallback = 'Documents') => {
   const normalized = normalizePathValue(value);
   return normalized || fallback;
@@ -65,6 +70,12 @@ function SetupPhase() {
   const dispatch = useAppDispatch();
   const documentsPathFromStore = useAppSelector((state) => state.system.documentsPath);
   const smartFoldersFromStore = useAppSelector((state) => state.files.smartFolders);
+  // Adding or re-pointing a folder makes the watcher analyze what is already
+  // in it, but only while watching is on (the default).
+  const isWatchingFolders = useAppSelector(
+    (state) => state.ui?.settings?.smartFolderWatchEnabled !== false
+  );
+  const hasAnalyzedFiles = useAppSelector((state) => (state.analysis?.results?.length || 0) > 0);
 
   const actions = useMemo(
     () => ({
@@ -267,7 +278,11 @@ function SetupPhase() {
       if (result.directoryCreated) {
         showSuccess(`Added smart folder and created directory: ${newFolder.name}`);
       } else if (result.directoryExisted) {
-        showSuccess(`Added smart folder: ${newFolder.name} (directory already exists)`);
+        showSuccess(
+          isWatchingFolders
+            ? `Added "${newFolder.name}". Files already in it are being analyzed in the background so search can find them. Nothing is moved.`
+            : `Added "${newFolder.name}". Nothing is moved.`
+        );
       } else {
         showSuccess(`Added smart folder: ${newFolder.name}`);
       }
@@ -305,10 +320,31 @@ function SetupPhase() {
       return;
     }
     setIsSavingEdit(true);
+    const original = smartFolders.find((f) => f.id === editingFolder.id);
+    const pathChanged =
+      Boolean(original) &&
+      typeof editingFolder.path === 'string' &&
+      toFolderKey(editingFolder.path) !== toFolderKey(original.path);
+    const descriptionChanged =
+      Boolean(original) &&
+      String(editingFolder.description || '').trim() !== String(original.description || '').trim();
     try {
       const result = await smartFoldersIpc.edit(editingFolder.id, editingFolder);
       if (result.success) {
-        showSuccess(`Updated folder: ${editingFolder.name}`);
+        const name = editingFolder.name.trim();
+        if (pathChanged) {
+          showSuccess(
+            isWatchingFolders
+              ? `Updated "${name}". Files in the new location are being analyzed in the background. Nothing is moved.`
+              : `Updated "${name}". Nothing is moved.`
+          );
+        } else if (descriptionChanged && hasAnalyzedFiles) {
+          showSuccess(
+            `Updated "${name}". Organize uses the new description for files you already analyzed. To have the AI read a file again, use Reanalyze.`
+          );
+        } else {
+          showSuccess(`Updated folder: ${editingFolder.name}`);
+        }
         await loadSmartFolders();
         setEditingFolder(null);
       } else {
@@ -475,6 +511,8 @@ function SetupPhase() {
   // only the fallback (Discover still analyzes and searches); its tooltip says
   // what that means instead.
   const destinationCount = countDestinationFolders(smartFolders);
+  const nestedDestinations = useMemo(() => findNestedDestinations(smartFolders), [smartFolders]);
+  const promptFolderOverflow = smartFolders.length - TRUNCATION.PROMPT_FOLDERS_MAX;
   const hasConfiguredFolders = destinationCount > 0;
   const onlyFallbackFolder = !hasConfiguredFolders && smartFolders.length > 0;
   // Threshold past which the responsive smart-folder grid becomes
@@ -538,7 +576,7 @@ function SetupPhase() {
           Configure <span className="text-gradient">Smart Folders</span>
         </Heading>
         <Text variant="lead" className="max-w-xl mx-auto">
-          Choose the trusted destinations StratoSort can suggest before anything moves.
+          Smart Folders are where your files go. You pick the files to sort on the next screen.
         </Text>
       </Stack>
 
@@ -653,6 +691,33 @@ function SetupPhase() {
         </Inline>
       </Inline>
 
+      {!isLoading && promptFolderOverflow > 0 && (
+        <AlertBox variant="warning" role="status">
+          The AI can compare a file with {TRUNCATION.PROMPT_FOLDERS_MAX} Smart Folders at a time.
+          You have {smartFolders.length}, so {promptFolderOverflow} of them are left out. Remove the
+          folders you don&apos;t use.
+        </AlertBox>
+      )}
+
+      {!isLoading && nestedDestinations.length > 0 && (
+        <AlertBox variant="info" role="status">
+          <ul className="flex flex-col gap-1">
+            {nestedDestinations.slice(0, NESTED_NOTES_SHOWN).map(({ outer, inner }) => (
+              <li key={`${folderIdentity(outer)}>${folderIdentity(inner)}`}>
+                {`"${inner.name}" is inside another Smart Folder, "${outer.name}". Files sorted into "${outer.name}" will sit next to the "${inner.name}" folder. That is fine if you meant it.`}
+              </li>
+            ))}
+            {nestedDestinations.length > NESTED_NOTES_SHOWN && (
+              <li>
+                {nestedDestinations.length - NESTED_NOTES_SHOWN === 1
+                  ? '1 more Smart Folder is inside another Smart Folder.'
+                  : `${nestedDestinations.length - NESTED_NOTES_SHOWN} more Smart Folders are inside other Smart Folders.`}
+              </li>
+            )}
+          </ul>
+        </AlertBox>
+      )}
+
       {/* Folder list */}
       <div className="flex-1 min-h-0 relative">
         {showSkeletonLayer && (
@@ -733,6 +798,7 @@ function SetupPhase() {
                       compact={isCompactMode}
                       isExpanded={expandedFolders.has(folder.id)}
                       onToggleExpand={handleToggleExpand}
+                      smartFolders={smartFolders}
                     />
                   );
                   if (!virtItemStyle) {

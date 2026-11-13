@@ -11,7 +11,8 @@ import {
   CheckCircle2,
   AlertTriangle,
   ScanSearch,
-  ListChecks
+  ListChecks,
+  Copy
 } from 'lucide-react';
 import { useAppSelector } from '../../store/hooks';
 import {
@@ -22,11 +23,14 @@ import {
   selectFilesWithAnalysis,
   selectIsAnalyzing,
   selectAnalysisProgress,
-  selectRedactPaths
+  selectRedactPaths,
+  selectLastOrganizeRunFiles
 } from '../../store/selectors';
 import { formatDisplayFileName } from '../../utils/pathDisplay';
 import { formatDateTime } from '../../utils/format';
 import { leftFilesUnmoved } from '../../utils/organizeRunSummary';
+import { withQueueNote } from '../../utils/organizeRunResults';
+import { isRemovedDuplicate } from '../../utils/duplicateRemoval';
 import { TIMEOUTS } from '../../../shared/performanceConstants';
 import { dispatchAcked } from '../../utils/dispatchAcked';
 import { useDragAndDrop } from '../../hooks/useDragAndDrop';
@@ -287,17 +291,22 @@ PipelineStage.propTypes = {
 
 /**
  * PipelineCard — the dashboard's centerpiece. Renders the three lifecycle stages
- * (awaiting → ready → organized) as a full-width left-to-right flow, with the
- * "in flight" tally and a Failed indicator sharing the footer. Failed only
- * becomes an actionable control when something has actually failed; otherwise it
- * recedes to a quiet "0 failed" so the calm state reads as calm. The smart-folder
- * count lives in the hero summary and the Smart Folders section, so it is not
- * repeated here.
+ * (awaiting → ready → organized) as a full-width left-to-right flow, with how
+ * many files are not organized yet and a Failed indicator sharing the footer.
+ * Files waiting for analysis or for the user are not "in progress": nothing
+ * runs while they wait, so the badge says what they wait for ("4 to analyze",
+ * "273 to review"). Failed only becomes an actionable control when something
+ * has actually failed; otherwise it recedes to a quiet "0 failed" so the calm
+ * state reads as calm. Files the last organize run did not move get their own
+ * "{n} not moved" control beside it. The smart-folder count lives in the hero
+ * summary and the Smart Folders section, so it is not repeated here.
  */
 function PipelineCard({
   stats,
   organizedCount,
+  moveFailedCount = 0,
   onReviewFailed,
+  onReviewNotMoved,
   onPendingStage,
   onReadyStage,
   onOrganizedStage,
@@ -306,6 +315,12 @@ function PipelineCard({
   const reduceMotion = useReducedMotion();
   const inFlight = stats.pending + stats.ready;
   const isEmpty = stats.total === 0 && organizedCount === 0;
+  const waitingLabel =
+    stats.pending > 0
+      ? `${stats.pending} to analyze`
+      : stats.ready > 0
+        ? `${stats.ready} to review`
+        : 'All clear';
   // Weighted progress: pending = 0%, ready = halfway, organized = complete. This
   // keeps the connector rail alive while files move through analysis, not only
   // after the first organize confirmation.
@@ -317,7 +332,7 @@ function PipelineCard({
       <div className="flex items-center justify-between gap-cozy">
         <SectionLabel>Organization pipeline</SectionLabel>
         <StatusBadge variant={inFlight > 0 ? 'info' : 'success'} size="sm">
-          {inFlight > 0 ? `${inFlight} in progress` : 'All clear'}
+          {waitingLabel}
         </StatusBadge>
       </div>
       {/* The three lifecycle stages sit on a single connector rail so the card
@@ -369,17 +384,31 @@ function PipelineCard({
         </div>
       </div>
       <div className="mt-[var(--dash-section-gap)] flex items-center justify-between gap-cozy lg:mt-auto lg:pt-[var(--dash-section-gap)]">
-        <Text variant="tiny">{`${inFlight} of ${stats.total} files in flight`}</Text>
-        {stats.failed > 0 ? (
-          <Button variant="ghost" size="sm" onClick={onReviewFailed}>
-            <span className="inline-flex items-center gap-1.5 text-stratosort-danger">
-              <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
-              {`${stats.failed} failed`}
-            </span>
-          </Button>
-        ) : (
-          <Text variant="tiny">0 failed</Text>
-        )}
+        <Text variant="tiny">
+          {inFlight > 0
+            ? `${inFlight} ${inFlight === 1 ? 'file' : 'files'} not organized yet`
+            : 'Nothing waiting'}
+        </Text>
+        <div className="flex items-center gap-compact">
+          {moveFailedCount > 0 && (
+            <Button variant="ghost" size="sm" onClick={onReviewNotMoved}>
+              <span className="inline-flex items-center gap-1.5 text-stratosort-warning">
+                <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+                {`${moveFailedCount} not moved`}
+              </span>
+            </Button>
+          )}
+          {stats.failed > 0 ? (
+            <Button variant="ghost" size="sm" onClick={onReviewFailed}>
+              <span className="inline-flex items-center gap-1.5 text-stratosort-danger">
+                <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+                {`${stats.failed} failed`}
+              </span>
+            </Button>
+          ) : (
+            <Text variant="tiny">0 failed</Text>
+          )}
+        </div>
       </div>
     </Card>
   );
@@ -393,7 +422,9 @@ PipelineCard.propTypes = {
     failed: PropTypes.number.isRequired
   }).isRequired,
   organizedCount: PropTypes.number.isRequired,
+  moveFailedCount: PropTypes.number,
   onReviewFailed: PropTypes.func.isRequired,
+  onReviewNotMoved: PropTypes.func,
   onPendingStage: PropTypes.func,
   onReadyStage: PropTypes.func,
   onOrganizedStage: PropTypes.func,
@@ -559,22 +590,33 @@ function ActivityCard({
       ) : (
         <>
           <Stack gap="compact" className="mt-[var(--dash-section-gap)]">
-            {recent.map((file, idx) => (
-              <div
-                key={`${file.originalPath || file.newName || 'file'}-${idx}`}
-                className="flex items-center gap-compact"
-              >
-                <CheckCircle2
-                  className="h-4 w-4 shrink-0 text-stratosort-success"
-                  aria-hidden="true"
-                />
-                <Text variant="small" className="truncate">
-                  {formatDisplayFileName(file.newName || file.originalName || 'Unknown', {
-                    redact: redactPaths
-                  })}
-                </Text>
-              </div>
-            ))}
+            {recent.map((file, idx) => {
+              // A removed duplicate was not moved: it gets its own mark and
+              // says so, not the check of a file that was organized.
+              const duplicate = isRemovedDuplicate(file);
+              return (
+                <div
+                  key={`${file.originalPath || file.newName || 'file'}-${idx}`}
+                  className="flex items-center gap-compact"
+                  data-outcome={duplicate ? 'duplicate' : 'moved'}
+                >
+                  {duplicate ? (
+                    <Copy className="h-4 w-4 shrink-0 text-system-gray-500" aria-hidden="true" />
+                  ) : (
+                    <CheckCircle2
+                      className="h-4 w-4 shrink-0 text-stratosort-success"
+                      aria-hidden="true"
+                    />
+                  )}
+                  <Text variant="small" className="min-w-0 truncate">
+                    {formatDisplayFileName(file.newName || file.originalName || 'Unknown', {
+                      redact: redactPaths
+                    })}
+                  </Text>
+                  {duplicate && <Caption className="ml-auto shrink-0">Duplicate removed</Caption>}
+                </div>
+              );
+            })}
           </Stack>
           <div className="mt-[var(--dash-section-gap)] lg:mt-auto lg:pt-[var(--dash-section-gap)]">
             <Button variant="ghost" size="sm" onClick={onViewAll}>
@@ -614,6 +656,9 @@ export default function DashboardView() {
   const filesWithAnalysis = useAppSelector(selectFilesWithAnalysis);
   const isAnalyzing = useAppSelector(selectIsAnalyzing);
   const progress = useAppSelector(selectAnalysisProgress);
+  const analysisRunOrigin = useAppSelector(
+    (/** @type {any} */ state) => state.analysis?.runOrigin ?? null
+  );
   const redactPaths = useAppSelector(selectRedactPaths);
 
   const { showInfo } = useNotification();
@@ -622,7 +667,21 @@ export default function DashboardView() {
   // Only a run that left files unmoved is reported here; a run that moved
   // everything already shows in the counts.
   const { lastOrganizeRun, finishedWhileOpen, dismissLastOrganizeRun } = useLastOrganizeRun();
-  const unmovedRun = leftFilesUnmoved(lastOrganizeRun) ? lastOrganizeRun : null;
+  const lastRunFiles = useAppSelector(selectLastOrganizeRunFiles);
+  const queuedFiles = useAppSelector((state) => state?.files?.selectedFiles);
+  // "Files that were not moved are still listed" stops being true once they
+  // leave the queue; the banner then says where they are.
+  const unmovedRun = useMemo(
+    () =>
+      leftFilesUnmoved(lastOrganizeRun)
+        ? withQueueNote(
+            lastOrganizeRun,
+            lastRunFiles,
+            (Array.isArray(queuedFiles) ? queuedFiles : []).map((file) => file?.path)
+          )
+        : null,
+    [lastOrganizeRun, lastRunFiles, queuedFiles]
+  );
 
   // Leaving the dashboard hands the user back to the phased flow at a chosen
   // step, under the phase tabs' rule (uiSlice.getPhaseNavigation): back is
@@ -808,7 +867,9 @@ export default function DashboardView() {
           variants={blockVariants}
           className="flex flex-col gap-[var(--dash-gap)] lg:flex-1"
         >
-          {isAnalyzing && progress && <AnalysisProgress progress={progress} />}
+          {isAnalyzing && progress && (
+            <AnalysisProgress progress={progress} origin={analysisRunOrigin} />
+          )}
 
           {/* Live-status zone — the two surfaces that answer "what's happening?".
               The pipeline holds the aggregate counts; the activity rail holds the
@@ -818,7 +879,9 @@ export default function DashboardView() {
             <PipelineCard
               stats={stats}
               organizedCount={organizedCount}
+              moveFailedCount={unmovedRun?.notMovedCount || 0}
               onReviewFailed={goDiscover}
+              onReviewNotMoved={goOrganize}
               onPendingStage={stats.pending > 0 ? goDiscover : undefined}
               onReadyStage={stats.ready > 0 ? goOrganize : undefined}
               onOrganizedStage={organizedCount > 0 ? goOrganize : undefined}

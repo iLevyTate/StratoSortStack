@@ -143,3 +143,38 @@ describe('authorizeSmartFolderRoot', () => {
     expect(decision.reason).toBe('missing');
   });
 });
+
+// The folder dialog on macOS can return decomposed accents (a + U+0308) while
+// the path that reaches the policy has been composed (U+00E4) by
+// sanitizeFolderPath. Both name one folder on APFS.
+describe('user-chosen locations with accented names', () => {
+  beforeEach(() => {
+    _resetDestinationPolicyForTests();
+  });
+
+  test('a folder picked with decomposed accents is found by its composed path', () => {
+    rememberUserChosenLocation('/Volumes/SSD/Vertra\u0308ge', 'darwin');
+    expect(isUserChosenLocation('/Volumes/SSD/Vertr\u00e4ge', 'darwin')).toBe(true);
+    expect(isUserChosenLocation('/Volumes/SSD/Vertrage', 'darwin')).toBe(false);
+  });
+
+  test('on macOS the composed match also ignores case', () => {
+    rememberUserChosenLocation('/Users/hans/Vertra\u0308ge', 'darwin');
+    expect(isUserChosenLocation('/users/hans/VERTR\u00c4GE', 'darwin')).toBe(true);
+  });
+
+  // NTFS keeps decomposed and composed spellings as two different folders,
+  // so approving one must not approve the other.
+  test('on Windows only case is ignored, not accent encoding', () => {
+    rememberUserChosenLocation('C:\\Users\\hans\\Vertra\u0308ge', 'win32');
+    expect(isUserChosenLocation('c:\\users\\hans\\VERTRA\u0308GE', 'win32')).toBe(true);
+    expect(isUserChosenLocation('C:\\Users\\hans\\Vertr\u00e4ge', 'win32')).toBe(false);
+  });
+
+  test('on Linux neither case nor accent encoding is folded', () => {
+    rememberUserChosenLocation('/home/hans/Vertra\u0308ge', 'linux');
+    expect(isUserChosenLocation('/home/hans/Vertra\u0308ge', 'linux')).toBe(true);
+    expect(isUserChosenLocation('/home/hans/Vertr\u00e4ge', 'linux')).toBe(false);
+    expect(isUserChosenLocation('/home/hans/vertra\u0308ge', 'linux')).toBe(false);
+  });
+});

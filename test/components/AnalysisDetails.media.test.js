@@ -128,6 +128,21 @@ describe('AnalysisDetails — media surfacing', () => {
     expect(screen.queryByText(/visual keyframes/i)).not.toBeInTheDocument();
   });
 
+  // After a restart the saved result keeps only the segment count.
+  test('shows the saved transcript segment count when the segments are not kept', () => {
+    render(
+      <AnalysisDetails
+        analysis={{
+          mediaKind: 'audio',
+          transcript: 'hello there',
+          transcriptSegmentCount: 1234
+        }}
+      />
+    );
+    expect(screen.getByText('Transcript segments')).toBeInTheDocument();
+    expect(screen.getByText((1234).toLocaleString())).toBeInTheDocument();
+  });
+
   test('transcript container is scrollable, not line-clamped', () => {
     render(
       <AnalysisDetails

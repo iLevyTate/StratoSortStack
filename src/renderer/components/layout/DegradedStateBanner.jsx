@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { fetchDegradedState, dismissDegradedFlag } from '../../store/slices/systemSlice';
 import { whisperIpc, systemIpc } from '../../services/ipc';
@@ -15,6 +15,24 @@ const bannerLogger = createLogger('DegradedStateBanner');
  */
 const VC_REDIST_DOWNLOAD_PAGE_URL =
   'https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist';
+
+const COPIED_FEEDBACK_MS = 2000;
+
+/**
+ * Text for a flag's "Copy details" button: the message plus the code and
+ * the underlying system error, which the banner does not show but a bug
+ * report needs. Only strings from `detail` are used.
+ * @param {any} flag
+ * @returns {string}
+ */
+function buildFlagCopyText(flag) {
+  const lines = [String(flag?.message || ''), `Code: ${flag?.code || 'unknown'}`];
+  const errno = flag?.detail?.errno;
+  const error = flag?.detail?.error;
+  if (typeof errno === 'string' && errno) lines.push(`System error: ${errno}`);
+  if (typeof error === 'string' && error) lines.push(error);
+  return lines.join('\n');
+}
 
 function openVcRedistDownloadPage() {
   window.open(VC_REDIST_DOWNLOAD_PAGE_URL, '_blank', 'noopener,noreferrer');
@@ -239,6 +257,32 @@ function DegradedStateBanner() {
   // in-flight state and the most recent error message (rendered inline
   // so a failed install doesn't silently leave the user wondering).
   const [actionState, setActionState] = useState({});
+  // Code of the flag whose details were just copied (shows "Copied").
+  const [copiedCode, setCopiedCode] = useState(null);
+  const copiedTimerRef = useRef(null);
+
+  useEffect(
+    () => () => {
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+    },
+    []
+  );
+
+  const copyFlagDetails = useCallback(async (flag) => {
+    const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : undefined;
+    if (!clipboard || typeof clipboard.writeText !== 'function') return;
+    try {
+      await clipboard.writeText(buildFlagCopyText(flag));
+      setCopiedCode(flag.code);
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = setTimeout(() => {
+        copiedTimerRef.current = null;
+        setCopiedCode(null);
+      }, COPIED_FEEDBACK_MS);
+    } catch (error) {
+      bannerLogger.warn('Could not copy flag details', { code: flag?.code, error: error?.message });
+    }
+  }, []);
 
   const runAction = useCallback(
     async (flag, action = flag?.detail?.action) => {
@@ -454,7 +498,7 @@ function DegradedStateBanner() {
             aria-live={isError ? 'assertive' : 'polite'}
             className={`flex items-start gap-cozy px-4 py-2 text-sm border-l-4 ${bgClass}`}
           >
-            <span className="font-medium">{isError ? 'Degraded mode' : 'Warning'}:</span>
+            <span className="font-medium">{isError ? 'Problem' : 'Warning'}:</span>
             <span className="flex-1 break-words">
               {flag.message}
               {flagActionState?.notice ? (
@@ -503,6 +547,16 @@ function DegradedStateBanner() {
                   : secondaryAction.label}
               </button>
             ) : null}
+            <button
+              type="button"
+              className="shrink-0 text-xs underline underline-offset-2 hover:opacity-80"
+              onClick={() => copyFlagDetails(flag)}
+              aria-label={
+                copiedCode === flag.code ? 'Copied' : `Copy details for "${flag.message}"`
+              }
+            >
+              {copiedCode === flag.code ? 'Copied' : 'Copy details'}
+            </button>
             <button
               type="button"
               className="shrink-0 text-xs underline underline-offset-2 hover:opacity-80"

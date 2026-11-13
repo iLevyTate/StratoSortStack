@@ -179,7 +179,10 @@ class FileOperationTracker {
 
   /**
    * Resolve and normalize a file path for consistent map lookups.
-   * On Windows, lowercases for case-insensitive comparison.
+   * On case-insensitive file systems (Windows, macOS), lowercases. On macOS
+   * it also composes accents (NFC): watchers report decomposed names while
+   * the organizer records composed ones, and APFS treats both as one name.
+   * NTFS keeps the two spellings apart, so Windows does not compose them.
    * Distinct from the security-oriented sanitizePath in pathSanitization.js.
    * @param {string} filePath - Path to normalize
    * @returns {string} Normalized path
@@ -187,7 +190,8 @@ class FileOperationTracker {
    */
   _resolveForTracking(filePath) {
     const normalized = path.normalize(filePath);
-    return isCaseInsensitiveFileSystem() ? normalized.toLowerCase() : normalized;
+    if (!isCaseInsensitiveFileSystem()) return normalized;
+    return (process.platform === 'darwin' ? normalized.normalize('NFC') : normalized).toLowerCase();
   }
 
   /**

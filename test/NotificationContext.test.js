@@ -161,4 +161,54 @@ describe('NotificationProvider', () => {
     expect(groupKeys[0]).not.toBe(groupKeys[1]);
     expect(groupKeys[2]).toBe(groupKeys[0]);
   });
+
+  // The toast's Copy button adds these after the message (an error code, the
+  // full path), so a bug report carries what the short message leaves out.
+  it('forwards details from an app notification to the toast', () => {
+    mockAddToast.mockReturnValueOnce('toast-1');
+    render(
+      <NotificationProvider>
+        <div data-testid="child" />
+      </NotificationProvider>
+    );
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('app:notification', {
+          detail: {
+            id: 'n-1',
+            message: 'Could not move a.xlsx',
+            severity: 'error',
+            details: 'EPERM: operation not permitted',
+            groupKey: 'g'
+          }
+        })
+      );
+    });
+
+    expect(mockAddToast).toHaveBeenCalledWith('Could not move a.xlsx', 'error', 6000, 'g', {
+      details: 'EPERM: operation not permitted'
+    });
+  });
+
+  it('addNotification passes copyable details through to the toast', () => {
+    let api;
+    const Probe = () => {
+      api = useNotification();
+      return null;
+    };
+    render(
+      <NotificationProvider>
+        <Probe />
+      </NotificationProvider>
+    );
+
+    act(() => {
+      api.addNotification('Could not save', 'error', 0, null, { details: 'ENOSPC' });
+    });
+
+    expect(mockAddToast).toHaveBeenCalledWith('Could not save', 'error', 0, null, {
+      details: 'ENOSPC'
+    });
+  });
 });

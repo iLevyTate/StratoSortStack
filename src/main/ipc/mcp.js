@@ -145,7 +145,8 @@ function registerMcpIpc(servicesOrParams) {
       schema: schemas.mcpEnable,
       handler: async () => {
         try {
-          const { port, token } = await ensureLifecycle().enable();
+          // remember: the server starts with the app while this stays on.
+          const { port, token } = await ensureLifecycle().enable({ remember: true });
           return _ok({ port, tokenMasked: _mask(token) });
         } catch (e) {
           return _fail(e);
@@ -156,7 +157,7 @@ function registerMcpIpc(servicesOrParams) {
       schema: schemas.mcpDisable,
       handler: async () => {
         try {
-          await ensureLifecycle().disable();
+          await ensureLifecycle().disable({ remember: true });
           return _ok();
         } catch (e) {
           return _fail(e);
@@ -239,6 +240,33 @@ function registerMcpIpc(servicesOrParams) {
       .catch(() => app.quit());
   };
   app.on('will-quit', _willQuitHandler);
+
+  // Start the server with the app when the user left it on. Deferred off the
+  // registration path, and a failure (port taken, token unreadable) is only
+  // logged: the lifecycle records status 'error' for Settings to show, and
+  // app startup never waits on or fails because of MCP. Bound to localhost
+  // with token auth exactly as a manual enable — this is the same enable().
+  setImmediate(() => {
+    startIfLeftOn(ensureLifecycle, logger).catch(() => {});
+  });
+}
+
+/**
+ * @param {() => any} ensureLifecycle
+ * @param {{ info?: Function, warn?: Function }} logger
+ */
+async function startIfLeftOn(ensureLifecycle, logger) {
+  try {
+    const lc = ensureLifecycle();
+    if (!(await lc.getRememberedEnabled())) return;
+    const { port } = await lc.enable();
+    logger?.info?.('[mcp] server started on launch (it was left on)', { port });
+  } catch (e) {
+    logger?.warn?.('[mcp] server could not start on launch', {
+      error: _sanitizeMessage(e?.message || String(e)),
+      code: e?.code
+    });
+  }
 }
 
 async function disposeMcp() {
@@ -272,7 +300,8 @@ async function disposeMcp() {
       // the entire app on user quit. 5 s is generous for a local-port HTTP
       // server close. If we time out, accept the orphan process risk over
       // hanging the shutdown — Electron will kill the process anyway when
-      // app.quit() proceeds.
+      // app.quit() proceeds. No { remember } here: quitting keeps the user's
+      // on/off choice, so a server left on starts again next launch.
       const { withTimeout } = require('../../shared/promiseUtils');
       await withTimeout(_lifecycle.disable(), 5000, 'mcp:lifecycle.disable');
     } catch (err) {

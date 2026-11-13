@@ -613,7 +613,29 @@ async function readTextFileWithEncoding(filePath, options = {}) {
 }
 
 /**
- * Decode a text buffer: UTF-16 BOMs, UTF-8 with BOM, Windows-1252 recovery.
+ * 'le' or 'be' when a buffer with no BOM reads as UTF-16: at least 40% of
+ * one side's bytes in the first 512 are zero and under 5% of the other's.
+ * @param {Buffer} raw
+ * @returns {'le' | 'be' | null}
+ */
+function sniffBomlessUtf16(raw) {
+  if (raw.length < 4) return null;
+  const sample = Math.min(raw.length - (raw.length % 2), 512);
+  let evenZeros = 0;
+  let oddZeros = 0;
+  for (let i = 0; i < sample; i += 2) {
+    if (raw[i] === 0) evenZeros += 1;
+    if (raw[i + 1] === 0) oddZeros += 1;
+  }
+  const pairs = sample / 2;
+  if (oddZeros >= pairs * 0.4 && evenZeros < pairs * 0.05) return 'le';
+  if (evenZeros >= pairs * 0.4 && oddZeros < pairs * 0.05) return 'be';
+  return null;
+}
+
+/**
+ * Decode a text buffer: UTF-16 with or without a BOM, UTF-8 with BOM,
+ * Windows-1252 recovery.
  * @param {Buffer} raw
  * @returns {Promise<string>}
  */
@@ -638,6 +660,17 @@ async function decodeTextBuffer(raw) {
     const view = evenLength === raw.length ? raw : raw.subarray(0, evenLength);
     view.swap16();
     return view.toString('utf16le').replace(/^\uFEFF/, '');
+  }
+
+  // UTF-16 without a BOM (Excel "Unicode text", some Bing exports): mostly
+  // ASCII text leaves a zero in every other byte, on the odd side for little
+  // endian and the even side for big endian.
+  const utf16 = sniffBomlessUtf16(raw);
+  if (utf16) {
+    const evenLength = raw.length - (raw.length % 2);
+    const view = evenLength === raw.length ? raw : raw.subarray(0, evenLength);
+    if (utf16 === 'be') view.swap16();
+    return view.toString('utf16le');
   }
 
   // Default: UTF-8 (handles UTF-8 BOM automatically)
@@ -978,27 +1011,87 @@ async function extractPlainTextFromXml(/** @type {any} */ xmlString) {
   return await extractPlainTextFromHtml(xmlString);
 }
 
-function formatCsvRow(/** @type {any} */ row) {
-  if (Array.isArray(row)) {
-    const cells = [];
-    const len = Math.min(row.length, MAX_CSV_COLS);
-    for (let i = 0; i < len; i += 1) {
-      const cell = row[i];
-      if (cell !== null && cell !== undefined) cells.push(String(cell));
-    }
-    return cells.join(' ');
+/**
+ * A cell that is only a number, amount, percentage, date or time ("12",
+ * "3,5%", "2026-09-03", "09:00"): a row holding one is data, not a header.
+ */
+const NUMERIC_CELL_RE = /^[-+]?[\d.,%\s:/-]+$/;
+
+/**
+ * Text for one row of a table (a CSV or a spreadsheet sheet). Exports that
+ * look alike are told apart by their sheets and columns, so the first row
+ * with content is written as "Columns: a | b | c" when it has two or more
+ * cells and none is a number, and a sheet's rows start with "## Sheet:
+ * <name>" (a heading line, so it also reaches the document outline when a
+ * long sheet is sampled). Later rows keep their space-joined form.
+ * @param {string[]} cells
+ * @param {{ started: boolean, sheetName?: string }} table per-table state
+ * @returns {string} the row's text, without a trailing newline
+ */
+function tableRowText(cells, table) {
+  const filled = cells.filter((c) => c !== '');
+  if (table.started || filled.length === 0) return cells.join(' ');
+  table.started = true;
+  const heading = table.sheetName ? `## Sheet: ${table.sheetName}\n` : '';
+  const isHeader = filled.length >= 2 && filled.every((c) => !NUMERIC_CELL_RE.test(c));
+  return isHeader ? `${heading}Columns: ${filled.join(' | ')}` : `${heading}${cells.join(' ')}`;
+}
+
+/**
+ * A sheet's display name for its heading line: one line, at most 80 chars.
+ * @param {any} sheet
+ * @returns {string}
+ */
+function xlsxSheetLabel(sheet) {
+  let name;
+  try {
+    name = typeof sheet?.name === 'function' ? String(sheet.name() || '') : '';
+  } catch {
+    name = '';
   }
-  if (row && typeof row === 'object') {
-    const values = Object.values(row);
-    const cells = [];
-    const len = Math.min(values.length, MAX_CSV_COLS);
-    for (let i = 0; i < len; i += 1) {
-      const cell = values[i];
-      if (cell !== null && cell !== undefined) cells.push(String(cell));
-    }
-    return cells.join(' ');
+  return name.replace(/\s+/g, ' ').trim().slice(0, 80) || 'Sheet';
+}
+
+/**
+ * The delimiter of a CSV: whichever of comma, semicolon and tab appears most
+ * often (outside quotes) in the first non-empty line; comma on a tie or when
+ * none appears. Regional Excel exports use semicolons, "Unicode text" tabs.
+ * @param {string} raw
+ * @returns {',' | ';' | '\t'}
+ */
+function sniffCsvDelimiter(raw) {
+  const text = String(raw || '').replace(/^\uFEFF/, '');
+  const lines = text.slice(0, 64 * 1024).split(/\r?\n/);
+  const first = lines.find((line) => line.trim() !== '') || '';
+  const counts = { ',': 0, ';': 0, '\t': 0 };
+  let inQuotes = false;
+  for (const ch of first) {
+    if (ch === '"') inQuotes = !inQuotes;
+    else if (!inQuotes && (ch === ',' || ch === ';' || ch === '\t')) counts[ch] += 1;
   }
-  return String(row);
+  if (counts[';'] > counts[','] && counts[';'] >= counts['\t']) return ';';
+  if (counts['\t'] > counts[','] && counts['\t'] > counts[';']) return '\t';
+  return ',';
+}
+
+/**
+ * The cells of one parsed CSV record as strings (null/undefined dropped).
+ * @param {any} row
+ * @returns {string[]}
+ */
+function csvRowCells(row) {
+  const values = Array.isArray(row)
+    ? row
+    : row && typeof row === 'object'
+      ? Object.values(row)
+      : [row];
+  const cells = [];
+  const len = Math.min(values.length, MAX_CSV_COLS);
+  for (let i = 0; i < len; i += 1) {
+    const cell = values[i];
+    if (cell !== null && cell !== undefined) cells.push(String(cell));
+  }
+  return cells;
 }
 
 /**
@@ -1027,16 +1120,19 @@ async function extractTextFromCsv(filePath, options = {}) {
   // but the first 5 000 away — a large transient allocation plus GC churn.
   // The stream path stops feeding rows to the consumer as soon as the cap
   // is hit.
+  const delimiter = sniffCsvDelimiter(raw);
   try {
     const parser = parseCsvStream(raw, {
       bom: true,
+      delimiter,
       skip_empty_lines: true,
       relax_column_count: true,
       relax_quotes: true
     });
     const lines = [];
+    const table = { started: false };
     for await (const row of parser) {
-      lines.push(formatCsvRow(row));
+      lines.push(tableRowText(csvRowCells(row), table));
       if (lines.length >= MAX_CSV_ROWS) {
         // Cooperative abort: tell the parser we're done so it releases
         // its internal state before we fall out of the loop.
@@ -1067,6 +1163,7 @@ async function extractTextFromCsv(filePath, options = {}) {
     try {
       const records = parseCsv(raw, {
         bom: true,
+        delimiter,
         skipEmptyLines: true,
         relaxColumnCount: true,
         relaxQuotes: true
@@ -1076,8 +1173,9 @@ async function extractTextFromCsv(filePath, options = {}) {
       }
       const limit = Math.min(records.length, MAX_CSV_ROWS);
       const lines = new Array(limit);
+      const table = { started: false };
       for (let i = 0; i < limit; i += 1) {
-        lines[i] = formatCsvRow(records[i]);
+        lines[i] = tableRowText(csvRowCells(records[i]), table);
       }
       return truncateText(lines.join('\n'));
     } catch (fallbackError) {
@@ -2622,6 +2720,7 @@ async function extractTextFromXlsx(/** @type {any} */ filePath) {
     let totalRows = 0;
 
     for (const sheet of sheets) {
+      const table = { started: false, sheetName: xlsxSheetLabel(sheet) };
       try {
         if (!sheet || typeof sheet.usedRange !== 'function') {
           logger.warn('[XLSX] Sheet missing usedRange method, skipping', {
@@ -2673,7 +2772,7 @@ async function extractTextFromXlsx(/** @type {any} */ filePath) {
                   }
                 }
                 if (rowData.length > 0) {
-                  allText += `${rowData.join(' ')}\n`;
+                  allText += `${tableRowText(rowData, table)}\n`;
                   totalRows++;
                 }
               }
@@ -2726,7 +2825,7 @@ async function extractTextFromXlsx(/** @type {any} */ filePath) {
                 }
               }
               if (texts.length > 0) {
-                allText += `${texts.join(' ')}\n`;
+                allText += `${tableRowText(texts, table)}\n`;
                 totalRows++;
               }
               if (totalRows % 1000 === 0 && allText.length > MAX_TEXT_LENGTH) {
@@ -2760,10 +2859,12 @@ async function extractTextFromXlsx(/** @type {any} */ filePath) {
         for (let i = 0; i < rowsToProcess; i++) {
           const row = values[i];
           if (Array.isArray(row)) {
-            allText += `${row
-              .map((cell) => formatXlsxCellValue(cell, null, XLSX))
-              .filter((text) => text !== null && text !== '')
-              .join(' ')}\n`;
+            const texts = /** @type {string[]} */ (
+              row
+                .map((cell) => formatXlsxCellValue(cell, null, XLSX))
+                .filter((text) => text !== null && text !== '')
+            );
+            allText += `${tableRowText(texts, table)}\n`;
             totalRows++;
 
             // Fixed: Check text length periodically to prevent runaway memory
@@ -2777,7 +2878,7 @@ async function extractTextFromXlsx(/** @type {any} */ filePath) {
               .map((cell) => formatXlsxCellValue(cell, null, XLSX))
               .filter((text) => text !== null && text !== '');
             if (objectValues.length > 0) {
-              allText += `${objectValues.join(' ')}\n`;
+              allText += `${tableRowText(/** @type {string[]} */ (objectValues), table)}\n`;
               totalRows++;
             }
           } else if (row !== null && row !== undefined) {

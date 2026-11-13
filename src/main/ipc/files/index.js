@@ -14,6 +14,7 @@ const { registerFileOperationHandlers } = require('./fileOperationHandlers');
 const { registerFolderHandlers } = require('./folderHandlers');
 const { registerShellHandlers } = require('./shellHandlers');
 const { registerTaggingHandlers } = require('./taggingHandlers');
+const { registerReportHandlers } = require('./reportHandlers');
 
 // Re-export batch handler components for direct access if needed
 const {
@@ -48,6 +49,9 @@ function registerFilesIpc(servicesOrParams) {
   // Register shell handlers (OPEN_FILE, REVEAL_FILE)
   registerShellHandlers(container);
 
+  // Register the organize report handler (EXPORT_ORGANIZE_REPORT)
+  registerReportHandlers(container);
+
   // Register tagging handlers (ADD_TAGS)
   registerTaggingHandlers(container);
 }
@@ -60,6 +64,7 @@ module.exports.registerFileSelectionHandlers = registerFileSelectionHandlers;
 module.exports.registerFileOperationHandlers = registerFileOperationHandlers;
 module.exports.registerFolderHandlers = registerFolderHandlers;
 module.exports.registerShellHandlers = registerShellHandlers;
+module.exports.registerReportHandlers = registerReportHandlers;
 module.exports.handleBatchOrganize = handleBatchOrganize;
 module.exports.computeFileChecksum = computeFileChecksum;
 module.exports.MAX_BATCH_SIZE = MAX_BATCH_SIZE;

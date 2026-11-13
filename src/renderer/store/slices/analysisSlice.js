@@ -41,6 +41,13 @@ function enforceResultsLimit(/** @type {any} */ results) {
   }
 }
 
+/**
+ * Why the current run started, so the progress card can say so: files the
+ * person added, files added while the last run was going, a run resumed after
+ * a restart, a retry of failed files, or a Reanalyze. Not persisted.
+ */
+const RUN_ORIGINS = ['added', 'queued', 'resume', 'retry', 'reanalyze'];
+
 /** @type {any} */
 const initialState = {
   isAnalyzing: false,
@@ -50,6 +57,7 @@ const initialState = {
     total: 0,
     lastActivity: 0
   },
+  runOrigin: null,
   results: [] // Analysis results
 };
 
@@ -72,6 +80,8 @@ const analysisSlice = createSlice({
             : state.analysisProgress?.total || 0,
         lastActivity: action.payload?.timestamp || Date.now()
       };
+      const origin = action.payload?.origin;
+      state.runOrigin = RUN_ORIGINS.includes(origin) ? origin : 'added';
       // Optionally clear previous results if new batch
       if (action.payload?.clearPrevious) {
         state.results = [];
@@ -111,6 +121,7 @@ const analysisSlice = createSlice({
     stopAnalysis: (state) => {
       state.isAnalyzing = false;
       state.currentAnalysisFile = '';
+      state.runOrigin = null;
     },
     setAnalysisResults: (state, action) => {
       state.results = action.payload;
@@ -207,6 +218,7 @@ const analysisSlice = createSlice({
       state.isAnalyzing = false;
       state.currentAnalysisFile = '';
       state.analysisProgress = { current: 0, total: 0, lastActivity: 0 };
+      state.runOrigin = null;
       // Keep results - user may want to see what was analyzed before the error
     },
     // This prevents orphaned analysis results that consume memory

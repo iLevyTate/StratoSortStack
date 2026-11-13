@@ -210,7 +210,7 @@ describe('Document Extractors Extended', () => {
 
       const result = await documentExtractors.extractTextFromCsv('data.csv');
 
-      expect(result).toContain('col1 col2');
+      expect(result).toContain('Columns: col1 | col2');
       expect(result).toContain('val1 val2');
     });
 
@@ -254,7 +254,7 @@ describe('Document Extractors Extended', () => {
       });
 
       const result = await documentExtractors.extractTextFromXlsx('test.xlsx');
-      expect(result).toContain('Head1 Head2');
+      expect(result).toContain('Columns: Head1 | Head2');
       expect(result).toContain('Val1 Val2');
     });
 

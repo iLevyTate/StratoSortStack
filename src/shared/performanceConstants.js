@@ -531,6 +531,19 @@ const TRUNCATION = {
 
   // Collection limits
   FOLDERS_DISPLAY: 10,
+  // How many Smart Folders the analysis prompt lists, and how much of each
+  // folder's description it keeps. Folders past the limit are left out of the
+  // prompt (logged, and warned about in Setup); FOLDERS_DISPLAY is UI-only.
+  PROMPT_FOLDERS_MAX: 20,
+  PROMPT_FOLDER_DESCRIPTION_MAX: 300,
+  // On a small context (2048 tokens on CPU, 4096 on low-VRAM GPUs) the folder
+  // list may use only this share of the model's context. Descriptions are
+  // shortened to fit; when that would leave each one shorter than
+  // PROMPT_FOLDER_DESCRIPTION_MIN characters, the list falls back to the
+  // PROMPT_FOLDERS_COMPACT_MAX folders it used to list.
+  PROMPT_FOLDER_CONTEXT_SHARE: 0.2,
+  PROMPT_FOLDERS_COMPACT_MAX: 10,
+  PROMPT_FOLDER_DESCRIPTION_MIN: 60,
   KEYWORDS_MAX: 7,
   KEYWORDS_EXTENDED: 15,
   TAGS_DISPLAY: 5,

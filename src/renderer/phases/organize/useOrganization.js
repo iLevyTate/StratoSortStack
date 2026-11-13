@@ -15,6 +15,12 @@ import { createOrganizeBatchAction, previewBatchOrganize } from '../../component
 import { updateResultPathsAfterMove } from '../../store/slices/analysisSlice';
 import { updateFilePathsAfterMove } from '../../store/slices/filesSlice';
 import { mapErrorToNotification } from '../../utils/errorMapping';
+import {
+  buildRunResultRows,
+  countRunOutcomes,
+  isDuplicateSkip
+} from '../../utils/organizeRunResults';
+import { isMac } from '../../utils/platform';
 
 /**
  * The first failed result's reason, in the words errorMapping uses for its
@@ -40,16 +46,6 @@ function describeFirstFailure(results) {
  */
 function countOf(count, noun = 'file') {
   return `${count} ${count === 1 ? noun : `${noun}s`}`;
-}
-
-/**
- * True for a row main reports as done without a move: the destination already
- * held the same content, so the source was removed instead.
- * @param {any} row
- * @returns {boolean}
- */
-function isDuplicateSkip(row) {
-  return Boolean(row && row.success && row.skipped && row.reason === 'duplicate');
 }
 
 /**
@@ -495,11 +491,19 @@ export function useProgressTracking() {
  */
 // Helper to normalize paths for comparison (handles mixed / and \)
 const isWindowsPath = (/** @type {any} */ p) => p && (p.includes('\\') || /^[A-Za-z]:/.test(p));
+/**
+ * Key for "is this the same file name on disk": Unicode composed (main
+ * composes every path), one separator, and case folded where the file system
+ * ignores case: Windows, and a Mac (APFS and HFS+ volumes are case-insensitive
+ * by default), so Report.pdf and report.pdf headed for one folder are caught
+ * before one of them is quietly renamed report_1.pdf.
+ */
 const normalizeForComparison = (/** @type {any} */ path) => {
   if (!path) return '';
-  const normalized = path.replace(/[\\/]+/g, '/');
-  // Only lowercase on Windows paths (contains backslash or drive letter)
-  return isWindowsPath(path) ? normalized.toLowerCase() : normalized;
+  const normalized = String(path)
+    .normalize('NFC')
+    .replace(/[\\/]+/g, '/');
+  return isWindowsPath(path) || isMac ? normalized.toLowerCase() : normalized;
 };
 
 const hasFileExtension = (/** @type {any} */ fileName) => !!extractExtension(fileName);
@@ -798,7 +802,9 @@ export function useOrganization({
   addOrganizedFiles = () => {},
   removeOrganizedFiles = () => {},
   setOrganizingState = () => {},
-  setLastOrganizeRun = () => {}
+  setLastOrganizeRun = () => {},
+  // Every file of the last run and what happened to it (files.lastOrganizeRunFiles).
+  setLastOrganizeRunFiles = (/** @type {any[]} */ _rows) => {}
 } = {}) {
   const {
     batchProgress,
@@ -906,12 +912,17 @@ export function useOrganization({
       // progress polls, path updates) under a single main-process
       // correlation id. Opened only once we know real work will happen.
       let traceSession = null;
+      // The operations sent to main, and whether onExecute stored their rows.
+      // A batch call that throws stores them in the catch below instead.
+      let runOperations = /** @type {any[]} */ ([]);
+      let runFilesStored = false;
 
       try {
         setIsOrganizing(true);
         setOrganizingState(true);
         setOrganizeConflicts([]);
         setLastOrganizeRun(null);
+        setLastOrganizeRunFiles([]);
         resetChunkedResults();
 
         const filesToProcess = resumeInfo
@@ -1091,6 +1102,20 @@ export function useOrganization({
                 resArray = Array.isArray(result?.results) ? result.results : [];
               }
 
+              // Every file of the run and what became of it, for "See every
+              // file", the Complete screen and the CSV export.
+              const batchError = result?.partialFailure
+                ? String(result.error || 'The batch stopped early')
+                : undefined;
+              const runRows = buildRunResultRows({ operations, rows: resArray, batchError });
+              setLastOrganizeRunFiles(runRows);
+              runFilesStored = true;
+              // Failed, not reached, stopped, or returned by a rollback,
+              // counted from the stored rows so the Dashboard and the list
+              // agree. A file a rollback could not return is at its
+              // destination.
+              const notMovedCount = countRunOutcomes(runRows).notMoved;
+
               // A batch main rolled back after a critical error: restored rows
               // (rolledBack) never count as moved; rows whose restore failed
               // keep success:true because those files are at their
@@ -1104,7 +1129,10 @@ export function useOrganization({
                 .filter((/** @type {any} */ r) => r.success && !r.rolledBack)
                 .map((/** @type {any} */ r) => {
                   const original =
-                    analysisResults.find((/** @type {any} */ a) => a.path === r.source) || {};
+                    analysisResults.find(
+                      (/** @type {any} */ a) =>
+                        toCanonicalPath(a?.path) === toCanonicalPath(r.source)
+                    ) || {};
                   // This ensures notifications show the correct folder (e.g., "Uncategorized" not "3D Print")
                   let actualSmartFolder = 'Organized'; // fallback
                   if (r.destination) {
@@ -1140,9 +1168,7 @@ export function useOrganization({
                     rows: resArray,
                     movedCount: uiResults.length - duplicateRows.length,
                     duplicateRows,
-                    batchError: result?.partialFailure
-                      ? String(result.error || 'The batch stopped early')
-                      : undefined,
+                    batchError,
                     interrupted: result?.interrupted === true,
                     stoppedOnFailure: result?.stoppedOnFailure === true
                   });
@@ -1172,6 +1198,7 @@ export function useOrganization({
                 setLastOrganizeRun({
                   outcome: 'rolledBack',
                   count: uiResults.length,
+                  ...(notMovedCount > 0 ? { notMovedCount } : {}),
                   headline: ROLLED_BACK_HEADLINE,
                   detail,
                   finishedAt: Date.now()
@@ -1193,7 +1220,11 @@ export function useOrganization({
                 if (report.summary.outcome !== 'moved' || !stoppedByUser) {
                   addNotification(report.toast, report.severity, report.duration);
                 }
-                setLastOrganizeRun({ ...report.summary, finishedAt: Date.now() });
+                setLastOrganizeRun({
+                  ...report.summary,
+                  ...(notMovedCount > 0 ? { notMovedCount } : {}),
+                  finishedAt: Date.now()
+                });
                 reported.outcome = report.summary.outcome;
               }
 
@@ -1452,6 +1483,7 @@ export function useOrganization({
           operationsCount: operations.length
         });
 
+        runOperations = operations;
         const result = await executeAction(
           createOrganizeBatchAction(
             `Organize ${countOf(operations.length)}`,
@@ -1553,10 +1585,34 @@ export function useOrganization({
           message: error.message,
           stack: error.stack
         });
+        // The executor leaves this error to us (reportsOwnErrors), so this is
+        // the only message. The summary outlasts the toast, on Organize and
+        // on the Dashboard. Whether any file moved before the call failed is
+        // not known here.
+        const { message } = mapErrorToNotification({ error });
         if (isMountedRef.current) {
-          const { message } = mapErrorToNotification({ error });
           addNotification(`Organization failed: ${message}`, 'error');
         }
+        // Every file of the run is still listed. An IPC timeout can leave
+        // main moving files, so the rows do not say the files stayed put.
+        let notMovedCount = 0;
+        if (!runFilesStored && runOperations.length > 0) {
+          const runRows = buildRunResultRows({
+            operations: runOperations,
+            rows: [],
+            outcomeUnknown: true
+          });
+          setLastOrganizeRunFiles(runRows);
+          notMovedCount = countRunOutcomes(runRows).notMoved;
+        }
+        setLastOrganizeRun({
+          outcome: 'none',
+          count: 0,
+          ...(notMovedCount > 0 ? { notMovedCount } : {}),
+          headline: 'Organization stopped with an error',
+          detail: `${message} Files that were not moved are still listed. Check the destination folders for any that were.`,
+          finishedAt: Date.now()
+        });
       } finally {
         traceSession?.end?.();
         // Always clear global organizing flag even if phase unmounted mid-operation.
@@ -1593,6 +1649,7 @@ export function useOrganization({
       removeOrganizedFiles,
       setOrganizingState,
       setLastOrganizeRun,
+      setLastOrganizeRunFiles,
       setBatchProgress,
       setIsOrganizing,
       setOrganizePreview,

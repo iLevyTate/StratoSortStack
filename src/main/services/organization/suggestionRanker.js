@@ -41,8 +41,21 @@ function rankSuggestions(suggestions) {
       // Merge scores if duplicate (working on our cloned copy, not caller's object)
       const existing = uniqueSuggestions.get(key);
 
-      // Keep the source that provided higher confidence (check BEFORE updating)
-      if (suggestion.confidence > existing.confidence) {
+      // An improvement candidate ("this folder could be enhanced") is an idea,
+      // not evidence, and its score carries a +0.2 fit bonus. Merged into a
+      // real match it took over that match's source, and the primary filter
+      // then ruled the folder out. A real match wins outright either way.
+      if (suggestion.source === 'improvement' && existing.source !== 'improvement') continue;
+      if (existing.source === 'improvement' && suggestion.source !== 'improvement') {
+        uniqueSuggestions.set(key, { ...suggestion });
+        continue;
+      }
+
+      // Keep the source that ranks higher once weighted (check BEFORE
+      // updating). Comparing raw confidence let a content match at 0.61 take
+      // a learned folder's source (0.60, weighted higher), so agreeing
+      // evidence dropped that folder below its rival.
+      if (applySourceWeight(suggestion) > applySourceWeight(existing)) {
         existing.source = suggestion.source;
         existing.method = suggestion.method;
         // The explanation is written from these, so they follow the source.
@@ -139,6 +152,7 @@ function generateExplanation(suggestion, file) {
     llm_creative: suggestion.reasoning || 'Alternative way to organize this file',
     folder_improvement: `"${suggestion.folder}" could be enhanced for this type of file`,
     improvement: suggestion.improvement || `Suggested improvement for better organization`,
+    default: 'No Smart Folder matched what this file contains',
     new_folder_suggestion: 'A new folder would be perfect for this file type',
     cluster: suggestion.clusterLabel
       ? `This file clusters with ${suggestion.clusterPeersInFolder || 'similar'} files in "${suggestion.folder}" (${suggestion.clusterLabel})`
