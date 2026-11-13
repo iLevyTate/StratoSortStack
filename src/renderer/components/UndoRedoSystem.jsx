@@ -948,6 +948,17 @@ export function UndoRedoProvider({ children }) {
           return result;
         }
 
+        // Main stopped the batch after failures before any move of it was
+        // confirmed, and recorded no undo entry. A local entry would point
+        // Undo at main's previous action, and "completed" would contradict
+        // the error the caller's onExecute shows.
+        if (result?.stoppedOnFailure === true) {
+          logger.warn('Action stopped by main; not added to undo history', {
+            description: actionConfig.description
+          });
+          return result;
+        }
+
         undoStack.push({
           type: actionConfig.type,
           description: actionConfig.description,

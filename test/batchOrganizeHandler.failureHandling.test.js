@@ -16,6 +16,8 @@
  *    suffix instead of failing
  *  - a rolled-back batch reports restored files as not organized, and
  *    broadcasts the files whose restore failed (they stayed moved)
+ *  - a run that failures stopped has one row per file, and the files it did
+ *    not reach are marked not attempted
  */
 
 const path = require('path');
@@ -579,6 +581,157 @@ describe('rolled-back batch results', () => {
     expect(result.results.filter((r) => r.success)).toEqual([]);
     expect(sendFileOperationBatchComplete).not.toHaveBeenCalled();
     expect(recordAction).not.toHaveBeenCalled();
+  });
+});
+
+describe('a run stopped by failures', () => {
+  // A move whose source is another move's destination makes the batch run one
+  // file at a time. The pair goes last, so nothing is confirmed before it.
+  const chainLast = (ops) => {
+    seedFile('/src/chain.pdf', 'CHAIN');
+    return ops.concat([
+      { source: '/src/chain.pdf', destination: '/stage/chain.pdf', type: 'move' },
+      { source: '/stage/chain.pdf', destination: '/dest/chain.pdf', type: 'move' }
+    ]);
+  };
+  const denyDocs = (denied) => {
+    mockState.renameHook = (s) => {
+      if (s.startsWith(R('/src/doc')) && denied(s)) {
+        throw mockErr('EACCES', 'permission denied, rename');
+      }
+    };
+  };
+  // A file the run never reached keeps the path the caller sent.
+  const flagged = (result, flag) => result.results.filter((r) => r[flag]).map((r) => R(r.source));
+  const rowFor = (result, k) => result.results.find((r) => R(r.source) === R(`/src/doc${k}.pdf`));
+
+  test('with nothing moved yet: every file has a row, and the untried ones say so', async () => {
+    const ops = chainLast(makeOps(6));
+    denyDocs(() => true);
+
+    const { result, recordAction } = await run(ops);
+
+    expect(executeRollback).not.toHaveBeenCalled();
+    expect(result.rolledBack).toBeUndefined();
+    expect(result.success).toBe(false);
+    expect(result.stoppedOnFailure).toBe(true);
+    expect(result.stopReason).toMatch(/^Critical error on file 3\/8: /);
+    expect(result.results).toHaveLength(8);
+    expect(result.failCount).toBe(3);
+    expect(result.notAttemptedCount).toBe(5);
+    expect(result.summary).toBe('Processed 8 files: 0 successful, 3 failed, 5 not attempted');
+    for (const k of [1, 2, 3]) {
+      expect(resultFor(result, k)).toMatchObject({ success: false, errorCode: 'EACCES' });
+      expect(resultFor(result, k).notAttempted).toBeUndefined();
+    }
+    expect(flagged(result, 'notAttempted')).toEqual([
+      R('/src/doc4.pdf'),
+      R('/src/doc5.pdf'),
+      R('/src/doc6.pdf'),
+      R('/src/chain.pdf'),
+      R('/stage/chain.pdf')
+    ]);
+    for (const row of result.results.filter((r) => r.notAttempted)) {
+      expect(row).toMatchObject({ success: false, operation: 'move' });
+      expect(row.error).toBeUndefined();
+    }
+    // The journal batch is closed, so nothing resumes these files.
+    expect(flagged(result, 'interrupted')).toEqual([]);
+    expect(flagged(result, 'cancelled')).toEqual([]);
+    expect(result.interrupted).toBeUndefined();
+    expect(result.cancelled).toBe(false);
+    // Nothing moved, so nothing is undoable.
+    expect(recordAction).not.toHaveBeenCalled();
+    for (const k of [1, 2, 3, 4, 5, 6]) {
+      expect(mockState.files.get(R(`/src/doc${k}.pdf`))).toBe(`DOC-${k}`);
+    }
+    expect(mockState.files.get(R('/src/chain.pdf'))).toBe('CHAIN');
+  });
+
+  test('several files at a time: each file still has exactly one row', async () => {
+    const ops = makeOps(8);
+    denyDocs(() => true);
+
+    const { result } = await run(ops);
+
+    expect(executeRollback).not.toHaveBeenCalled();
+    expect(result.stoppedOnFailure).toBe(true);
+    expect(result.results.map((r) => R(r.source)).sort()).toEqual(
+      ops.map((op) => R(op.source)).sort()
+    );
+    expect(result.notAttemptedCount).toBe(flagged(result, 'notAttempted').length);
+    expect(result.failCount + result.notAttemptedCount).toBe(8);
+    expect(flagged(result, 'interrupted')).toEqual([]);
+  });
+
+  test('strict mode: the first failure stops the run and the rest are not attempted', async () => {
+    const ops = chainLast(makeOps(3));
+    denyDocs((s) => s === R('/src/doc1.pdf'));
+
+    const { result } = await run(ops, { strict: true });
+
+    expect(executeRollback).not.toHaveBeenCalled();
+    expect(result.stoppedOnFailure).toBe(true);
+    expect(result.stopReason).toMatch(/^Strict-mode failure on file 1\/5: /);
+    expect(resultFor(result, 1)).toMatchObject({ success: false, strictModeTriggered: true });
+    expect(result.failCount).toBe(1);
+    expect(result.notAttemptedCount).toBe(4);
+    // Only the denied file was tried (its rename is retried).
+    expect([...new Set(mockState.renames.map(([s]) => s))]).toEqual([R('/src/doc1.pdf')]);
+  });
+
+  test('a run that was not stopped carries no stop fields', async () => {
+    const ops = makeOps(5);
+    denyDocs((s) => s === R('/src/doc3.pdf'));
+
+    const { result } = await run(ops);
+
+    expect(result.stoppedOnFailure).toBeUndefined();
+    expect(result.stopReason).toBeUndefined();
+    expect(result.notAttemptedCount).toBeUndefined();
+    expect(result.summary).toBe('Processed 5 files: 4 successful, 1 failed');
+    expect(flagged(result, 'notAttempted')).toEqual([]);
+  });
+
+  test('with a move to undo: the rolled-back result lists the untried files too', async () => {
+    const ops = chainLast(makeOps(8));
+    denyDocs((s) => s !== R('/src/doc1.pdf'));
+
+    const { result } = await run(ops);
+
+    expect(executeRollback).toHaveBeenCalledTimes(1);
+    expect(result.rolledBack).toBe(true);
+    expect(result.stoppedOnFailure).toBeUndefined();
+    expect(result.results).toHaveLength(10);
+    expect(resultFor(result, 1)).toMatchObject({ success: false, rolledBack: true });
+    expect(result.notAttemptedCount).toBe(6);
+    expect(flagged(result, 'notAttempted')).toEqual([
+      R('/src/doc5.pdf'),
+      R('/src/doc6.pdf'),
+      R('/src/doc7.pdf'),
+      R('/src/doc8.pdf'),
+      R('/src/chain.pdf'),
+      R('/stage/chain.pdf')
+    ]);
+    expect(flagged(result, 'interrupted')).toEqual([]);
+    expect(mockState.files.get(R('/src/doc1.pdf'))).toBe('DOC-1');
+  });
+
+  test('a file an earlier run already moved keeps its row when the resumed run is stopped', async () => {
+    const ops = chainLast(makeOps(5));
+    // doc5 was moved before the run was paused; resume skips it.
+    mockState.files.delete(R('/src/doc5.pdf'));
+    seedFile('/dest/doc5.pdf', 'DOC-5');
+    ops[4].status = 'done';
+    denyDocs(() => true);
+
+    const { result } = await run(ops);
+
+    expect(result.stoppedOnFailure).toBe(true);
+    expect(result.results).toHaveLength(7);
+    expect(rowFor(result, 5)).toMatchObject({ success: true, resumed: true });
+    expect(rowFor(result, 4)).toMatchObject({ success: false, notAttempted: true });
+    expect(result.summary).toBe('Processed 7 files: 1 successful, 3 failed, 3 not attempted');
   });
 });
 

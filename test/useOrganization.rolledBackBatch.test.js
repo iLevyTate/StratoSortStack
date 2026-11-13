@@ -157,6 +157,48 @@ describe('useOrganization: rolled-back batch (fileops-organize-2)', () => {
     );
   });
 
+  test('files the run never reached are counted after the restored ones', async () => {
+    const result = rolledBack(
+      [
+        {
+          success: false,
+          rolledBack: true,
+          source: '/in/a.txt',
+          destination: '/Documents/A.txt',
+          error: 'Critical error: EACCES: permission denied'
+        },
+        {
+          success: false,
+          source: '/in/b.txt',
+          destination: '/Documents/B.txt',
+          error: 'EACCES: permission denied',
+          critical: true
+        },
+        {
+          success: false,
+          notAttempted: true,
+          source: '/in/c.txt',
+          destination: '/Documents/C.txt',
+          operation: 'move'
+        }
+      ],
+      { notAttemptedCount: 1 }
+    );
+    const options = buildOptions(result);
+    const { result: hook } = renderHook(() => useOrganization(options));
+
+    await act(async () => {
+      await hook.current.handleOrganizeFiles();
+    });
+
+    const calls = outcomeToasts(options);
+    expect(calls).toHaveLength(1);
+    const [message, level] = calls[0];
+    expect(level).toBe('error');
+    expect(message).toMatch(/returned to their original locations\. 1 file was not attempted\.$/);
+    expect(hook.current.lastOrganizeSummary).toMatchObject({ outcome: 'rolledBack', count: 0 });
+  });
+
   test('partially restored batch: names files left at their destination and the recovery file', async () => {
     const result = rolledBack(
       [

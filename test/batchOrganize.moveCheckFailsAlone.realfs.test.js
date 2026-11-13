@@ -322,4 +322,36 @@ describe('a temporary copy taken during a move to another drive (real filesystem
     expect(await tree(root)).toEqual(moves.map((move) => `Input/${path.basename(move.source)}`));
     expect(await fsp.readFile(moves[0].source, 'utf8')).toBe('DOC-1');
   });
+
+  test('a destination that takes every copy stops the run, and every file is accounted for', async () => {
+    const root = await makeRoot();
+    const moves = await seedMoves(root, 8);
+    betweenDrives(() => true);
+
+    const result = await organize(moves);
+
+    // No move was confirmed, so there is nothing to roll back.
+    expect(result.rolledBack).toBeFalsy();
+    expect(result.success).toBe(false);
+    expect(result.stoppedOnFailure).toBe(true);
+    expect(result.stopReason).toContain('The original was not moved');
+    // One row per file. Several moves run at once, so how many failed before
+    // the run stopped varies; the rest were not attempted.
+    expect(
+      result.results.map((/** @type {any} */ row) => path.basename(row.source)).sort()
+    ).toEqual(moves.map((move) => path.basename(move.source)).sort());
+    const failed = result.results.filter((/** @type {any} */ row) => row.error);
+    const untried = result.results.filter((/** @type {any} */ row) => row.notAttempted);
+    expect(failed.length).toBeGreaterThanOrEqual(3);
+    expect(untried.length).toBeGreaterThanOrEqual(1);
+    expect(failed.length + untried.length).toBe(8);
+    for (const row of failed) expect(row.errorCode).toBe('STAGED_COPY_FAILED');
+    expect(result.results.filter((/** @type {any} */ row) => row.interrupted)).toEqual([]);
+    expect(result.failCount).toBe(failed.length);
+    expect(result.notAttemptedCount).toBe(untried.length);
+    expect(result.summary).toBe(
+      `Processed 8 files: 0 successful, ${failed.length} failed, ${untried.length} not attempted`
+    );
+    expect(await tree(root)).toEqual(moves.map((move) => `Input/${path.basename(move.source)}`));
+  });
 });

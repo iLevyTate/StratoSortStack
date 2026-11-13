@@ -38,6 +38,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   temporary copy was removed or could not be read or renamed, and says the original was not moved.
   Three of these in a row, with no confirmed move between them, undo the run, as failed move checks
   do.
+- **A run that stops after repeated failures says it was stopped and how many files it did not
+  try.** When the failures came before any file had moved, there was nothing to undo, and the run
+  reported "No files were organized" with the first failure only. The files after the ones that
+  failed had no result, or were marked as interrupted, as if they would be moved at the next start.
+  The message now reads "Organization was stopped; no files were moved", with the first failure, the
+  number of failures and the number of files not attempted. A run that was undone also says how many
+  files it did not attempt. Those files are still at their original locations.
 - **Files that are already in the folder chosen for them are pointed out before the run.** When a
   folder you sort from is also one of your Smart Folders, files matched to it stay where they are
   (or are renamed there). A notice on the Organize screen and a mark in Preview now say which, so a
