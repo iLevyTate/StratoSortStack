@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-12T01:40:35.862Z",
+  "generatedAt": "2026-11-13T01:20:54.483Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
@@ -6091,7 +6091,7 @@
     },
     {
       "packageName": "@hono/node-server",
-      "version": "2.1.5",
+      "version": "2.1.6",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -15113,7 +15113,7 @@
     },
     {
       "packageName": "hono",
-      "version": "4.13.14",
+      "version": "4.13.17",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,

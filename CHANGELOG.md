@@ -26,6 +26,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   undone could move on to the Complete screen as if it had worked. An identical copy that was
   removed instead of moved is listed as a duplicate, with the copy that was kept, and is no longer
   counted as a moved file.
+- **One file that cannot be confirmed after its move no longer undoes the whole run.** After each
+  move the app checks that the file is at its destination and gone from its source. A file that
+  failed this check stopped the run and sent every file already moved back. It is now listed as not
+  moved, with whether it is still at its original location, and the other files stay moved. Three
+  such failures in a row, with no confirmed move between them, still undo the run.
+- **A move to another drive that loses its temporary copy no longer says the original was not
+  found.** Such a move copies the file to a temporary name in the destination folder and renames it
+  into place. When another program removed or held that copy, the failure read "File not found" with
+  the path of the original, which was still there. It now names the destination folder, says the
+  temporary copy was removed or could not be read or renamed, and says the original was not moved.
+  Three of these in a row, with no confirmed move between them, undo the run, as failed move checks
+  do.
+- **A run that stops after repeated failures says it was stopped and how many files it did not
+  try.** When the failures came before any file had moved, there was nothing to undo, and the run
+  reported "No files were organized" with the first failure only. The files after the ones that
+  failed had no result, or were marked as interrupted, as if they would be moved at the next start.
+  The message now reads "Organization was stopped; no files were moved", with the first failure, the
+  number of failures and the number of files not attempted. A run that was undone also says how many
+  files it did not attempt. Those files are still at their original locations.
+- **An organize run no longer shows "Organize N files completed" beside its own result.** That
+  second message appeared after every run, including one in which some or all files had failed, next
+  to the message saying so. It is removed; the run's own message says what was moved and what was
+  not. A run in which every file failed also no longer adds an entry to the undo history. That entry
+  was removed again a moment later, when the history was reloaded.
 - **Files that are already in the folder chosen for them are pointed out before the run.** When a
   folder you sort from is also one of your Smart Folders, files matched to it stay where they are
   (or are renamed there). A notice on the Organize screen and a mark in Preview now say which, so a

@@ -98,7 +98,8 @@ try {
     SIZE_MISMATCH: 'SIZE_MISMATCH',
     CHECKSUM_MISMATCH: 'CHECKSUM_MISMATCH',
     FILE_NOT_FOUND: 'FILE_NOT_FOUND',
-    WRITE_FAILED: 'WRITE_FAILED'
+    WRITE_FAILED: 'WRITE_FAILED',
+    STAGED_COPY_FAILED: 'STAGED_COPY_FAILED'
   };
 }
 
@@ -1805,7 +1806,9 @@ AtomicFileOperations.prototype.safeWriteFile = function safeWriteFile(filePath, 
  *   nothing more is published or deleted: the source stays, the staging copy
  *   is removed and the call rejects with an AbortError.
  * @returns {Promise<void>} Resolves when move is complete
- * @throws {Error} If copy fails or verification fails
+ * @throws {Error} If copy fails or verification fails. A failure on the
+ *   staging copy is a FileSystemError with code STAGED_COPY_FAILED whose
+ *   message says the source was not moved.
  */
 async function crossDeviceMove(source, dest, options = {}) {
   const normalizedSource = resolveFsPath(source);
@@ -1955,10 +1958,26 @@ async function crossDeviceMove(source, dest, options = {}) {
     if (error.isFileSystemError || error?.name === 'AbortError') {
       throw error;
     }
-    // EEXIST can only come from the publish onto the destination name, so
-    // name the occupied destination, not the source, in the error.
+    // Name the file the failure is about. Node reports the path a failed call
+    // was given, unchanged, as `error.path`. A failure on the staging copy
+    // (removed or held by a sync client or scanner between the copy and the
+    // publish) must not read as "source not found": the source is deleted
+    // only after the publish, so it is still in place.
+    if (error?.path === stagingPath) {
+      throw new FileSystemError(FILE_SYSTEM_ERROR_CODES.STAGED_COPY_FAILED, {
+        path: stagingPath,
+        source: normalizedSource,
+        destination: normalizedDest,
+        operation: 'crossDeviceMove',
+        originalError: error.message,
+        originalCode: error.code
+      });
+    }
+    // The destination name: EEXIST can only come from the publish onto it,
+    // and a failed probe of it (renameNoReplace) carries it as `error.path`.
+    const aboutDestination = error?.code === 'EEXIST' || error?.path === normalizedDest;
     const fsError = FileSystemError.fromNodeError(error, {
-      path: error?.code === 'EEXIST' ? normalizedDest : normalizedSource,
+      path: aboutDestination ? normalizedDest : normalizedSource,
       operation: 'crossDeviceMove',
       destination: normalizedDest
     });
