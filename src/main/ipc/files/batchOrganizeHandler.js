@@ -268,6 +268,31 @@ const pLimit = (concurrency) => {
 // Use shared delay() from promiseUtils (supports .unref() for clean shutdown)
 
 /**
+ * The two findings that only the move check reports: the file is not at its
+ * destination, or it is still at its source. See isEscalatingFileError for
+ * how the batch treats them.
+ */
+const MOVE_CHECK_DESTINATION_MISSING = 'MOVE_VERIFICATION_DESTINATION_FAILED';
+const MOVE_CHECK_SOURCE_REMAINS = 'MOVE_VERIFICATION_SOURCE_EXISTS';
+
+/**
+ * Where the file is when the move check does not find it at its destination,
+ * as a sentence that ends the failure message.
+ * @param {string} source
+ * @returns {Promise<string>}
+ */
+async function describeSourceAfterMissingDestination(source) {
+  try {
+    await fs.access(source);
+    return 'The file is still at its original location.';
+  } catch (error) {
+    return error.code === 'ENOENT'
+      ? 'The file is no longer at its original location either.'
+      : 'Its original location could not be checked.';
+  }
+}
+
+/**
  * Verify move operation completed correctly.
  * Checks that destination exists and source is gone.
  *
@@ -286,12 +311,15 @@ async function verifyMoveCompletion(source, destination, log) {
       const isRetryable =
         error.code === 'ENOENT' || (error.code && FILE_LOCK_ERROR_CODES.has(error.code));
       if (!isRetryable || attempt === VERIFY_MAX_ATTEMPTS) {
-        const message =
-          error.code === 'ENOENT'
-            ? `Move verification failed: destination does not exist after move: ${destination}`
-            : `Move verification failed: destination not accessible after move: ${destination}`;
+        const missing = error.code === 'ENOENT';
+        const message = missing
+          ? `Move verification failed: destination does not exist after move: ${destination}. ${await describeSourceAfterMissingDestination(source)}`
+          : `Move verification failed: destination not accessible after move: ${destination}`;
         const verificationError = /** @type {NodeJS.ErrnoException} */ (new Error(message));
-        verificationError.code = error.code || 'MOVE_VERIFICATION_DESTINATION_FAILED';
+        // A destination that cannot be read keeps the filesystem's code, so
+        // EIO still stops the batch and EACCES counts as a permission failure.
+        verificationError.code =
+          missing || !error.code ? MOVE_CHECK_DESTINATION_MISSING : error.code;
         throw verificationError;
       }
       log.debug('[FILE-OPS] Destination not yet visible after move, retrying', {
@@ -321,7 +349,7 @@ async function verifyMoveCompletion(source, destination, log) {
               `Move verification failed: source file still exists at original location: ${source}`
             )
           );
-          verificationError.code = 'MOVE_VERIFICATION_SOURCE_EXISTS';
+          verificationError.code = MOVE_CHECK_SOURCE_REMAINS;
           throw verificationError;
         }
         log.debug('[FILE-OPS] Source still exists after move, retrying', {
@@ -512,9 +540,9 @@ async function handleBatchOrganize(params) {
       // batchId already defined above for lock acquisition
       let shouldRollback = false;
       let rollbackReason = null;
-      // Permission failures since the last successful move; a run of them
-      // means permissions are gone for the batch, not for one file.
-      let consecutivePermissionFailures = 0;
+      // Permission failures and failed move checks since the last verified
+      // move; a run of them means the destination is at fault, not one file.
+      let consecutiveEscalatingFailures = 0;
       const processedKeys = new Set(); // For idempotency
       const mkdirPromises = new Map(); // Deduplicate mkdir across concurrent pLimit workers
       let postBatchPersistence = { undoRecorded: true, pathIndexUpdated: true };
@@ -931,17 +959,16 @@ async function handleBatchOrganize(params) {
                 await verifyMoveCompletion(op.source, resolvedDestination, log);
               } catch (verifyError) {
                 // The source was removed as a duplicate and the copy it
-                // duplicated cannot be confirmed. Rollback has nothing to
-                // copy back, so the message is where the user learns that the
-                // file is in the trash.
+                // duplicated cannot be confirmed. Nothing in the batch puts it
+                // back, so the message is where the user learns that the file
+                // is in the trash.
                 if (moveResult.sourceRemoval === 'trashed' && verifyError instanceof Error) {
-                  verifyError.message +=
-                    '. The original was moved to the system Trash / Recycle Bin as a duplicate and can be restored from there.';
+                  verifyError.message = `${verifyError.message.replace(/\.?$/, '.')} The original was moved to the system Trash / Recycle Bin as a duplicate and can be restored from there.`;
                 }
                 throw verifyError;
               }
 
-              consecutivePermissionFailures = 0;
+              consecutiveEscalatingFailures = 0;
               // A duplicate skip still mutates disk state by deleting the source file.
               // Track it so a later critical failure can restore the original path.
               completedOperations.push({
@@ -1027,7 +1054,7 @@ async function handleBatchOrganize(params) {
             // Post-move verification: ensure destination exists and source is gone
             await verifyMoveCompletion(op.source, op.destination, log);
 
-            consecutivePermissionFailures = 0;
+            consecutiveEscalatingFailures = 0;
             // Push to completedOperations IMMEDIATELY after verify so rollback
             // can restore this file if another concurrent task triggers abort
             completedOperations.push({
@@ -1094,11 +1121,12 @@ async function handleBatchOrganize(params) {
 
             // Determine if critical error (always triggers rollback) or if
             // strict mode makes any failure terminal. One permission denial
-            // is a per-file failure; a run of them is systemic.
+            // or failed move check is a per-file failure; a run of them is
+            // systemic.
             let isCriticalError = isCriticalFileError(error);
-            if (isPermissionFileError(error)) {
-              consecutivePermissionFailures++;
-              if (consecutivePermissionFailures >= PERMISSION_FAILURE_ESCALATION_THRESHOLD) {
+            if (isEscalatingFileError(error)) {
+              consecutiveEscalatingFailures++;
+              if (consecutiveEscalatingFailures >= FAILURE_ESCALATION_THRESHOLD) {
                 isCriticalError = true;
               }
             }
@@ -1479,10 +1507,8 @@ async function handleBatchOrganize(params) {
  * Grouped by root cause:
  *  - Read-only FS:     EROFS
  *  - Storage/quota:    ENOSPC, EDQUOT, EFBIG
- *  - IO integrity:     EIO, checksum mismatch, verification failed
- *  - Path integrity:   ENAMETOOLONG, EUUID_EXHAUSTED,
- *                      MOVE_VERIFICATION_DESTINATION_FAILED,
- *                      MOVE_VERIFICATION_SOURCE_EXISTS
+ *  - IO integrity:     EIO, checksum mismatch
+ *  - Path integrity:   ENAMETOOLONG, EUUID_EXHAUSTED
  *  - Resource pressure:EMFILE, ENFILE
  *  - Process lifecycle:ECANCELED
  *
@@ -1502,11 +1528,18 @@ async function handleBatchOrganize(params) {
  * are FILE_LOCK_ERROR_CODES above: a Windows AV/indexer hold, a
  * delete-pending handle, or one source folder the user cannot write
  * surfaces as EPERM/EACCES for that one file, and rolling back every other
- * completed move for it discarded the whole organize. A run of
- * PERMISSION_FAILURE_ESCALATION_THRESHOLD permission failures with no
- * successful move in between is still treated as systemic (permissions
- * revoked on the destination) and rolls the batch back; see
- * isPermissionFileError and its use in handleBatchOrganize.
+ * completed move for it discarded the whole organize.
+ *
+ * NOTE: a failed move check (MOVE_VERIFICATION_DESTINATION_FAILED,
+ * MOVE_VERIFICATION_SOURCE_EXISTS) is NOT critical on its own either. The
+ * file that failed it never joins the completed moves, so a rollback would
+ * not bring it back; it only undid every move that had been confirmed. The
+ * failed row says where the file is.
+ *
+ * A run of FAILURE_ESCALATION_THRESHOLD of these two kinds of failure with no
+ * verified move in between is still treated as systemic (permissions revoked
+ * on the destination, or a destination that is losing files) and rolls the
+ * batch back; see isEscalatingFileError and its use in handleBatchOrganize.
  */
 const CRITICAL_ERROR_CODES = new Set([
   'EROFS',
@@ -1516,8 +1549,6 @@ const CRITICAL_ERROR_CODES = new Set([
   'EIO',
   'ENAMETOOLONG',
   'EUUID_EXHAUSTED',
-  'MOVE_VERIFICATION_DESTINATION_FAILED',
-  'MOVE_VERIFICATION_SOURCE_EXISTS',
   'EMFILE',
   'ENFILE',
   'ECANCELED'
@@ -1534,32 +1565,39 @@ const CRITICAL_MAPPED_ERROR_CODES = new Set([
   'TOO_MANY_OPEN_FILES'
 ]);
 
-const CRITICAL_MESSAGE_FRAGMENTS = ['checksum mismatch', 'verification failed'];
+const CRITICAL_MESSAGE_FRAGMENTS = ['checksum mismatch'];
 
-const PERMISSION_ERROR_CODES = new Set([
+/**
+ * Codes that are a per-file failure once and systemic in a run: a permission
+ * or access denial, and the move check's two findings.
+ */
+const ESCALATING_ERROR_CODES = new Set([
   'EACCES',
   'EPERM',
   'FILE_ACCESS_DENIED',
-  'PERMISSION_DENIED'
+  'PERMISSION_DENIED',
+  MOVE_CHECK_DESTINATION_MISSING,
+  MOVE_CHECK_SOURCE_REMAINS
 ]);
 
 /**
- * Permission failures in a row (no successful move in between) after which
- * the batch treats them as systemic and rolls back, as it does for ENOSPC.
+ * Escalating failures in a row (no verified move in between) after which the
+ * batch treats them as systemic and rolls back, as it does for ENOSPC.
  */
-const PERMISSION_FAILURE_ESCALATION_THRESHOLD = 3;
+const FAILURE_ESCALATION_THRESHOLD = 3;
 
 /**
- * Whether a failed op's error is a permission/access denial. On its own that
- * is a per-file failure (see CRITICAL_ERROR_CODES); repeated, it escalates.
+ * Whether a failed op's error is one of ESCALATING_ERROR_CODES. On its own
+ * that is a per-file failure (see CRITICAL_ERROR_CODES); repeated, it
+ * escalates.
  * @param {any} error
  * @returns {boolean}
  */
-function isPermissionFileError(error) {
+function isEscalatingFileError(error) {
   if (!error || typeof error !== 'object') return false;
-  if (typeof error.code === 'string' && PERMISSION_ERROR_CODES.has(error.code)) return true;
+  if (typeof error.code === 'string' && ESCALATING_ERROR_CODES.has(error.code)) return true;
   const originalCode = error.metadata?.originalCode;
-  return typeof originalCode === 'string' && PERMISSION_ERROR_CODES.has(originalCode);
+  return typeof originalCode === 'string' && ESCALATING_ERROR_CODES.has(originalCode);
 }
 
 /**

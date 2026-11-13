@@ -103,6 +103,19 @@ const FILE_OPERATION_CODE_MAP = {
     message:
       'That folder leads into a system folder through a link or short name. Choose a different folder.',
     useHandlerMessage: true
+  },
+  // Organize (batchOrganizeHandler.js): the move ran but the check after it
+  // did not find the file where it should be. The handler's message names the
+  // path and says where the file is, so it is shown as is.
+  MOVE_VERIFICATION_DESTINATION_FAILED: {
+    severity: 'error',
+    message: 'The move could not be confirmed: the file was not found at its destination.',
+    useHandlerMessage: true
+  },
+  MOVE_VERIFICATION_SOURCE_EXISTS: {
+    severity: 'error',
+    message: 'The move could not be confirmed: the file is still at its original location.',
+    useHandlerMessage: true
   }
 };
 

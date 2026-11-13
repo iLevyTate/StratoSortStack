@@ -26,6 +26,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   undone could move on to the Complete screen as if it had worked. An identical copy that was
   removed instead of moved is listed as a duplicate, with the copy that was kept, and is no longer
   counted as a moved file.
+- **One file that cannot be confirmed after its move no longer undoes the whole run.** After each
+  move the app checks that the file is at its destination and gone from its source. A file that
+  failed this check stopped the run and sent every file already moved back. It is now listed as not
+  moved, with whether it is still at its original location, and the other files stay moved. Three
+  such failures in a row, with no confirmed move between them, still undo the run.
 - **Files that are already in the folder chosen for them are pointed out before the run.** When a
   folder you sort from is also one of your Smart Folders, files matched to it stay where they are
   (or are renamed there). A notice on the Organize screen and a mark in Preview now say which, so a

@@ -104,6 +104,29 @@ describe('errorMapping: file operation codes', () => {
     });
   });
 
+  describe('a move the check after it could not confirm', () => {
+    const HANDLER_MESSAGE =
+      'Move verification failed: destination does not exist after move: /dest/a.pdf. The file is still at its original location.';
+
+    test('shows where the file is, not the generic save failure', () => {
+      const mapped = mapErrorToNotification({
+        error: HANDLER_MESSAGE,
+        errorCode: 'MOVE_VERIFICATION_DESTINATION_FAILED'
+      });
+      expect(mapped).toMatchObject({ severity: 'error', message: HANDLER_MESSAGE });
+    });
+
+    test.each([
+      ['MOVE_VERIFICATION_DESTINATION_FAILED', /not found at its destination/],
+      ['MOVE_VERIFICATION_SOURCE_EXISTS', /still at its original location/]
+    ])('%s without a handler message still says what happened', (errorCode, expected) => {
+      expect(mapErrorToNotification({ errorCode })).toMatchObject({
+        severity: 'error',
+        message: expect.stringMatching(expected)
+      });
+    });
+  });
+
   test('an unknown code falls back to the handler message', () => {
     const mapped = mapErrorToNotification({
       error: 'Invalid destination path: something odd',

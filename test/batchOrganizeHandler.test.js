@@ -1208,6 +1208,30 @@ describe('Batch Organize Handler', () => {
         })
       ).toBe(false);
     });
+
+    test.each([
+      [
+        'MOVE_VERIFICATION_DESTINATION_FAILED',
+        'Move verification failed: destination does not exist after move: /dest/a.pdf. The file is still at its original location.'
+      ],
+      [
+        'MOVE_VERIFICATION_SOURCE_EXISTS',
+        'Move verification failed: source file still exists at original location: /src/a.pdf'
+      ]
+    ])('treats one failed move check (%s) as a per-file failure', (code, message) => {
+      // The file never joins the completed moves, so a rollback would undo
+      // every other file without bringing this one back.
+      expect(isCriticalFileError({ code, message })).toBe(false);
+    });
+
+    test('still treats a checksum mismatch as critical', () => {
+      expect(
+        isCriticalFileError({
+          code: 'INTEGRITY_ERROR',
+          message: 'File checksum mismatch - possible corruption: /dest/a.pdf'
+        })
+      ).toBe(true);
+    });
   });
 
   describe('recordUndoAndUpdateDatabase', () => {
