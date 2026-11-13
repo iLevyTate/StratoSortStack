@@ -127,6 +127,26 @@ describe('errorMapping: file operation codes', () => {
     });
   });
 
+  describe('a move between drives that lost its temporary copy', () => {
+    const HANDLER_MESSAGE =
+      'The temporary copy in /dest/Invoices was removed before the move finished. The original was not moved: /home/user/Downloads/a.pdf';
+
+    test('shows which folder and that the original was not moved, not "File not found"', () => {
+      const mapped = mapErrorToNotification({
+        error: HANDLER_MESSAGE,
+        errorCode: 'STAGED_COPY_FAILED'
+      });
+      expect(mapped).toMatchObject({ severity: 'error', message: HANDLER_MESSAGE });
+    });
+
+    test('without a handler message still says the original was not moved', () => {
+      expect(mapErrorToNotification({ errorCode: 'STAGED_COPY_FAILED' })).toMatchObject({
+        severity: 'error',
+        message: expect.stringMatching(/The original file was not moved\.$/)
+      });
+    });
+  });
+
   test('an unknown code falls back to the handler message', () => {
     const mapped = mapErrorToNotification({
       error: 'Invalid destination path: something odd',

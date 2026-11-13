@@ -1536,7 +1536,12 @@ async function handleBatchOrganize(params) {
  * not bring it back; it only undid every move that had been confirmed. The
  * failed row says where the file is.
  *
- * A run of FAILURE_ESCALATION_THRESHOLD of these two kinds of failure with no
+ * NOTE: STAGED_COPY_FAILED (a move between drives whose temporary copy in the
+ * destination folder was removed or held before it was renamed into place) is
+ * the same finding made one step earlier: the destination lost a file. The
+ * source was not touched, so it is a per-file failure too.
+ *
+ * A run of FAILURE_ESCALATION_THRESHOLD of these kinds of failure with no
  * verified move in between is still treated as systemic (permissions revoked
  * on the destination, or a destination that is losing files) and rolls the
  * batch back; see isEscalatingFileError and its use in handleBatchOrganize.
@@ -1569,7 +1574,8 @@ const CRITICAL_MESSAGE_FRAGMENTS = ['checksum mismatch'];
 
 /**
  * Codes that are a per-file failure once and systemic in a run: a permission
- * or access denial, and the move check's two findings.
+ * or access denial, the move check's two findings, and a cross-drive move's
+ * lost temporary copy.
  */
 const ESCALATING_ERROR_CODES = new Set([
   'EACCES',
@@ -1577,7 +1583,8 @@ const ESCALATING_ERROR_CODES = new Set([
   'FILE_ACCESS_DENIED',
   'PERMISSION_DENIED',
   MOVE_CHECK_DESTINATION_MISSING,
-  MOVE_CHECK_SOURCE_REMAINS
+  MOVE_CHECK_SOURCE_REMAINS,
+  'STAGED_COPY_FAILED'
 ]);
 
 /**

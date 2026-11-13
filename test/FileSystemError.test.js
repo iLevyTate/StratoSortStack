@@ -134,6 +134,35 @@ describe('FileSystemError', () => {
     });
   });
 
+  describe('STAGED_COPY_FAILED (the temporary copy of a move between drives)', () => {
+    const stagedCopy = (/** @type {Record<string, any>} */ metadata) =>
+      new FileSystemError(FILE_SYSTEM_ERROR_CODES.STAGED_COPY_FAILED, {
+        path: '/dest/Invoices/a.pdf.stratosort-1-abcd.tmp',
+        source: '/home/user/Downloads/a.pdf',
+        ...metadata
+      });
+
+    test('a removed copy names the destination folder and the original', () => {
+      expect(stagedCopy({ originalCode: 'ENOENT' }).message).toBe(
+        'The temporary copy in /dest/Invoices was removed before the move finished. The original was not moved: /home/user/Downloads/a.pdf'
+      );
+    });
+
+    test('any other failure names its code instead of calling the copy removed', () => {
+      expect(stagedCopy({ originalCode: 'EBUSY' }).message).toBe(
+        'The temporary copy in /dest/Invoices could not be read or renamed (EBUSY). The original was not moved: /home/user/Downloads/a.pdf'
+      );
+    });
+
+    test('does not read as a missing file', () => {
+      const error = stagedCopy({ originalCode: 'ENOENT' });
+
+      expect(error.message).not.toMatch(/not found/i);
+      expect(error.getUserFriendlyMessage()).toContain('The original file was not moved');
+      expect(error.getActionableSteps()[0]).toBe('Try the move again');
+    });
+  });
+
   describe('isRecoverable', () => {
     test('returns false for corrupted file', () => {
       const error = new FileSystemError(FILE_SYSTEM_ERROR_CODES.CORRUPTED_FILE, {});
