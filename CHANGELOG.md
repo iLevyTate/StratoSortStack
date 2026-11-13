@@ -45,6 +45,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   The message now reads "Organization was stopped; no files were moved", with the first failure, the
   number of failures and the number of files not attempted. A run that was undone also says how many
   files it did not attempt. Those files are still at their original locations.
+- **An organize run no longer shows "Organize N files completed" beside its own result.** That
+  second message appeared after every run, including one in which some or all files had failed, next
+  to the message saying so. It is removed; the run's own message says what was moved and what was
+  not. A run in which every file failed also no longer adds an entry to the undo history. That entry
+  was removed again a moment later, when the history was reloaded.
 - **Files that are already in the folder chosen for them are pointed out before the run.** When a
   folder you sort from is also one of your Smart Folders, files matched to it stay where they are
   (or are renamed there). A notice on the Organize screen and a mark in Preview now say which, so a

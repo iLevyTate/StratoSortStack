@@ -935,25 +935,14 @@ export function UndoRedoProvider({ children }) {
       try {
         const result = await actionConfig.execute();
 
-        // Main rolled the batch back after a critical error. The restored
-        // moves have no history; any move the rollback could NOT reverse got
-        // its own undo entry in main (recorded there, not here). A local
-        // entry for the whole batch would undo files that are already back
-        // or double main's entry. The caller's onExecute owns the one error
-        // message for it.
-        if (result?.rolledBack === true) {
-          logger.warn('Action rolled back by main; not added to undo history', {
-            description: actionConfig.description
-          });
-          return result;
-        }
-
-        // Main stopped the batch after failures before any move of it was
-        // confirmed, and recorded no undo entry. A local entry would point
-        // Undo at main's previous action, and "completed" would contradict
-        // the error the caller's onExecute shows.
-        if (result?.stoppedOnFailure === true) {
-          logger.warn('Action stopped by main; not added to undo history', {
+        // Main reports success:false for a batch it recorded no undo entry
+        // for: every file failed, it stopped the run before any move was
+        // confirmed, or it rolled the batch back. A move a rollback could
+        // NOT reverse gets its own entry in main, loaded by the sync below.
+        // A local entry would point Undo at main's previous action, or undo
+        // files that are already back.
+        if (result?.success === false) {
+          logger.warn('Action reported failure; not added to undo history', {
             description: actionConfig.description
           });
           return result;
@@ -968,8 +957,9 @@ export function UndoRedoProvider({ children }) {
           result
         });
 
-        showSuccess(`${actionConfig.description} completed`);
-
+        // No toast here. The caller's onExecute reports what the run moved,
+        // left or refused; "completed" beside it was wrong whenever a file
+        // had failed.
         return result;
       } catch (error) {
         showError(
@@ -980,7 +970,7 @@ export function UndoRedoProvider({ children }) {
         await releaseUndoRedoLock();
       }
     },
-    [undoStack, showInfo, showSuccess, showError, releaseUndoRedoLock, beginExecution]
+    [undoStack, showInfo, showError, releaseUndoRedoLock, beginExecution]
   );
 
   const undo = useCallback(async () => {
