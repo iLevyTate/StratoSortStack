@@ -66,7 +66,8 @@ function buildOptions(rollbackResult) {
     }),
     addOrganizedFiles: jest.fn(),
     removeOrganizedFiles: jest.fn(),
-    setOrganizingState: jest.fn()
+    setOrganizingState: jest.fn(),
+    setLastOrganizeRun: jest.fn()
   };
 }
 
@@ -146,15 +147,15 @@ describe('useOrganization: rolled-back batch (fileops-organize-2)', () => {
     expect(options.dispatch).not.toHaveBeenCalled();
     expect(options.markFilesAsProcessed).not.toHaveBeenCalled();
     expect(options.actions.advancePhase).not.toHaveBeenCalled();
-    // The banner repeats the toast and stays after the toast is gone.
-    expect(hook.current.lastOrganizeSummary).toMatchObject({
+    // The summary repeats the toast; its banner stays after the toast is gone.
+    const summary = options.setLastOrganizeRun.mock.calls.at(-1)[0];
+    expect(summary).toMatchObject({
       outcome: 'rolledBack',
       count: 0,
-      headline: 'Organization was rolled back'
+      headline: 'Organization was rolled back',
+      finishedAt: expect.any(Number)
     });
-    expect(message).toBe(
-      `Organization was rolled back. ${hook.current.lastOrganizeSummary.detail}`
-    );
+    expect(message).toBe(`Organization was rolled back. ${summary.detail}`);
   });
 
   test('files the run never reached are counted after the restored ones', async () => {
@@ -196,7 +197,9 @@ describe('useOrganization: rolled-back batch (fileops-organize-2)', () => {
     const [message, level] = calls[0];
     expect(level).toBe('error');
     expect(message).toMatch(/returned to their original locations\. 1 file was not attempted\.$/);
-    expect(hook.current.lastOrganizeSummary).toMatchObject({ outcome: 'rolledBack', count: 0 });
+    expect(options.setLastOrganizeRun).toHaveBeenLastCalledWith(
+      expect.objectContaining({ outcome: 'rolledBack', count: 0 })
+    );
   });
 
   test('partially restored batch: names files left at their destination and the recovery file', async () => {
@@ -251,6 +254,10 @@ describe('useOrganization: rolled-back batch (fileops-organize-2)', () => {
       expect(action.payload.newPaths).toEqual(['C:\\Docs\\B.txt']);
     }
     expect(options.actions.advancePhase).not.toHaveBeenCalled();
+    // The summary counts that file, so undoing its move clears the summary.
+    expect(options.setLastOrganizeRun).toHaveBeenLastCalledWith(
+      expect.objectContaining({ outcome: 'rolledBack', count: 1 })
+    );
   });
 
   test('a recovery path is not shown when every file was restored (main deletes that file)', async () => {

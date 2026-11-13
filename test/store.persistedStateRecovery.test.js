@@ -199,4 +199,84 @@ describe('persisted Redux state recovery across reloads', () => {
 
     expect(storage[BACKUP_KEY]).toBe(blob);
   });
+
+  // files.lastOrganizeRun: how the last organize run ended.
+  describe('last organize run', () => {
+    const summaryOf = (outcome, extra = {}) => ({
+      outcome,
+      count: 3,
+      headline: `headline for ${outcome}`,
+      detail: 'EACCES: permission denied',
+      finishedAt: 1000,
+      resumesAtLaunch: false,
+      ...extra
+    });
+    const blobWith = (files, timestamp = Date.now()) =>
+      JSON.stringify({
+        _version: 4,
+        timestamp,
+        ui: { currentPhase: 'organize' },
+        files: {
+          selectedFiles: [{ path: 'C:/docs/left.pdf' }],
+          organizedFiles: [{ path: 'C:/out/a.pdf' }],
+          smartFolders: [],
+          fileStates: {},
+          ...files
+        },
+        analysis: { results: [] }
+      });
+    const restoredRun = (blob) =>
+      bootStore({ [REDUX_STATE_KEY]: blob }).getState().files.lastOrganizeRun;
+
+    test.each(['partial', 'none', 'rolledBack'])(
+      'a %s run is there after a restart, with the queue it left',
+      (outcome) => {
+        const store = bootStore({
+          [REDUX_STATE_KEY]: blobWith({ lastOrganizeRun: summaryOf(outcome) })
+        });
+
+        expect(store.getState().files.lastOrganizeRun).toEqual(summaryOf(outcome));
+        expect(store.getState().files.selectedFiles).toHaveLength(1);
+      }
+    );
+
+    test('only the fields of a summary are restored', () => {
+      const saved = { ...summaryOf('partial'), files: ['C:/docs/left.pdf'], finishedAt: 'now' };
+
+      expect(restoredRun(blobWith({ lastOrganizeRun: saved }))).toEqual(
+        summaryOf('partial', { finishedAt: null })
+      );
+    });
+
+    test.each([
+      ['a run that moved everything', summaryOf('moved')],
+      ['an interrupted run', summaryOf('partial', { resumesAtLaunch: true })],
+      ['a summary with an unknown outcome', summaryOf('finished')],
+      ['a summary with no headline', summaryOf('partial', { headline: '' })],
+      ['something that is not a summary', 'partial']
+    ])('%s in the saved state is not restored', (_label, saved) => {
+      expect(restoredRun(blobWith({ lastOrganizeRun: saved }))).toBeNull();
+    });
+
+    test('state saved before the field existed restores with no summary', () => {
+      expect(restoredRun(blobWith({}))).toBeNull();
+    });
+
+    test('a TTL-expired blob loses the summary with the queue, on this boot and the next', () => {
+      const storage = {
+        [REDUX_STATE_KEY]: blobWith(
+          { lastOrganizeRun: summaryOf('partial') },
+          Date.now() - 48 * 60 * 60 * 1000
+        )
+      };
+
+      const first = bootStore(storage).getState();
+      expect(window.__STRATOSORT_STATE_EXPIRED__).toBe(true);
+      expect(first.files.selectedFiles).toEqual([]);
+      expect(first.files.lastOrganizeRun).toBeNull();
+      expect(first.files.organizedFiles).toHaveLength(1);
+
+      expect(bootStore(storage).getState().files.lastOrganizeRun).toBeNull();
+    });
+  });
 });

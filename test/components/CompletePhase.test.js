@@ -24,10 +24,15 @@ jest.mock('../../src/renderer/store/hooks', () => ({
   )
 }));
 
-jest.mock('../../src/renderer/store/selectors', () => ({
-  selectRedactPaths: jest.fn(() => false),
-  selectOrganizedCount: jest.fn(() => 2)
-}));
+// The two counts are the real selectors, so each test's organized list decides them.
+jest.mock('../../src/renderer/store/selectors', () => {
+  const actual = jest.requireActual('../../src/renderer/store/selectors');
+  return {
+    selectRedactPaths: jest.fn(() => false),
+    selectOrganizedCount: actual.selectOrganizedCount,
+    selectMovedCount: actual.selectMovedCount
+  };
+});
 
 jest.mock('../../src/renderer/store/slices/uiSlice', () => ({
   setPhase: jest.fn(),
@@ -252,12 +257,10 @@ describe('CompletePhase premium finish', () => {
 
   describe('counts in the summary', () => {
     const { useAppSelector } = require('../../src/renderer/store/hooks');
-    const { selectOrganizedCount } = require('../../src/renderer/store/selectors');
     const defaultSelector = useAppSelector.getMockImplementation();
 
     const renderWithOrganized = (organizedFiles) => {
       selectRedactPaths.mockReturnValue(false);
-      selectOrganizedCount.mockReturnValue(organizedFiles.length);
       useAppSelector.mockImplementation((selector) =>
         selector({
           files: { organizedFiles, organizedPathIndex: [] },
@@ -269,7 +272,6 @@ describe('CompletePhase premium finish', () => {
 
     afterEach(() => {
       useAppSelector.mockImplementation(defaultSelector);
-      selectOrganizedCount.mockReturnValue(2);
     });
 
     test('counts destination folders, not one destination per file', () => {
@@ -319,7 +321,6 @@ describe('CompletePhase premium finish', () => {
   // moved. `path` on its entry is the copy that was kept.
   describe('duplicates that were removed instead of moved', () => {
     const { useAppSelector } = require('../../src/renderer/store/hooks');
-    const { selectOrganizedCount } = require('../../src/renderer/store/selectors');
     const defaultSelector = useAppSelector.getMockImplementation();
 
     const movedFile = {
@@ -336,7 +337,6 @@ describe('CompletePhase premium finish', () => {
 
     const renderWithOrganized = (organizedFiles, { redact = false } = {}) => {
       selectRedactPaths.mockReturnValue(redact);
-      selectOrganizedCount.mockReturnValue(organizedFiles.length);
       useAppSelector.mockImplementation((selector) =>
         selector({
           files: { organizedFiles, organizedPathIndex: [] },
@@ -348,7 +348,6 @@ describe('CompletePhase premium finish', () => {
 
     afterEach(() => {
       useAppSelector.mockImplementation(defaultSelector);
-      selectOrganizedCount.mockReturnValue(2);
       selectRedactPaths.mockReturnValue(false);
     });
 

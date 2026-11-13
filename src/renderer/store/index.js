@@ -24,6 +24,7 @@ import {
   mergeOrganizedPathIndex,
   normalizeOrganizedPathIndex
 } from '../utils/organizedPathIndex';
+import { normalizeOrganizeRunSummary, summaryForNextLaunch } from '../utils/organizeRunSummary';
 
 // Helper to serialize file objects loaded from localStorage
 // Converts Date objects to ISO strings for Redux compatibility
@@ -209,6 +210,7 @@ const loadState = () => {
                 parsedLegacy.phaseData?.organizedPathIndex
               ),
               fileStates: normalizeHydratedFileStates(parsedLegacy.phaseData?.fileStates || {}),
+              lastOrganizeRun: null,
               namingConvention: parsedLegacy.phaseData?.namingConvention || {
                 convention: 'subject-date',
                 dateFormat: 'YYYY-MM-DD',
@@ -376,6 +378,8 @@ const loadState = () => {
           smartFoldersLoading: false,
           smartFoldersError: null,
           fileStates: {},
+          // The queue the run worked on is gone with the rest of the session.
+          lastOrganizeRun: null,
           namingConvention: parsed.files?.namingConvention || {
             convention: 'subject-date',
             dateFormat: 'YYYY-MM-DD',
@@ -497,6 +501,11 @@ const loadState = () => {
         smartFoldersLoading: false,
         smartFoldersError: null,
         fileStates: hydratedFileStates,
+        // Only a run that left files unmoved is saved; checking again here
+        // covers a blob that was edited or damaged.
+        lastOrganizeRun: summaryForNextLaunch(
+          normalizeOrganizeRunSummary(parsed.files?.lastOrganizeRun)
+        ),
         namingConvention: parsed.files?.namingConvention || {
           convention: 'subject-date',
           dateFormat: 'YYYY-MM-DD',

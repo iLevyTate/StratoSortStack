@@ -9,10 +9,51 @@ import {
   selectSelectedFiles,
   selectAnalysisResults,
   selectFileStates,
-  selectSmartFolders
+  selectSmartFolders,
+  selectOrganizedCount,
+  selectMovedCount,
+  selectLastOrganizeRun
 } from '../src/renderer/store/selectors';
 
 describe('Redux Selectors', () => {
+  // A file whose destination already held an identical copy is removed, not
+  // moved; its history entry carries `duplicateRemoval`.
+  describe('organized counts', () => {
+    const stateWith = (organizedFiles) => ({ files: { organizedFiles } });
+
+    test('selectMovedCount leaves out duplicates that were removed', () => {
+      const state = stateWith([
+        { path: '/out/a.pdf' },
+        { path: '/out/b.pdf', duplicateRemoval: 'trashed' },
+        { path: '/out/c.pdf', duplicateRemoval: 'deleted' },
+        { path: '/out/d.pdf' }
+      ]);
+
+      expect(selectMovedCount(state)).toBe(2);
+      expect(selectOrganizedCount(state)).toBe(4);
+    });
+
+    test('both counts are 0 without a history', () => {
+      expect(selectMovedCount(stateWith(undefined))).toBe(0);
+      expect(selectMovedCount(stateWith([]))).toBe(0);
+      expect(selectOrganizedCount(stateWith(undefined))).toBe(0);
+    });
+  });
+
+  describe('selectLastOrganizeRun', () => {
+    test('returns the stored summary', () => {
+      const summary = { outcome: 'partial', count: 1, headline: 'Moved 1 file' };
+
+      expect(selectLastOrganizeRun({ files: { lastOrganizeRun: summary } })).toBe(summary);
+    });
+
+    test('is null before a run, and for state saved before the field existed', () => {
+      expect(selectLastOrganizeRun({ files: { lastOrganizeRun: null } })).toBeNull();
+      expect(selectLastOrganizeRun({ files: {} })).toBeNull();
+      expect(selectLastOrganizeRun({})).toBeNull();
+    });
+  });
+
   describe('selectSelectedFiles', () => {
     test('returns selected files', () => {
       const state = {

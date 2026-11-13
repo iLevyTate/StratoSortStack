@@ -1078,4 +1078,160 @@ describe('persistenceMiddleware', () => {
       expect(savedResultCounts()).toEqual([2]);
     });
   });
+
+  // files.lastOrganizeRun: how the last organize run ended. Only a run that
+  // left files unmoved is kept for the next launch.
+  describe('last organize run', () => {
+    const STATE_KEY = 'stratosort_redux_state';
+    const summaryOf = (outcome, extra = {}) => ({
+      outcome,
+      count: 1,
+      headline: `headline for ${outcome}`,
+      detail: '',
+      finishedAt: 1000,
+      resumesAtLaunch: false,
+      ...extra
+    });
+    let baseState;
+    let nextHandler;
+
+    const withRun = (lastOrganizeRun, state = baseState) => ({
+      ...state,
+      files: { ...state.files, lastOrganizeRun }
+    });
+    const saves = () =>
+      mockLocalStorage.setItem.mock.calls
+        .filter(([key]) => key === STATE_KEY)
+        .map(([, json]) => JSON.parse(json));
+    const dispatchWith = (state, type = 'files/setLastOrganizeRun') => {
+      mockStore.getState.mockReturnValue(state);
+      nextHandler({ type });
+      jest.advanceTimersByTime(1000);
+    };
+    const failFirstSaves = (count) => {
+      let calls = 0;
+      mockLocalStorage.setItem.mockImplementation(() => {
+        calls += 1;
+        if (calls <= count) {
+          const error = new Error('Quota exceeded');
+          error.name = 'QuotaExceededError';
+          throw error;
+        }
+      });
+    };
+
+    beforeEach(() => {
+      baseState = mockStore.getState();
+      nextHandler = persistenceMiddleware(mockStore)(mockNext);
+      // A first save, so that each test's change is the only unsaved one.
+      dispatchWith(baseState, 'ACTION_1');
+      mockLocalStorage.setItem.mockClear();
+    });
+
+    test.each(['partial', 'none', 'rolledBack'])(
+      'a %s run is saved, though nothing else changed',
+      (outcome) => {
+        dispatchWith(withRun(summaryOf(outcome)));
+
+        expect(saves()).toHaveLength(1);
+        expect(saves()[0].files.lastOrganizeRun).toEqual(summaryOf(outcome));
+      }
+    );
+
+    test.each([
+      ['a run that moved everything', summaryOf('moved')],
+      ['an interrupted run', summaryOf('partial', { resumesAtLaunch: true })]
+    ])('%s causes no save, and is left out of the next one', (_label, summary) => {
+      dispatchWith(withRun(summary));
+      expect(saves()).toHaveLength(0);
+
+      dispatchWith(
+        withRun(summary, { ...baseState, ui: { ...baseState.ui, currentPhase: 'organize' } }),
+        'ui/setPhase'
+      );
+      expect(saves()).toHaveLength(1);
+      expect(saves()[0].files.lastOrganizeRun).toBeNull();
+    });
+
+    test('a saved summary is not saved again until it changes', () => {
+      const state = withRun(summaryOf('partial'));
+      dispatchWith(state);
+      dispatchWith(state, 'ACTION_2');
+
+      expect(saves()).toHaveLength(1);
+    });
+
+    test('dismissing a saved summary saves that it is gone', () => {
+      dispatchWith(withRun(summaryOf('partial')));
+      dispatchWith(withRun(null));
+
+      expect(saves()).toHaveLength(2);
+      expect(saves()[1].files.lastOrganizeRun).toBeNull();
+    });
+
+    test('a new run that moved everything replaces a saved summary with nothing', () => {
+      dispatchWith(withRun(summaryOf('partial')));
+      dispatchWith(withRun(summaryOf('moved')));
+
+      expect(saves()).toHaveLength(2);
+      expect(saves()[1].files.lastOrganizeRun).toBeNull();
+    });
+
+    test('the unload flush writes a summary that was waiting to be saved', () => {
+      mockStore.getState.mockReturnValue(withRun(summaryOf('none')));
+      nextHandler({ type: 'files/setLastOrganizeRun' });
+      cleanupPersistence(mockStore);
+
+      expect(saves()).toHaveLength(1);
+      expect(saves()[0].files.lastOrganizeRun).toEqual(summaryOf('none'));
+    });
+
+    // The summary describes files in the queue, so it is kept only by a save
+    // that also keeps the queue.
+    describe('when storage is full', () => {
+      const queue = [{ path: '/docs/a.pdf' }];
+      const stateWithQueue = () => {
+        const state = withRun(summaryOf('partial'));
+        return { ...state, files: { ...state.files, selectedFiles: queue } };
+      };
+
+      test('the reduced save keeps the queue and the summary', () => {
+        failFirstSaves(1);
+        dispatchWith(stateWithQueue());
+
+        const saved = mockLocalStorage.setItem.mock.calls.map(([, json]) => JSON.parse(json));
+        expect(saved).toHaveLength(2);
+        expect(saved[1].files.selectedFiles).toEqual(queue);
+        expect(saved[1].files.lastOrganizeRun).toEqual(summaryOf('partial'));
+      });
+
+      test('the minimal save drops the queue and the summary with it', () => {
+        failFirstSaves(2);
+        dispatchWith(stateWithQueue());
+
+        const saved = mockLocalStorage.setItem.mock.calls.map(([, json]) => JSON.parse(json));
+        expect(saved).toHaveLength(3);
+        expect(saved[2]._partial).toBe(true);
+        expect(saved[2].files.selectedFiles).toEqual([]);
+        expect(saved[2].files).not.toHaveProperty('lastOrganizeRun');
+      });
+    });
+
+    describe('buildStateSnapshot', () => {
+      const snapshotRun = (state) =>
+        require('../src/renderer/store/middleware/persistenceMiddleware').buildStateSnapshot(state)
+          .files.lastOrganizeRun;
+
+      test('carries a run that left files unmoved', () => {
+        expect(snapshotRun(withRun(summaryOf('rolledBack')))).toEqual(summaryOf('rolledBack'));
+      });
+
+      test('carries nothing for a clean run, an interrupted run, or no run', () => {
+        expect(snapshotRun(withRun(summaryOf('moved')))).toBeNull();
+        expect(snapshotRun(withRun(summaryOf('none', { resumesAtLaunch: true })))).toBeNull();
+        expect(snapshotRun(withRun(null))).toBeNull();
+        expect(snapshotRun(baseState)).toBeNull();
+      });
+    });
+  });
 });

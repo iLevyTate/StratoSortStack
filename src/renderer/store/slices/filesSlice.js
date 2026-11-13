@@ -10,6 +10,7 @@ import {
   mergeOrganizedPathIndex,
   removeFromOrganizedPathIndex
 } from '../../utils/organizedPathIndex';
+import { normalizeOrganizeRunSummary } from '../../utils/organizeRunSummary';
 
 // Thunk to fetch smart folders with optional cache bypass
 export const fetchSmartFolders = createAsyncThunk(
@@ -97,6 +98,8 @@ const initialState = {
   // Compact durable path keys (original + destination). Survives the
   // organizedFiles persistence cap so Discover does not resurrect moved files.
   organizedPathIndex: [],
+  // How the last organize run ended (see utils/organizeRunSummary), or null.
+  lastOrganizeRun: null,
   fileStates: {}, // Map of path -> state (pending, analyzing, ready, error)
   namingConvention: {
     convention: 'subject-date',
@@ -256,6 +259,12 @@ const filesSlice = createSlice({
         state.organizedPathIndex,
         collectOrganizedPathKeys(removedEntries)
       );
+      // An undo put files back, so a summary that counts files at their
+      // destinations no longer matches the disk: files a run moved, or files a
+      // rollback could not return. One that counts none is still true.
+      if (removedEntries.length > 0 && state.lastOrganizeRun?.count > 0) {
+        state.lastOrganizeRun = null;
+      }
     },
     // Explicit re-selection is intent: a fresh Downloads\invoice.pdf after the
     // old one was organized (or a re-dropped destination) must re-enter the
@@ -274,6 +283,10 @@ const filesSlice = createSlice({
         state.organizedPathIndex,
         Array.from(released)
       );
+    },
+    // null clears it; so does anything that is not a run summary.
+    setLastOrganizeRun: (state, action) => {
+      state.lastOrganizeRun = normalizeOrganizeRunSummary(action.payload);
     },
     setNamingConvention: (state, action) => {
       state.namingConvention = { ...state.namingConvention, ...action.payload };
@@ -423,7 +436,8 @@ export const {
   updateFilePathsAfterMove,
   addOrganizedFiles,
   removeOrganizedFiles,
-  releaseOrganizedPaths
+  releaseOrganizedPaths,
+  setLastOrganizeRun
 } = filesSlice.actions;
 
 // The actual implementations are in atomicActions.js which properly imports from both slices

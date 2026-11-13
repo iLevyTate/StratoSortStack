@@ -8,6 +8,7 @@ import {
   MAX_ORGANIZED_PATH_INDEX,
   normalizeOrganizedPathIndex
 } from '../../utils/organizedPathIndex';
+import { summaryForNextLaunch } from '../../utils/organizeRunSummary';
 
 const SAVE_DEBOUNCE_MS = DEFAULT_SETTINGS.saveDebounceMs || 1000;
 const MAX_DEBOUNCE_WAIT_MS = 5000;
@@ -43,6 +44,11 @@ let lastSavedResultsRef = null;
 let lastSavedFileStatesRef = null;
 /** @type {any} */
 let lastSavedNamingConventionRef = null;
+// What was written for files.lastOrganizeRun, which is null for a summary that
+// is not kept for the next launch. Comparing the live summary itself would
+// save the whole snapshot again each time a clean run's summary came and went.
+/** @type {any} */
+let lastSavedLastOrganizeRunRef = null;
 /** @type {any} */
 let lastSavedGraphTourDismissed = null;
 /** @type {any} */
@@ -321,6 +327,7 @@ function buildStateSnapshot(freshState, options = {}) {
         max: MAX_ORGANIZED_PATH_INDEX
       }),
       namingConvention: freshState.files.namingConvention,
+      lastOrganizeRun: summaryForNextLaunch(freshState.files.lastOrganizeRun ?? null),
       fileStates: {}
     },
     analysis: {
@@ -384,7 +391,8 @@ function detectUnsavedChanges(state) {
     state.files.organizedFiles !== lastSavedOrganizedFilesRef ||
     state.files.organizedPathIndex !== lastSavedOrganizedPathIndexRef ||
     state.files.smartFolders !== lastSavedSmartFoldersRef ||
-    state.files.namingConvention !== lastSavedNamingConventionRef;
+    state.files.namingConvention !== lastSavedNamingConventionRef ||
+    summaryForNextLaunch(state.files.lastOrganizeRun ?? null) !== lastSavedLastOrganizeRunRef;
   const analysisChurn =
     state.analysis.results !== lastSavedResultsRef ||
     state.files.fileStates !== lastSavedFileStatesRef ||
@@ -595,6 +603,7 @@ const persistenceMiddleware = (/** @type {any} */ store) => {
             lastSavedSmartFoldersRef = freshState.files.smartFolders;
             lastSavedFileStatesRef = freshState.files.fileStates;
             lastSavedNamingConventionRef = freshState.files.namingConvention;
+            lastSavedLastOrganizeRunRef = stateToSave.files.lastOrganizeRun;
             lastSavedResultsRef = freshState.analysis.results;
           }
         } finally {
@@ -712,6 +721,7 @@ export const cancelPendingPersistence = () => {
   lastSavedResultsRef = null;
   lastSavedFileStatesRef = null;
   lastSavedNamingConventionRef = null;
+  lastSavedLastOrganizeRunRef = null;
   firstPendingRequestTime = 0;
   hasNotifiedHardCap = false;
 };
@@ -762,6 +772,7 @@ export const cleanupPersistence = (/** @type {any} */ store) => {
   lastSavedResultsRef = null;
   lastSavedFileStatesRef = null;
   lastSavedNamingConventionRef = null;
+  lastSavedLastOrganizeRunRef = null;
   firstPendingRequestTime = 0;
   hasNotifiedHardCap = false;
 };

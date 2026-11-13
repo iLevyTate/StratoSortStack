@@ -220,10 +220,11 @@ describe('useOrganization', () => {
       expect(result.current.organizePreview).toEqual([]);
     });
 
-    test('returns lastOrganizeSummary null until a successful organize batch', () => {
-      const { result } = renderHook(() => useOrganization(createMockOptions()));
+    test('leaves the stored run summary alone until a run starts', () => {
+      const options = createMockOptions({ setLastOrganizeRun: jest.fn() });
+      renderHook(() => useOrganization(options));
 
-      expect(result.current.lastOrganizeSummary).toBeNull();
+      expect(options.setLastOrganizeRun).not.toHaveBeenCalled();
     });
 
     describe('handleOrganizeFiles', () => {

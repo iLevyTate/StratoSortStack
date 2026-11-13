@@ -30,6 +30,7 @@ import { collectOrganizedPathKeys, mergeOrganizedPathIndex } from '../utils/orga
 const LARGE_ARRAY_THRESHOLD = 1000;
 
 import { toCanonicalPath } from '../utils/canonicalPath';
+import { isRemovedDuplicate } from '../utils/duplicateRemoval';
 
 const createStableSelector = (/** @type {any} */ dependencies, /** @type {any} */ combiner) => {
   const baseSelector = createSelector(dependencies, combiner);
@@ -316,6 +317,23 @@ export const selectOrganizedCount = createSelector(
   [selectOrganizedFiles],
   (/** @type {any} */ organizedFiles) => (Array.isArray(organizedFiles) ? organizedFiles.length : 0)
 );
+
+/**
+ * Files that were moved: the organized history without the duplicates that
+ * were removed instead of moved. This is the figure to show as "organized";
+ * selectOrganizedCount also counts the removed duplicates.
+ */
+export const selectMovedCount = createSelector(
+  [selectOrganizedFiles],
+  (/** @type {any} */ organizedFiles) =>
+    Array.isArray(organizedFiles)
+      ? organizedFiles.filter((/** @type {any} */ file) => !isRemovedDuplicate(file)).length
+      : 0
+);
+
+/** How the last organize run ended, or null (see utils/organizeRunSummary). */
+export const selectLastOrganizeRun = (/** @type {any} */ state) =>
+  state?.files?.lastOrganizeRun ?? null;
 
 /**
  * Get redactPaths setting from system state

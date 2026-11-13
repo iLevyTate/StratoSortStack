@@ -17,6 +17,7 @@ import filesReducer, {
   addOrganizedFiles,
   removeOrganizedFiles,
   releaseOrganizedPaths,
+  setLastOrganizeRun,
   setNamingConvention,
   clearFiles,
   resetFilesState,
@@ -34,6 +35,7 @@ describe('filesSlice', () => {
     smartFoldersError: null,
     organizedFiles: [],
     organizedPathIndex: [],
+    lastOrganizeRun: null,
     fileStates: {},
     namingConvention: {
       convention: 'subject-date',
@@ -458,6 +460,102 @@ describe('filesSlice', () => {
       const result = filesReducer(state, removeOrganizedFiles(['C:\\docs\\a.pdf']));
 
       expect(result.organizedPathIndex).toEqual(['c:/docs/b.pdf', 'c:/out/b.pdf']);
+    });
+  });
+
+  // How the last organize run ended. The Organize screen and the Dashboard
+  // both show it, so it lives here and not in either screen.
+  describe('lastOrganizeRun', () => {
+    const summaryOf = (outcome, count) => ({
+      outcome,
+      count,
+      headline: `headline for ${outcome}`,
+      detail: '',
+      finishedAt: 1000,
+      resumesAtLaunch: false
+    });
+    const organized = [
+      { originalPath: 'C:/docs/a.pdf', path: 'C:/out/a.pdf' },
+      { originalPath: 'C:/docs/b.pdf', path: 'C:/out/b.pdf' }
+    ];
+
+    test('is empty before a run', () => {
+      expect(filesReducer(undefined, { type: 'unknown' }).lastOrganizeRun).toBeNull();
+    });
+
+    test('setLastOrganizeRun stores a summary and null clears it', () => {
+      const stored = filesReducer(initialState, setLastOrganizeRun(summaryOf('partial', 1)));
+      expect(stored.lastOrganizeRun).toEqual(summaryOf('partial', 1));
+
+      expect(filesReducer(stored, setLastOrganizeRun(null)).lastOrganizeRun).toBeNull();
+    });
+
+    test('setLastOrganizeRun stores only the fields of a summary', () => {
+      const result = filesReducer(
+        initialState,
+        setLastOrganizeRun({ ...summaryOf('moved', 2), files: ['C:/docs/a.pdf'] })
+      );
+
+      expect(result.lastOrganizeRun).toEqual(summaryOf('moved', 2));
+    });
+
+    test('setLastOrganizeRun clears it when given something that is not a summary', () => {
+      const state = { ...initialState, lastOrganizeRun: summaryOf('partial', 1) };
+
+      expect(
+        filesReducer(state, setLastOrganizeRun({ outcome: 'finished' })).lastOrganizeRun
+      ).toBeNull();
+    });
+
+    // A rolled-back run counts the files its rollback could not return.
+    test.each(['moved', 'partial', 'rolledBack'])(
+      'an undo that puts files back clears a %s summary that counted them',
+      (outcome) => {
+        const state = {
+          ...initialState,
+          organizedFiles: organized,
+          lastOrganizeRun: summaryOf(outcome, 2)
+        };
+
+        const result = filesReducer(state, removeOrganizedFiles(['C:\\docs\\a.pdf']));
+
+        expect(result.organizedFiles).toHaveLength(1);
+        expect(result.lastOrganizeRun).toBeNull();
+      }
+    );
+
+    test.each(['none', 'rolledBack'])(
+      'an undo of an earlier run leaves a %s summary: it reported no moves',
+      (outcome) => {
+        const state = {
+          ...initialState,
+          organizedFiles: organized,
+          lastOrganizeRun: summaryOf(outcome, 0)
+        };
+
+        const result = filesReducer(state, removeOrganizedFiles(['C:\\docs\\a.pdf']));
+
+        expect(result.organizedFiles).toHaveLength(1);
+        expect(result.lastOrganizeRun).toEqual(summaryOf(outcome, 0));
+      }
+    );
+
+    test('removing a path that is not in the history leaves the summary', () => {
+      const state = {
+        ...initialState,
+        organizedFiles: organized,
+        lastOrganizeRun: summaryOf('partial', 2)
+      };
+
+      const result = filesReducer(state, removeOrganizedFiles(['C:\\docs\\other.pdf']));
+
+      expect(result.lastOrganizeRun).toEqual(summaryOf('partial', 2));
+    });
+
+    test('starting over clears it with the rest of the session', () => {
+      const state = { ...initialState, lastOrganizeRun: summaryOf('partial', 2) };
+
+      expect(filesReducer(state, resetFilesState()).lastOrganizeRun).toBeNull();
     });
   });
 

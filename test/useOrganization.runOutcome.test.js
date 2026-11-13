@@ -1,6 +1,7 @@
 /**
- * How a finished organize run is reported: one toast and one banner
- * (`lastOrganizeSummary`) that say what was moved, what was not and why.
+ * How a finished organize run is reported: one toast and one summary (handed
+ * to `setLastOrganizeRun`, which the banner shows) that say what was moved,
+ * what was not and why.
  *
  * A file that was not moved must never be counted as organized: a failed row,
  * a row the run never reached, and a duplicate that was removed because the
@@ -95,6 +96,7 @@ function buildOptions(batchResult, overrides = {}) {
     addOrganizedFiles: jest.fn(),
     removeOrganizedFiles: jest.fn(),
     setOrganizingState: jest.fn(),
+    setLastOrganizeRun: jest.fn(),
     ...overrides
   };
 }
@@ -103,6 +105,11 @@ function buildOptions(batchResult, overrides = {}) {
 // the batch outcome; these tests look only at the outcome toasts.
 function outcomeToasts(options) {
   return options.addNotification.mock.calls.filter((call) => call[3] !== 'category-changed');
+}
+
+// The summary the store holds: whatever the hook handed over last.
+function lastRun(options) {
+  return options.setLastOrganizeRun.mock.calls.at(-1)?.[0];
 }
 
 describe('useOrganization: how a finished run is reported', () => {
@@ -127,40 +134,33 @@ describe('useOrganization: how a finished run is reported', () => {
     useOrganization = require('../src/renderer/phases/organize/useOrganization').useOrganization;
   });
 
-  afterEach(() => {
-    jest.useRealTimers();
-  });
-
   describe('every file moved', () => {
     test('one success toast, a banner with the count, and on to Complete', async () => {
-      const { options, hook } = await run({
+      const { options } = await run({
         success: true,
         results: [moved('a'), moved('b'), moved('c')],
         successCount: 3
       });
 
       expect(outcomeToasts(options)).toEqual([['Organized 3 files', 'success', 7000]]);
-      expect(hook.current.lastOrganizeSummary).toEqual({
+      expect(lastRun(options)).toEqual({
         outcome: 'moved',
         count: 3,
         headline: 'Moved 3 files to their destinations',
-        detail: ''
+        detail: '',
+        finishedAt: expect.any(Number)
       });
       expect(options.actions.advancePhase).toHaveBeenCalledWith('complete');
     });
 
-    test('the banner clears itself', async () => {
-      jest.useFakeTimers();
-      const { hook } = await run({ success: true, results: [moved('a')], successCount: 1 });
-      expect(hook.current.lastOrganizeSummary).toMatchObject({
-        headline: 'Moved 1 file to its destination'
-      });
+    test('the summary says when the run finished', async () => {
+      const before = Date.now();
+      const { options } = await run({ success: true, results: [moved('a')], successCount: 1 });
 
-      act(() => {
-        jest.advanceTimersByTime(12000);
-      });
-
-      expect(hook.current.lastOrganizeSummary).toBeNull();
+      const { headline, finishedAt } = lastRun(options);
+      expect(headline).toBe('Moved 1 file to its destination');
+      expect(finishedAt).toBeGreaterThanOrEqual(before);
+      expect(finishedAt).toBeLessThanOrEqual(Date.now());
     });
   });
 
@@ -173,21 +173,19 @@ describe('useOrganization: how a finished run is reported', () => {
     };
 
     test('one warning toast with the reason, and the run stays on Organize', async () => {
-      const { options, hook } = await run(partial);
+      const { options } = await run(partial);
 
       const toasts = outcomeToasts(options);
       expect(toasts).toHaveLength(1);
       const [message, level] = toasts[0];
       expect(level).toBe('warning');
       expect(message).toMatch(/^Organized 2 files with 1 failure\. \S/);
-      expect(hook.current.lastOrganizeSummary).toMatchObject({
+      expect(lastRun(options)).toMatchObject({
         outcome: 'partial',
         count: 2,
         headline: 'Moved 2 files; 1 could not be moved'
       });
-      expect(hook.current.lastOrganizeSummary.detail).toMatch(
-        /Files that were not moved are still listed\.$/
-      );
+      expect(lastRun(options).detail).toMatch(/Files that were not moved are still listed\.$/);
       expect(options.actions.advancePhase).not.toHaveBeenCalled();
       // The files that did move are still recorded.
       expect(options.addOrganizedFiles).toHaveBeenCalledWith([
@@ -196,22 +194,12 @@ describe('useOrganization: how a finished run is reported', () => {
       ]);
     });
 
-    test('the banner stays until it is dismissed', async () => {
-      jest.useFakeTimers();
-      const { hook } = await run(partial);
-
-      act(() => {
-        jest.advanceTimersByTime(60000);
-      });
-      expect(hook.current.lastOrganizeSummary).toMatchObject({ outcome: 'partial' });
-
-      act(() => {
-        hook.current.dismissOrganizeSummary();
-      });
-      expect(hook.current.lastOrganizeSummary).toBeNull();
+    test('nothing resumes the unmoved files, and the summary says so', async () => {
+      const { options } = await run(partial);
+      expect(lastRun(options)).toMatchObject({ outcome: 'partial', resumesAtLaunch: false });
     });
 
-    test('the next run clears the previous banner when it starts', async () => {
+    test('the next run clears the previous summary when it starts', async () => {
       const { options, hook } = await run(partial);
       let finish;
       options.executeAction.mockImplementation(
@@ -226,7 +214,7 @@ describe('useOrganization: how a finished run is reported', () => {
         second = hook.current.handleOrganizeFiles();
         await Promise.resolve();
       });
-      expect(hook.current.lastOrganizeSummary).toBeNull();
+      expect(options.setLastOrganizeRun).toHaveBeenLastCalledWith(null);
 
       await act(async () => {
         finish();
@@ -237,7 +225,7 @@ describe('useOrganization: how a finished run is reported', () => {
 
   describe('no file moved', () => {
     test('one error toast with the reason and nothing else', async () => {
-      const { options, hook } = await run({
+      const { options } = await run({
         success: false,
         results: [failed('a'), failed('b'), failed('c')],
         successCount: 0,
@@ -249,7 +237,7 @@ describe('useOrganization: how a finished run is reported', () => {
       const [message, level] = toasts[0];
       expect(level).toBe('error');
       expect(message).toMatch(/^No files were organized\. \S/);
-      expect(hook.current.lastOrganizeSummary).toMatchObject({
+      expect(lastRun(options)).toMatchObject({
         outcome: 'none',
         count: 0,
         headline: 'No files were organized'
@@ -259,7 +247,7 @@ describe('useOrganization: how a finished run is reported', () => {
     });
 
     test('a batch that stopped on an error reports that error', async () => {
-      const { options, hook } = await run({
+      const { options } = await run({
         success: false,
         partialFailure: true,
         results: [moved('a')],
@@ -273,9 +261,10 @@ describe('useOrganization: how a finished run is reported', () => {
       expect(toasts).toHaveLength(1);
       expect(toasts[0][0]).toMatch(/^Organized 1 file, but the run did not finish\. \S/);
       expect(toasts[0][1]).toBe('warning');
-      expect(hook.current.lastOrganizeSummary).toMatchObject({
+      expect(lastRun(options)).toMatchObject({
         outcome: 'partial',
-        headline: 'Moved 1 file; the run did not finish'
+        headline: 'Moved 1 file; the run did not finish',
+        resumesAtLaunch: false
       });
       expect(options.actions.advancePhase).not.toHaveBeenCalled();
     });
@@ -283,7 +272,7 @@ describe('useOrganization: how a finished run is reported', () => {
 
   describe('duplicates removed instead of moved', () => {
     test('are counted apart from the files that moved', async () => {
-      const { options, hook } = await run({
+      const { options } = await run({
         success: true,
         results: [moved('a'), duplicate('b'), moved('c')],
         // Main counts a removed duplicate as a success.
@@ -297,12 +286,13 @@ describe('useOrganization: how a finished run is reported', () => {
           10000
         ]
       ]);
-      expect(hook.current.lastOrganizeSummary).toEqual({
+      expect(lastRun(options)).toEqual({
         outcome: 'moved',
         count: 2,
         headline: 'Moved 2 files to their destinations',
         detail:
-          '1 identical copy was not moved: the destination already had the same content. It is in the system Trash.'
+          '1 identical copy was not moved: the destination already had the same content. It is in the system Trash.',
+        finishedAt: expect.any(Number)
       });
       expect(options.actions.advancePhase).toHaveBeenCalledWith('complete');
     });
@@ -340,7 +330,7 @@ describe('useOrganization: how a finished run is reported', () => {
     });
 
     test('a run of nothing but duplicates does not claim a move', async () => {
-      const { options, hook } = await run(
+      const { options } = await run(
         { success: true, results: [duplicate('b')], successCount: 1 },
         { unprocessedFiles: [files[1]] }
       );
@@ -352,7 +342,7 @@ describe('useOrganization: how a finished run is reported', () => {
           10000
         ]
       ]);
-      expect(hook.current.lastOrganizeSummary).toMatchObject({
+      expect(lastRun(options)).toMatchObject({
         outcome: 'moved',
         count: 0,
         headline: 'No files needed moving'
@@ -360,7 +350,7 @@ describe('useOrganization: how a finished run is reported', () => {
     });
 
     test('are still reported when another file failed', async () => {
-      const { options, hook } = await run({
+      const { options } = await run({
         success: true,
         results: [duplicate('b'), failed('c')],
         successCount: 1,
@@ -372,14 +362,14 @@ describe('useOrganization: how a finished run is reported', () => {
       expect(toasts[0][1]).toBe('error');
       expect(toasts[0][0]).toMatch(/^No files were organized\. /);
       expect(toasts[0][0]).toMatch(/1 identical copy was not moved/);
-      expect(hook.current.lastOrganizeSummary).toMatchObject({ outcome: 'none', count: 0 });
+      expect(lastRun(options)).toMatchObject({ outcome: 'none', count: 0 });
       expect(options.actions.advancePhase).not.toHaveBeenCalled();
     });
   });
 
   describe('a run that was stopped', () => {
     test('files the user cancelled before they started are not failures', async () => {
-      const { options, hook } = await run({
+      const { options } = await run({
         success: true,
         cancelled: true,
         cancelledCount: 2,
@@ -392,12 +382,12 @@ describe('useOrganization: how a finished run is reported', () => {
       expect(toasts).toEqual([
         ['Organization cancelled — 1 file organized, 2 skipped.', 'warning']
       ]);
-      expect(hook.current.lastOrganizeSummary).toMatchObject({ outcome: 'moved', count: 1 });
+      expect(lastRun(options)).toMatchObject({ outcome: 'moved', count: 1 });
       expect(options.actions.advancePhase).not.toHaveBeenCalled();
     });
 
     test('a cancel before any file moved says so once', async () => {
-      const { options, hook } = await run({
+      const { options } = await run({
         success: true,
         cancelled: true,
         cancelledCount: 3,
@@ -409,11 +399,12 @@ describe('useOrganization: how a finished run is reported', () => {
       expect(outcomeToasts(options)).toEqual([
         ['Organization cancelled before any file was moved.', 'warning']
       ]);
-      expect(hook.current.lastOrganizeSummary).toBeNull();
+      // Only the clear at the start of the run; nothing was reported after it.
+      expect(options.setLastOrganizeRun.mock.calls).toEqual([[null]]);
     });
 
     test('an interrupted run is reported as unfinished, with what happens next', async () => {
-      const { options, hook } = await run({
+      const { options } = await run({
         success: true,
         interrupted: true,
         interruptedCount: 2,
@@ -430,16 +421,18 @@ describe('useOrganization: how a finished run is reported', () => {
           8000
         ]
       ]);
-      expect(hook.current.lastOrganizeSummary).toMatchObject({
+      // Main finishes these moves at the next launch.
+      expect(lastRun(options)).toMatchObject({
         outcome: 'partial',
         count: 1,
-        headline: 'Moved 1 file; the run did not finish'
+        headline: 'Moved 1 file; the run did not finish',
+        resumesAtLaunch: true
       });
       expect(options.actions.advancePhase).not.toHaveBeenCalled();
     });
 
     test('a run main stopped after failures says so, and counts the untried files apart', async () => {
-      const { options, hook } = await run({
+      const { options } = await run({
         success: false,
         stoppedOnFailure: true,
         stopReason: 'Critical error on file 2/3: EACCES: permission denied',
@@ -462,20 +455,21 @@ describe('useOrganization: how a finished run is reported', () => {
       expect(message).toMatch(/ The run was stopped after 2 failures; 1 file was not attempted\.$/);
       // Nothing resumes these files, so the interrupted wording does not apply.
       expect(message).not.toMatch(/resume/);
-      expect(hook.current.lastOrganizeSummary).toMatchObject({
+      expect(lastRun(options)).toMatchObject({
         outcome: 'none',
         count: 0,
-        headline: 'Organization was stopped; no files were moved'
+        headline: 'Organization was stopped; no files were moved',
+        resumesAtLaunch: false
       });
       expect(message).toBe(
-        `Organization was stopped; no files were moved. ${hook.current.lastOrganizeSummary.detail}`
+        `Organization was stopped; no files were moved. ${lastRun(options).detail}`
       );
       expect(options.addOrganizedFiles).not.toHaveBeenCalled();
       expect(options.actions.advancePhase).not.toHaveBeenCalled();
     });
 
     test('a stopped run that kept a file an earlier run moved counts only real failures', async () => {
-      const { options, hook } = await run({
+      const { options } = await run({
         success: false,
         stoppedOnFailure: true,
         stopReason: 'Strict-mode failure on file 2/3: EACCES: permission denied',
@@ -495,7 +489,7 @@ describe('useOrganization: how a finished run is reported', () => {
       expect(level).toBe('warning');
       expect(message).toMatch(/^Organized 1 file with 1 failure\. \S/);
       expect(message).toMatch(/ The run was stopped after 1 failure; 1 file was not attempted\.$/);
-      expect(hook.current.lastOrganizeSummary).toMatchObject({
+      expect(lastRun(options)).toMatchObject({
         outcome: 'partial',
         count: 1,
         headline: 'Moved 1 file; 1 could not be moved'
