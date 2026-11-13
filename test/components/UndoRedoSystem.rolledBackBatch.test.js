@@ -6,7 +6,8 @@
  * '<description> completed' and must not push an undo entry. Main recorded no
  * history for the restored moves, so a local entry would point Undo at
  * whatever main's previous action was. The organize caller (onExecute) owns
- * the single error message for a rolled-back batch.
+ * the single error message for a rolled-back batch. The same holds for a
+ * batch main stopped after failures before any move was confirmed.
  */
 import React from 'react';
 import { render, screen, act, waitFor, fireEvent } from '@testing-library/react';
@@ -134,6 +135,33 @@ describe('UndoRedoProvider: rolled-back organize batch', () => {
 
     await waitFor(() => expect(onResult).toHaveBeenCalledWith(ROLLED_BACK));
     expect(onExecute).toHaveBeenCalledWith(ROLLED_BACK);
+    expect(mockShowSuccess).not.toHaveBeenCalled();
+    expect(screen.getByTestId('stackSize')).toHaveTextContent('0');
+    expect(screen.getByTestId('canUndo')).toHaveTextContent('no');
+  });
+
+  test('a batch main stopped before any move: no success toast and no undo entry', async () => {
+    const stopped = {
+      success: false,
+      stoppedOnFailure: true,
+      stopReason: 'Strict-mode failure on file 1/2: EACCES',
+      notAttemptedCount: 1,
+      results: [
+        { success: false, source: '/in/a.txt', destination: '/out/a.txt', error: 'EACCES' },
+        { success: false, notAttempted: true, source: '/in/b.txt', destination: '/out/b.txt' }
+      ],
+      successCount: 0,
+      failCount: 1
+    };
+    const { onResult, onExecute } = mount(stopped);
+    await waitFor(() => expect(screen.getByTestId('canUndo')).toHaveTextContent('no'));
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('run'));
+    });
+
+    await waitFor(() => expect(onResult).toHaveBeenCalledWith(stopped));
+    expect(onExecute).toHaveBeenCalledWith(stopped);
     expect(mockShowSuccess).not.toHaveBeenCalled();
     expect(screen.getByTestId('stackSize')).toHaveTextContent('0');
     expect(screen.getByTestId('canUndo')).toHaveTextContent('no');

@@ -437,5 +437,70 @@ describe('useOrganization: how a finished run is reported', () => {
       });
       expect(options.actions.advancePhase).not.toHaveBeenCalled();
     });
+
+    test('a run main stopped after failures says so, and counts the untried files apart', async () => {
+      const { options, hook } = await run({
+        success: false,
+        stoppedOnFailure: true,
+        stopReason: 'Critical error on file 2/3: EACCES: permission denied',
+        notAttemptedCount: 1,
+        results: [
+          failed('a', 'EACCES: permission denied'),
+          failed('b', 'EACCES: permission denied'),
+          notStarted('c', 'notAttempted')
+        ],
+        successCount: 0,
+        failCount: 2
+      });
+
+      const toasts = outcomeToasts(options);
+      expect(toasts).toHaveLength(1);
+      const [message, level, duration] = toasts[0];
+      expect(level).toBe('error');
+      expect(duration).toBe(9000);
+      expect(message).toMatch(/^Organization was stopped; no files were moved\. \S/);
+      expect(message).toMatch(/ The run was stopped after 2 failures; 1 file was not attempted\.$/);
+      // Nothing resumes these files, so the interrupted wording does not apply.
+      expect(message).not.toMatch(/resume/);
+      expect(hook.current.lastOrganizeSummary).toMatchObject({
+        outcome: 'none',
+        count: 0,
+        headline: 'Organization was stopped; no files were moved'
+      });
+      expect(message).toBe(
+        `Organization was stopped; no files were moved. ${hook.current.lastOrganizeSummary.detail}`
+      );
+      expect(options.addOrganizedFiles).not.toHaveBeenCalled();
+      expect(options.actions.advancePhase).not.toHaveBeenCalled();
+    });
+
+    test('a stopped run that kept a file an earlier run moved counts only real failures', async () => {
+      const { options, hook } = await run({
+        success: false,
+        stoppedOnFailure: true,
+        stopReason: 'Strict-mode failure on file 2/3: EACCES: permission denied',
+        notAttemptedCount: 1,
+        results: [
+          { ...moved('a'), resumed: true },
+          failed('b', 'EACCES: permission denied'),
+          notStarted('c', 'notAttempted')
+        ],
+        successCount: 1,
+        failCount: 1
+      });
+
+      const toasts = outcomeToasts(options);
+      expect(toasts).toHaveLength(1);
+      const [message, level] = toasts[0];
+      expect(level).toBe('warning');
+      expect(message).toMatch(/^Organized 1 file with 1 failure\. \S/);
+      expect(message).toMatch(/ The run was stopped after 1 failure; 1 file was not attempted\.$/);
+      expect(hook.current.lastOrganizeSummary).toMatchObject({
+        outcome: 'partial',
+        count: 1,
+        headline: 'Moved 1 file; 1 could not be moved'
+      });
+      expect(options.actions.advancePhase).not.toHaveBeenCalled();
+    });
   });
 });

@@ -537,6 +537,11 @@ async function handleBatchOrganize(params) {
       // cancelled — these ops stay pending in the journal and are replayed
       // by OrganizeResumeService at next launch.
       let interruptedCount = 0;
+      // Ops whose file is still at its source because a FAILURE stopped the
+      // run (a critical error, a run of escalating failures, strict mode)
+      // before their move started or was published. The journal batch is
+      // closed, so nothing replays them.
+      let notAttemptedCount = 0;
       // batchId already defined above for lock acquisition
       let shouldRollback = false;
       let rollbackReason = null;
@@ -630,35 +635,43 @@ async function handleBatchOrganize(params) {
         const USER_ABORT_REASONS = new Set(['user-cancel-organize', 'user-pause-organize']);
         const isUserAbort = () => USER_ABORT_REASONS.has(abortController.signal.reason);
 
-        // Push a result entry for an op skipped due to abort (rollback keeps
-        // its silent early-exit — restore is coming anyway). User aborts mark
-        // the op `cancelled`; non-user aborts mark it `interrupted` (the op
-        // stays pending in the journal and resumes at next launch, so calling
-        // it cancelled would misreport both intent and outcome).
+        // Push a result entry for an op whose file is still at its source
+        // because the run ended first, so every op of the batch has a row.
+        // A run a failure stopped marks the op `notAttempted` (checked first:
+        // that stop also fires the abort signal). User aborts mark it
+        // `cancelled`; other aborts mark it `interrupted` (the op stays
+        // pending in the journal and resumes at next launch, so calling it
+        // cancelled would misreport both intent and outcome).
         /** @param {BatchOp} op */
-        const recordCancelledOp = (op) => {
-          const userAbort = isUserAbort();
-          results.push({
+        const recordUnmovedOp = (op) => {
+          const row = {
             success: false,
             source: op.source,
             destination: op.destination,
-            operation: op.type || 'move',
-            ...(userAbort ? { cancelled: true } : { interrupted: true })
-          });
-          if (userAbort) cancelledCount++;
-          else interruptedCount++;
+            operation: op.type || 'move'
+          };
+          if (shouldRollback) {
+            results.push({ ...row, notAttempted: true });
+            notAttemptedCount++;
+          } else if (isUserAbort()) {
+            results.push({ ...row, cancelled: true });
+            cancelledCount++;
+          } else {
+            results.push({ ...row, interrupted: true });
+            interruptedCount++;
+          }
         };
 
         /** @param {number} i */
         const processOperation = async (i) => {
-          // The abort signal is set atomically when a critical error occurs, ensuring
-          // concurrent tasks don't continue processing after rollback is triggered
-          if (shouldRollback) return;
-          if (abortController.signal.aborted) {
+          // shouldRollback and the abort signal are set together, with no
+          // await between them, when a failure stops the run, so concurrent
+          // tasks do not start a move after that.
+          if (shouldRollback || abortController.signal.aborted) {
             const op = batch.operations[i];
             // Already-done ops (resume) are handled below as successes.
             if (op.status !== 'done') {
-              recordCancelledOp(op);
+              recordUnmovedOp(op);
               return;
             }
           }
@@ -802,11 +815,11 @@ async function handleBatchOrganize(params) {
             }
             await mkdirPromises.get(destDir);
 
-            // Hard-cancel gate: never START a destructive move once the user
-            // aborted. (An in-flight rename still finishes — we never
-            // interrupt a syscall mid-move.) Rollback keeps the silent exit.
+            // Hard-cancel gate: never START a destructive move once the run
+            // was stopped. (An in-flight rename still finishes — we never
+            // interrupt a syscall mid-move.)
             if (shouldRollback || abortController.signal.aborted) {
-              if (!shouldRollback) recordCancelledOp(op);
+              recordUnmovedOp(op);
               return;
             }
 
@@ -901,7 +914,7 @@ async function handleBatchOrganize(params) {
                 mkdirPromises.delete(destDir);
                 // Same hard-cancel gate as before the first attempt.
                 if (shouldRollback || abortController.signal.aborted) {
-                  if (!shouldRollback) recordCancelledOp(op);
+                  recordUnmovedOp(op);
                   return;
                 }
                 try {
@@ -945,7 +958,7 @@ async function handleBatchOrganize(params) {
               // performFileMove bailed with the source untouched: the abort
               // landed between the gate above and the first rename attempt,
               // or during a cross-volume copy that was then never published.
-              recordCancelledOp(op);
+              recordUnmovedOp(op);
               return;
             }
 
@@ -1258,7 +1271,7 @@ async function handleBatchOrganize(params) {
               });
             }
           }
-          return rollbackOutcome;
+          return { ...rollbackOutcome, notAttemptedCount };
         }
 
         // Record undo and update database BEFORE marking the batch complete.
@@ -1421,6 +1434,16 @@ async function handleBatchOrganize(params) {
             abortReason: String(abortController.signal.reason ?? 'aborted')
           }
         : {};
+      // A failure stopped the run before any move of this run was confirmed,
+      // so there was nothing to roll back (the rollback branch above returns
+      // its own outcome). The files the run did not reach are still at their
+      // sources and, with the journal batch closed, nothing resumes them.
+      const stoppedFields = shouldRollback
+        ? { stoppedOnFailure: true, stopReason: rollbackReason, notAttemptedCount }
+        : {};
+      const summary = `Processed ${requestedOperationTotal} files: ${effectiveSuccessCount} successful, ${failCount} failed${
+        shouldRollback ? `, ${notAttemptedCount} not attempted` : ''
+      }`;
 
       movesToBroadcast = completedOperations;
 
@@ -1438,11 +1461,12 @@ async function handleBatchOrganize(params) {
             cancelled: wasCancelled,
             cancelledCount,
             ...interruptionFields,
+            ...stoppedFields,
             results,
             successCount: effectiveSuccessCount,
             failCount,
             completedOperations: completedOperations.length,
-            summary: `Processed ${requestedOperationTotal} files: ${effectiveSuccessCount} successful, ${failCount} failed`,
+            summary,
             batchId,
             ...postBatchPersistence
           };
@@ -1454,10 +1478,11 @@ async function handleBatchOrganize(params) {
           cancelled: wasCancelled,
           cancelledCount,
           ...interruptionFields,
+          ...stoppedFields,
           successCount: effectiveSuccessCount,
           failCount,
           completedOperations: completedOperations.length,
-          summary: `Processed ${requestedOperationTotal} files: ${effectiveSuccessCount} successful, ${failCount} failed`,
+          summary,
           batchId,
           chunkedResults: true,
           totalChunks,
@@ -1471,11 +1496,12 @@ async function handleBatchOrganize(params) {
         cancelled: wasCancelled,
         cancelledCount,
         ...interruptionFields,
+        ...stoppedFields,
         results,
         successCount: effectiveSuccessCount,
         failCount,
         completedOperations: completedOperations.length,
-        summary: `Processed ${requestedOperationTotal} files: ${effectiveSuccessCount} successful, ${failCount} failed`,
+        summary,
         batchId,
         ...postBatchPersistence
       };

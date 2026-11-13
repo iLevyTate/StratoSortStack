@@ -85,39 +85,73 @@ const INTERRUPTED_REASON =
   'The run was interrupted. The remaining moves resume the next time StratoSort starts.';
 
 /**
+ * One sentence on a run main stopped after failures, with the files it never
+ * tried. Those files are still at their sources and nothing resumes them.
+ * @param {number} failedCount
+ * @param {number} notAttemptedCount
+ * @returns {string}
+ */
+function describeStop(failedCount, notAttemptedCount) {
+  const after = failedCount > 0 ? ` after ${countOf(failedCount, 'failure')}` : '';
+  const untried =
+    notAttemptedCount > 0
+      ? `; ${countOf(notAttemptedCount)} ${notAttemptedCount === 1 ? 'was' : 'were'} not attempted`
+      : '';
+  return `The run was stopped${after}${untried}.`;
+}
+
+/**
  * The toast and the banner for a run main did not roll back, or null when the
  * run left nothing to report. A row that never started is not a failure: the
- * cancel and pause messages cover the ones the user stopped, and an
- * interrupted run is reported as unfinished.
+ * cancel and pause messages cover the ones the user stopped, an interrupted
+ * run is reported as unfinished, and a run main stopped after failures says
+ * how many files it did not attempt.
  * @param {object} run
  * @param {any[]} run.rows - the batch's per-op results
  * @param {number} run.movedCount
  * @param {any[]} run.duplicateRows
  * @param {string} [run.batchError] - the error that ended the batch early
  * @param {boolean} [run.interrupted] - stopped by a timeout or shutdown
+ * @param {boolean} [run.stoppedOnFailure] - main stopped the run after
+ *   failures, before any move of the run was confirmed
  * @returns {{ summary: OrganizeSummary, toast: string, severity: string, duration: number } | null}
  */
-function describeFinishedRun({ rows, movedCount, duplicateRows, batchError, interrupted }) {
-  const failedCount = rows.filter((r) => r && !r.success && !r.cancelled && !r.interrupted).length;
+function describeFinishedRun({
+  rows,
+  movedCount,
+  duplicateRows,
+  batchError,
+  interrupted,
+  stoppedOnFailure
+}) {
+  const failedCount = rows.filter(
+    (r) => r && !r.success && !r.cancelled && !r.interrupted && !r.notAttempted
+  ).length;
   const duplicateNote = describeDuplicates(duplicateRows);
   const tail = duplicateNote ? ` ${duplicateNote}` : '';
 
-  if (failedCount > 0 || batchError || interrupted) {
-    const reason =
-      failedCount === 0 && !batchError
+  if (failedCount > 0 || batchError || interrupted || stoppedOnFailure) {
+    const firstFailure =
+      failedCount === 0 && !batchError && !stoppedOnFailure
         ? INTERRUPTED_REASON
         : describeFirstFailure(
             batchError ? [...rows, { success: false, error: batchError }] : rows
           );
+    const reason = stoppedOnFailure
+      ? `${firstFailure} ${describeStop(failedCount, rows.filter((r) => r && r.notAttempted).length)}`
+      : firstFailure;
     if (movedCount === 0) {
+      const headline = stoppedOnFailure
+        ? 'Organization was stopped; no files were moved'
+        : 'No files were organized';
       return {
         summary: {
           outcome: 'none',
           count: 0,
-          headline: 'No files were organized',
+          headline,
           detail: `${reason}${tail}`
         },
-        toast: `No files were organized. ${reason}${tail}`,
+        toast: `${headline}. ${reason}${tail}`,
         severity: 'error',
         duration: 9000
       };
@@ -194,8 +228,15 @@ function describeRolledBackBatch(result, rows) {
     leftBehind.length,
     Number.isInteger(result?.rollbackFailCount) ? result.rollbackFailCount : 0
   );
+  // Files the run had not reached when it stopped; they never left their
+  // sources, so the rollback had nothing to return for them.
+  const notAttemptedCount = list.filter((r) => r && r.notAttempted).length;
+  const untried =
+    notAttemptedCount > 0
+      ? ` ${countOf(notAttemptedCount)} ${notAttemptedCount === 1 ? 'was' : 'were'} not attempted.`
+      : '';
   if (leftBehindCount === 0) {
-    return `${reason} Files already moved were returned to their original locations.`;
+    return `${reason} Files already moved were returned to their original locations.${untried}`;
   }
   const names = leftBehind
     .map((r) =>
@@ -212,7 +253,7 @@ function describeRolledBackBatch(result, rows) {
     typeof result?.recoveryPath === 'string' && result.recoveryPath
       ? ` Recovery details: ${result.recoveryPath}`
       : '';
-  return `${reason} ${leftBehindCount} ${fileWord} could not be returned and remain in the destination folder${named}.${recovery}`;
+  return `${reason} ${leftBehindCount} ${fileWord} could not be returned and remain in the destination folder${named}.${untried}${recovery}`;
 }
 
 import { toCanonicalPath, toFolderKey, toParentFolderKey } from '../../utils/canonicalPath';
@@ -1121,7 +1162,8 @@ export function useOrganization({
                     batchError: result?.partialFailure
                       ? String(result.error || 'The batch stopped early')
                       : undefined,
-                    interrupted: result?.interrupted === true
+                    interrupted: result?.interrupted === true,
+                    stoppedOnFailure: result?.stoppedOnFailure === true
                   });
               const successfulMoves = resArray
                 .filter((/** @type {any} */ r) => r.success && !r.rolledBack && r.source)
@@ -1201,12 +1243,17 @@ export function useOrganization({
                 }
 
                 // Only a run that got through every file fills the bar. A
-                // cancelled, paused, interrupted or rolled-back run keeps the
-                // count it reached, so it is not shown as done.
+                // cancelled, paused, interrupted, stopped or rolled-back run
+                // keeps the count it reached, so it is not shown as done.
                 const stoppedEarly =
                   rolledBackBatch ||
                   cancelledRef.current ||
-                  Boolean(result?.cancelled || result?.interrupted || result?.paused);
+                  Boolean(
+                    result?.cancelled ||
+                    result?.interrupted ||
+                    result?.paused ||
+                    result?.stoppedOnFailure
+                  );
                 if (!stoppedEarly) {
                   setBatchProgress({
                     current: filesToProcess.length,
