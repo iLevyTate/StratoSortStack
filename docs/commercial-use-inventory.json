@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-13T01:20:54.483Z",
+  "generatedAt": "2026-11-13T15:00:16.257Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
@@ -13306,7 +13306,7 @@
     },
     {
       "packageName": "dotenv",
-      "version": "18.0.9",
+      "version": "18.0.10",
       "license": "BSD-2-Clause",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -14695,7 +14695,7 @@
     },
     {
       "packageName": "framer-motion",
-      "version": "14.10.1",
+      "version": "14.11.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -18181,7 +18181,7 @@
     },
     {
       "packageName": "motion-dom",
-      "version": "14.10.1",
+      "version": "14.11.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -18725,7 +18725,7 @@
     },
     {
       "packageName": "officeparser",
-      "version": "8.7.0",
+      "version": "8.7.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": true,
