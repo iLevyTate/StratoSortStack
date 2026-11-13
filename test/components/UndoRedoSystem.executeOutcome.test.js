@@ -1,13 +1,18 @@
 /**
  * @jest-environment jsdom
  *
- * fileops-organize-2 (renderer half): when main rolls an organize batch back
- * after a critical error, executeAction must not announce
- * '<description> completed' and must not push an undo entry. Main recorded no
- * history for the restored moves, so a local entry would point Undo at
- * whatever main's previous action was. The organize caller (onExecute) owns
- * the single error message for a rolled-back batch. The same holds for a
- * batch main stopped after failures before any move was confirmed.
+ * What executeAction does with the result main returns for an organize batch.
+ *
+ * It shows no message of its own: the organize caller (onExecute) reports
+ * what the run moved, left or refused, and a '<description> completed' toast
+ * beside that report contradicted it whenever files had failed.
+ *
+ * It pushes no undo entry for a result main reports as failed
+ * (fileops-organize-2, renderer half): a batch main rolled back after a
+ * critical error, a batch main stopped after failures before any move was
+ * confirmed, and a batch in which every file failed. Main recorded no history
+ * for these, so a local entry would point Undo at whatever main's previous
+ * action was.
  */
 import React from 'react';
 import { render, screen, act, waitFor, fireEvent } from '@testing-library/react';
@@ -88,7 +93,7 @@ function Harness({ onResult, onExecute }) {
   );
 }
 
-describe('UndoRedoProvider: rolled-back organize batch', () => {
+describe('UndoRedoProvider: executeAction and the result of an organize batch', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     try {
@@ -125,7 +130,7 @@ describe('UndoRedoProvider: rolled-back organize batch', () => {
     return { onResult, onExecute };
   }
 
-  test('no success toast and no undo entry; result and onExecute still reach the caller', async () => {
+  test('a rolled-back batch: no success toast and no undo entry; result and onExecute still reach the caller', async () => {
     const { onResult, onExecute } = mount(ROLLED_BACK);
     await waitFor(() => expect(screen.getByTestId('canUndo')).toHaveTextContent('no'));
 
@@ -167,12 +172,67 @@ describe('UndoRedoProvider: rolled-back organize batch', () => {
     expect(screen.getByTestId('canUndo')).toHaveTextContent('no');
   });
 
-  test('a batch that was not rolled back still pushes and announces completion', async () => {
+  test('a batch in which every file failed: no success toast and no undo entry', async () => {
+    const allFailed = {
+      success: false,
+      results: [
+        { success: false, source: '/in/a.txt', destination: '/out/a.txt', error: 'EACCES' },
+        { success: false, source: '/in/b.txt', destination: '/out/b.txt', error: 'EACCES' }
+      ],
+      successCount: 0,
+      failCount: 2
+    };
+    const { onResult, onExecute } = mount(allFailed);
+    await waitFor(() => expect(screen.getByTestId('canUndo')).toHaveTextContent('no'));
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('run'));
+    });
+
+    await waitFor(() => expect(onResult).toHaveBeenCalledWith(allFailed));
+    expect(onExecute).toHaveBeenCalledWith(allFailed);
+    expect(mockShowSuccess).not.toHaveBeenCalled();
+    expect(screen.getByTestId('stackSize')).toHaveTextContent('0');
+    expect(screen.getByTestId('canUndo')).toHaveTextContent('no');
+  });
+
+  test('a partly failed batch gets an undo entry and no toast from the provider', async () => {
+    const partial = {
+      success: true,
+      results: [
+        { success: true, source: '/in/a.txt', destination: '/out/a.txt' },
+        { success: false, source: '/in/b.txt', destination: '/out/b.txt', error: 'EACCES' }
+      ],
+      successCount: 1,
+      failCount: 1
+    };
+    const { onResult, onExecute } = mount(partial);
+    await waitFor(() => expect(screen.getByTestId('canUndo')).toHaveTextContent('no'));
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('run'));
+    });
+
+    await waitFor(() => expect(onResult).toHaveBeenCalledWith(partial));
+    expect(onExecute).toHaveBeenCalledWith(partial);
+    expect(mockShowSuccess).not.toHaveBeenCalled();
+    expect(mockShowError).not.toHaveBeenCalled();
+    expect(mockShowInfo).not.toHaveBeenCalled();
+    expect(screen.getByTestId('stackSize')).toHaveTextContent('1');
+    expect(screen.getByTestId('canUndo')).toHaveTextContent('yes');
+  });
+
+  test('a batch that moved every file gets an undo entry; the caller reports it', async () => {
     const ok = {
       success: true,
-      results: [{ success: true, source: '/in/a.txt', destination: '/out/a.txt' }]
+      results: [
+        { success: true, source: '/in/a.txt', destination: '/out/a.txt' },
+        { success: true, source: '/in/b.txt', destination: '/out/b.txt' }
+      ],
+      successCount: 2,
+      failCount: 0
     };
-    const { onResult } = mount(ok);
+    const { onResult, onExecute } = mount(ok);
     await waitFor(() => expect(screen.getByTestId('canUndo')).toHaveTextContent('no'));
 
     await act(async () => {
@@ -180,7 +240,11 @@ describe('UndoRedoProvider: rolled-back organize batch', () => {
     });
 
     await waitFor(() => expect(onResult).toHaveBeenCalledWith(ok));
-    expect(mockShowSuccess).toHaveBeenCalledWith('Organize 2 files completed');
+    expect(onExecute).toHaveBeenCalledWith(ok);
+    expect(mockShowSuccess).not.toHaveBeenCalled();
+    expect(mockShowError).not.toHaveBeenCalled();
+    expect(mockShowInfo).not.toHaveBeenCalled();
     expect(screen.getByTestId('stackSize')).toHaveTextContent('1');
+    expect(screen.getByTestId('canUndo')).toHaveTextContent('yes');
   });
 });
