@@ -64,6 +64,14 @@ jest.mock('child_process', () => {
   };
 });
 
+// On macOS the real ModelMemoryManager reads available memory through a
+// background `sysctl` spawn, which the spawn mock above would count as the
+// vision runtime starting. Read os.freemem() on every platform instead.
+jest.mock('../src/main/utils/systemMemory', () => ({
+  getAvailableMemoryBytes: jest.fn(async () => require('os').freemem()),
+  peekAvailableMemoryBytes: jest.fn(() => require('os').freemem())
+}));
+
 // Mock adm-zip and tar (not needed in unit tests)
 jest.mock('adm-zip', () => jest.fn());
 jest.mock('tar', () => ({ x: jest.fn() }));
