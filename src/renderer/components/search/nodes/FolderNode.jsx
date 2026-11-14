@@ -6,6 +6,14 @@ import { IconButton } from '../../ui';
 import { useAppSelector } from '../../../store/hooks';
 import { selectSmartFolders } from '../../../store/selectors';
 import { resolveSmartFolderPath } from '../utils/graphLayoutUtils';
+import { isMac, isWindows } from '../../../utils/platform';
+
+// Named after what the OS calls the window the folder opens in.
+function revealFolderLabel() {
+  if (isMac) return 'Reveal folder in Finder';
+  if (isWindows) return 'Reveal folder in File Explorer';
+  return 'Reveal folder in file manager';
+}
 
 const FolderNode = memo(({ data, selected }) => {
   const label = data?.label || 'Suggested folder';
@@ -15,6 +23,7 @@ const FolderNode = memo(({ data, selected }) => {
   // its path on disk. Empty when the name matches no configured smart folder.
   const smartFolders = useAppSelector(selectSmartFolders);
   const folderPath = resolveSmartFolderPath(smartFolders, data?.label);
+  const revealLabel = revealFolderLabel();
 
   const dispatchFolderAction = useCallback(
     (action) => {
@@ -80,8 +89,8 @@ const FolderNode = memo(({ data, selected }) => {
             icon={<FolderOpen className="w-3 h-3" />}
             size="xs"
             variant="ghost"
-            title="Reveal folder in Explorer"
-            aria-label="Reveal folder in Explorer"
+            title={revealLabel}
+            aria-label={revealLabel}
             onClick={handleReveal}
           />
         </div>

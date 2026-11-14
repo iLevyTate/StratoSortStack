@@ -28,7 +28,8 @@ function generateSnippet(client, { port, token }) {
     case 'zed':
       return JSON.stringify(
         {
-          context_servers: { stratosort: { source: 'http', url, headers: { Authorization: auth } } }
+          // Zed's documented remote shape: only url and headers.
+          context_servers: { stratosort: { url, headers: { Authorization: auth } } }
         },
         null,
         2

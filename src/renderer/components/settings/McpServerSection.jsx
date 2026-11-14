@@ -33,6 +33,13 @@ const TOOLS = [
   { name: 'list_smart_folders', desc: 'List your smart folders and where they are.' }
 ];
 
+// Names users know the clients by; the keys are the ids main expects.
+const CLIENT_NAMES = {
+  claudeDesktop: 'Claude Desktop',
+  cursor: 'Cursor',
+  zed: 'Zed'
+};
+
 // Plain words for the lifecycle states; 'running' shows the address instead.
 const STATUS_TEXT = {
   starting: 'Starting…',
@@ -81,7 +88,7 @@ function McpServerSection({ addNotification }) {
       const result = await dispatch(getConfigSnippet(client)).unwrap();
       const snippet = result?.snippet || '';
       await navigator.clipboard.writeText(snippet);
-      addNotification?.(`Copied ${client} snippet.`, 'success');
+      addNotification?.(`Copied ${CLIENT_NAMES[client] || 'MCP'} config.`, 'success');
     } catch (err) {
       addNotification?.(err.message, 'error');
     }

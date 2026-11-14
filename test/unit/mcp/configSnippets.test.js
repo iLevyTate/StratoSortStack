@@ -17,10 +17,17 @@ describe('configSnippets', () => {
     expect(s).toContain('"http://127.0.0.1:53827/mcp"');
   });
 
-  test('zed returns expected shape', () => {
-    const s = generateSnippet('zed', ctx);
-    expect(s).toContain('context_servers');
-    expect(s).toContain('stratosort');
+  test("zed returns Zed's documented remote shape: url and headers only", () => {
+    const parsed = JSON.parse(generateSnippet('zed', ctx));
+    expect(parsed).toEqual({
+      context_servers: {
+        stratosort: {
+          url: 'http://127.0.0.1:53827/mcp',
+          headers: { Authorization: `Bearer ${ctx.token}` }
+        }
+      }
+    });
+    expect(parsed.context_servers.stratosort).not.toHaveProperty('source');
   });
 
   test('throws on unknown client', () => {

@@ -860,6 +860,40 @@ describe('Custom Folders', () => {
       );
     });
 
+    describe.each([
+      ['win32', /Windows Security's Controlled folder access/],
+      ['darwin', /System Settings > Privacy & Security > Files and Folders/],
+      ['linux', /Check that you can write to that folder\./]
+    ])('the unwritable-Documents warning on %s', (platform, hint) => {
+      const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+
+      afterEach(() => {
+        Object.defineProperty(process, 'platform', realPlatform);
+      });
+
+      test('names the setting for that OS only', async () => {
+        Object.defineProperty(process, 'platform', { ...realPlatform, value: platform });
+        const eacces = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+        mockFs.mkdir.mockImplementation(async (dir) => {
+          if (String(dir).startsWith('/mock/documents')) throw eacces;
+        });
+
+        await customFolders.loadCustomFolders();
+
+        const flag = require('../src/main/services/DegradedStateTracker')
+          .getInstance()
+          .list()
+          .find((f) => f.code === 'storage.uncategorized-unavailable');
+        expect(flag.message).toMatch(hint);
+        if (platform !== 'win32') {
+          expect(flag.message).not.toMatch(/Windows|Controlled folder access/);
+        }
+        if (platform !== 'darwin') {
+          expect(flag.message).not.toMatch(/System Settings/);
+        }
+      });
+    });
+
     test('a saved Documents path that still cannot be created is retried and flagged on every launch', async () => {
       const eperm = Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' });
       const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });

@@ -228,7 +228,37 @@ describe('McpServerSection', () => {
     fireEvent.click(copyButton);
     await waitFor(() => {
       expect(navigator.clipboard.writeText).toHaveBeenCalledWith('claudeDesktop-snippet');
-      expect(addNotification).toHaveBeenCalledWith('Copied claudeDesktop snippet.', 'success');
+      expect(addNotification).toHaveBeenCalledWith('Copied Claude Desktop config.', 'success');
+    });
+  });
+
+  test.each([
+    ['Copy Cursor config', 'cursor', 'Copied Cursor config.'],
+    ['Copy Zed config', 'zed', 'Copied Zed config.']
+  ])('"%s" confirms with the client name, not its id', async (buttonName, id, message) => {
+    const addNotification = jest.fn();
+    const store = configureStore({
+      reducer: { mcp: mcpReducer },
+      preloadedState: {
+        mcp: {
+          enabled: true,
+          status: 'running',
+          port: 53827,
+          tokenMasked: 'test',
+          lastError: null,
+          isWorking: false
+        }
+      }
+    });
+    render(
+      <Provider store={store}>
+        <McpServerSection addNotification={addNotification} />
+      </Provider>
+    );
+    fireEvent.click(screen.getByRole('button', { name: buttonName }));
+    await waitFor(() => {
+      expect(navigator.clipboard.writeText).toHaveBeenCalledWith(`${id}-snippet`);
+      expect(addNotification).toHaveBeenCalledWith(message, 'success');
     });
   });
 

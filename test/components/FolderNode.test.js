@@ -29,6 +29,17 @@ jest.mock('../../src/renderer/components/ui', () => ({
   )
 }));
 
+// Read at render time, so each test can pick the platform.
+const mockPlatform = { isMac: false, isWindows: true };
+jest.mock('../../src/renderer/utils/platform', () => ({
+  get isMac() {
+    return mockPlatform.isMac;
+  },
+  get isWindows() {
+    return mockPlatform.isWindows;
+  }
+}));
+
 const mockSmartFolders = [
   { id: 'sf-1', name: 'Invoices/2025', path: 'C:\\Docs\\Invoices\\2025' },
   { id: 'sf-2', name: 'Receipts', path: 'C:\\Docs\\Receipts' }
@@ -134,11 +145,28 @@ describe('FolderNode keyboard affordances', () => {
 
     render(<FolderNode data={baseData} selected />);
     fireEvent.click(screen.getByRole('button', { name: /Move connected files here/i }));
-    fireEvent.click(screen.getByRole('button', { name: /Reveal folder in Explorer/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reveal folder in File Explorer' }));
 
     expect(handler).toHaveBeenCalledTimes(2);
     expect(handler.mock.calls[0][0].detail.action).toBe('moveFilesHere');
     expect(handler.mock.calls[1][0].detail.action).toBe('reveal');
     window.removeEventListener('graph:folderAction', handler);
+  });
+
+  describe('reveal button names the platform file manager', () => {
+    afterEach(() => {
+      Object.assign(mockPlatform, { isMac: false, isWindows: true });
+    });
+
+    test.each([
+      ['Windows', { isMac: false, isWindows: true }, 'Reveal folder in File Explorer'],
+      ['macOS', { isMac: true, isWindows: false }, 'Reveal folder in Finder'],
+      ['Linux', { isMac: false, isWindows: false }, 'Reveal folder in file manager']
+    ])('on %s', (_name, platform, label) => {
+      Object.assign(mockPlatform, platform);
+      render(<FolderNode data={baseData} selected />);
+      expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /in Explorer$/ })).not.toBeInTheDocument();
+    });
   });
 });

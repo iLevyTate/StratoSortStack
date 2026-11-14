@@ -116,6 +116,22 @@ async function probeFolder(op, label) {
 }
 
 /**
+ * What to tell the user when the Uncategorized folder cannot be created: the
+ * setting that most often blocks it on this OS.
+ * @param {NodeJS.Platform} [platform]
+ * @returns {string}
+ */
+function uncategorizedAccessHint(platform = process.platform) {
+  if (platform === 'win32') {
+    return "If Windows Security's Controlled folder access is on, allow StratoSort Stack through it.";
+  }
+  if (platform === 'darwin') {
+    return 'Check that StratoSort Stack is allowed in System Settings > Privacy & Security > Files and Folders.';
+  }
+  return 'Check that you can write to that folder.';
+}
+
+/**
  * Create the directory for a new or healed Uncategorized entry. Never throws,
  * and the entry always keeps `preferredPath`.
  * - Timed out: the mkdir keeps running and usually lands, and organize creates
@@ -157,7 +173,7 @@ async function createUncategorizedDirectory(preferredPath) {
         code: 'storage.uncategorized-unavailable',
         subsystem: 'storage',
         severity: 'warning',
-        message: `StratoSort could not create the Uncategorized folder at ${preferredPath}, so files that match no smart folder cannot be moved there. If Windows Security's Controlled folder access is on, allow StratoSort Stack through it.`,
+        message: `StratoSort could not create the Uncategorized folder at ${preferredPath}, so files that match no smart folder cannot be moved there. ${uncategorizedAccessHint()}`,
         detail: { path: preferredPath, code: created.error?.code }
       });
   } catch {

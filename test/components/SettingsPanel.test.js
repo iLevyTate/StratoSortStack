@@ -700,6 +700,9 @@ describe('SettingsPanel regression guards', () => {
     expect(screen.getByText('Processing Limits Section')).toBeInTheDocument();
     expect(screen.getByText('Graph Retrieval Section')).toBeInTheDocument();
     expect(screen.getByText('Diagnostics Logs Section')).toBeInTheDocument();
+    // Settings save automatically, so the mode text must not ask for a save.
+    expect(screen.getByText(/^Advanced reveals every configuration panel/)).toBeInTheDocument();
+    expect(screen.queryByText(/Save to apply/)).not.toBeInTheDocument();
   });
 
   test('warns instead of reporting success when a vision model installs without its projector', async () => {

@@ -23,6 +23,17 @@ jest.mock('../src/renderer/store/hooks', () => ({
     })
 }));
 
+// Read at call time, so each test can pick the platform.
+const mockPlatform = { isMac: false, isWindows: true };
+jest.mock('../src/renderer/utils/platform', () => ({
+  get isMac() {
+    return mockPlatform.isMac;
+  },
+  get isWindows() {
+    return mockPlatform.isWindows;
+  }
+}));
+
 jest.mock('../src/renderer/store/slices/uiSlice', () => ({
   clearOrganizeFocus: jest.fn(() => ({ type: 'ui/clearOrganizeFocus' }))
 }));
@@ -115,29 +126,51 @@ describe('useOrganizeNotificationFocus', () => {
     expect(mockDispatch).toHaveBeenCalledWith({ type: 'ui/clearOrganizeFocus' });
   });
 
-  test('reveals file in Explorer when not in organize lists', async () => {
-    mockOrganizeFocusRequest = {
-      filePath: '/downloads/new.pdf',
-      fileName: 'new.pdf',
-      openDetails: true,
-      requestedAt: 3000
-    };
-
-    window.electronAPI = {
-      analysisHistory: {
-        getFileHistory: jest.fn().mockResolvedValue([])
-      }
-    };
-
-    const { revealFile, addNotification } = renderFocusHook();
-
-    await waitFor(() => {
-      expect(revealFile).toHaveBeenCalledWith('/downloads/new.pdf');
+  describe.each([
+    ['Windows', { isMac: false, isWindows: true }, 'File Explorer'],
+    ['macOS', { isMac: true, isWindows: false }, 'Finder'],
+    ['Linux', { isMac: false, isWindows: false }, 'your file manager']
+  ])('on %s', (_name, platform, fileManager) => {
+    beforeEach(() => {
+      Object.assign(mockPlatform, platform);
     });
-    expect(addNotification).toHaveBeenCalledWith('Opened new.pdf in Explorer', 'info', 3500);
-    expect(mockDispatch).toHaveBeenCalledWith({ type: 'ui/clearOrganizeFocus' });
 
-    delete window.electronAPI;
+    afterEach(() => {
+      Object.assign(mockPlatform, { isMac: false, isWindows: true });
+      delete window.electronAPI;
+    });
+
+    test(`reveals a file not in the organize lists and names ${fileManager}`, async () => {
+      mockOrganizeFocusRequest = {
+        filePath: '/downloads/new.pdf',
+        fileName: 'new.pdf',
+        openDetails: true,
+        requestedAt: 3000
+      };
+
+      window.electronAPI = {
+        analysisHistory: {
+          getFileHistory: jest.fn().mockResolvedValue([])
+        }
+      };
+
+      const { revealFile, addNotification } = renderFocusHook();
+
+      await waitFor(() => {
+        expect(revealFile).toHaveBeenCalledWith('/downloads/new.pdf');
+      });
+      expect(addNotification).toHaveBeenCalledWith(
+        `Opened new.pdf in ${fileManager}`,
+        'info',
+        3500
+      );
+      expect(addNotification).not.toHaveBeenCalledWith(
+        expect.stringMatching(/in Explorer$/),
+        expect.anything(),
+        expect.anything()
+      );
+      expect(mockDispatch).toHaveBeenCalledWith({ type: 'ui/clearOrganizeFocus' });
+    });
   });
 
   test('ignores duplicate focus requests with the same requestedAt', () => {

@@ -4,13 +4,21 @@ import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { clearOrganizeFocus } from '../../store/slices/uiSlice';
 import { findFileByPathOrName, findFileIndexByPathOrName } from '../../utils/findFileInList';
 import { toCanonicalPath } from '../../utils/canonicalPath';
+import { isMac, isWindows } from '../../utils/platform';
 import { createLogger } from '../../../shared/logger';
 
 const logger = createLogger('OrganizeNotificationFocus');
 
+/** What the OS calls the window a revealed file is shown in. */
+function fileManagerName() {
+  if (isMac) return 'Finder';
+  if (isWindows) return 'File Explorer';
+  return 'your file manager';
+}
+
 /**
  * When the user clicks a download/watcher notification, jump to the matching
- * file in Organize (scroll + select + details), or reveal it in Explorer.
+ * file in Organize (scroll + select + details), or reveal it in the file manager.
  */
 /**
  * @param {{ unprocessedFiles: any[], processedFiles: any[], setSelectedFiles: Function, setFocusFileIndex: Function, setViewingFileDetails: Function, setShowHistoryModal: Function, addNotification: Function, revealFile: Function }} args
@@ -117,7 +125,7 @@ export function useOrganizeNotificationFocus({
           await reveal(filePath);
           if (!cancelled) {
             addNotificationRef.current(
-              fileName ? `Opened ${fileName} in Explorer` : 'Opened file in Explorer',
+              `Opened ${fileName || 'file'} in ${fileManagerName()}`,
               'info',
               3500
             );
