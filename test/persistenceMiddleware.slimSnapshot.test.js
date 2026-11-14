@@ -1,7 +1,7 @@
 /**
  * What the saved session costs per file, and how many files it keeps.
  *
- * Hans queued 275 Search Console and SEO-tool exports. Each analysis result in
+ * A tester queued 275 Search Console and SEO-tool exports. Each analysis result in
  * the renderer carries the file's full extracted text (up to ~64,000
  * characters, see analysisTextUtils.getMaxChunkableTextLength), so 200 of
  * them were far over the 4 MB save budget: the save fell back to 100, then
@@ -30,7 +30,7 @@ function realisticResult(i) {
   const name = `https___www.example-shop.com_-Performance-on-Search-2026-10-${i}.xlsx`;
   return {
     name,
-    path: `/Users/hans/Downloads/GSC exports/${name}`,
+    path: `/Users/alex/Downloads/GSC exports/${name}`,
     extension: '.xlsx',
     size: 48213 + i,
     isDirectory: false,
@@ -80,8 +80,8 @@ function selectedFile(i) {
 
 function organizedEntry(i) {
   return {
-    originalPath: `/Users/hans/Downloads/GSC exports/file-${i}.xlsx`,
-    path: `/Users/hans/Documents/SEO Reports/search-console-performance-2026-10-${i}.xlsx`,
+    originalPath: `/Users/alex/Downloads/GSC exports/file-${i}.xlsx`,
+    path: `/Users/alex/Documents/SEO Reports/search-console-performance-2026-10-${i}.xlsx`,
     originalName: `file-${i}.xlsx`,
     newName: `search-console-performance-2026-10-${i}.xlsx`,
     smartFolder: 'SEO Reports',
@@ -103,7 +103,7 @@ function stateWith({ files = 0, organized = 0 } = {}) {
       selectedFiles: Array.from({ length: files }, (_, i) => selectedFile(i)),
       organizedFiles: Array.from({ length: organized }, (_, i) => organizedEntry(i)),
       organizedPathIndex: [],
-      smartFolders: [{ id: '1', name: 'SEO Reports', path: '/Users/hans/Documents/SEO Reports' }],
+      smartFolders: [{ id: '1', name: 'SEO Reports', path: '/Users/alex/Documents/SEO Reports' }],
       namingConvention: null,
       lastOrganizeRun: null,
       fileStates: {}
@@ -207,7 +207,7 @@ describe('persisted session size', () => {
     expect(buildStateSnapshot(state).analysis.results).toEqual(state.analysis.results);
   });
 
-  test("Hans' 275-file batch is saved whole, within the budget", () => {
+  test('a 275-file batch is saved whole, within the budget', () => {
     const snapshot = buildStateSnapshot(stateWith({ files: 275, organized: 275 }));
 
     expect(snapshot.files.selectedFiles).toHaveLength(275);

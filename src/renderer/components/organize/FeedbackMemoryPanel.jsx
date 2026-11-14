@@ -105,8 +105,9 @@ function FeedbackMemoryPanel({ className = '', refreshToken }) {
 
       <Text variant="tiny" className="text-system-gray-600 mb-3">
         Rules and notes that adjust future suggestions. A rule like &ldquo;CSV files go to
-        Bing&rdquo; applies to every file of that type. Your corrections and folder descriptions are
-        listed here too. Edit or delete any that are wrong.
+        Bing&rdquo; moves that folder up for files of that type when it is already one of the
+        folders StratoSort considers for them. Your corrections and folder descriptions are listed
+        here too. Edit or delete any that are wrong.
       </Text>
 
       <div className="space-y-2 mb-4">

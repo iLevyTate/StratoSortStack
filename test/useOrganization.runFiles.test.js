@@ -252,21 +252,104 @@ describe('useOrganization: the per-file record of a run', () => {
       },
       { path: '/in/2.pdf', name: '2.pdf', analysis: { category: 'x', suggestedName: 'report.pdf' } }
     ];
+    const sentDestinations = (options) =>
+      options.executeAction.mock.calls[0][0].operations.map((op) => op.destination);
 
-    test('are one destination on a Mac', async () => {
+    test('are one destination on a Mac, so the second is numbered and the move runs', async () => {
       mockIsMac = true;
-      const { options, hook } = await run(null, { unprocessedFiles: twins });
-      expect(hook.current.organizeConflicts).toHaveLength(1);
-      expect(options.executeAction).not.toHaveBeenCalled();
-    });
-
-    test('are two destinations on Linux', async () => {
-      mockIsMac = false;
-      const { hook } = await run(
+      const { options, hook } = await run(
         { success: true, successCount: 2, results: [] },
         { unprocessedFiles: twins }
       );
       expect(hook.current.organizeConflicts).toHaveLength(0);
+      expect(sentDestinations(options)).toEqual([
+        '/Documents/Uncategorized/Report.pdf',
+        '/Documents/Uncategorized/report_1.pdf'
+      ]);
+    });
+
+    test('are two destinations on Linux', async () => {
+      mockIsMac = false;
+      const { options, hook } = await run(
+        { success: true, successCount: 2, results: [] },
+        { unprocessedFiles: twins }
+      );
+      expect(hook.current.organizeConflicts).toHaveLength(0);
+      expect(sentDestinations(options)).toEqual([
+        '/Documents/Uncategorized/Report.pdf',
+        '/Documents/Uncategorized/report.pdf'
+      ]);
+    });
+  });
+
+  test('two exports given the same name both move: the second is numbered, nothing blocks', async () => {
+    const exports = [
+      'search-performance-2026-09-03.xlsx',
+      'search-performance-2026-09-03_2.xlsx'
+    ].map((name) => ({
+      path: `/Users/alex/Downloads/${name}`,
+      name,
+      analysis: { category: 'GSC exports', suggestedName: 'search-performance-2026-09-03.xlsx' }
+    }));
+    const { options, hook } = await run(
+      { success: true, successCount: 2, results: [] },
+      { unprocessedFiles: exports }
+    );
+
+    expect(hook.current.organizeConflicts).toEqual([]);
+    expect(options.addNotification.mock.calls.map((call) => call[0])).not.toEqual(
+      expect.arrayContaining([expect.stringMatching(/Cannot organize/)])
+    );
+    expect(options.executeAction.mock.calls[0][0].operations).toEqual([
+      expect.objectContaining({
+        source: exports[0].path,
+        destination: '/Documents/Uncategorized/search-performance-2026-09-03.xlsx',
+        analysisLabel: 'GSC exports'
+      }),
+      expect.objectContaining({
+        source: exports[1].path,
+        destination: '/Documents/Uncategorized/search-performance-2026-09-03_1.xlsx',
+        analysisLabel: 'GSC exports'
+      })
+    ]);
+  });
+
+  describe('a batch main refused before any file', () => {
+    const lockBusy = {
+      success: false,
+      error: 'Another batch operation is already in progress. Please wait for it to complete.',
+      errorCode: 'BATCH_LOCK_TIMEOUT'
+    };
+
+    test('the summary gives the reason, and no toast says to check the logs', async () => {
+      const { options } = await run(lockBusy);
+
+      expect(lastRun(options)).toEqual(
+        expect.objectContaining({
+          outcome: 'none',
+          count: 0,
+          headline: 'No files were organized',
+          detail: expect.stringContaining('Another batch operation is already in progress')
+        })
+      );
+      const messages = options.addNotification.mock.calls.map((call) => call[0]);
+      expect(messages.filter((m) => /Check the logs/i.test(m))).toEqual([]);
+      expect(messages).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('Another batch operation is already in progress')
+        ])
+      );
+    });
+
+    test('each file gives that reason, not that the run ended before it', async () => {
+      const { options } = await run(lockBusy);
+
+      const rows = runFilesDispatches(options).at(-1).payload;
+      expect(rows.map((r) => r.outcome)).toEqual(['notMoved', 'notMoved', 'notMoved']);
+      for (const row of rows) {
+        expect(row.reason).toMatch(/Another batch operation is already in progress/);
+      }
+      expect(lastRun(options).notMovedCount).toBe(3);
     });
   });
 });

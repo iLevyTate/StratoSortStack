@@ -12,6 +12,7 @@
 const os = require('os');
 const { createLogger } = require('../../shared/logger');
 const { delay } = require('../../shared/promiseUtils');
+const { peekAvailableMemoryBytes } = require('../utils/systemMemory');
 
 const logger = createLogger('ModelMemoryManager');
 
@@ -112,7 +113,7 @@ class ModelMemoryManager {
    * Calculate maximum memory we can use.
    *
    * Budget = max(ramBudget, vramBudget) where
-   *   ramBudget  = min(70% of free system RAM, 16 GiB)
+   *   ramBudget  = min(70% of available system RAM, 16 GiB)
    *   vramBudget = 80% of reported VRAM (0 when no GPU info)
    *
    * On discrete GPUs (e.g. NVIDIA), models are GPU-offloaded into VRAM which is
@@ -124,19 +125,24 @@ class ModelMemoryManager {
    * pool there, so the VRAM share is additionally capped at total RAM minus
    * UNIFIED_MEMORY_SYSTEM_RESERVE_BYTES; without the cap an 8 GB machine was
    * budgeted at 4.8 GB for models alone.
+   *
+   * "Available" comes from systemMemory: os.freemem() on Windows and Linux,
+   * where it already counts reclaimable caches, and the kernel's available
+   * figure on macOS, where os.freemem() counts only free pages and a busy Mac
+   * shows a few hundred MB.
    */
   _calculateMaxMemory() {
     const totalMemory = os.totalmem();
-    const freeMemory = os.freemem();
+    const availableMemory = peekAvailableMemoryBytes();
 
-    // System RAM budget: 70% of free, capped at 16GB
-    const ramBudget = Math.min(freeMemory * 0.7, 16 * 1024 * 1024 * 1024);
+    // System RAM budget: 70% of available, capped at 16GB
+    const ramBudget = Math.min(availableMemory * 0.7, 16 * 1024 * 1024 * 1024);
 
     let maxUsable = ramBudget;
 
     // When GPU info is available, use the larger of RAM and VRAM budgets.
     // On discrete GPUs, models are loaded into VRAM via GPU offload, so system
-    // RAM free-mem should not constrain the budget.
+    // RAM availability should not constrain the budget.
     if (this._gpuInfo?.vramMB && this._gpuInfo.vramMB > 0) {
       const vramBytes = this._gpuInfo.vramMB * 1024 * 1024;
       let vramBudget = Math.floor(vramBytes * 0.8); // 80% of VRAM
@@ -157,7 +163,7 @@ class ModelMemoryManager {
     } else {
       logger.info('[Memory] Calculated max memory usage (no GPU VRAM info)', {
         totalGB: Math.round(totalMemory / 1024 / 1024 / 1024),
-        freeGB: Math.round(freeMemory / 1024 / 1024 / 1024),
+        availableGB: Math.round(availableMemory / 1024 / 1024 / 1024),
         maxUsableGB: Math.round(maxUsable / 1024 / 1024 / 1024)
       });
     }
@@ -166,7 +172,7 @@ class ModelMemoryManager {
   }
 
   /**
-   * Refresh the memory budget based on current free memory.
+   * Refresh the memory budget based on current available memory.
    * Called before load decisions to avoid using a stale snapshot from constructor time.
    */
   _refreshMemoryBudget() {

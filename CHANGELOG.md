@@ -16,6 +16,44 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Two files given the same new name no longer stop the whole Move.** Two exports from the same
+  day, for example, could both be renamed to the same name in the same folder, and Organize refused
+  the run with "Cannot organize: 2 files have destination conflicts". The second file now gets a
+  number (`_1`), as it does when a file of that name is already in the folder, and Preview marks it
+  "Name taken — number added". If files still clash, the message lists their own names, not the
+  shared new name.
+- **Correcting a file whose AI label already named the right folder now teaches StratoSort.** When
+  the label was right but the ranking put another folder first, the correction was saved without the
+  label, so two such corrections never changed later suggestions.
+- **A short, accurate summary that uses a Smart Folder description's words is no longer erased.** It
+  was taken for a copy of the description: the summary or reason was removed, the confidence was cut
+  to 50% and the file could be held for review. Words that also appear in the file no longer count
+  as copied, and the reason may cite the folder's description, as the analysis asks it to. Real
+  copies of a description or of the instructions are still caught.
+- **A label that paraphrases a folder name no longer goes to whichever folder was added first.**
+  With folders such as "GSC exports" and "Bing exports", a label like "Google Search Console
+  exports" matched every folder on the shared word "exports", and the first folder in the list won.
+  Words that several folder names share are now ignored, and a tie is decided by the folder
+  descriptions.
+- **On a Mac, models are no longer unloaded and loaded again between files when the GPU check gives
+  no answer.** The model memory budget was based on free memory pages only, which macOS keeps low,
+  so a busy Mac could get a budget of a few hundred MB. It now uses the memory macOS reports as
+  available, and an Apple Silicon Mac is always treated as having its Metal GPU.
+- **A Move the app refuses as a whole now says why.** When another run was still in progress, or the
+  batch was too large, the app said only "Check the logs for details" and listed every file as if
+  the run had ended before it. The reason is now shown in the run summary and on each file.
+- **A card whose folder you changed no longer shows a confidence score.** The score was for
+  StratoSort's own choice, so beside your choice it looked like the app agreed with it.
+- **On a Mac, messages name Finder instead of Explorer,** and a warning that the Uncategorized
+  folder could not be created points to System Settings > Privacy & Security instead of Windows
+  Security. The MCP copy buttons confirm with the app's name (Claude Desktop, Cursor, Zed) instead
+  of an internal id, and the Advanced settings text no longer says "Save to apply", since settings
+  save automatically.
+- **Memory & Rules no longer says a typed rule applies to every file of that type.** A rule moves
+  its folder up when StratoSort already considers that folder for a file; two corrections teach a
+  firm change. The User Guide says the same.
+- **The Zed MCP config matches the format in Zed's documentation.** It no longer includes a
+  `"source": "http"` entry.
 - **Two identical files in one folder are no longer both sent to the trash when one run renames or
   moves them.** Each was taken for a copy of the other that was already in place, so both were
   removed instead of moved, and the run could then fail and be undone with the two files missing

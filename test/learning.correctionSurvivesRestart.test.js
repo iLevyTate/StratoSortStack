@@ -3,7 +3,7 @@
  */
 /**
  * "If I correct it, does it learn, or will it make the same mistakes next
- * time?" (Hans, retest item 16).
+ * time?" (retest item 16).
  *
  * Runs the real learning path against a temp userData dir: corrections are
  * recorded through LearningFeedbackService, the suggestion service shuts down

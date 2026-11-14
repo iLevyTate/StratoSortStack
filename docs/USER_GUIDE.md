@@ -106,8 +106,10 @@ folder for the next such file. Its card then gives the reason _You moved 2 simil
 Undoing those moves takes it back, and so does moving as many such files away from your folder when
 StratoSort suggests it.
 
-To give a rule straight away, type it in **Settings > Performance > Memory & Rules** (see
-[Performance](#performance)).
+You can also type a rule in **Settings > Performance > Memory & Rules** (see
+[Performance](#performance)). A rule moves its folder up for files of that type when that folder is
+already one of the folders StratoSort considers for the file. It does not add a folder StratoSort
+did not consider. For a firm change, make the two corrections described above.
 
 ---
 
@@ -227,8 +229,10 @@ See [MCP_SERVER.md](MCP_SERVER.md).
 ### Performance
 
 - **Auto-organize**: Watch Downloads (and related routing).
-- **Memory & Rules**: Type a rule such as "CSV files go to Reports" and it applies to every file of
-  that type. Your corrections are listed here too; edit or delete any that are wrong.
+- **Memory & Rules**: Type a rule such as "CSV files go to Reports". It moves Reports up for CSV
+  files when Reports is already one of the folders StratoSort considers for them. Two corrections
+  teach a firm change (see [Teaching StratoSort](#teaching-stratosort)). Your corrections are listed
+  here too; edit or delete any that are wrong.
 - **Background Mode**: Keep running in the tray.
 - **Exclusion rules**: Skip paths or patterns from watchers and triage.
 - **Processing limits** and **Search enrichment** (relationship expansion and the relationship index

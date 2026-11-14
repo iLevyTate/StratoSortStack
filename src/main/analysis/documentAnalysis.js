@@ -1113,7 +1113,13 @@ async function analyzeDocumentStages(filePath, smartFolders = [], options = {}, 
         });
         const normalized = normalizeAnalysisResult(
           {
-            ...dropPromptEchoes(analysis, smartFolders),
+            // The file's own words are not echoes of a folder description
+            // that happens to use them too.
+            ...dropPromptEchoes(
+              analysis,
+              smartFolders,
+              `${fileName || ''}\n${extractedTextForStorage || ''}`
+            ),
             llmSuggestedName: analysis.suggestedName || null,
             contentLength: extractedTextLength,
             extractionMethod: 'content',

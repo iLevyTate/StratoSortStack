@@ -1,7 +1,7 @@
 /**
  * @jest-environment jsdom
  *
- * Hans could not tell whether changing a folder teaches StratoSort anything,
+ * A tester could not tell whether changing a folder teaches StratoSort anything,
  * and every card showed the same 60%. A user's change says what it teaches;
  * a score is shown only when it measures how well the folder matches.
  */
@@ -114,6 +114,16 @@ describe('the score on the card', () => {
       category: 'Uncategorized',
       routing: { folder: FOLDERS[2], source: 'engine', engine: fallback }
     });
+    expect(screen.queryByText(/% confidence/)).not.toBeInTheDocument();
+  });
+
+  test('a folder the user picked shows no score', () => {
+    // The label's 60% rates the label, not the folder the user chose.
+    renderItem({
+      category: 'GSC',
+      routing: { folder: FOLDERS[0], source: 'user', engine: ENGINE }
+    });
+    expect(screen.getByTestId('organize-routing-note')).toHaveTextContent('Your choice');
     expect(screen.queryByText(/% confidence/)).not.toBeInTheDocument();
   });
 

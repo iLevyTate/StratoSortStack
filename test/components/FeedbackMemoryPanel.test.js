@@ -76,7 +76,12 @@ describe('FeedbackMemoryPanel', () => {
 
   test('says what a rule does without promising more', async () => {
     render(<FeedbackMemoryPanel refreshToken={0} />);
-    expect(await screen.findByText(/applies to every file of that type/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        /moves that folder up for files of that type when it is already one of the folders StratoSort considers for them/
+      )
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/applies to every file/)).not.toBeInTheDocument();
     expect(screen.queryByText(/follow these/)).not.toBeInTheDocument();
   });
 });

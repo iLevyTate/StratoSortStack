@@ -1,6 +1,7 @@
 // @ts-check
 // src/main/services/GPUMonitor.js
 
+const os = require('os');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
 const { createLogger } = require('../../shared/logger');
@@ -84,6 +85,7 @@ const logger = createLogger('GPUMonitor');
 class GPUMonitor {
   constructor() {
     this._platform = process.platform;
+    this._arch = process.arch;
     this._gpuInfo = null;
     this._detectPromise = null;
   }
@@ -137,40 +139,74 @@ class GPUMonitor {
   }
 
   async _detectMacGPU() {
+    // Every arm64 Mac is Apple Silicon: a Metal GPU on memory it shares with
+    // the CPU. Keep that answer when system_profiler fails, times out during
+    // a busy start or names the GPU some other way. Reporting a CPU there left
+    // the model budget at 70% of free RAM, which macOS keeps at a few hundred
+    // MB on purpose, and models were evicted and reloaded for every file.
+    const appleSilicon = this._arch === 'arm64';
+    let profiled = false;
+    /** @type {any} */
+    let gpu = null;
     try {
       const output = await runCommand('system_profiler', ['SPDisplaysDataType', '-json']);
-      if (!output) return { type: 'cpu', name: 'CPU' };
-      const data = JSON.parse(output);
-      const gpu = data.SPDisplaysDataType?.[0];
-
-      if (gpu?.sppci_model?.toLowerCase().includes('apple')) {
-        const memOutput = await runCommand('sysctl', ['hw.memsize']);
-        const totalMem = parseInt(memOutput?.split(':')[1]?.trim(), 10) || 0;
-        const vramEstimate = Math.round(totalMem * 0.75);
-
-        return {
-          type: 'metal',
-          name: gpu.sppci_model,
-          vramBytes: vramEstimate,
-          vramMB: Math.round(vramEstimate / 1024 / 1024),
-          isAppleSilicon: true
-        };
+      if (output) {
+        gpu = JSON.parse(output).SPDisplaysDataType?.[0];
+        profiled = true;
       }
-
-      const rawVram = String(gpu?.sppci_vram || '');
-      const vramNum = parseInt(rawVram, 10) || 0;
-      const vramMB = /GB/i.test(rawVram) ? vramNum * 1024 : vramNum;
-
-      return {
-        type: 'metal',
-        name: gpu?.sppci_model || 'Unknown GPU',
-        vramBytes: vramMB * 1024 * 1024,
-        vramMB,
-        isAppleSilicon: false
-      };
     } catch {
-      return { type: 'cpu', name: 'CPU' };
+      // Output that does not parse counts as no output.
+      profiled = false;
     }
+
+    const model = typeof gpu?.sppci_model === 'string' ? gpu.sppci_model : '';
+    if (appleSilicon || model.toLowerCase().includes('apple')) {
+      if (!model) {
+        logger.info('[GPU] system_profiler gave no GPU model; assuming the Apple Silicon GPU');
+      }
+      return this._appleSiliconGPUInfo(model || 'Apple Silicon GPU');
+    }
+    if (!profiled) return { type: 'cpu', name: 'CPU' };
+
+    const rawVram = String(gpu?.sppci_vram || '');
+    const vramNum = parseInt(rawVram, 10) || 0;
+    const vramMB = /GB/i.test(rawVram) ? vramNum * 1024 : vramNum;
+
+    return {
+      type: 'metal',
+      name: model || 'Unknown GPU',
+      vramBytes: vramMB * 1024 * 1024,
+      vramMB,
+      isAppleSilicon: false
+    };
+  }
+
+  /**
+   * Apple Silicon GPU info. Metal addresses the same memory as the CPU, so the
+   * "VRAM" figure is an estimate of 75% of total RAM.
+   * @private
+   * @param {string} name
+   * @returns {Promise<Record<string, any>>}
+   */
+  async _appleSiliconGPUInfo(name) {
+    const memOutput = await runCommand('sysctl', ['hw.memsize']);
+    const parsedMem = parseInt(
+      String(memOutput || '')
+        .split(':')[1]
+        ?.trim() || '',
+      10
+    );
+    // os.totalmem() reads the same hw.memsize through libuv.
+    const totalMem = parsedMem > 0 ? parsedMem : os.totalmem();
+    const vramEstimate = Math.round(totalMem * 0.75);
+
+    return {
+      type: 'metal',
+      name,
+      vramBytes: vramEstimate,
+      vramMB: Math.round(vramEstimate / 1024 / 1024),
+      isAppleSilicon: true
+    };
   }
 
   async _detectWindowsGPU() {

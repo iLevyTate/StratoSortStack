@@ -74,7 +74,7 @@ const renderSection = (preloaded) => {
   );
 };
 
-describe('McpServerSection plain words (Hans retest)', () => {
+describe('McpServerSection plain words (tester retest)', () => {
   test('says the server starts with StratoSort while the box is ticked', () => {
     renderSection({ enabled: false, status: 'stopped', port: null });
     expect(

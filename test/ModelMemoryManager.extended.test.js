@@ -26,6 +26,13 @@ jest.mock('../src/shared/logger', () => ({
   })
 }));
 
+// The budget reads available memory through systemMemory, which asks the
+// kernel on a macOS host. Route it to the mocked os.freemem() above so the
+// budget figures below hold on every CI platform.
+jest.mock('../src/main/utils/systemMemory', () => ({
+  peekAvailableMemoryBytes: () => require('os').freemem()
+}));
+
 const { ModelMemoryManager } = require('../src/main/services/ModelMemoryManager');
 
 function createMockLlamaService() {

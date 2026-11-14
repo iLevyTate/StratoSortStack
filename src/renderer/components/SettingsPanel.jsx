@@ -1637,7 +1637,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
                     <Text variant="small" className="text-system-gray-600">
                       {isSimpleMode
                         ? 'Simple mode hides the advanced configuration panels and uses a streamlined retrieval path, while still embedding your files on-device in the background — so nothing needs re-processing if you switch to Advanced later.'
-                        : 'Advanced reveals every configuration panel — AI models, semantic search, chat-with-documents, and the knowledge graph — and enables graph-aware retrieval at search time. Save to apply.'}
+                        : 'Advanced reveals every configuration panel — AI models, semantic search, chat-with-documents, and the knowledge graph — and enables graph-aware retrieval at search time.'}
                     </Text>
                   </div>
                 </SettingsCard>

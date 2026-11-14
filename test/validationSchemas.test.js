@@ -345,6 +345,23 @@ describe('validationSchemas (Zod path)', () => {
       });
     });
 
+    // The same for the analysis label: a correction is learned under it.
+    test('preserves the per-op analysis label on a batch_organize payload', () => {
+      const result = schemas.fileOperation.safeParse({
+        type: 'batch_organize',
+        operations: [
+          {
+            source: '/a/file.txt',
+            destination: '/b/Finance/file.txt',
+            suggestion: { folder: 'Receipts', source: 'engine' },
+            analysisLabel: 'Finance'
+          }
+        ]
+      });
+      expect(result.success).toBe(true);
+      expect(result.data.operations[0].analysisLabel).toBe('Finance');
+    });
+
     test('rejects a suggestion with a relative path', () => {
       const result = schemas.fileOperation.safeParse({
         type: 'batch_organize',

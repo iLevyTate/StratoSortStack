@@ -2,8 +2,8 @@
  * @jest-environment node
  */
 /**
- * "If I correct it, does it learn?" in LLM-only and Hybrid routing (Hans,
- * retest item 16).
+ * "If I correct it, does it learn?" in LLM-only and Hybrid routing (retest
+ * item 16).
  *
  * In those modes the analysis label that names a folder is lifted to at least
  * 0.95 and weighted x1.5, and the correction penalty needs embeddings, so no

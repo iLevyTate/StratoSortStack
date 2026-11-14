@@ -368,6 +368,46 @@ describe('OrganizePhase premium preflight copy', () => {
     expect(await screen.findByText('ORGANIZE_PROGRESS')).toBeInTheDocument();
   });
 
+  test('a destination conflict names the files by their own names, not the shared new one', () => {
+    const { useOrganization } = require('../../src/renderer/phases/organize/useOrganization');
+    useOrganization.mockReturnValue({
+      isOrganizing: false,
+      isPaused: false,
+      batchProgress: null,
+      organizePreview: [],
+      handleOrganizeFiles: jest.fn(),
+      organizeConflicts: [
+        {
+          destination: '/Users/alex/Exports/search-performance-2026-09-03.xlsx',
+          files: [
+            {
+              fileName: 'search-performance-2026-09-03.xlsx',
+              sourcePath: '/Users/alex/Inbox/export (1).xlsx'
+            },
+            {
+              fileName: 'search-performance-2026-09-03.xlsx',
+              sourcePath: '/Users/alex/Inbox/export (2).xlsx'
+            }
+          ]
+        }
+      ]
+    });
+
+    render(<OrganizePhase />);
+
+    expect(screen.getByText('export (1).xlsx, export (2).xlsx')).toBeInTheDocument();
+    expect(
+      screen.queryByText(/search-performance-2026-09-03\.xlsx, search-performance/)
+    ).not.toBeInTheDocument();
+    useOrganization.mockReturnValue({
+      isOrganizing: false,
+      batchProgress: null,
+      organizePreview: [],
+      handleOrganizeFiles: jest.fn(),
+      organizeConflicts: []
+    });
+  });
+
   test('shows how the last run ended, and lets the user dismiss it', () => {
     const { useLastOrganizeRun } = require('../../src/renderer/hooks/useLastOrganizeRun');
     const { useOrganization } = require('../../src/renderer/phases/organize/useOrganization');
