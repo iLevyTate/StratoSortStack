@@ -1,6 +1,6 @@
 # StratoSort Stack Testing Guide
 
-**Applies to:** StratoSort Stack 5.1.x  
+**Applies to:** StratoSort Stack 5.3.x  
 **Purpose:** Single source of truth for manual QA and automated test expectations.
 
 ---

@@ -12,6 +12,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [5.3.0] - 2026-11-13
+
 ### Fixed
 
 - **Two identical files in one folder are no longer both sent to the trash when one run renames or
@@ -149,6 +151,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Uncategorized. When you change a file's folder, its card says what StratoSort learns from that.
   Rules typed in Memory & Rules without a dot, such as "CSV files go to Bing", now work, and
   correction notes no longer replace a rule you wrote.
+- **Corrections also count when StratoSort sorts by the AI label alone.** In LLM-only and Hybrid
+  routing, a folder named by the label could not be overridden however often you corrected it. Once
+  you move two different files of the same type and label from the folder it picked into the same
+  other folder, the next such file is suggested for your folder, with the reason "You moved 2
+  similar files from X to Y". It waits for your review until the pattern is well learned. One
+  correction changes nothing, and moving files back or undoing the moves takes it back.
 - **Setup and Discover say which folders are which.** Setup says Smart Folders are where files go
   and Discover says it is where you pick the files to sort. The app warns, without blocking, when
   the folder you sort overlaps a Smart Folder or one Smart Folder sits inside another; when a Smart
@@ -180,6 +188,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Analysis can be stopped from the Organize screen,** which also shows how many files are done,
   and the progress card says why a run is going: files you added, files added during the last run, a
   run resumed after a restart, a retry of failed files, or a Reanalyze.
+- **Analysis keeps running when you open another step.** The run used to belong to the Discover
+  screen: while it ran, the step tabs, the Alt+arrow keys and the dashboard links waited for it, and
+  when a batch finished while files added during it were waiting, the app moved on to Organize,
+  stopped their run and started all of them again when you came back. The step tabs no longer wait
+  for it, so you can organize the files that are ready while the rest are analyzed. Only the switch
+  to Dashboard waits for it to finish.
+- **Reanalyze works on files you are sorting.** Reanalyze on a Discover file card and "Reanalyze N"
+  on the Organize screen always failed with "This file is not inside a configured Smart Folder".
+  They now analyze the files again where they are, without reusing the saved result. While another
+  analysis runs, Reanalyze asks you to wait until it finishes.
 - **On a Mac, analysis no longer pauses before each file** because the app misread how much memory
   was free, and the model setup describes Apple Silicon memory as one pool shared by the processor
   and graphics, instead of "24 GB of RAM and Apple M4 Pro (18 GB)".
@@ -191,12 +209,49 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   none of them moves, renames or deletes files.
 - **Discover cards say how search finds a file:** "Search by meaning" or "Keyword search only",
   instead of "Embed: Local". The Knowledge OS button shows ⌘K on a Mac.
+- **Preview shows where your files will go.** Preview on the Organize screen opens a list of each
+  file under its destination folder with its new name, the folders that will be created, names that
+  clash and files that will not move. It used to show only a count.
+- **"Start over" on the Complete screen is now "Analyze more files".** It clears the finished batch
+  and opens Discover for the next files, instead of going back to the Welcome screen.
+- **A zip file is sorted by what it holds.** Every archive was labeled "archive" and so ended up in
+  Uncategorized. When most of its files are of one type and that type matches one of your Smart
+  Folders, the archive goes there: a zip of .stl parts goes to your 3D-print folder, if you have
+  one.
+- **A guess from the file name alone says it is a guess.** When a file's content could not be read
+  and it was sorted by its name, the result reported 65-75% confidence, more than a real content
+  analysis. It now reports 50%.
+- **A file name no longer matches a folder by part of a word.** "Work" matched "network" and "code"
+  matched "barcode". Folder names now match whole words in the file name, plurals included.
+- **Memory & Rules is in Settings > Performance,** in Simple mode too. Type a rule there, and
+  review, edit or delete what StratoSort has learned from your corrections.
+- **A file you move into a Smart Folder yourself teaches StratoSort.** Outside an organize run, such
+  a move was recorded without the file's label, so it never matched another file. Undoing a move
+  takes back what it taught.
+- **The search index warns you when it cannot be saved.** When saving it kept failing, for example
+  because the file was locked, nothing said so, and recent changes could be lost when the app
+  closed. A warning now says so and goes away once a save works. A full disk keeps its own message.
+- **Regenerate and Retry in Chat replace the earlier answer.** The discarded answer, or the error
+  before a retry, is no longer kept in the saved conversation or sent back to the AI with the
+  question.
+- **"Smart folder…" in Atlas describes the new folder by the selected files.** It was created with
+  the description "Created from an Atlas selection of N files" and no keywords. Its description and
+  keywords now come from what the selected files have in common, so files like them are suggested
+  for it. The files stay where they are; Move… puts them in it.
 
 ### Documentation
 
 - **The Install Guide, the README and each release's notes say which Mac file to download:**
   `mac-arm64` for Apple Silicon, `mac-x64` for Intel, and how to check in About This Mac.
 - **The MCP Server guide uses the labels the app shows.**
+- **The User Guide says where files went, how corrections are learned and what to do when a Mac
+  blocks a folder,** and that analysis no longer pauses the step tabs. The Tester Guide and the
+  walkthrough describe the new Complete screen.
+
+### Dependencies
+
+- Electron 45.2.3 → 45.3.0, officeparser 8.6.0 → 8.7.1, minimatch 11.0.5 → 11.0.7 and postal-mime
+  4.2.0 → 4.2.1, plus minor updates to renderer libraries and build tooling.
 
 ## [5.2.0] - 2026-11-10
 
@@ -1588,7 +1643,8 @@ notes.
 Note: versions before 5.0.0 were released from predecessor repositories whose tags are not part of
 this repository's history, so they are listed without links.
 
-[Unreleased]: https://github.com/iLevyTate/StratoSortStack/compare/v5.2.0...HEAD
+[Unreleased]: https://github.com/iLevyTate/StratoSortStack/compare/v5.3.0...HEAD
+[5.3.0]: https://github.com/iLevyTate/StratoSortStack/compare/v5.2.0...v5.3.0
 [5.2.0]: https://github.com/iLevyTate/StratoSortStack/compare/v5.1.2...v5.2.0
 [5.1.2]: https://github.com/iLevyTate/StratoSortStack/compare/v5.1.1...v5.1.2
 [5.1.1]: https://github.com/iLevyTate/StratoSortStack/compare/v5.1.0...v5.1.1

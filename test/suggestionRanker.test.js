@@ -386,3 +386,27 @@ describe('Suggestion Ranker', () => {
     });
   });
 });
+
+describe('capSuggestionConfidence', () => {
+  const {
+    capSuggestionConfidence,
+    calculateConfidence
+  } = require('../src/main/services/organization/suggestionRanker');
+
+  test('a user pattern is capped after its confidence boost', () => {
+    const capped = capSuggestionConfidence(
+      { folder: 'Invoices', source: 'user_pattern', score: 0.9, confidence: 0.9 },
+      0.7
+    );
+    expect(calculateConfidence(capped)).toBeLessThanOrEqual(0.7);
+    expect(capped.folder).toBe('Invoices');
+  });
+
+  test('other sources are capped at the value itself, lower values are kept', () => {
+    expect(capSuggestionConfidence({ source: 'llm', score: 0.95, confidence: 0.6 }, 0.7)).toEqual({
+      source: 'llm',
+      score: 0.7,
+      confidence: 0.6
+    });
+  });
+});

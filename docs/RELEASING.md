@@ -81,6 +81,10 @@ npx jest --config test/jest.config.js test/components/PhaseRenderer.test.js test
 1. **Update release metadata**
    - Bump `version` in `package.json`
    - Move release notes from `CHANGELOG.md` **[Unreleased]** to the new version section
+   - Update the version strings in the docs, which are not generated: `docs/BETA_TESTER_GUIDE.md`
+     (current version, the download table, the example bug report), `SECURITY.md` (Supported
+     Versions, the patch-version examples, Last updated) and the example in `docs/INSTALL_GUIDE.md`.
+     `git grep -n "<previous version>" -- docs SECURITY.md` finds them.
 2. **Run quality gates**
    - `npm run ci`
 3. **Smoke-test installers**

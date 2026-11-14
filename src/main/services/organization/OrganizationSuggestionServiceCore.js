@@ -46,11 +46,26 @@ const FOLDER_DESCRIPTION_HISTORY_LIMIT = 5;
 const {
   buildMemoryEntry,
   applyMemoryRuleAdjustments,
+  findLearnedCorrection,
   normalizeText
 } = require('./feedbackMemoryUtils');
+
+/**
+ * Item 16: the folder a learned correction overrides is capped here, below
+ * the auto-organize default (0.75), so it cannot move a file on its own
+ * while the user keeps correcting it.
+ */
+const OVERRIDDEN_FOLDER_MAX_CONFIDENCE = 0.7;
+/** Confidence of a learned correction whose folder had no suggestion of its own. */
+const LEARNED_CORRECTION_FALLBACK_CONFIDENCE = 0.6;
 const { getMetrics: getPatternMetrics } = require('./persistence');
 
-const { rankSuggestions, calculateConfidence, generateExplanation } = require('./suggestionRanker');
+const {
+  rankSuggestions,
+  calculateConfidence,
+  capSuggestionConfidence,
+  generateExplanation
+} = require('./suggestionRanker');
 
 const {
   calculateFolderFitScore,
@@ -948,6 +963,15 @@ class OrganizationSuggestionServiceCore {
         rankedSuggestions
       );
 
+      // Repeated corrections away from the folder about to be suggested
+      // (item 16). Runs in every routing mode and needs no embeddings.
+      rankedSuggestions = await this._applyLearnedCorrectionOverride(
+        normalizedFile,
+        rankedSuggestions,
+        smartFolders,
+        patternMatches
+      );
+
       // A folder that "could be enhanced" for this file is an idea, not a
       // destination: its +0.2 score could reach the auto-move threshold.
       let primary =
@@ -1659,7 +1683,7 @@ class OrganizationSuggestionServiceCore {
     /** @type {any} */ suggestion,
     /** @type {any} */ accepted,
     /** @type {any} */ note,
-    /** @type {{ filePath?: string }} */ extraMetadata = {}
+    /** @type {{ filePath?: string, correction?: { extension?: string, category?: string|null, correctFolder?: string, correctFolderId?: string, correctFolderPath?: string } }} */ extraMetadata = {}
   ) {
     await this._ensureFeedbackMemoryLoaded();
     const normalized = normalizeText(note);
@@ -1670,7 +1694,10 @@ class OrganizationSuggestionServiceCore {
       targetFolder: suggestion?.folder || null,
       scope: suggestion?.folder ? { type: 'folder', value: suggestion.folder } : { type: 'global' },
       // F-202: remember which file a correction was about so an undo can find it.
-      ...(extraMetadata?.filePath ? { filePath: extraMetadata.filePath } : {})
+      ...(extraMetadata?.filePath ? { filePath: extraMetadata.filePath } : {}),
+      // Item 16: what was corrected (type, label, where it went), normalized
+      // by buildMemoryEntry, for _applyLearnedCorrectionOverride.
+      ...(extraMetadata?.correction ? { correction: extraMetadata.correction } : {})
     });
     return entry;
   }
@@ -1833,11 +1860,16 @@ class OrganizationSuggestionServiceCore {
         source: /** @type {any} */ (metadata).source || existing.source
       }) || {};
     const updatedAt = new Date().toISOString();
+    // A user-edited correction note no longer says what the structured
+    // `correction` recorded, and its re-parsed targetFolder can even reverse
+    // it: once the text changes, it stops driving the learned override.
+    const dropCorrection = Boolean(existing.correction) && normalized !== existing.text;
     const updated = await this.feedbackMemoryStore.update(
       id,
       {
         text: normalized,
         rules: rules || [],
+        ...(dropCorrection ? { correction: undefined } : {}),
         targetFolder:
           /** @type {any} */ (metadata).targetFolder ||
           targetFolder ||
@@ -2022,6 +2054,149 @@ class OrganizationSuggestionServiceCore {
     const rankingKey = (s) =>
       Number.isFinite(s.weightedScore) ? s.weightedScore : Number.isFinite(s.score) ? s.score : 0;
     return adjusted.sort((a, b) => rankingKey(b) - rankingKey(a));
+  }
+
+  /**
+   * Item 16: when the user has moved at least two different files with this
+   * file's type and analysis label away from the folder about to be suggested,
+   * into the same other smart folder (findLearnedCorrection), suggest that
+   * folder instead. Without this, a label that names a folder (lifted to 0.95,
+   * weighted x1.5 in LLM-only and Hybrid routing) beat any number of
+   * corrections, since the correction penalty needs embeddings.
+   *
+   * Both folders are capped at OVERRIDDEN_FOLDER_MAX_CONFIDENCE, below the
+   * auto-organize default (0.75). The corrected folder may go above it only
+   * as far as the learned user pattern for it, alone, already does: whatever
+   * other evidence was merged into that folder, a fresh override is shown for
+   * review, and moves files on its own only once the pattern has grown past
+   * the auto-organize threshold.
+   *
+   * Reads the stored memories only: no embeddings, no text model.
+   *
+   * @param {any} file
+   * @param {any[]} rankedSuggestions - ranked, adjusted suggestions
+   * @param {any[]} smartFolders
+   * @param {any[]} [patternMatches] - the pattern suggestions, before merging
+   * @returns {Promise<any[]>} the same list, or a re-ranked copy with the override first
+   */
+  async _applyLearnedCorrectionOverride(
+    file,
+    rankedSuggestions,
+    smartFolders,
+    patternMatches = []
+  ) {
+    if (!Array.isArray(rankedSuggestions) || rankedSuggestions.length === 0) {
+      return rankedSuggestions;
+    }
+    const current = rankedSuggestions.find(
+      (suggestion) =>
+        suggestion?.isSmartFolder && suggestion.source !== 'improvement' && suggestion.folder
+    );
+    const category = file?.analysis?.category;
+    if (!current || typeof category !== 'string' || !category.trim()) {
+      return rankedSuggestions;
+    }
+
+    let memories;
+    try {
+      memories = await this.feedbackMemoryStore.list();
+    } catch (error) {
+      logger.debug('[OrganizationSuggestionService] Learned-correction lookup failed', {
+        error: error?.message
+      });
+      return rankedSuggestions;
+    }
+
+    const learned = findLearnedCorrection({
+      memories,
+      extension: file.extension,
+      category,
+      fromFolder: current.folder,
+      smartFolders
+    });
+    if (!learned) return rankedSuggestions;
+
+    const target = learned.folder;
+    /** @param {any} s */
+    const rankingKey = (s) =>
+      Number.isFinite(s?.weightedScore) ? s.weightedScore : Number.isFinite(s?.score) ? s.score : 0;
+    /**
+     * Same smart folder: by id, then path, then name. Two smart folders can
+     * share a name.
+     * @param {any} suggestion
+     * @param {{ id?: any, path?: any, name?: any }} ref
+     */
+    const isSameFolder = (suggestion, ref) => {
+      if (suggestion?.folderId && ref.id) return suggestion.folderId === ref.id;
+      if (suggestion?.path && ref.path) {
+        return (
+          normalizePathForIndex(String(suggestion.path)) === normalizePathForIndex(String(ref.path))
+        );
+      }
+      return (
+        String(suggestion?.folder || '').toLowerCase() === String(ref.name || '').toLowerCase()
+      );
+    };
+    const currentRef = { id: current.folderId, path: current.path, name: current.folder };
+
+    // The corrected folder's own suggestion (usually the learned pattern from
+    // the same moves), else one built from the smart folder.
+    const existing = rankedSuggestions.find(
+      (suggestion) =>
+        suggestion?.isSmartFolder &&
+        suggestion.source !== 'improvement' &&
+        isSameFolder(suggestion, target)
+    );
+    const base = existing || {
+      folder: target.name,
+      path: target.path,
+      folderId: target.id || null,
+      description: target.description || '',
+      score: LEARNED_CORRECTION_FALLBACK_CONFIDENCE,
+      confidence: LEARNED_CORRECTION_FALLBACK_CONFIDENCE,
+      source: 'learned_correction',
+      isSmartFolder: true
+    };
+    // Other evidence merged into the folder (an LLM alternative, a semantic
+    // match) must not let a fresh override move files unattended. The learned
+    // pattern alone may, once it has matured past the cap.
+    const targetName = String(target.name).toLowerCase();
+    const learnedPatternConfidence = Math.max(
+      0,
+      ...(Array.isArray(patternMatches) ? patternMatches : [])
+        .filter(
+          (match) =>
+            match?.method === 'user_pattern' &&
+            String(match.folder || '').toLowerCase() === targetName
+        )
+        .map((match) => calculateConfidence({ ...match, source: 'user_pattern' }))
+    );
+    const topRank = Math.max(...rankedSuggestions.map(rankingKey));
+    const promoted = {
+      ...capSuggestionConfidence(
+        base,
+        Math.max(OVERRIDDEN_FOLDER_MAX_CONFIDENCE, learnedPatternConfidence)
+      ),
+      method: 'learned_correction',
+      learnedOverride: { from: current.folder, files: learned.files },
+      weightedScore: topRank + 0.01
+    };
+
+    const rest = rankedSuggestions
+      .filter((suggestion) => suggestion !== existing && !isSameFolder(suggestion, target))
+      .map((suggestion) =>
+        isSameFolder(suggestion, currentRef)
+          ? capSuggestionConfidence(suggestion, OVERRIDDEN_FOLDER_MAX_CONFIDENCE)
+          : suggestion
+      );
+
+    logger.debug('[OrganizationSuggestionService] Learned correction overrides suggestion', {
+      from: current.folder,
+      to: target.name,
+      files: learned.files
+    });
+
+    return [promoted, ...rest].sort((a, b) => rankingKey(b) - rankingKey(a));
   }
 
   async rebuildFeedbackMemoryEmbeddings() {

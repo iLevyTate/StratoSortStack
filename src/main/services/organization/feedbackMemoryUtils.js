@@ -8,6 +8,7 @@
 const { randomUUID } = require('crypto');
 const { normalizePathForIndex } = require('../../../shared/pathSanitization');
 const { ALL_SUPPORTED_EXTENSIONS } = require('../../../shared/constants');
+const { isUncategorizedFolder } = require('../../../shared/uncategorizedFolder');
 
 const MAX_TEXT_LENGTH = 500;
 
@@ -110,8 +111,81 @@ function parseRuleFromText(text, { allowRules = true } = {}) {
 }
 
 /**
+ * @typedef {{ extension: string, category: string|null, correctFolder: string, correctFolderId?: string, correctFolderPath?: string }} MemoryCorrection
+ */
+
+/** @param {any} value @returns {string} lowercase, no leading dot */
+function normalizeExtension(value) {
+  return String(value || '')
+    .trim()
+    .replace(/^\./, '')
+    .toLowerCase();
+}
+
+/** @param {any} value @returns {string} */
+function normalizeLabel(value) {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+/**
+ * What a correction was about: a file of this type, which the analysis
+ * labeled this, went to `correctFolder` instead of the memory's targetFolder.
+ * The folder's id and path, when known, tell apart two smart folders with the
+ * same name.
+ * @param {any} correction
+ * @returns {MemoryCorrection|null}
+ */
+function normalizeCorrection(correction) {
+  if (!correction || typeof correction !== 'object') return null;
+  const extension = normalizeExtension(correction.extension);
+  const correctFolder =
+    typeof correction.correctFolder === 'string' ? correction.correctFolder.trim() : '';
+  if (!extension || !correctFolder) return null;
+  const id = typeof correction.correctFolderId === 'string' ? correction.correctFolderId : '';
+  const folderPath =
+    typeof correction.correctFolderPath === 'string' ? correction.correctFolderPath : '';
+  return {
+    extension,
+    category: normalizeLabel(correction.category) || null,
+    correctFolder,
+    ...(id ? { correctFolderId: id } : {}),
+    ...(folderPath ? { correctFolderPath: folderPath } : {})
+  };
+}
+
+/** @param {any} value @returns {string} a folder path compared as an index key */
+function folderPathKey(value) {
+  if (typeof value !== 'string' || !value) return '';
+  return (normalizePathForIndex(value) || value).replace(/\/+$/, '');
+}
+
+/**
+ * The smart folder a correction went to: by recorded id, then by recorded
+ * path, then the first one with its name.
+ * @param {MemoryCorrection} correction
+ * @param {any[]} smartFolders
+ * @returns {any|null}
+ */
+function resolveCorrectionFolder(correction, smartFolders) {
+  const valid = smartFolders.filter((f) => f && typeof f === 'object');
+  if (correction.correctFolderId) {
+    const byId = valid.find((f) => f.id === correction.correctFolderId);
+    if (byId) return byId;
+  }
+  const wantedPath = folderPathKey(correction.correctFolderPath);
+  if (wantedPath) {
+    const byPath = valid.find((f) => folderPathKey(f.path) === wantedPath);
+    if (byPath) return byPath;
+  }
+  const name = correction.correctFolder.toLowerCase();
+  return (
+    valid.find((f) => typeof f.name === 'string' && f.name.trim().toLowerCase() === name) || null
+  );
+}
+
+/**
  * @param {any} text
- * @param {{ targetFolder?: string, scope?: any, source?: string, filePath?: string }} [metadata]
+ * @param {{ targetFolder?: string, scope?: any, source?: string, filePath?: string, correction?: any }} [metadata]
  */
 function buildMemoryEntry(text, metadata = {}) {
   const normalized = normalizeText(text);
@@ -128,6 +202,9 @@ function buildMemoryEntry(text, metadata = {}) {
     typeof metadata.filePath === 'string' && metadata.filePath
       ? normalizePathForIndex(metadata.filePath) || metadata.filePath
       : null;
+  // Item 16: what was corrected, so findLearnedCorrection can match it
+  // without embeddings.
+  const correction = normalizeCorrection(metadata.correction);
   return {
     id: randomUUID(),
     text: normalized,
@@ -136,9 +213,115 @@ function buildMemoryEntry(text, metadata = {}) {
     scope: metadata.scope || { type: 'global' },
     source: metadata.source || 'manual',
     filePath,
+    ...(correction ? { correction } : {}),
     createdAt: now,
     updatedAt: now
   };
+}
+
+/**
+ * Labels that say nothing about where a file belongs. Learning from them
+ * would send every "document" to wherever one was last moved. Same list as
+ * the label suggestion's generic categories, plus 'unknown'.
+ */
+const GENERIC_LABELS = new Set([
+  'document',
+  'documents',
+  'image',
+  'images',
+  'file',
+  'files',
+  'media',
+  'misc',
+  'miscellaneous',
+  'other',
+  'uncategorized',
+  'unknown'
+]);
+
+/**
+ * A correction the user has made often enough to act on (item 16): at least
+ * `minFiles` different files with this type and this (non-generic) label were
+ * moved away from `fromFolder` into the same other folder, and that folder is
+ * strictly ahead of every other folder they went to, and of the files with
+ * this type and label later corrected away from it. The folder must still be
+ * a smart folder and not the catch-all. Memories without a structured
+ * `correction` (recorded before it existed) are ignored.
+ *
+ * Pure: reads only what it is given, needs no embeddings.
+ *
+ * @param {{ memories?: any, extension?: any, category?: any, fromFolder?: any, smartFolders?: any, minFiles?: number }} [params]
+ * @returns {{ folder: any, files: number } | null} the smart folder and how many files taught it
+ */
+function findLearnedCorrection({
+  memories,
+  extension,
+  category,
+  fromFolder,
+  smartFolders,
+  minFiles = 2
+} = {}) {
+  if (!Array.isArray(memories) || !Array.isArray(smartFolders)) return null;
+  const ext = normalizeExtension(extension);
+  const label = normalizeLabel(category);
+  const from = normalizeLabel(fromFolder);
+  if (!ext || !label || GENERIC_LABELS.has(label) || !from) return null;
+
+  /** @type {Array<{ targetFolder: string, correction: MemoryCorrection, fileKey: string }>} */
+  const relevant = [];
+  for (const entry of memories) {
+    if (!entry || typeof entry !== 'object' || entry.source !== 'feedback_reject') continue;
+    const correction = normalizeCorrection(entry.correction);
+    if (!correction || correction.extension !== ext || correction.category !== label) continue;
+    if (typeof entry.filePath !== 'string' || !entry.filePath) continue;
+    relevant.push({
+      targetFolder: normalizeLabel(entry.targetFolder),
+      correction,
+      fileKey: normalizePathForIndex(entry.filePath) || entry.filePath
+    });
+  }
+
+  // Grouped by the smart folder each went to (by id, then path, then name),
+  // so two folders with the same name are counted apart. A folder that is no
+  // longer a smart folder still competes, under its name.
+  /** @type {Map<any, { folder: any, files: Set<string> }>} */
+  const groups = new Map();
+  for (const { targetFolder, correction, fileKey } of relevant) {
+    if (targetFolder !== from) continue;
+    if (correction.correctFolder.toLowerCase() === from) continue;
+    const folder = resolveCorrectionFolder(correction, smartFolders);
+    const key = folder || `name:${correction.correctFolder.toLowerCase()}`;
+    if (!groups.has(key)) groups.set(key, { folder, files: new Set() });
+    /** @type {{ files: Set<string> }} */ (groups.get(key)).files.add(fileKey);
+  }
+
+  let best = null;
+  let bestFiles = 0;
+  let runnerUp = 0;
+  for (const group of groups.values()) {
+    if (group.files.size > bestFiles) {
+      runnerUp = bestFiles;
+      best = group.folder;
+      bestFiles = group.files.size;
+    } else if (group.files.size > runnerUp) {
+      runnerUp = group.files.size;
+    }
+  }
+  if (!best || bestFiles < Math.max(1, minFiles) || bestFiles <= runnerUp) return null;
+  if (isUncategorizedFolder(best)) return null;
+
+  // Corrections away from that folder, for the same type and label, count
+  // against it: the user changed their mind (moved overridden files back, or
+  // on to a third folder). Without this the override could not be unlearned,
+  // since those corrections are keyed to the override folder, not `from`.
+  const bestName = String(best.name || '')
+    .trim()
+    .toLowerCase();
+  const contrary = new Set(
+    relevant.filter((item) => item.targetFolder === bestName).map((item) => item.fileKey)
+  );
+  if (bestFiles <= contrary.size) return null;
+  return { folder: best, files: bestFiles };
 }
 
 /** @param {{ fileExtension?: string, suggestionFolder?: string, rules?: any[] }} args */
@@ -169,5 +352,6 @@ module.exports = {
   normalizeText,
   parseRuleFromText,
   buildMemoryEntry,
-  applyMemoryRuleAdjustments
+  applyMemoryRuleAdjustments,
+  findLearnedCorrection
 };
