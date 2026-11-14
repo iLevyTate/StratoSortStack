@@ -18,6 +18,11 @@ jest.mock('../src/shared/config/index', () => ({
   get: jest.fn((_, fallback) => fallback)
 }));
 
+jest.mock('../src/main/utils/systemMemory', () => ({
+  getAvailableMemoryBytes: jest.fn().mockResolvedValue(8 * 1024 * 1024 * 1024),
+  peekAvailableMemoryBytes: jest.fn(() => 8 * 1024 * 1024 * 1024)
+}));
+
 const mockBatchProcessor = {
   concurrencyLimit: 3,
   processBatch: jest.fn()
@@ -102,20 +107,9 @@ describe('BatchAnalysisService (edge)', () => {
     await flushMicrotasks();
   };
 
-  let freememSpy;
-
-  afterEach(() => {
-    freememSpy?.mockRestore();
-  });
-
   beforeEach(() => {
     jest.clearAllMocks();
     jest.resetModules();
-    // analyzeFiles pauses each file start for up to 8 s while os.freemem() is
-    // under 300 MB. macOS reports only fully unused pages as free, so CI
-    // runners there sit below the floor and the ordering test timed out.
-    // Pin a healthy value; the memory guard is not what these tests cover.
-    freememSpy = jest.spyOn(require('os'), 'freemem').mockReturnValue(8 * 1024 * 1024 * 1024);
 
     // default queue stats
     mockAnalysisQueue.getStats.mockReturnValue({
@@ -171,11 +165,6 @@ describe('BatchAnalysisService (edge)', () => {
 
   test('backpressure waits for queue to drain but does not loop forever (drain scenario)', async () => {
     jest.useFakeTimers();
-    // The memory-headroom guard polls os.freemem() with a real 1s delay; under
-    // fake timers a low-memory host would never get past it. Pin it healthy.
-    const os = require('os');
-    const freememSpy = jest.spyOn(os, 'freemem').mockReturnValue(8 * 1024 * 1024 * 1024);
-
     // Key the queue state on (fake) elapsed time, not call count: analyzeFiles
     // reads getStats() for bookkeeping before the backpressure check, so a
     // call-count script silently skips the wait entirely.
@@ -210,7 +199,6 @@ describe('BatchAnalysisService (edge)', () => {
 
       await expect(p).resolves.toEqual(expect.objectContaining({ total: 1, successful: 1 }));
     } finally {
-      freememSpy.mockRestore();
       jest.useRealTimers();
     }
   });
