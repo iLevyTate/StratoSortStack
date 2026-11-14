@@ -18,16 +18,19 @@ import {
   selectFileStats,
   selectSmartFolders,
   selectOrganizedFiles,
-  selectOrganizedCount,
+  selectMovedCount,
   selectFilesWithAnalysis,
   selectIsAnalyzing,
   selectAnalysisProgress,
   selectRedactPaths
 } from '../../store/selectors';
 import { formatDisplayFileName } from '../../utils/pathDisplay';
+import { formatDateTime } from '../../utils/format';
+import { leftFilesUnmoved } from '../../utils/organizeRunSummary';
 import { TIMEOUTS } from '../../../shared/performanceConstants';
 import { dispatchAcked } from '../../utils/dispatchAcked';
 import { useDragAndDrop } from '../../hooks/useDragAndDrop';
+import { useLastOrganizeRun } from '../../hooks/useLastOrganizeRun';
 import Card from '../ui/Card';
 import Button from '../ui/Button';
 import StatusBadge from '../ui/StatusBadge';
@@ -36,6 +39,7 @@ import StateMessage from '../ui/StateMessage';
 import Stack from '../layout/Stack';
 import { Heading, Text, Caption } from '../ui/Typography';
 import AnalysisProgress from '../discover/AnalysisProgress';
+import OrganizeSummaryBanner from '../organize/OrganizeSummaryBanner';
 import KnowledgeStatsCard from './KnowledgeStatsCard';
 import { countDestinationFolders } from '../../utils/smartFolderDestinations';
 import { usePhaseJump } from '../../utils/phaseNavigation';
@@ -604,7 +608,9 @@ export default function DashboardView() {
   const stats = useAppSelector(selectFileStats);
   const smartFolders = useAppSelector(selectSmartFolders);
   const organizedFiles = useAppSelector(selectOrganizedFiles);
-  const organizedCount = useAppSelector(selectOrganizedCount);
+  // Files that were moved. A duplicate that was removed instead of moved is in
+  // the organized history but is not counted as organized.
+  const organizedCount = useAppSelector(selectMovedCount);
   const filesWithAnalysis = useAppSelector(selectFilesWithAnalysis);
   const isAnalyzing = useAppSelector(selectIsAnalyzing);
   const progress = useAppSelector(selectAnalysisProgress);
@@ -612,6 +618,11 @@ export default function DashboardView() {
 
   const { showInfo } = useNotification();
   const { isExecuting: isUndoRedoExecuting } = useUndoRedo();
+
+  // Only a run that left files unmoved is reported here; a run that moved
+  // everything already shows in the counts.
+  const { lastOrganizeRun, finishedWhileOpen, dismissLastOrganizeRun } = useLastOrganizeRun();
+  const unmovedRun = leftFilesUnmoved(lastOrganizeRun) ? lastOrganizeRun : null;
 
   // Leaving the dashboard hands the user back to the phased flow at a chosen
   // step, under the phase tabs' rule (uiSlice.getPhaseNavigation): back is
@@ -687,11 +698,15 @@ export default function DashboardView() {
   }, [goDiscover, goOrganize, queuePreview]);
 
   // Adaptive status pill — collapse the whole pipeline state into one reassuring
-  // (or actionable) phrase. Failures dominate, then pending work, then ready
-  // work, otherwise the calm "all caught up" success state.
+  // (or actionable) phrase. Analysis failures dominate, then an organize run
+  // that left files unmoved, then pending work, then ready work, otherwise the
+  // calm "all caught up" success state.
   const status = useMemo(() => {
     if (stats.failed > 0) {
       return { label: `${stats.failed} need attention`, variant: 'error', icon: AlertTriangle };
+    }
+    if (unmovedRun) {
+      return { label: 'Last run left files unmoved', variant: 'warning', icon: AlertTriangle };
     }
     if (stats.pending > 0) {
       return { label: `${stats.pending} awaiting analysis`, variant: 'info', icon: ScanSearch };
@@ -700,7 +715,7 @@ export default function DashboardView() {
       return { label: `${stats.ready} ready to organize`, variant: 'info', icon: ArrowRight };
     }
     return { label: 'All caught up', variant: 'success', icon: CheckCircle2 };
-  }, [stats.failed, stats.pending, stats.ready]);
+  }, [stats.failed, stats.pending, stats.ready, unmovedRun]);
 
   const summary = useMemo(() => {
     // The Uncategorized catch-all main seeds on every profile is not a
@@ -709,6 +724,9 @@ export default function DashboardView() {
     const folderNoun = folderCount === 1 ? 'smart folder' : 'smart folders';
     const inFlight = stats.pending + stats.ready;
 
+    if (inFlight === 0 && unmovedRun) {
+      return `${folderCount} ${folderNoun} ready · the last organize run left files unmoved`;
+    }
     if (inFlight === 0 && organizedCount === 0) {
       return `${folderCount} ${folderNoun} ready · add files to get started`;
     }
@@ -724,7 +742,17 @@ export default function DashboardView() {
       parts.push(`${stats.ready} ready to organize`);
     }
     return `${folderCount} ${folderNoun} ready · ${parts.join(', ')}`;
-  }, [smartFolders, stats.pending, stats.ready, organizedCount]);
+  }, [smartFolders, stats.pending, stats.ready, organizedCount, unmovedRun]);
+
+  const unmovedRunLabel = useMemo(() => {
+    if (!unmovedRun) return '';
+    const finished = formatDateTime(unmovedRun.finishedAt);
+    return finished ? `Last organize run · ${finished}` : 'Last organize run';
+  }, [unmovedRun]);
+  const unmovedRunAction = useMemo(
+    () => ({ label: 'Review in Organize', onClick: goOrganize }),
+    [goOrganize]
+  );
 
   const reduceMotion = useReducedMotion();
   const blockVariants = reduceMotion ? BLOCK_VARIANTS_REDUCED : BLOCK_VARIANTS;
@@ -807,8 +835,17 @@ export default function DashboardView() {
             />
           </div>
 
-          {/* Sits directly under the status zone it refers to, so the problem and
-              the counts that flagged it read as one thought. */}
+          {/* These sit directly under the status zone they refer to, so the problem
+              and the counts that flagged it read as one thought. */}
+          {unmovedRun && (
+            <OrganizeSummaryBanner
+              summary={unmovedRun}
+              onDismiss={dismissLastOrganizeRun}
+              label={unmovedRunLabel}
+              action={unmovedRunAction}
+              announce={finishedWhileOpen}
+            />
+          )}
           {stats.failed > 0 && (
             <AlertBox variant="danger">
               {stats.failed} {stats.failed === 1 ? 'file' : 'files'} couldn&apos;t be analyzed —

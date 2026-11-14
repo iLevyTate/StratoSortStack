@@ -69,14 +69,8 @@ function describeDuplicates(duplicateRows) {
 }
 
 /**
- * How the last organize run ended, for the banner on the Organize screen.
- * `count` is the number of files moved; a duplicate that was removed instead
- * is not one of them.
- * @typedef {object} OrganizeSummary
- * @property {'moved' | 'partial' | 'none' | 'rolledBack'} outcome
- * @property {number} count
- * @property {string} headline
- * @property {string} detail
+ * A run's summary before its finish time is stamped on it.
+ * @typedef {Omit<import('../../utils/organizeRunSummary').OrganizeRunSummary, 'finishedAt'>} OrganizeSummary
  */
 
 // Main keeps an interrupted batch's journal open and OrganizeResumeService
@@ -131,12 +125,12 @@ function describeFinishedRun({
   const tail = duplicateNote ? ` ${duplicateNote}` : '';
 
   if (failedCount > 0 || batchError || interrupted || stoppedOnFailure) {
-    const firstFailure =
-      failedCount === 0 && !batchError && !stoppedOnFailure
-        ? INTERRUPTED_REASON
-        : describeFirstFailure(
-            batchError ? [...rows, { success: false, error: batchError }] : rows
-          );
+    // Nothing failed: the run was only interrupted, and main finishes it at
+    // the next launch.
+    const resumesAtLaunch = failedCount === 0 && !batchError && !stoppedOnFailure;
+    const firstFailure = resumesAtLaunch
+      ? INTERRUPTED_REASON
+      : describeFirstFailure(batchError ? [...rows, { success: false, error: batchError }] : rows);
     const reason = stoppedOnFailure
       ? `${firstFailure} ${describeStop(failedCount, rows.filter((r) => r && r.notAttempted).length)}`
       : firstFailure;
@@ -149,7 +143,8 @@ function describeFinishedRun({
           outcome: 'none',
           count: 0,
           headline,
-          detail: `${reason}${tail}`
+          detail: `${reason}${tail}`,
+          resumesAtLaunch
         },
         toast: `${headline}. ${reason}${tail}`,
         severity: 'error',
@@ -163,7 +158,8 @@ function describeFinishedRun({
         outcome: 'partial',
         count: movedCount,
         headline: `Moved ${countOf(movedCount)}; ${shortfall}`,
-        detail: `${reason}${tail} Files that were not moved are still listed.`
+        detail: `${reason}${tail} Files that were not moved are still listed.`,
+        resumesAtLaunch
       },
       toast:
         failedCount > 0
@@ -291,12 +287,6 @@ function collectPathsToUnmarkAfterUndo(
   }
   return Array.from(paths);
 }
-/**
- * Auto-clear the inline organize banner (FI-02) after a clean run. A run that
- * left something unmoved keeps its banner until it is dismissed or the next
- * run starts.
- */
-const LAST_ORGANIZE_SUMMARY_CLEAR_MS = 12000;
 /**
  * Hook for progress tracking
  * @returns {Record<string, any>} Progress state and setter
@@ -807,7 +797,8 @@ export function useOrganization({
   dispatch = null,
   addOrganizedFiles = () => {},
   removeOrganizedFiles = () => {},
-  setOrganizingState = () => {}
+  setOrganizingState = () => {},
+  setLastOrganizeRun = () => {}
 } = {}) {
   const {
     batchProgress,
@@ -821,16 +812,6 @@ export function useOrganization({
     chunkedResultsRef,
     resetChunkedResults
   } = useProgressTracking();
-  /** Inline outcome banner on Organize (FI-02); cleared when a new run starts */
-  const [lastOrganizeSummary, setLastOrganizeSummary] = useState(
-    /** @type {OrganizeSummary | null} */ (null)
-  );
-  useEffect(() => {
-    if (lastOrganizeSummary?.outcome !== 'moved') return undefined;
-    const id = setTimeout(() => setLastOrganizeSummary(null), LAST_ORGANIZE_SUMMARY_CLEAR_MS);
-    return () => clearTimeout(id);
-  }, [lastOrganizeSummary]);
-  const dismissOrganizeSummary = useCallback(() => setLastOrganizeSummary(null), []);
   const currentPhaseRef = useRef(currentPhase);
   useEffect(() => {
     currentPhaseRef.current = currentPhase;
@@ -930,7 +911,7 @@ export function useOrganization({
         setIsOrganizing(true);
         setOrganizingState(true);
         setOrganizeConflicts([]);
-        setLastOrganizeSummary(null);
+        setLastOrganizeRun(null);
         resetChunkedResults();
 
         const filesToProcess = resumeInfo
@@ -1188,11 +1169,12 @@ export function useOrganization({
                 });
                 const detail = describeRolledBackBatch(result, resArray);
                 addNotification(`${ROLLED_BACK_HEADLINE}. ${detail}`, 'error', 12000);
-                setLastOrganizeSummary({
+                setLastOrganizeRun({
                   outcome: 'rolledBack',
                   count: uiResults.length,
                   headline: ROLLED_BACK_HEADLINE,
-                  detail
+                  detail,
+                  finishedAt: Date.now()
                 });
                 reported.outcome = 'rolledBack';
               } else if (report) {
@@ -1211,7 +1193,7 @@ export function useOrganization({
                 if (report.summary.outcome !== 'moved' || !stoppedByUser) {
                   addNotification(report.toast, report.severity, report.duration);
                 }
-                setLastOrganizeSummary(report.summary);
+                setLastOrganizeRun({ ...report.summary, finishedAt: Date.now() });
                 reported.outcome = report.summary.outcome;
               }
 
@@ -1610,6 +1592,7 @@ export function useOrganization({
       addOrganizedFiles,
       removeOrganizedFiles,
       setOrganizingState,
+      setLastOrganizeRun,
       setBatchProgress,
       setIsOrganizing,
       setOrganizePreview,
@@ -1722,8 +1705,6 @@ export function useOrganization({
     setBatchProgress,
     organizeConflicts,
     inPlaceMoves,
-    lastOrganizeSummary,
-    dismissOrganizeSummary,
     cancelOrganize,
     isCancelling,
     pauseOrganize,

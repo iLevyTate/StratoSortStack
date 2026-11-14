@@ -61,6 +61,61 @@ describe('OrganizeSummaryBanner', () => {
     expect(banner).not.toHaveTextContent(/status panel/i);
   });
 
+  // The Dashboard shows a run that finished before the screen opened.
+  describe('away from the Organize screen', () => {
+    test('a label says which run it is', () => {
+      render(
+        <OrganizeSummaryBanner
+          summary={summaryOf('partial')}
+          onDismiss={jest.fn()}
+          label="Last organize run · Nov 12, 9:30 AM"
+        />
+      );
+
+      expect(screen.getByRole('status')).toHaveTextContent('Last organize run · Nov 12, 9:30 AM');
+    });
+
+    test('an action leads back to the files, beside the dismiss button', () => {
+      const onClick = jest.fn();
+      const onDismiss = jest.fn();
+      render(
+        <OrganizeSummaryBanner
+          summary={summaryOf('partial')}
+          onDismiss={onDismiss}
+          action={{ label: 'Review in Organize', onClick }}
+        />
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: 'Review in Organize' }));
+
+      expect(onClick).toHaveBeenCalledTimes(1);
+      expect(onDismiss).not.toHaveBeenCalled();
+    });
+
+    test('there is no label or action unless one is given', () => {
+      render(<OrganizeSummaryBanner summary={summaryOf('partial')} onDismiss={jest.fn()} />);
+
+      expect(screen.getAllByRole('button')).toHaveLength(1);
+      expect(screen.getByRole('status')).toHaveTextContent(/^headline for partial$/);
+    });
+
+    test.each(['none', 'rolledBack'])(
+      'a %s run that is not announced is a polite status, not an alert',
+      (outcome) => {
+        render(
+          <OrganizeSummaryBanner
+            summary={summaryOf(outcome)}
+            onDismiss={jest.fn()}
+            announce={false}
+          />
+        );
+
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+        expect(screen.getByRole('status')).toHaveAttribute('aria-live', 'polite');
+      }
+    );
+  });
+
   test('can be dismissed', () => {
     const onDismiss = jest.fn();
     render(<OrganizeSummaryBanner summary={summaryOf('partial')} onDismiss={onDismiss} />);

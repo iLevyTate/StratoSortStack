@@ -12,7 +12,7 @@ import { Button, Card, MinimizableGuideCard, StatusBadge } from '../components/u
 import { Heading, Text } from '../components/ui/Typography';
 import { UndoRedoToolbar } from '../components/UndoRedoSystem';
 import { ActionBar, Inline, Stack } from '../components/layout';
-import { selectOrganizedCount, selectRedactPaths } from '../store/selectors';
+import { selectMovedCount, selectOrganizedCount, selectRedactPaths } from '../store/selectors';
 import { formatDisplayFileName, formatDisplayPath } from '../utils/pathDisplay';
 import { useNotification } from '../contexts/NotificationContext';
 import { filesIpc } from '../services/ipc';
@@ -126,6 +126,9 @@ function CompletePhase() {
   const organizedFiles = useAppSelector((state) => state.files.organizedFiles);
   const organizedPathIndex = useAppSelector((state) => state.files.organizedPathIndex);
   const organizedCount = useAppSelector(selectOrganizedCount);
+  // The Dashboard's "Organized" figure: removed duplicates are not in it.
+  const movedCount = useAppSelector(selectMovedCount);
+  const duplicateCount = organizedCount - movedCount;
   const analysisResults = useAppSelector((state) => state.analysis?.results);
   const redactPaths = useAppSelector(selectRedactPaths);
   const shouldReduceMotion = useReducedMotion();
@@ -138,59 +141,48 @@ function CompletePhase() {
     [organizedPathIndex, organizedFiles]
   );
 
-  const {
-    filesToRender,
-    overflowCount,
-    destinationCount,
-    totalFiles,
-    movedCount,
-    duplicateCount,
-    primaryDestination
-  } = useMemo(() => {
-    const safeFiles = Array.isArray(organizedFiles) ? organizedFiles : [];
-    const destinations = new Set();
-    // Track folder counts separately from the destination set so the
-    // "Open organized folder" CTA can pick a real directory path, even if
-    // some entries fall back to the synthetic 'Organized' placeholder.
-    const folderCounts = new Map();
-    let duplicates = 0;
-    safeFiles.forEach((file) => {
-      if (!file || typeof file !== 'object') return;
-      // A destination is a folder. Counting file paths made every file its
-      // own destination.
-      const folder = pickOpenableFolder(file);
-      if (isRemovedDuplicate(file)) {
-        // Nothing was moved there, so it is not a destination of this run.
-        duplicates += 1;
-      } else {
-        destinations.add(folder ? toCanonicalPath(folder) : file.smartFolder || 'Organized');
-      }
-      if (folder) {
-        folderCounts.set(folder, (folderCounts.get(folder) || 0) + 1);
-      }
-    });
+  const { filesToRender, overflowCount, destinationCount, totalFiles, primaryDestination } =
+    useMemo(() => {
+      const safeFiles = Array.isArray(organizedFiles) ? organizedFiles : [];
+      const destinations = new Set();
+      // Track folder counts separately from the destination set so the
+      // "Open organized folder" CTA can pick a real directory path, even if
+      // some entries fall back to the synthetic 'Organized' placeholder.
+      const folderCounts = new Map();
+      safeFiles.forEach((file) => {
+        if (!file || typeof file !== 'object') return;
+        // A destination is a folder. Counting file paths made every file its
+        // own destination.
+        const folder = pickOpenableFolder(file);
+        // Nothing was moved to a removed duplicate's folder, so it is not a
+        // destination of this run.
+        if (!isRemovedDuplicate(file)) {
+          destinations.add(folder ? toCanonicalPath(folder) : file.smartFolder || 'Organized');
+        }
+        if (folder) {
+          folderCounts.set(folder, (folderCounts.get(folder) || 0) + 1);
+        }
+      });
 
-    let topFolder = null;
-    let topCount = 0;
-    folderCounts.forEach((count, folder) => {
-      if (count > topCount) {
-        topCount = count;
-        topFolder = folder;
-      }
-    });
+      let topFolder = null;
+      let topCount = 0;
+      folderCounts.forEach((count, folder) => {
+        if (count > topCount) {
+          topCount = count;
+          topFolder = folder;
+        }
+      });
 
-    const displayed = safeFiles.slice(0, 12);
-    return {
-      filesToRender: displayed,
-      overflowCount: Math.max(organizedCount - displayed.length, 0),
-      destinationCount: destinations.size,
-      // Same source as Dashboard "Organized" (selectOrganizedCount).
-      totalFiles: organizedCount,
-      movedCount: Math.max(organizedCount - duplicates, 0),
-      duplicateCount: duplicates,
-      primaryDestination: topFolder
-    };
-  }, [organizedFiles, organizedCount]);
+      const displayed = safeFiles.slice(0, 12);
+      return {
+        filesToRender: displayed,
+        overflowCount: Math.max(organizedCount - displayed.length, 0),
+        destinationCount: destinations.size,
+        // Moved files and removed duplicates together.
+        totalFiles: organizedCount,
+        primaryDestination: topFolder
+      };
+    }, [organizedFiles, organizedCount]);
 
   // Analyzed files still waiting to organize — exclude already-moved paths so
   // the Complete screen does not treat remapped results as "skipped"/unmoved.

@@ -26,6 +26,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   undone could move on to the Complete screen as if it had worked. An identical copy that was
   removed instead of moved is listed as a duplicate, with the copy that was kept, and is no longer
   counted as a moved file.
+- **A run that left files unmoved is still reported after you leave the Organize screen or restart
+  the app.** The banner was lost as soon as you left the Organize screen, and the Dashboard showed
+  nothing about the run. The banner now also appears on the Dashboard, with the time the run
+  finished and a button that opens Organize, and the Dashboard's status says the last run left files
+  unmoved. It stays until you dismiss it, start another run, undo the moves it counted or start
+  over. After a restart it comes back with the files still waiting in the queue; when saved work
+  older than a day is cleared, the report is cleared with it. A run that was interrupted, by a
+  timeout or by the app closing, is not kept across a restart, because the app finishes its moves at
+  the next launch. A screen reader announces a failed run as an alert once, on the screen that was
+  open when it finished; on later visits the banner is read as ordinary status.
+- **The Dashboard's Organized count no longer includes identical copies that were removed.** It
+  counts the files that were moved, as the Complete screen does. Recent activity still lists the
+  removed copies.
 - **One file that cannot be confirmed after its move no longer undoes the whole run.** After each
   move the app checks that the file is at its destination and gone from its source. A file that
   failed this check stopped the run and sent every file already moved back. It is now listed as not

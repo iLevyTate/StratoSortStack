@@ -62,6 +62,7 @@ import { PHASE_PREREQUISITE_REASONS } from '../store/slices/uiSlice';
 import { formatDisplayPath } from '../utils/pathDisplay';
 import { toCanonicalPath } from '../utils/canonicalPath';
 import { useFileActions } from '../hooks/useFileActions';
+import { useLastOrganizeRun } from '../hooks/useLastOrganizeRun';
 import { useAnalysisRun } from './discover/AnalysisRunProvider';
 
 const logger = createLogger('OrganizePhase');
@@ -113,6 +114,8 @@ function OrganizePhase() {
     phaseData,
     actions
   } = useOrganizeState();
+  const { lastOrganizeRun, finishedWhileOpen, setLastOrganizeRun, dismissLastOrganizeRun } =
+    useLastOrganizeRun();
   const safeSmartFolders = useMemo(
     () => (Array.isArray(smartFolders) ? smartFolders : []),
     [smartFolders]
@@ -232,8 +235,6 @@ function OrganizePhase() {
     handlePreviewOrganize,
     organizeConflicts,
     inPlaceMoves,
-    lastOrganizeSummary,
-    dismissOrganizeSummary,
     cancelOrganize,
     isCancelling,
     pauseOrganize,
@@ -263,7 +264,8 @@ function OrganizePhase() {
     setOrganizedFiles,
     addOrganizedFiles,
     removeOrganizedFiles,
-    setOrganizingState
+    setOrganizingState,
+    setLastOrganizeRun
   });
 
   const filesBeingOrganized = useMemo(() => {
@@ -641,8 +643,12 @@ function OrganizePhase() {
         <UndoRedoToolbar className="flex-shrink-0" />
       </Inline>
 
-      {lastOrganizeSummary && (
-        <OrganizeSummaryBanner summary={lastOrganizeSummary} onDismiss={dismissOrganizeSummary} />
+      {lastOrganizeRun && (
+        <OrganizeSummaryBanner
+          summary={lastOrganizeRun}
+          onDismiss={dismissLastOrganizeRun}
+          announce={finishedWhileOpen}
+        />
       )}
 
       {/* Main Content */}
@@ -827,7 +833,7 @@ function OrganizePhase() {
                   pausedSummary={pausedSummary}
                   onResume={resumeOrganize}
                   onDismissPaused={dismissPausedBatch}
-                  organizedCount={lastOrganizeSummary?.count}
+                  organizedCount={lastOrganizeRun?.count}
                 />
               </div>
             )}

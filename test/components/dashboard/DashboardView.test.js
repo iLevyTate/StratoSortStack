@@ -46,6 +46,9 @@ jest.mock('../../../src/renderer/store/selectors', () => ({
   selectOrganizedFiles: () => mockSelectorValues.organizedFiles,
   selectOrganizedCount: () =>
     Array.isArray(mockSelectorValues.organizedFiles) ? mockSelectorValues.organizedFiles.length : 0,
+  selectMovedCount: () =>
+    (mockSelectorValues.organizedFiles || []).filter((file) => !file.duplicateRemoval).length,
+  selectLastOrganizeRun: () => mockSelectorValues.lastOrganizeRun,
   selectFilesWithAnalysis: () => mockSelectorValues.filesWithAnalysis,
   selectIsAnalyzing: () => mockSelectorValues.isAnalyzing,
   selectAnalysisProgress: () => mockSelectorValues.analysisProgress,
@@ -149,6 +152,7 @@ jest.mock('lucide-react', () => {
 });
 
 import DashboardView from '../../../src/renderer/components/dashboard/DashboardView';
+import { formatDateTime } from '../../../src/renderer/utils/format';
 
 const DEFAULT_FOLDERS = [
   { id: 'fin', name: 'Financial', description: 'Invoices, receipts' },
@@ -169,7 +173,8 @@ function setupState({
   analysisProgress = null,
   redactPaths = false,
   isOrganizing = false,
-  isLoading = false
+  isLoading = false,
+  lastOrganizeRun = null
 } = {}) {
   // DashboardView only renders in dashboard view mode.
   mockState = { ui: { currentPhase, viewMode: 'dashboard', isOrganizing, isLoading } };
@@ -180,7 +185,8 @@ function setupState({
     filesWithAnalysis,
     isAnalyzing,
     analysisProgress,
-    redactPaths
+    redactPaths,
+    lastOrganizeRun
   };
 }
 
@@ -444,6 +450,183 @@ describe('DashboardView', () => {
       const alert = screen.getByRole('alert');
       expect(alert).toHaveTextContent('1 file');
       expect(alert).toHaveTextContent('retry it in Discover');
+    });
+  });
+
+  // files.lastOrganizeRun: how the last organize run ended. The Dashboard shows
+  // it only when the run left files where they were.
+  describe('last organize run', () => {
+    const finishedAt = new Date(2026, 10, 12, 9, 30).getTime();
+    const partialRun = {
+      outcome: 'partial',
+      count: 3,
+      headline: 'Moved 3 files; 2 could not be moved',
+      detail: 'EACCES: permission denied',
+      finishedAt,
+      resumesAtLaunch: false
+    };
+    const banner = () => screen.queryByTestId('organize-summary-banner');
+
+    test('a run that left files unmoved is shown with its time and a way back to Organize', () => {
+      setupState({ organizedFiles: [{ newName: 'a.pdf' }], lastOrganizeRun: partialRun });
+      render(<DashboardView />);
+
+      expect(banner()).toHaveAttribute('data-outcome', 'partial');
+      expect(screen.getByText('Moved 3 files; 2 could not be moved')).toBeInTheDocument();
+      expect(screen.getByText('EACCES: permission denied')).toBeInTheDocument();
+      expect(
+        screen.getByText(`Last organize run · ${formatDateTime(finishedAt)}`)
+      ).toBeInTheDocument();
+
+      fireEvent.click(buttonFor('Review in Organize'));
+      expect(phasePayloads().at(-1)).toBe('organize');
+    });
+
+    test('the status pill and the hero line stop saying everything is organized', () => {
+      setupState({ organizedFiles: [{ newName: 'a.pdf' }], lastOrganizeRun: partialRun });
+      render(<DashboardView />);
+
+      const badge = screen
+        .getByText('Last run left files unmoved')
+        .closest('[data-testid="status-badge"]');
+      expect(badge).toHaveAttribute('data-variant', 'warning');
+      expect(screen.queryByText('All caught up')).not.toBeInTheDocument();
+      expect(
+        screen.getByText('6 smart folders ready · the last organize run left files unmoved')
+      ).toBeInTheDocument();
+    });
+
+    test('a run that moved nothing does not read as an empty first run', () => {
+      setupState({
+        lastOrganizeRun: {
+          ...partialRun,
+          outcome: 'none',
+          count: 0,
+          headline: 'No files were moved'
+        }
+      });
+      render(<DashboardView />);
+
+      expect(
+        screen.getByText('6 smart folders ready · the last organize run left files unmoved')
+      ).toBeInTheDocument();
+      // It finished before this screen opened, so it is read politely, not as an alert.
+      expect(banner()).toHaveAttribute('role', 'status');
+      expect(banner()).toHaveAttribute('aria-live', 'polite');
+    });
+
+    test('a run that finishes while the Dashboard is open is announced as an alert', () => {
+      setupState({});
+      const { rerender } = render(<DashboardView />);
+      expect(banner()).not.toBeInTheDocument();
+
+      setupState({
+        lastOrganizeRun: {
+          ...partialRun,
+          outcome: 'none',
+          count: 0,
+          headline: 'No files were moved',
+          finishedAt: Date.now()
+        }
+      });
+      rerender(<DashboardView />);
+
+      expect(banner()).toHaveAttribute('role', 'alert');
+    });
+
+    test('files still in the queue stay in the hero line; the banner carries the run', () => {
+      setupState({
+        fileStats: { total: 2, ready: 2, failed: 0, pending: 0 },
+        lastOrganizeRun: partialRun
+      });
+      render(<DashboardView />);
+
+      expect(screen.getByText('6 smart folders ready · 2 ready to organize')).toBeInTheDocument();
+      expect(screen.getByText('Last run left files unmoved')).toBeInTheDocument();
+      expect(banner()).toBeInTheDocument();
+    });
+
+    test('analysis failures still lead the status pill, and both problems are listed', () => {
+      setupState({
+        fileStats: { total: 1, ready: 0, failed: 1, pending: 0 },
+        lastOrganizeRun: partialRun
+      });
+      render(<DashboardView />);
+
+      expect(screen.getByText('1 need attention')).toBeInTheDocument();
+      expect(screen.queryByText('Last run left files unmoved')).not.toBeInTheDocument();
+      expect(banner()).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent("1 file couldn't be analyzed");
+    });
+
+    test('a run with no known finish time is labelled without one', () => {
+      setupState({ lastOrganizeRun: { ...partialRun, finishedAt: null } });
+      render(<DashboardView />);
+
+      expect(screen.getByText('Last organize run')).toBeInTheDocument();
+    });
+
+    test('dismissing it clears the stored summary', () => {
+      setupState({ lastOrganizeRun: partialRun });
+      render(<DashboardView />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+      expect(mockDispatch).toHaveBeenCalledWith({
+        type: 'files/setLastOrganizeRun',
+        payload: null
+      });
+    });
+
+    test('a run that moved everything is not repeated here', () => {
+      setupState({
+        organizedFiles: [{ newName: 'a.pdf' }],
+        lastOrganizeRun: {
+          outcome: 'moved',
+          count: 1,
+          headline: 'Moved 1 file',
+          detail: '',
+          finishedAt: Date.now()
+        }
+      });
+      render(<DashboardView />);
+
+      expect(banner()).not.toBeInTheDocument();
+      expect(screen.getByText('All caught up')).toBeInTheDocument();
+      expect(screen.getByText('6 smart folders ready · all files organized')).toBeInTheDocument();
+    });
+
+    test('nothing is shown when no run is stored', () => {
+      setupState({ organizedFiles: [{ newName: 'a.pdf' }] });
+      render(<DashboardView />);
+
+      expect(banner()).not.toBeInTheDocument();
+    });
+  });
+
+  // A file whose destination already held an identical copy is removed, not
+  // moved. It is in the organized history but is not an organized file.
+  describe('duplicates that were removed instead of moved', () => {
+    const organizedStage = () =>
+      screen.getAllByText('Organized').find((el) => el.closest('[class*="group/stage"]'));
+
+    test('are not counted in the Organized stage', () => {
+      setupState({
+        organizedFiles: [{ newName: 'copy.pdf', duplicateRemoval: 'trashed' }]
+      });
+      render(<DashboardView />);
+
+      // A stage with a count is a button that opens Organize; an empty one is not.
+      expect(organizedStage().closest('button')).toBeNull();
+    });
+
+    test('a moved file beside them still opens Organize from the stage', () => {
+      setupState({
+        organizedFiles: [{ newName: 'a.pdf' }, { newName: 'copy.pdf', duplicateRemoval: 'trashed' }]
+      });
+      render(<DashboardView />);
+
+      fireEvent.click(organizedStage().closest('button'));
+      expect(phasePayloads().at(-1)).toBe('organize');
     });
   });
 

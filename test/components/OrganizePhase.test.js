@@ -45,6 +45,15 @@ jest.mock('../../src/renderer/store/slices/filesSlice', () => ({
   setFileStates: jest.fn()
 }));
 
+jest.mock('../../src/renderer/hooks/useLastOrganizeRun', () => ({
+  useLastOrganizeRun: jest.fn(() => ({
+    lastOrganizeRun: null,
+    finishedWhileOpen: false,
+    setLastOrganizeRun: jest.fn(),
+    dismissLastOrganizeRun: jest.fn()
+  }))
+}));
+
 jest.mock('../../src/renderer/store/slices/analysisSlice', () => ({
   updateAnalysisResult: jest.fn(),
   updateAnalysisResultsByPaths: jest.fn()
@@ -115,8 +124,8 @@ jest.mock('../../src/renderer/components/organize', () => ({
   TargetFolderList: () => <div>TARGET_FOLDER_LIST</div>,
   BulkOperations: () => <div>BULK_OPERATIONS</div>,
   OrganizeProgress: () => <div>ORGANIZE_PROGRESS</div>,
-  OrganizeSummaryBanner: ({ summary, onDismiss }) => (
-    <button type="button" onClick={onDismiss}>
+  OrganizeSummaryBanner: ({ summary, onDismiss, announce }) => (
+    <button type="button" onClick={onDismiss} data-announce={String(announce)}>
       SUMMARY_BANNER:{summary.outcome}
     </button>
   ),
@@ -335,35 +344,63 @@ describe('OrganizePhase premium preflight copy', () => {
   });
 
   test('shows how the last run ended, and lets the user dismiss it', () => {
+    const { useLastOrganizeRun } = require('../../src/renderer/hooks/useLastOrganizeRun');
     const { useOrganization } = require('../../src/renderer/phases/organize/useOrganization');
-    const dismissOrganizeSummary = jest.fn();
+    const setLastOrganizeRun = jest.fn();
+    const dismissLastOrganizeRun = jest.fn();
     const hookValue = {
-      isOrganizing: false,
-      batchProgress: null,
-      organizePreview: [],
-      handleOrganizeFiles: jest.fn(),
-      organizeConflicts: [],
-      lastOrganizeSummary: null,
-      dismissOrganizeSummary
+      lastOrganizeRun: null,
+      finishedWhileOpen: false,
+      setLastOrganizeRun,
+      dismissLastOrganizeRun
     };
-    useOrganization.mockReturnValue(hookValue);
+    useLastOrganizeRun.mockReturnValue(hookValue);
 
     const { rerender } = render(<OrganizePhase />);
     expect(screen.queryByText(/SUMMARY_BANNER/)).not.toBeInTheDocument();
+    // The run reports its outcome through the same store field the banner reads.
+    expect(useOrganization.mock.calls.at(-1)[0].setLastOrganizeRun).toBe(setLastOrganizeRun);
 
-    useOrganization.mockReturnValue({
+    useLastOrganizeRun.mockReturnValue({
       ...hookValue,
-      lastOrganizeSummary: {
+      lastOrganizeRun: {
         outcome: 'partial',
         count: 1,
         headline: 'Moved 1 file; 1 could not be moved',
-        detail: 'EEXIST: destination exists'
+        detail: 'EEXIST: destination exists',
+        finishedAt: 1
       }
     });
     rerender(<OrganizePhase />);
 
     fireEvent.click(screen.getByText('SUMMARY_BANNER:partial'));
-    expect(dismissOrganizeSummary).toHaveBeenCalledTimes(1);
+    expect(dismissLastOrganizeRun).toHaveBeenCalledTimes(1);
+  });
+
+  test.each([
+    ['a run that finished on this screen is announced', true],
+    ['a run that was over when the screen opened is not announced again', false]
+  ])('%s', (_label, finishedWhileOpen) => {
+    const { useLastOrganizeRun } = require('../../src/renderer/hooks/useLastOrganizeRun');
+    useLastOrganizeRun.mockReturnValue({
+      lastOrganizeRun: {
+        outcome: 'none',
+        count: 0,
+        headline: 'No files were organized',
+        detail: 'EACCES: permission denied',
+        finishedAt: 1
+      },
+      finishedWhileOpen,
+      setLastOrganizeRun: jest.fn(),
+      dismissLastOrganizeRun: jest.fn()
+    });
+
+    render(<OrganizePhase />);
+
+    expect(screen.getByText('SUMMARY_BANNER:none')).toHaveAttribute(
+      'data-announce',
+      String(finishedWhileOpen)
+    );
   });
 
   test('says which files stay in their folder, but not while a run is under way', () => {
