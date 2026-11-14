@@ -667,11 +667,87 @@ export function findInPlaceMoves({ files, smartFolders = [], defaultLocation, ..
 }
 
 /**
- * Build file operations for organization
- * @param {Object} params - Parameters
- * @returns {Object} Object with operations array and categoryChanges array
+ * The Nth numbered form of a destination, in the shape main gives a name
+ * that is taken (formatNumberedCollisionCandidate in batchOrganizeHandler.js):
+ * `_N` before the last extension, so report.pdf becomes report_1.pdf. A name
+ * numbered here is the one the move uses, and the one Preview shows.
+ * @param {string} destination
+ * @param {number} counter - 1-based
+ * @returns {string}
  */
-/** @param {any} params */
+function numberedDestination(destination, counter) {
+  const nameStart = Math.max(destination.lastIndexOf('/'), destination.lastIndexOf('\\')) + 1;
+  const dot = destination.lastIndexOf('.');
+  // Like path.extname: a leading dot (.env) starts the name, not an extension.
+  const ext = dot > nameStart ? destination.slice(dot) : '';
+  return `${destination.slice(0, destination.length - ext.length)}_${counter}${ext}`;
+}
+
+/**
+ * Every file's planned move. Files of this batch that would get the same name
+ * in the same folder (the naming convention gives two exports of one day the
+ * same name) are numbered apart instead of stopping the whole move: the first
+ * keeps the name, the others get the next free number. A file already at its
+ * destination keeps its name, so the run does not rename a file that was
+ * filed. A number never lands on a name another file of the batch is headed
+ * for. Names are compared the way the file system does (see
+ * normalizeForComparison).
+ * @param {Omit<ProcessParams, 'file'> & { filesToProcess: any[] }} params
+ */
+function planBatchDestinations({ filesToProcess, ...planParams }) {
+  const planned = filesToProcess.map((/** @type {any} */ file) => ({
+    file,
+    ...processFileForOrganization({ ...planParams, file }),
+    renumbered: false
+  }));
+  const taken = new Set(planned.map((entry) => normalizeForComparison(entry.normalized)));
+  const claimed = new Set();
+  /** @param {(typeof planned)[number]} entry */
+  const isInPlace = (entry) =>
+    normalizeForComparison(entry.file?.path) === normalizeForComparison(entry.normalized);
+  for (const entry of [...planned.filter(isInPlace), ...planned.filter((e) => !isInPlace(e))]) {
+    const key = normalizeForComparison(entry.normalized);
+    if (!claimed.has(key)) {
+      claimed.add(key);
+      continue;
+    }
+    // `taken` holds every name the batch is headed for, so a numbered name is
+    // never one another file keeps or claims later.
+    let counter = 1;
+    while (taken.has(normalizeForComparison(numberedDestination(entry.normalized, counter)))) {
+      counter += 1;
+    }
+    const numbered = numberedDestination(entry.normalized, counter);
+    taken.add(normalizeForComparison(numbered));
+    entry.normalized = numbered;
+    entry.newName = numbered.split(/[\\/]/).pop() || entry.newName;
+    entry.renumbered = true;
+  }
+  return planned;
+}
+
+/**
+ * The label the analysis gave a file, sent with its move so main can record
+ * a correction under it when the history has no different label to offer.
+ * A folder change on the card is written to `analysis.category` too, so after
+ * one this is the user's choice; main prefers the history's label whenever
+ * the two differ. Over 255 characters it is left off: the IPC schema would
+ * refuse the whole batch.
+ * @param {any} file
+ * @returns {string | undefined}
+ */
+function analysisLabelOf(file) {
+  const label = file?.analysis?.category;
+  return typeof label === 'string' && label.trim() && label.length <= 255 ? label : undefined;
+}
+
+/**
+ * Build file operations for organization: the operations, the category
+ * changes to report, and the source paths of the files numbered apart from
+ * another file of the batch.
+ * @param {any} params
+ * @returns {{ operations: any[], categoryChanges: any[], renumberedSources: Set<string> }}
+ */
 function buildOperations({
   filesToProcess,
   unprocessedFiles: _unprocessedFiles,
@@ -685,18 +761,20 @@ function buildOperations({
 }) {
   /** @type {any[]} */
   const categoryChanges = [];
-  const operations = filesToProcess.map((/** @type {any} */ file) => {
-    const { normalized, categoryChanged, originalCategory, finalCategory, suggestion } =
-      processFileForOrganization({
-        file,
-        editingFiles,
-        getFileWithEdits,
-        findSmartFolderForCategory,
-        findSmartFolderForFile,
-        defaultLocation,
-        smartFolders,
-        suggestionsByPath
-      });
+  const planned = planBatchDestinations({
+    filesToProcess,
+    editingFiles,
+    getFileWithEdits,
+    findSmartFolderForCategory,
+    findSmartFolderForFile,
+    defaultLocation,
+    smartFolders,
+    suggestionsByPath
+  });
+  const operations = planned.map((entry) => {
+    const { file, normalized, categoryChanged, originalCategory, finalCategory, suggestion } =
+      entry;
+    const analysisLabel = analysisLabelOf(file);
 
     if (categoryChanged) {
       categoryChanges.push({
@@ -710,11 +788,15 @@ function buildOperations({
       type: 'move',
       source: file.path,
       destination: normalized,
-      ...(suggestion ? { suggestion } : {})
+      ...(suggestion ? { suggestion } : {}),
+      ...(analysisLabel ? { analysisLabel } : {})
     };
   });
+  const renumberedSources = new Set(
+    planned.filter((entry) => entry.renumbered).map((entry) => entry.file.path)
+  );
 
-  return { operations, categoryChanges };
+  return { operations, categoryChanges, renumberedSources };
 }
 
 /**
@@ -733,19 +815,23 @@ function buildPreview({
   smartFolders = [],
   suggestionsByPath = null
 }) {
-  const preview = filesToProcess.map((/** @type {any} */ file) => {
-    const { newName, normalized } = processFileForOrganization({
-      file,
-      editingFiles,
-      getFileWithEdits,
-      findSmartFolderForCategory,
-      findSmartFolderForFile,
-      defaultLocation,
-      smartFolders,
-      suggestionsByPath
-    });
-    return { fileName: newName, destination: normalized, sourcePath: file.path };
-  });
+  // The same plan the move sends, numbered names included, so a conflict
+  // here is one that numbering could not settle.
+  const preview = planBatchDestinations({
+    filesToProcess,
+    editingFiles,
+    getFileWithEdits,
+    findSmartFolderForCategory,
+    findSmartFolderForFile,
+    defaultLocation,
+    smartFolders,
+    suggestionsByPath
+  }).map(({ file, newName, normalized, renumbered }) => ({
+    fileName: newName,
+    destination: normalized,
+    sourcePath: file.path,
+    ...(renumbered ? { renumbered: true } : {})
+  }));
 
   const destinationMap = new Map();
   preview.forEach((/** @type {any} */ item) => {
@@ -771,7 +857,8 @@ function buildPreview({
 
   // NOTE: External file collision checking requires an async check (e.g. IPC to main process)
   // which is generally handled during the actual batch processor execution (makeUniqueFileName).
-  // This sync function only detects *internal* batch conflicts where two files want the *same* new name.
+  // This sync function only detects *internal* batch conflicts: two files of the batch still
+  // headed for the *same* name after planBatchDestinations numbered them apart.
 
   return { preview, conflicts };
 }
@@ -971,7 +1058,7 @@ export function useOrganization({
         // - file.analysis.category/suggestedName
         // - any user edits in editingFiles
         const { operations, categoryChanges } = resumeInfo
-          ? { operations: resumeInfo.operations, categoryChanges: [] }
+          ? { operations: resumeInfo.operations, categoryChanges: /** @type {any[]} */ ([]) }
           : buildOperations({
               filesToProcess,
               unprocessedFiles,
@@ -1103,10 +1190,21 @@ export function useOrganization({
               }
 
               // Every file of the run and what became of it, for "See every
-              // file", the Complete screen and the CSV export.
-              const batchError = result?.partialFailure
-                ? String(result.error || 'The batch stopped early')
-                : undefined;
+              // file", the Complete screen and the CSV export. A batch main
+              // refused outright (another run holds the lock, too many files,
+              // an error before any file) has an error and no rows: its reason
+              // is the run's summary and each file's, since none was tried.
+              const refusedBatch =
+                result?.success === false &&
+                !result?.rolledBack &&
+                !result?.paused &&
+                !result?.cancelled &&
+                typeof result?.error === 'string' &&
+                result.error.trim() !== '';
+              const batchError =
+                result?.partialFailure || refusedBatch
+                  ? String(result.error || 'The batch stopped early')
+                  : undefined;
               const runRows = buildRunResultRows({ operations, rows: resArray, batchError });
               setLastOrganizeRunFiles(runRows);
               runFilesStored = true;
@@ -1668,8 +1766,9 @@ export function useOrganization({
    * before any disk write.
    *
    * Returns the main-process plan plus `sameDestination`, the files this
-   * batch sends to one name (the move refuses to start while any exist), or
-   * null when no file has a destination to preview. Throws when the request
+   * batch still sends to one name after numbering (the move refuses to start
+   * while any exist; numbering leaves none), or null when no file has a
+   * destination to preview. Throws when the request
    * fails or is refused, so the caller can say why instead of reporting an
    * empty preview. Caller decides how to surface (notification, modal,
    * etc.) — this hook intentionally doesn't push UI side-effects so
@@ -1694,7 +1793,7 @@ export function useOrganization({
         smartFolders,
         suggestionsByPath
       };
-      const { operations } = buildOperations(planInputs);
+      const { operations, renumberedSources } = buildOperations(planInputs);
 
       const validOps = operations.filter((/** @type {any} */ op) => op?.source && op?.destination);
       if (validOps.length === 0) return null;
@@ -1704,7 +1803,15 @@ export function useOrganization({
         if (!plan || plan.success === false) {
           throw new Error(plan?.error || 'The preview request was refused');
         }
-        return { ...plan, sameDestination: buildPreview(planInputs).conflicts };
+        // Main sees the numbered name as free, so it only marks names taken
+        // on disk; a file numbered apart from another file of the batch is
+        // marked here, like one whose name was taken.
+        const wouldMove = Array.isArray(plan.wouldMove)
+          ? plan.wouldMove.map((/** @type {any} */ item) =>
+              renumberedSources.has(item?.source) ? { ...item, collision: true } : item
+            )
+          : plan.wouldMove;
+        return { ...plan, wouldMove, sameDestination: buildPreview(planInputs).conflicts };
       } catch (error) {
         logger.warn('[ORGANIZE] Preview failed', { error: error?.message });
         throw error;

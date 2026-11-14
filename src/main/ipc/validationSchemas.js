@@ -799,7 +799,11 @@ if (!z) {
     source: fileOpPathSchema,
     destination: fileOpPathSchema,
     type: z.string().optional(),
-    suggestion: organizeSuggestionSchema
+    suggestion: organizeSuggestionSchema,
+    // The label the analysis gave the file; a correction is recorded under
+    // it. Listed for the same reason as `suggestion`. Organize leaves off a
+    // label longer than this rather than have the whole batch refused.
+    analysisLabel: z.string().max(255).optional()
   });
 
   const fileOperationSchema = z

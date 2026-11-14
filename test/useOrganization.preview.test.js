@@ -1,9 +1,10 @@
 /**
  * The Organize "Preview" asks the main process for a dry-run plan of the
  * same operations a Move would send. `handlePreviewOrganize` returns that
- * plan, adds the files this batch sends to one name (the Move refuses to
- * start while any exist), and throws when the request fails or is refused,
- * so the screen can say why instead of showing an empty preview.
+ * plan, numbers apart the files this batch would give one name (marked
+ * like a name taken on disk), lists any it still sends to one name (the Move
+ * refuses to start while any exist), and throws when the request fails or is
+ * refused, so the screen can say why instead of showing an empty preview.
  */
 
 import { renderHook } from '@testing-library/react';
@@ -103,24 +104,98 @@ describe('useOrganization: handlePreviewOrganize', () => {
     expect(plan.sameDestination).toEqual([]);
   });
 
-  test('lists the files this batch sends to one name', async () => {
+  test('numbers apart files this batch would give one name, and marks them', async () => {
     const first = file('/Users/alex/Downloads/scan 1.pdf', 'Finance', 'Invoice.pdf');
     const second = file('/Users/alex/Downloads/scan 2.pdf', 'Finance', 'Invoice.pdf');
+    const third = file('/Users/alex/Downloads/scan 3.pdf', 'Finance', 'Invoice.pdf');
     const other = file('/Users/alex/Downloads/budget.xlsx', 'Finance');
-    previewBatchOrganize.mockResolvedValue(dryRunPlan([]));
+    // Main echoes what it was sent: the numbered names are free on disk.
+    previewBatchOrganize.mockImplementation(async (ops) =>
+      dryRunPlan(ops.map((op) => ({ source: op.source, destination: op.destination })))
+    );
 
-    const { result } = renderHook(() => useOrganization(hookOptions([first, second, other])));
+    const { result } = renderHook(() =>
+      useOrganization(hookOptions([first, second, third, other]))
+    );
     const plan = await result.current.handlePreviewOrganize();
 
-    expect(plan.sameDestination).toEqual([
-      {
-        destination: '/Users/alex/Sorted/Finance/Invoice.pdf',
-        files: [
-          { fileName: 'Invoice.pdf', sourcePath: first.path },
-          { fileName: 'Invoice.pdf', sourcePath: second.path }
-        ]
-      }
+    // The shape main gives a taken name (formatNumberedCollisionCandidate).
+    expect(previewBatchOrganize.mock.calls[0][0].map((op) => op.destination)).toEqual([
+      '/Users/alex/Sorted/Finance/Invoice.pdf',
+      '/Users/alex/Sorted/Finance/Invoice_1.pdf',
+      '/Users/alex/Sorted/Finance/Invoice_2.pdf',
+      '/Users/alex/Sorted/Finance/budget.xlsx'
     ]);
+    expect(plan.wouldMove.map((item) => Boolean(item.collision))).toEqual([
+      false,
+      true,
+      true,
+      false
+    ]);
+    // Nothing left that would stop the move.
+    expect(plan.sameDestination).toEqual([]);
+  });
+
+  test('a number never lands on the name another file of the batch is headed for', async () => {
+    const first = file('/Users/alex/Downloads/a.pdf', 'Finance', 'Invoice.pdf');
+    const second = file('/Users/alex/Downloads/b.pdf', 'Finance', 'Invoice.pdf');
+    const named = file('/Users/alex/Downloads/c.pdf', 'Finance', 'Invoice_1.pdf');
+    previewBatchOrganize.mockResolvedValue(dryRunPlan([]));
+
+    const { result } = renderHook(() => useOrganization(hookOptions([first, second, named])));
+    const plan = await result.current.handlePreviewOrganize();
+
+    expect(previewBatchOrganize.mock.calls[0][0].map((op) => op.destination)).toEqual([
+      '/Users/alex/Sorted/Finance/Invoice.pdf',
+      '/Users/alex/Sorted/Finance/Invoice_2.pdf',
+      '/Users/alex/Sorted/Finance/Invoice_1.pdf'
+    ]);
+    expect(plan.sameDestination).toEqual([]);
+  });
+
+  test('a file already filed under the name keeps it; the newcomer is numbered', async () => {
+    const incoming = file('/Users/alex/Downloads/scan.pdf', 'Finance', 'Invoice.pdf');
+    const filed = file('/Users/alex/Sorted/Finance/Invoice.pdf', 'Finance', 'Invoice.pdf');
+    previewBatchOrganize.mockResolvedValue(dryRunPlan([]));
+
+    const { result } = renderHook(() => useOrganization(hookOptions([incoming, filed])));
+    await result.current.handlePreviewOrganize();
+
+    expect(previewBatchOrganize.mock.calls[0][0]).toEqual([
+      expect.objectContaining({
+        source: incoming.path,
+        destination: '/Users/alex/Sorted/Finance/Invoice_1.pdf'
+      }),
+      expect.objectContaining({
+        source: filed.path,
+        destination: '/Users/alex/Sorted/Finance/Invoice.pdf'
+      })
+    ]);
+  });
+
+  test('names that differ only in case or accent encoding are numbered apart on Windows', async () => {
+    const win = (...parts) => ['C:', 'Users', 'alex', ...parts].join('\\');
+    const folder = { id: 'fin', name: 'Finance', path: win('Sorted', 'Finance') };
+    // Decomposed accents (as macOS returns them) and composed upper case.
+    const first = file(win('Downloads', '1.pdf'), 'Finance', 'Résumé.pdf');
+    const second = file(win('Downloads', '2.pdf'), 'Finance', 'RÉSUMÉ.PDF');
+    previewBatchOrganize.mockResolvedValue(dryRunPlan([]));
+
+    const { result } = renderHook(() =>
+      useOrganization({
+        ...hookOptions([first, second]),
+        defaultLocation: win('Documents'),
+        findSmartFolderForCategory: () => folder,
+        smartFolders: [folder]
+      })
+    );
+    const plan = await result.current.handlePreviewOrganize();
+
+    expect(previewBatchOrganize.mock.calls[0][0].map((op) => op.destination)).toEqual([
+      win('Sorted', 'Finance', 'Résumé.pdf'),
+      win('Sorted', 'Finance', 'RÉSUMÉ_1.PDF')
+    ]);
+    expect(plan.sameDestination).toEqual([]);
   });
 
   test('previews only the files it is given', async () => {

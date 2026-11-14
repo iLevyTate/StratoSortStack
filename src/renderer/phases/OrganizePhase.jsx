@@ -866,7 +866,14 @@ function OrganizePhase() {
                         >
                           <span className="text-stratosort-warning">•</span>
                           <Text as="span" variant="tiny" className="truncate">
-                            <strong>{conflict.files.map((f) => f.fileName).join(', ')}</strong>
+                            {/* The files' own names, so the user can find the
+                                cards to rename: the new name is the same for
+                                all of them and follows the arrow. */}
+                            <strong>
+                              {conflict.files
+                                .map((f) => f.sourcePath?.split(/[\\/]/).pop() || f.fileName)
+                                .join(', ')}
+                            </strong>
                             {' → '}
                             <span className="text-system-gray-500">
                               {conflict.destination.split(/[\\/]/).pop()}

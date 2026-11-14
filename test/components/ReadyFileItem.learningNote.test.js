@@ -117,6 +117,16 @@ describe('the score on the card', () => {
     expect(screen.queryByText(/% confidence/)).not.toBeInTheDocument();
   });
 
+  test('a folder the user picked shows no score', () => {
+    // The label's 60% rates the label, not the folder the user chose.
+    renderItem({
+      category: 'GSC',
+      routing: { folder: FOLDERS[0], source: 'user', engine: ENGINE }
+    });
+    expect(screen.getByTestId('organize-routing-note')).toHaveTextContent('Your choice');
+    expect(screen.queryByText(/% confidence/)).not.toBeInTheDocument();
+  });
+
   test('a content match still shows its score', () => {
     renderItem({ routing: { folder: FOLDERS[1], source: 'engine', engine: ENGINE } });
     expect(screen.getByText('62% confidence')).toBeInTheDocument();

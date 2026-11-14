@@ -84,8 +84,9 @@ test('a user choice says so and names the suggestion it overrode', () => {
   expect(screen.getByTestId('organize-routing-note')).toHaveTextContent(
     'Your choice (suggested: Finance)'
   );
-  // Not an engine placement: the confidence falls back to the label's.
-  expect(screen.getByText('95% confidence')).toBeInTheDocument();
+  // The label's 95% and the engine's 64% both rate other folders, not the
+  // one the user picked: show no percentage.
+  expect(screen.queryByText(/% confidence/)).not.toBeInTheDocument();
 });
 
 test('a name match says so and keeps the plain folder list', () => {

@@ -142,10 +142,12 @@ function ReadyFileItem({
     return `StratoSort remembers this after the move. Once a few ${similar} go to ${chosen}, it suggests ${chosen} for them too.`;
   }, [routing, engine, file?.name]);
   // A percentage only where it measures how well the folder fits: not the
-  // label's self-rating behind a name match, not the catch-all fallback.
+  // label's self-rating behind a name match or the user's own pick (it says
+  // nothing about the folder they chose), not the catch-all fallback.
   const showConfidence =
     computedConfidence !== null &&
     routing?.source !== 'name' &&
+    routing?.source !== 'user' &&
     !(routedByEngine && engine?.source === 'default');
   const fileKey = toCanonicalPath(file?.path) || file?.path || '';
   const handleToggle = useCallback(() => onToggleSelected(fileKey), [onToggleSelected, fileKey]);

@@ -62,6 +62,8 @@ const {
  * @property {{ similarFile: string, similarity: number }} [_semanticDuplicate]
  * @property {{ folder: string, path?: string, source?: string }} [suggestion] - What the
  *   app suggested before the user confirmed; a different landing folder is a correction
+ * @property {string} [analysisLabel] - The label the analysis gave the file, which a
+ *   correction is recorded under when the history holds no different one
  */
 
 /**
@@ -2322,14 +2324,21 @@ async function recordUndoAndUpdateDatabase(
           const divergencesByPath = new Map(
             (coordinatorResult?.divergences || []).map((d) => [d.filePath, d])
           );
-          // What the app suggested for each file (Organize sends it per op).
-          // Keyed by where the file landed, like the divergences above.
+          // What the app suggested for each file, and the label the analysis
+          // gave it (Organize sends both per op). Keyed by where the file
+          // landed, like the divergences above.
           /** @type {Map<string, { folder: string }>} */
           const suggestionsByNewPath = new Map();
+          /** @type {Map<string, string>} */
+          const labelsByNewPath = new Map();
           for (const c of Array.isArray(completedOperations) ? completedOperations : []) {
-            const suggested = batch?.operations?.[c?.index]?.suggestion;
-            if (typeof c?.destination === 'string' && typeof suggested?.folder === 'string') {
-              suggestionsByNewPath.set(c.destination, suggested);
+            if (typeof c?.destination !== 'string') continue;
+            const op = batch?.operations?.[c?.index];
+            if (typeof op?.suggestion?.folder === 'string') {
+              suggestionsByNewPath.set(c.destination, op.suggestion);
+            }
+            if (typeof op?.analysisLabel === 'string' && op.analysisLabel.trim()) {
+              labelsByNewPath.set(c.destination, op.analysisLabel);
             }
           }
           let learned = 0;
@@ -2386,11 +2395,16 @@ async function recordUndoAndUpdateDatabase(
                   !isDefaultCategoryName(wrongFolder) &&
                   wrongFolder.toLowerCase() !== String(change.newSmartFolder).toLowerCase()
                 ) {
+                  // The correction is counted under the analysis label
+                  // (findLearnedCorrection). With no divergence the history
+                  // label already named this folder, while the engine ranked
+                  // another first, so the label the op carries is used.
                   const didCorrect = await learningService.recordCorrection({
                     filePath: change.newPath,
                     wrongFolder,
                     correctFolder: change.newSmartFolder,
-                    oldCategory: divergence?.oldCategory || null
+                    oldCategory:
+                      divergence?.oldCategory || labelsByNewPath.get(change.newPath) || null
                   });
                   if (didCorrect) corrected++;
                 }

@@ -415,7 +415,9 @@ describe('useOrganization', () => {
               type: 'move',
               source: '/in/receipt.pdf',
               destination: '/Library/Finance/receipt.pdf',
-              suggestion: { folder: 'Finance', path: '/Library/Finance', source: 'engine' }
+              suggestion: { folder: 'Finance', path: '/Library/Finance', source: 'engine' },
+              // The label, so a correction away from Finance is learned under it.
+              analysisLabel: 'Taxes'
             }
           ]);
         });

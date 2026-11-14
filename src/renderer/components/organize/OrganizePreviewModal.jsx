@@ -24,9 +24,10 @@ function splitPath(p) {
  * Shows the dry-run plan from previewBatchOrganize before anything moves:
  * every file grouped under the folder it will land in, its new name when the
  * move renames it, folders that will be created, name clashes the move will
- * resolve with a numeric suffix, files that are already in the folder
- * chosen for them and so do not change folder, and files this batch sends to
- * one name, which the move refuses to start with.
+ * resolve with a numeric suffix (a name taken on disk, or one another file
+ * of this batch gets first), files that are already in the folder chosen for
+ * them and so do not change folder, and files this batch still sends to one
+ * name after numbering, which the move refuses to start with.
  */
 function OrganizePreviewModal({ isOpen, plan, onClose, onConfirm, redactPaths, isOrganizing }) {
   const { groups, newFolders, sameNameCount } = useMemo(() => {
