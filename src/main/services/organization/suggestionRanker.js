@@ -22,6 +22,9 @@ const sourceWeights = {
   llm_creative: 0.7 // Creative suggestions are experimental
 };
 
+/** calculateConfidence multiplies a user pattern's confidence by this. */
+const USER_PATTERN_CONFIDENCE_BOOST = 1.3;
+
 /**
  * Rank and deduplicate suggestions
  * @param {Array<any>} suggestions - All suggestions to rank
@@ -110,7 +113,7 @@ function calculateConfidence(suggestion) {
 
   // Boost if matches user pattern
   if (suggestion.source === 'user_pattern') {
-    confidence = Math.min(1.0, confidence * 1.3);
+    confidence = Math.min(1.0, confidence * USER_PATTERN_CONFIDENCE_BOOST);
   }
 
   // `score` is also the ranking key, and the cluster boost multiplies it past
@@ -118,6 +121,25 @@ function calculateConfidence(suggestion) {
   confidence = Math.min(1.0, confidence);
 
   return Math.round(confidence * 100) / 100;
+}
+
+/**
+ * A copy of `suggestion` whose score and confidence are lowered so that
+ * calculateConfidence returns at most `max` (it boosts a user pattern, so a
+ * raw cap alone would not hold). Other fields are kept.
+ * @param {Record<string, any>} suggestion
+ * @param {number} max
+ * @returns {Record<string, any>}
+ */
+function capSuggestionConfidence(suggestion, max) {
+  const boost = suggestion?.source === 'user_pattern' ? USER_PATTERN_CONFIDENCE_BOOST : 1;
+  const rawMax = max / boost;
+  /** @param {any} value */
+  const cap = (value) => {
+    const n = Number(value);
+    return Math.min(Number.isFinite(n) ? n : 0, rawMax);
+  };
+  return { ...suggestion, score: cap(suggestion?.score), confidence: cap(suggestion?.confidence) };
 }
 
 /**
@@ -129,6 +151,14 @@ function calculateConfidence(suggestion) {
 function generateExplanation(suggestion, file) {
   if (!suggestion) {
     return 'No clear match found. Consider creating a new folder.';
+  }
+
+  // The user's own corrections overrode the folder that ranked first (item 16).
+  // Checked before the source: the folder keeps the source of its evidence
+  // (usually user_pattern), but the reason it is first is the corrections.
+  if (suggestion.method === 'learned_correction' && suggestion.learnedOverride) {
+    const { from, files } = suggestion.learnedOverride;
+    return `You moved ${files} similar files from "${from}" to "${suggestion.folder}"`;
   }
 
   // A strategy template names its folder after one part of the file. Say
@@ -193,6 +223,7 @@ module.exports = {
   rankSuggestions,
   applySourceWeight,
   calculateConfidence,
+  capSuggestionConfidence,
   generateExplanation,
   combineSuggestions
 };

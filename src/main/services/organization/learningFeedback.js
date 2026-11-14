@@ -369,12 +369,37 @@ class LearningFeedbackService {
 
       // accepted=false → a feedback_reject memory whose targetFolder is the wrong
       // folder, which applyFeedbackMemoryAdjustments penalizes for similar files.
+      // `correction` lets the suggestion service act on repeated corrections
+      // without embeddings (item 16, findLearnedCorrection).
+      const fileMetadata = buildFileMetadata(filePath, null);
+      // The smart folder the file landed in, so a correction into one of two
+      // folders with the same name targets that one.
+      const landedIn = /** @type {any} */ (this.findContainingSmartFolder(filePath));
+      const correctSmartFolder =
+        landedIn &&
+        String(landedIn.name || '')
+          .trim()
+          .toLowerCase() ===
+          String(correctFolder || '')
+            .trim()
+            .toLowerCase()
+          ? landedIn
+          : null;
       await this.suggestionService.recordFeedbackNote(
-        buildFileMetadata(filePath, null),
+        fileMetadata,
         { folder: wrongFolder },
         false,
         note,
-        { filePath }
+        {
+          filePath,
+          correction: {
+            extension: fileMetadata.extension,
+            category: String(oldCategory || '').toLowerCase() || null,
+            correctFolder,
+            correctFolderId: correctSmartFolder?.id,
+            correctFolderPath: correctSmartFolder?.path
+          }
+        }
       );
 
       this.stats.corrections = (this.stats.corrections || 0) + 1;
