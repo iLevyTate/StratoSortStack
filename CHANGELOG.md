@@ -12,6 +12,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [5.3.0] - 2026-11-13
+
 ### Fixed
 
 - **Two identical files in one folder are no longer both sent to the trash when one run renames or
@@ -149,6 +151,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Uncategorized. When you change a file's folder, its card says what StratoSort learns from that.
   Rules typed in Memory & Rules without a dot, such as "CSV files go to Bing", now work, and
   correction notes no longer replace a rule you wrote.
+- **Corrections also count when StratoSort sorts by the AI label alone.** In LLM-only and Hybrid
+  routing, a folder named by the label could not be overridden however often you corrected it. Once
+  you move two different files of the same type and label from the folder it picked into the same
+  other folder, the next such file is suggested for your folder, with the reason "You moved 2
+  similar files from X to Y". It waits for your review until the pattern is well learned. One
+  correction changes nothing, and moving files back or undoing the moves takes it back.
 - **Setup and Discover say which folders are which.** Setup says Smart Folders are where files go
   and Discover says it is where you pick the files to sort. The app warns, without blocking, when
   the folder you sort overlaps a Smart Folder or one Smart Folder sits inside another; when a Smart
@@ -1588,7 +1596,8 @@ notes.
 Note: versions before 5.0.0 were released from predecessor repositories whose tags are not part of
 this repository's history, so they are listed without links.
 
-[Unreleased]: https://github.com/iLevyTate/StratoSortStack/compare/v5.2.0...HEAD
+[Unreleased]: https://github.com/iLevyTate/StratoSortStack/compare/v5.3.0...HEAD
+[5.3.0]: https://github.com/iLevyTate/StratoSortStack/compare/v5.2.0...v5.3.0
 [5.2.0]: https://github.com/iLevyTate/StratoSortStack/compare/v5.1.2...v5.2.0
 [5.1.2]: https://github.com/iLevyTate/StratoSortStack/compare/v5.1.1...v5.1.2
 [5.1.1]: https://github.com/iLevyTate/StratoSortStack/compare/v5.1.0...v5.1.1
