@@ -1,8 +1,8 @@
 /**
  * A file sitting in the catch-all folder ("Uncategorized", or whatever the
- * user renamed it to) means "fit nowhere", not "belongs here". Hans pointed
- * the catch-all at his input folder; every unsorted file there taught the app
- * to suggest his input folder. Only a user's own move into it is learned.
+ * user renamed it to) means "fit nowhere", not "belongs here". A tester
+ * pointed the catch-all at their input folder; every unsorted file there taught
+ * the app to suggest that input folder. Only a user's own move into it is learned.
  */
 
 jest.mock('../src/main/services/ServiceContainer', () => ({
@@ -18,26 +18,26 @@ const {
 const CATCH_ALL = {
   id: 'default-uncategorized-1',
   name: 'Strato test Data',
-  path: '/Users/hans/Strato test Data',
+  path: '/Users/alex/Strato test Data',
   category: 'uncategorized',
   isDefault: true
 };
 const PLAIN_UNCATEGORIZED = {
   id: 'u2',
   name: 'Uncategorized',
-  path: '/Users/hans/Uncategorized'
+  path: '/Users/alex/Uncategorized'
 };
 const GSC = {
   id: 'gsc',
   name: 'GSC',
-  path: '/Users/hans/GSC',
+  path: '/Users/alex/GSC',
   category: 'general'
 };
 // A seeded default folder that is not the catch-all.
 const ARCHIVES = {
   id: 'default-archives-1',
   name: 'Archives',
-  path: '/Users/hans/Archives',
+  path: '/Users/alex/Archives',
   category: 'archives',
   isDefault: true
 };

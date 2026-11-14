@@ -1,7 +1,7 @@
 /**
  * @jest-environment jsdom
  *
- * Hans could not tell whether changing a folder teaches StratoSort anything,
+ * A tester could not tell whether changing a folder teaches StratoSort anything,
  * and every card showed the same 60%. A user's change says what it teaches;
  * a score is shown only when it measures how well the folder matches.
  */

@@ -121,8 +121,8 @@ describe('FileOperationTracker accent spellings on macOS', () => {
     const tracker = new FileOperationTracker({ cooldownMs: 60000 });
 
     // The organizer records the composed name; the watcher sees decomposed.
-    tracker.recordOperation('/Users/hans/Vertr\u00e4ge/M\u00e4rz.pdf', 'move', 'organize');
-    expect(tracker.wasRecentlyOperated('/Users/hans/Vertra\u0308ge/Ma\u0308rz.pdf')).toBe(true);
+    tracker.recordOperation('/Users/alex/Vertr\u00e4ge/M\u00e4rz.pdf', 'move', 'organize');
+    expect(tracker.wasRecentlyOperated('/Users/alex/Vertra\u0308ge/Ma\u0308rz.pdf')).toBe(true);
     tracker.shutdown?.();
   });
 });
@@ -139,9 +139,9 @@ describe('FileOperationTracker accent spellings on Windows', () => {
     Object.defineProperty(process, 'platform', { value: 'win32' });
     const tracker = new FileOperationTracker({ cooldownMs: 60000 });
 
-    tracker.recordOperation('/Users/hans/Vertr\u00e4ge/M\u00e4rz.pdf', 'move', 'organize');
-    expect(tracker.wasRecentlyOperated('/Users/hans/Vertra\u0308ge/Ma\u0308rz.pdf')).toBe(false);
-    expect(tracker.wasRecentlyOperated('/users/hans/VERTR\u00c4GE/m\u00e4rz.pdf')).toBe(true);
+    tracker.recordOperation('/Users/alex/Vertr\u00e4ge/M\u00e4rz.pdf', 'move', 'organize');
+    expect(tracker.wasRecentlyOperated('/Users/alex/Vertra\u0308ge/Ma\u0308rz.pdf')).toBe(false);
+    expect(tracker.wasRecentlyOperated('/users/alex/VERTR\u00c4GE/m\u00e4rz.pdf')).toBe(true);
     tracker.shutdown?.();
   });
 });

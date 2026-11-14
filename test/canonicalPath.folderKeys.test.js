@@ -8,10 +8,10 @@ import { toFolderKey, toParentFolderKey } from '../src/renderer/utils/canonicalP
 
 describe('toFolderKey', () => {
   test('one Windows folder has one key however it is spelled', () => {
-    const key = toFolderKey('C:\\Users\\Hans\\Strato Input');
-    expect(key).toBe('c:/users/hans/strato input');
-    expect(toFolderKey('c:/users/hans/strato input/')).toBe(key);
-    expect(toFolderKey('C:\\Users\\Hans\\\\Strato Input\\')).toBe(key);
+    const key = toFolderKey('C:\\Users\\Alex\\Strato Input');
+    expect(key).toBe('c:/users/alex/strato input');
+    expect(toFolderKey('c:/users/alex/strato input/')).toBe(key);
+    expect(toFolderKey('C:\\Users\\Alex\\\\Strato Input\\')).toBe(key);
   });
 
   test('a POSIX folder keeps its case and loses a trailing slash', () => {
@@ -22,8 +22,8 @@ describe('toFolderKey', () => {
   });
 
   test('a name macOS lists decomposed matches the composed spelling', () => {
-    const composed = '/Users/hans/Caf\u00e9';
-    const decomposed = '/Users/hans/Cafe\u0301';
+    const composed = '/Users/alex/Caf\u00e9';
+    const decomposed = '/Users/alex/Cafe\u0301';
     expect(decomposed).not.toBe(composed);
     expect(toFolderKey(decomposed)).toBe(toFolderKey(composed));
   });
@@ -42,8 +42,8 @@ describe('toFolderKey', () => {
 
 describe('toParentFolderKey', () => {
   test('is the key of the folder that holds the file', () => {
-    expect(toParentFolderKey('C:\\Users\\Hans\\Strato Input\\report.csv')).toBe(
-      toFolderKey('C:\\Users\\Hans\\Strato Input')
+    expect(toParentFolderKey('C:\\Users\\Alex\\Strato Input\\report.csv')).toBe(
+      toFolderKey('C:\\Users\\Alex\\Strato Input')
     );
     expect(toParentFolderKey('/Volumes/SSD/Strato Input/report.csv')).toBe(
       toFolderKey('/Volumes/SSD/Strato Input/')
@@ -66,8 +66,8 @@ describe('toParentFolderKey', () => {
   });
 
   test('a decomposed folder name matches the composed folder', () => {
-    expect(toParentFolderKey('/Users/hans/Cafe\u0301/menu.pdf')).toBe(
-      toFolderKey('/Users/hans/Caf\u00e9')
+    expect(toParentFolderKey('/Users/alex/Cafe\u0301/menu.pdf')).toBe(
+      toFolderKey('/Users/alex/Caf\u00e9')
     );
   });
 

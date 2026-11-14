@@ -64,7 +64,7 @@ jest.mock('lucide-react', () => ({
 
 import AnalysisResultsList from '../../src/renderer/components/discover/AnalysisResultsList';
 
-// Hans could not tell what "Embed: Local" on every Discover card meant. The
+// A tester could not tell what "Embed: Local" on every Discover card meant. The
 // card now says how search can find the file, in plain words; the
 // hover title keeps the full setting name.
 describe('AnalysisResultsList search label', () => {

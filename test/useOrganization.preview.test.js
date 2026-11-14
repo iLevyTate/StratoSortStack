@@ -34,7 +34,7 @@ jest.mock('../src/renderer/components/UndoRedoSystem', () => ({
 const { previewBatchOrganize } = require('../src/renderer/components/UndoRedoSystem');
 const { useOrganization } = require('../src/renderer/phases/organize/useOrganization');
 
-const FINANCE = { id: 'fin', name: 'Finance', path: '/Users/hans/Sorted/Finance' };
+const FINANCE = { id: 'fin', name: 'Finance', path: '/Users/alex/Sorted/Finance' };
 
 const file = (path, category, suggestedName) => {
   const name = path.split(/[\\/]/).pop();
@@ -47,7 +47,7 @@ const hookOptions = (unprocessedFiles) => ({
   getFileWithEdits: (f) => f,
   findSmartFolderForCategory: (label) =>
     String(label).toLowerCase() === FINANCE.name.toLowerCase() ? FINANCE : null,
-  defaultLocation: '/Users/hans/Documents',
+  defaultLocation: '/Users/alex/Documents',
   smartFolders: [FINANCE],
   analysisResults: [],
   markFilesAsProcessed: jest.fn(),
@@ -83,9 +83,9 @@ describe('useOrganization: handlePreviewOrganize', () => {
   });
 
   test('sends the operations a Move would send and returns the plan', async () => {
-    const invoice = file('/Users/hans/Downloads/scan.pdf', 'Finance', 'Invoice March.pdf');
+    const invoice = file('/Users/alex/Downloads/scan.pdf', 'Finance', 'Invoice March.pdf');
     const moved = [
-      { source: invoice.path, destination: '/Users/hans/Sorted/Finance/Invoice March.pdf' }
+      { source: invoice.path, destination: '/Users/alex/Sorted/Finance/Invoice March.pdf' }
     ];
     previewBatchOrganize.mockResolvedValue(dryRunPlan(moved));
 
@@ -96,7 +96,7 @@ describe('useOrganization: handlePreviewOrganize', () => {
       expect.objectContaining({
         type: 'move',
         source: invoice.path,
-        destination: '/Users/hans/Sorted/Finance/Invoice March.pdf'
+        destination: '/Users/alex/Sorted/Finance/Invoice March.pdf'
       })
     ]);
     expect(plan.wouldMove).toEqual(moved);
@@ -104,9 +104,9 @@ describe('useOrganization: handlePreviewOrganize', () => {
   });
 
   test('lists the files this batch sends to one name', async () => {
-    const first = file('/Users/hans/Downloads/scan 1.pdf', 'Finance', 'Invoice.pdf');
-    const second = file('/Users/hans/Downloads/scan 2.pdf', 'Finance', 'Invoice.pdf');
-    const other = file('/Users/hans/Downloads/budget.xlsx', 'Finance');
+    const first = file('/Users/alex/Downloads/scan 1.pdf', 'Finance', 'Invoice.pdf');
+    const second = file('/Users/alex/Downloads/scan 2.pdf', 'Finance', 'Invoice.pdf');
+    const other = file('/Users/alex/Downloads/budget.xlsx', 'Finance');
     previewBatchOrganize.mockResolvedValue(dryRunPlan([]));
 
     const { result } = renderHook(() => useOrganization(hookOptions([first, second, other])));
@@ -114,7 +114,7 @@ describe('useOrganization: handlePreviewOrganize', () => {
 
     expect(plan.sameDestination).toEqual([
       {
-        destination: '/Users/hans/Sorted/Finance/Invoice.pdf',
+        destination: '/Users/alex/Sorted/Finance/Invoice.pdf',
         files: [
           { fileName: 'Invoice.pdf', sourcePath: first.path },
           { fileName: 'Invoice.pdf', sourcePath: second.path }
@@ -124,8 +124,8 @@ describe('useOrganization: handlePreviewOrganize', () => {
   });
 
   test('previews only the files it is given', async () => {
-    const picked = file('/Users/hans/Downloads/a.pdf', 'Finance');
-    const left = file('/Users/hans/Downloads/b.pdf', 'Finance');
+    const picked = file('/Users/alex/Downloads/a.pdf', 'Finance');
+    const left = file('/Users/alex/Downloads/b.pdf', 'Finance');
     previewBatchOrganize.mockResolvedValue(dryRunPlan([]));
 
     const { result } = renderHook(() => useOrganization(hookOptions([picked, left])));
@@ -142,7 +142,7 @@ describe('useOrganization: handlePreviewOrganize', () => {
     });
 
     const { result } = renderHook(() =>
-      useOrganization(hookOptions([file('/Users/hans/Downloads/a.pdf', 'Finance')]))
+      useOrganization(hookOptions([file('/Users/alex/Downloads/a.pdf', 'Finance')]))
     );
 
     await expect(result.current.handlePreviewOrganize()).rejects.toThrow(
@@ -154,7 +154,7 @@ describe('useOrganization: handlePreviewOrganize', () => {
     previewBatchOrganize.mockRejectedValue(new Error('File operations API not available'));
 
     const { result } = renderHook(() =>
-      useOrganization(hookOptions([file('/Users/hans/Downloads/a.pdf', 'Finance')]))
+      useOrganization(hookOptions([file('/Users/alex/Downloads/a.pdf', 'Finance')]))
     );
 
     await expect(result.current.handlePreviewOrganize()).rejects.toThrow(

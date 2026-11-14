@@ -2,7 +2,7 @@
  * @jest-environment node
  *
  * selectPromptFolders decides which Smart Folders the analysis prompt lists.
- * Hans added his own folders after the 8 defaults; a plain slice(0, 10) left
+ * A tester added their own folders after the 8 defaults; a plain slice(0, 10) left
  * them out of the prompt, so the AI never saw them.
  */
 

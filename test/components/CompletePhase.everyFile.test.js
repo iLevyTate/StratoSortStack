@@ -75,9 +75,9 @@ jest.mock('../../src/renderer/services/ipc', () => ({
 import CompletePhase from '../../src/renderer/phases/CompletePhase';
 
 const organized = (i, folder) => ({
-  originalPath: `C:\\Users\\Hans\\Downloads\\export-${i}.xlsx`,
+  originalPath: `C:\\Users\\Alex\\Downloads\\export-${i}.xlsx`,
   originalName: `export-${i}.xlsx`,
-  path: `C:\\Users\\Hans\\SEO\\${folder}\\export-${i}.xlsx`,
+  path: `C:\\Users\\Alex\\SEO\\${folder}\\export-${i}.xlsx`,
   smartFolder: folder
 });
 
@@ -97,22 +97,22 @@ describe('Complete screen: every file of the session', () => {
     }
     expect(screen.queryByText(/^\+\d+ more files?$/)).not.toBeInTheDocument();
     expect(
-      screen.getByText('Now at C:\\Users\\Hans\\SEO\\Bing\\export-19.xlsx')
+      screen.getByText('Now at C:\\Users\\Alex\\SEO\\Bing\\export-19.xlsx')
     ).toBeInTheDocument();
-    expect(screen.getAllByText('From C:\\Users\\Hans\\Downloads')).toHaveLength(20);
+    expect(screen.getAllByText('From C:\\Users\\Alex\\Downloads')).toHaveLength(20);
   });
 
   test('says how many files went to each folder, and opens one', async () => {
     render(<CompletePhase />);
 
     const where = screen.getByRole('region', { name: 'Where files went' });
-    expect(within(where).getByText('C:\\Users\\Hans\\SEO\\Search Console')).toBeInTheDocument();
+    expect(within(where).getByText('C:\\Users\\Alex\\SEO\\Search Console')).toBeInTheDocument();
     expect(within(where).getByText('15 files')).toBeInTheDocument();
     expect(within(where).getByText('5 files')).toBeInTheDocument();
     await act(async () => {
       fireEvent.click(within(where).getByRole('button', { name: 'Open Bing' }));
     });
-    expect(mockOpenFolder).toHaveBeenCalledWith('C:\\Users\\Hans\\SEO\\Bing');
+    expect(mockOpenFolder).toHaveBeenCalledWith('C:\\Users\\Alex\\SEO\\Bing');
   });
 
   test('every row can be shown in its folder', () => {
@@ -121,13 +121,13 @@ describe('Complete screen: every file of the session', () => {
     const reveal = screen.getAllByRole('button', { name: /^Show export-\d+\.xlsx in its folder$/ });
     expect(reveal).toHaveLength(20);
     fireEvent.click(reveal[19]);
-    expect(mockRevealFile).toHaveBeenCalledWith('C:\\Users\\Hans\\SEO\\Bing\\export-19.xlsx');
+    expect(mockRevealFile).toHaveBeenCalledWith('C:\\Users\\Alex\\SEO\\Bing\\export-19.xlsx');
   });
 
   test('Save list as CSV sends every file and says where the list went', async () => {
     mockExport.mockResolvedValue({
       success: true,
-      filePath: 'C:\\Users\\Hans\\Documents\\organize.csv',
+      filePath: 'C:\\Users\\Alex\\Documents\\organize.csv',
       rowCount: 20
     });
     render(<CompletePhase />);
@@ -140,8 +140,8 @@ describe('Complete screen: every file of the session', () => {
     expect(sent[0]).toEqual(
       expect.objectContaining({
         name: 'export-0.xlsx',
-        originalPath: 'C:\\Users\\Hans\\Downloads\\export-0.xlsx',
-        finalPath: 'C:\\Users\\Hans\\SEO\\Search Console\\export-0.xlsx',
+        originalPath: 'C:\\Users\\Alex\\Downloads\\export-0.xlsx',
+        finalPath: 'C:\\Users\\Alex\\SEO\\Search Console\\export-0.xlsx',
         outcome: 'moved'
       })
     );

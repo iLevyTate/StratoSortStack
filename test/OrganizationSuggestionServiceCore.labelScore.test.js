@@ -1,5 +1,5 @@
 /**
- * Nearly every file showed exactly 60% (Hans, retest item 7). The date-based
+ * Nearly every file showed exactly 60% (retest item 7). The date-based
  * strategy template scored 0.3 for a date plus 0.3 for the analysis label
  * and named its folder after that label, so the label reached the ranking at
  * 0.6 even in embedding mode, where the label is deliberately left out.

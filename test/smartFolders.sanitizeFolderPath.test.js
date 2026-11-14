@@ -75,7 +75,7 @@ describe('sanitizeFolderPath', () => {
       }
     );
 
-    posixOnly.each(['/Volumes/Samsung T7/Sorted', '/media/hans/SSD/Sorted', '/mnt/data/Sorted'])(
+    posixOnly.each(['/Volumes/Samsung T7/Sorted', '/media/alex/SSD/Sorted', '/mnt/data/Sorted'])(
       'a folder on a mounted volume: %s',
       async (input) => {
         await expect(sanitizeFolderPath(input)).resolves.toBe(input);
