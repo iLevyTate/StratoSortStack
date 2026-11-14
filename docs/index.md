@@ -58,8 +58,8 @@ more_features:
     alt: 'Adding a Smart Folder with a plain-language description'
     title: 'Smart Folders'
     excerpt:
-      'Describe a folder in plain words, such as "invoices and receipts", and new files that match
-      are routed into it.'
+      'Describe a folder in plain words, such as "invoices and receipts from suppliers", and new
+      files that match are routed into it.'
     url: '/USER_GUIDE.html'
     btn_label: 'Set up folders'
     btn_class: 'btn--inverse'

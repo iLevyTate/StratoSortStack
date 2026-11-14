@@ -41,16 +41,25 @@ StratoSort is organized into five phases. You move through them in order:
    analyzes content, extracts meaning, and generates organization suggestions.
 4. **Organize** — Review each suggestion. Accept, reject, or edit the destination and filename. Use
    Undo/Redo if you change your mind.
-5. **Complete** — See a summary of everything that was organized. Undo is still available here.
+5. **Complete** — Lists every file that was moved, with its new location, and how many files went to
+   each folder. The folder button on a row shows that file in its folder, and **Save list as CSV**
+   saves the list. Undo is still available here.
+
+If a run does not move every file, you stay on **Organize**. A banner says how many files moved, how
+many did not and why. **See every file** lists each file and where it went, or why it was not moved,
+and **Save list as CSV** saves that list with each file's original and new location. The banner also
+shows on the Dashboard and stays until you dismiss it or start another run.
 
 The step tabs in the top bar follow the same rules as each step's own Continue button. A tab you
 cannot open yet is dimmed, and hovering or focusing it tells you why (for example, from Welcome,
 Discover needs a Smart Folder first; Organize needs at least one analyzed file, or files you
 organized before; Complete needs at least one organized file). Going back to an earlier step is
-always allowed. While analysis runs, files are moving, or an undo or redo is running, the tabs pause
-until the work finishes, and so do the dashboard links, the Alt+arrow keys, **File > Select Files**
-and **Select Folder**, and the knowledge graph's Go to Discover. Settings stays available from the
-gear icon.
+always allowed. While files are moving, or an undo or redo is running, the tabs pause until the work
+finishes, and so do the dashboard links, the Alt+arrow keys, **File > Select Files** and **Select
+Folder**, and the knowledge graph's Go to Discover. Settings stays available from the gear icon.
+Analysis does not pause the tabs: it keeps running when you open another step, so you can organize
+the files that are ready while the rest are analyzed, and you can stop it with **Stop analysis** on
+Discover or Organize. Switching to **Dashboard** waits until the analysis finishes.
 
 Prefer one screen over steps? Choose **Dashboard** on the Welcome screen, or use the **Guided /
 Dashboard** toggle in the top bar, for a single overview screen. **Guided** (the phases above) is
@@ -72,7 +81,8 @@ content against these descriptions to decide where it fits best.
   `Contracts`).
 - Write descriptions in plain language — pretend you're telling a coworker what goes in each folder.
 - Be specific. "Monthly bills and vendor invoices" works better than "financial stuff."
-- The app creates a single "Uncategorized" fallback folder by default on the first launch.
+- The app creates a single "Uncategorized" fallback folder by default on the first launch. You can
+  change where it is, but not its name.
 - You must proactively create your own specific smart folders to instruct the AI where to sort
   files.
 - Start with 3-5 clear folders before adding more. Overlapping descriptions confuse the AI.
@@ -85,6 +95,19 @@ content against these descriptions to decide where it fits best.
 | **Tax Documents** | "W-2, 1099, tax forms, receipts needed for filing."    |
 | **Project Specs** | "Requirements, architecture docs, and project briefs." |
 | **Screenshots**   | "Screen captures, app screenshots, and UI mockups."    |
+
+### Teaching StratoSort
+
+When you change a file's folder on **Organize**, its card says what StratoSort learns from that.
+StratoSort learns from a correction once the file is moved. After you move two different files of
+the same type and label from the folder it picked into the same other Smart Folder, it suggests your
+folder for the next such file. Its card then gives the reason _You moved 2 similar files from "A" to
+"B"_, where A is the folder StratoSort picked and B is yours. One correction changes nothing.
+Undoing those moves takes it back, and so does moving as many such files away from your folder when
+StratoSort suggests it.
+
+To give a rule straight away, type it in **Settings > Performance > Memory & Rules** (see
+[Performance](#performance)).
 
 ---
 
@@ -196,12 +219,16 @@ See [AI_PROVIDERS.md](AI_PROVIDERS.md).
 
 - Off by default. Lets Claude Desktop, Cursor, Zed, or another MCP client search and chat with your
   local corpus. Loopback-only, bearer token, query text is not logged.
+- Once you tick **Enable MCP server**, it starts with StratoSort each time until you untick it. None
+  of its tools moves, renames or deletes files.
 
 See [MCP_SERVER.md](MCP_SERVER.md).
 
 ### Performance
 
 - **Auto-organize**: Watch Downloads (and related routing).
+- **Memory & Rules**: Type a rule such as "CSV files go to Reports" and it applies to every file of
+  that type. Your corrections are listed here too; edit or delete any that are wrong.
 - **Background Mode**: Keep running in the tray.
 - **Exclusion rules**: Skip paths or patterns from watchers and triage.
 - **Processing limits** and **Search enrichment** (relationship expansion and the relationship index
@@ -304,6 +331,13 @@ into a system folder, the folder is refused.
 
 A folder that is not inside one of your Smart Folders or Documents is created after you confirm it
 in a prompt. If the path runs through a link, the prompt names the folder the link really leads to.
+
+### A folder can't be used on a Mac
+
+If StratoSort says it is not allowed to open or write to a folder, open **System Settings > Privacy
+& Security > Files and Folders**, allow StratoSort, then choose the folder again. A read-only drive
+(for example one formatted for Windows, NTFS) cannot be a Smart Folder; choose a folder on another
+drive.
 
 ### Need to see logs
 

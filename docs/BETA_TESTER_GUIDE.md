@@ -44,7 +44,7 @@ No sign-up is needed: download the public release and send feedback through
 ## 1. Download one installer
 
 1. Open **[GitHub Releases](https://github.com/iLevyTate/StratoSortStack/releases)**.
-2. Pick the newest release and find the assets for your OS (current product version is **5.2.0**).
+2. Pick the newest release and find the assets for your OS (current product version is **5.3.0**).
 3. Download **exactly one app installer/package** for your OS (do not download checksum or `.yml`
    files unless asked).
 
@@ -60,13 +60,13 @@ No sign-up is needed: download the public release and send feedback through
 
 | Your computer                              | Typical filename pattern                      |
 | :----------------------------------------- | :-------------------------------------------- |
-| **Windows** (x64, preferred)               | `StratoSortStack-Setup-5.2.0.exe`             |
-| **Windows** (x64, no-install zip)          | `StratoSortStack-5.2.0-win-x64.zip`           |
-| **Windows on Arm** (arm64)                 | `StratoSortStack-Setup-5.2.0-arm64.exe`       |
-| **Mac** (Apple Silicon: M1 / M2 / M3 / M4) | `StratoSortStack-5.2.0-mac-arm64.dmg`         |
-| **Mac** (Intel)                            | `StratoSortStack-5.2.0-mac-x64.dmg`           |
-| **Linux** (x64)                            | `StratoSortStack-5.2.0-linux-x86_64.AppImage` |
-| **Linux** (arm64)                          | `StratoSortStack-5.2.0-linux-arm64.AppImage`  |
+| **Windows** (x64, preferred)               | `StratoSortStack-Setup-5.3.0.exe`             |
+| **Windows** (x64, no-install zip)          | `StratoSortStack-5.3.0-win-x64.zip`           |
+| **Windows on Arm** (arm64)                 | `StratoSortStack-Setup-5.3.0-arm64.exe`       |
+| **Mac** (Apple Silicon: M1 / M2 / M3 / M4) | `StratoSortStack-5.3.0-mac-arm64.dmg`         |
+| **Mac** (Intel)                            | `StratoSortStack-5.3.0-mac-x64.dmg`           |
+| **Linux** (x64)                            | `StratoSortStack-5.3.0-linux-x86_64.AppImage` |
+| **Linux** (arm64)                          | `StratoSortStack-5.3.0-linux-arm64.AppImage`  |
 
 Always take the **newest** installer for your OS, not one from an older release.
 
@@ -192,8 +192,11 @@ through this checklist.
 ### Complete
 
 - [ ] After a batch move, check moved / analyzed counts against what you approved.
-- [ ] **Notice:** Is undo still available? Does “open organized folder” land in the right place?
-- [ ] **You should see:** Counts that match the session, with undo still reachable.
+- [ ] **Notice:** Is undo still available? Does the **Open** button (it names the destination
+      folder, for example **Open Invoices**), or the folder button on a row, open the right place?
+- [ ] **You should see:** Every file you moved listed with its new location, counts that match the
+      session, and undo still reachable. A run that did not move every file stays on **Organize**
+      instead, with a banner that says why and a **See every file** button.
 
 ### Knowledge OS (search, chat, graph)
 
@@ -247,6 +250,8 @@ Do not attach documents or logs that contain private information; GitHub issues 
 ### Add if you can
 
 - Screenshot or **short screen recording**.
+- The error text: an error or warning message has a copy button (**Copy message**). Click it and
+  paste the text into the report.
 - **Exported logs** (strongly helps us fix crashes and “nothing happens” bugs).
 
 ### Export logs (in the app)
@@ -278,7 +283,7 @@ Do not attach documents or logs that contain private information; GitHub issues 
 
 **Actual:** Empty results and a warning about model mismatch.
 
-**Environment:** Windows 11, StratoSort Stack 5.2.0 (installer), 32 GB RAM, RTX 3060.
+**Environment:** Windows 11, StratoSort Stack 5.3.0 (installer), 32 GB RAM, RTX 3060.
 
 **Attachment:** Exported logs from Settings → Diagnostics → Export logs.
 
@@ -286,7 +291,7 @@ Do not attach documents or logs that contain private information; GitHub issues 
 
 ## Other ways to help (no code)
 
-- Confirm someone else’s bug on **your** OS and version (“Reproduced on macOS 15 / app 5.2.0”).
+- Confirm someone else’s bug on **your** OS and version (“Reproduced on macOS 15 / app 5.3.0”).
 - Test each new release and note **regressions** (things that used to work).
 - Suggest UX improvements with **screenshots** and short before/after notes.
 

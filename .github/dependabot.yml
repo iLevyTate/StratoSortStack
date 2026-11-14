@@ -20,7 +20,7 @@ updates:
         versions: ['1.0.12', '1.0.13']
 
       # @types/node must track the runtime major (Node 24, see .nvmrc and
-      # package.json#engines; .nvmrc pins the Node inside Electron 45.2).
+      # package.json#engines; .nvmrc pins the Node inside Electron 45.3).
       # Allow minor/patch bumps within 24.x; refuse cross-major jumps (e.g.
       # 25.x) which would expose Node-25-only APIs to TypeScript even though
       # the runtime is still 24.x. Re-evaluate this

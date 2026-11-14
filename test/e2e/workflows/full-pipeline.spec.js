@@ -148,8 +148,10 @@ test.describe('Full Pipeline — Analysis to Organize', () => {
     await expect.poll(() => nav.getCurrentPhase()).toBe(PHASES.COMPLETE);
 
     await expect(window.getByRole('heading', { name: /Organization Complete/i })).toBeVisible();
-    await expect(window.getByText('Session summary').first()).toBeVisible();
-    await expect(window.getByLabel('Organized file 1')).toContainText('pipeline-invoice.txt');
+    await expect(window.getByRole('heading', { name: 'Every file in this session' })).toBeVisible();
+    await expect(window.getByRole('list', { name: 'Files in this run' })).toContainText(
+      'pipeline-invoice.txt'
+    );
     await expect(window.getByRole('button', { name: /Analyze more files/i })).toBeVisible();
   });
 

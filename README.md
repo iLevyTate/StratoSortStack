@@ -39,8 +39,8 @@ no telemetry.
 
 - **Organizes by content.** Suggests names and folders from what a file contains, not its filename.
   You review every suggestion before anything moves, and every move can be undone.
-- **Smart Folders.** Describe a folder in plain words ("invoices and receipts") and matching files
-  are routed into it, including new files as they arrive.
+- **Smart Folders.** Describe a folder in plain words ("invoices and receipts from suppliers") and
+  matching files are routed into it, including new files as they arrive.
 - **Search by meaning.** Find the report about "how warming affects wildlife" even when those words
   are not in its name. Exact matches such as an invoice number still work.
 - **Chat with your documents.** Ask questions and get answers built from your own files, with

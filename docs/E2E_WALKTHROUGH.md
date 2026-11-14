@@ -262,7 +262,9 @@ Each file card shows:
 - **Original filename** with "Ready" badge
 - **Suggested Name** — AI-generated filename following your naming convention
 - **Category** dropdown — editable destination folder
-- **Confidence level** — color-coded percentage (green = high)
+- **Confidence level** — color-coded percentage (green = high). A file placed only by a name match
+  ("Matched by the label the analysis gave this file" or "Matched by folder name") shows no
+  percentage.
 - **Details** link — view the full AI analysis
 
 Example AI suggestions from a real analysis:
@@ -293,14 +295,16 @@ Click **Select All** to check all files, then use:
 
 ## 6. Complete Phase — Summary
 
-{% include figure image_path="/assets/e2e-screenshots/56_complete_phase.webp" alt="Organization Complete" caption="Complete phase — moved/analyzed counts, session summary, undo, and open organized folder" %}
+{% include figure image_path="/assets/e2e-screenshots/56_complete_phase.webp" alt="Organization Complete" caption="Complete phase — moved/analyzed counts, every file and where it went, undo, and the button that opens the destination folder" %}
 
-After executing organization, the Complete phase shows a summary of:
+After executing organization, the Complete phase shows:
 
-- Total files organized
-- Destination folders used
-- Any errors or conflicts encountered
-- Option to start a new session or undo recent changes
+- Every file that was moved, with its full new location
+- How many files went to each folder, and a button on each row that shows the file in its folder
+- **Save list as CSV**, undo, and **Analyze more files**
+
+A run that did not move every file stays on Organize, where a banner says what moved, what did not
+and why.
 
 ---
 

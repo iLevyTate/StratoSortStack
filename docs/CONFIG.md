@@ -622,6 +622,10 @@ The bearer token is generated locally on first enable and stored under `userData
 encrypted via `safeStorage` when the OS keystore is available (DPAPI on Windows, Keychain on macOS,
 libsecret on Linux). There is no env var to override it; rotate from Settings if it leaks.
 
+Once enabled, the choice is saved in `userData/mcp-server.json` (`{ "enabled": true }`), next to the
+token and outside `settings.json`, and the server starts with the app until it is turned off in
+Settings. A missing or damaged file means off. See [MCP_SERVER.md](MCP_SERVER.md).
+
 ### AI providers (multi-provider routing)
 
 StratoSort can optionally route document analysis, chat, and organization suggestions to a cloud
