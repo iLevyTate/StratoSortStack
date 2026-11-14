@@ -161,6 +161,123 @@ describe('GPUMonitor', () => {
     expect(result.percentUsed).toBe(20);
   });
 
+  describe('macOS detection', () => {
+    const os = require('os');
+    const MiB = 1024 * 1024;
+    const expectedUnifiedVramMB = (totalBytes) => Math.round(Math.round(totalBytes * 0.75) / MiB);
+
+    function macMonitor(arch) {
+      const monitor = new GPUMonitor();
+      monitor._platform = 'darwin';
+      monitor._arch = arch;
+      return monitor;
+    }
+
+    test('Apple Silicon reads the model name and sizes VRAM at 75% of hw.memsize', async () => {
+      const monitor = macMonitor('arm64');
+      mockExecFileAsync
+        .mockResolvedValueOnce({
+          stdout: JSON.stringify({ SPDisplaysDataType: [{ sppci_model: 'Apple M4 Pro' }] }),
+          stderr: ''
+        })
+        .mockResolvedValueOnce({ stdout: 'hw.memsize: 25769803776\n', stderr: '' });
+
+      const result = await monitor.detectGPU();
+
+      expect(result).toEqual({
+        type: 'metal',
+        name: 'Apple M4 Pro',
+        vramBytes: 19327352832,
+        vramMB: 18432,
+        isAppleSilicon: true
+      });
+    });
+
+    test('Apple Silicon stays Metal with unified VRAM when system_profiler fails or times out', async () => {
+      const monitor = macMonitor('arm64');
+      // runCommand turns every rejection (including the timeout kill) into null.
+      mockExecFileAsync.mockRejectedValue(new Error('system_profiler timed out'));
+
+      const result = await monitor.detectGPU();
+
+      expect(result).toEqual({
+        type: 'metal',
+        name: 'Apple Silicon GPU',
+        vramBytes: Math.round(os.totalmem() * 0.75),
+        vramMB: expectedUnifiedVramMB(os.totalmem()),
+        isAppleSilicon: true
+      });
+      expect(result.vramMB).toBeGreaterThan(0);
+    });
+
+    test('Apple Silicon keeps a GPU model name without "apple" in it', async () => {
+      const monitor = macMonitor('arm64');
+      mockExecFileAsync
+        .mockResolvedValueOnce({
+          stdout: JSON.stringify({ SPDisplaysDataType: [{ sppci_model: 'Integrated GPU' }] }),
+          stderr: ''
+        })
+        .mockResolvedValueOnce({ stdout: 'hw.memsize: 17179869184\n', stderr: '' });
+
+      const result = await monitor.detectGPU();
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          type: 'metal',
+          name: 'Integrated GPU',
+          vramMB: 12288,
+          isAppleSilicon: true
+        })
+      );
+    });
+
+    test('an unreadable hw.memsize falls back to os.totalmem()', async () => {
+      const monitor = macMonitor('arm64');
+      mockExecFileAsync
+        .mockResolvedValueOnce({
+          stdout: JSON.stringify({ SPDisplaysDataType: [{ sppci_model: 'Apple M2' }] }),
+          stderr: ''
+        })
+        .mockRejectedValueOnce(new Error('sysctl not found'));
+
+      const result = await monitor.detectGPU();
+
+      expect(result.name).toBe('Apple M2');
+      expect(result.vramMB).toBe(expectedUnifiedVramMB(os.totalmem()));
+      expect(result.vramMB).toBeGreaterThan(0);
+    });
+
+    test('an Intel Mac still reports a CPU when system_profiler fails', async () => {
+      const monitor = macMonitor('x64');
+      mockExecFileAsync.mockRejectedValue(new Error('system_profiler timed out'));
+
+      const result = await monitor.detectGPU();
+
+      expect(result).toEqual({ type: 'cpu', name: 'CPU' });
+      expect(mockExecFileAsync).toHaveBeenCalledTimes(1);
+    });
+
+    test('an Intel Mac still reads a discrete GPU from system_profiler', async () => {
+      const monitor = macMonitor('x64');
+      mockExecFileAsync.mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          SPDisplaysDataType: [{ sppci_model: 'AMD Radeon Pro 5500M', sppci_vram: '8 GB' }]
+        }),
+        stderr: ''
+      });
+
+      const result = await monitor.detectGPU();
+
+      expect(result).toEqual({
+        type: 'metal',
+        name: 'AMD Radeon Pro 5500M',
+        vramBytes: 8192 * MiB,
+        vramMB: 8192,
+        isAppleSilicon: false
+      });
+    });
+  });
+
   describe('child process options', () => {
     const { TIMEOUTS } = require('../src/shared/performanceConstants');
 
