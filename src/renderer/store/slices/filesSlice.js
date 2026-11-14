@@ -11,6 +11,7 @@ import {
   removeFromOrganizedPathIndex
 } from '../../utils/organizedPathIndex';
 import { normalizeOrganizeRunSummary } from '../../utils/organizeRunSummary';
+import { normalizeRunResultRows } from '../../utils/organizeRunResults';
 
 // Thunk to fetch smart folders with optional cache bypass
 export const fetchSmartFolders = createAsyncThunk(
@@ -100,6 +101,9 @@ const initialState = {
   organizedPathIndex: [],
   // How the last organize run ended (see utils/organizeRunSummary), or null.
   lastOrganizeRun: null,
+  // Every file of the last run and what happened to it (see
+  // utils/organizeRunResults). Capped at MAX_RUN_RESULT_ROWS.
+  lastOrganizeRunFiles: [],
   fileStates: {}, // Map of path -> state (pending, analyzing, ready, error)
   namingConvention: {
     convention: 'subject-date',
@@ -265,6 +269,10 @@ const filesSlice = createSlice({
       if (removedEntries.length > 0 && state.lastOrganizeRun?.count > 0) {
         state.lastOrganizeRun = null;
       }
+      // The run's file list says where files went; after an undo it does not.
+      if (removedEntries.length > 0) {
+        state.lastOrganizeRunFiles = [];
+      }
     },
     // Explicit re-selection is intent: a fresh Downloads\invoice.pdf after the
     // old one was organized (or a re-dropped destination) must re-enter the
@@ -287,6 +295,10 @@ const filesSlice = createSlice({
     // null clears it; so does anything that is not a run summary.
     setLastOrganizeRun: (state, action) => {
       state.lastOrganizeRun = normalizeOrganizeRunSummary(action.payload);
+    },
+    // An array of run result rows; anything else clears the list.
+    setLastOrganizeRunFiles: (state, action) => {
+      state.lastOrganizeRunFiles = normalizeRunResultRows(action.payload);
     },
     setNamingConvention: (state, action) => {
       state.namingConvention = { ...state.namingConvention, ...action.payload };
@@ -437,7 +449,8 @@ export const {
   addOrganizedFiles,
   removeOrganizedFiles,
   releaseOrganizedPaths,
-  setLastOrganizeRun
+  setLastOrganizeRun,
+  setLastOrganizeRunFiles
 } = filesSlice.actions;
 
 // The actual implementations are in atomicActions.js which properly imports from both slices

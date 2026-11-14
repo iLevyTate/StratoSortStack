@@ -49,6 +49,7 @@ jest.mock('../../../src/renderer/store/selectors', () => ({
   selectMovedCount: () =>
     (mockSelectorValues.organizedFiles || []).filter((file) => !file.duplicateRemoval).length,
   selectLastOrganizeRun: () => mockSelectorValues.lastOrganizeRun,
+  selectLastOrganizeRunFiles: () => mockSelectorValues.lastOrganizeRunFiles || [],
   selectFilesWithAnalysis: () => mockSelectorValues.filesWithAnalysis,
   selectIsAnalyzing: () => mockSelectorValues.isAnalyzing,
   selectAnalysisProgress: () => mockSelectorValues.analysisProgress,
@@ -174,10 +175,15 @@ function setupState({
   redactPaths = false,
   isOrganizing = false,
   isLoading = false,
-  lastOrganizeRun = null
+  lastOrganizeRun = null,
+  lastOrganizeRunFiles = [],
+  queue = []
 } = {}) {
   // DashboardView only renders in dashboard view mode.
-  mockState = { ui: { currentPhase, viewMode: 'dashboard', isOrganizing, isLoading } };
+  mockState = {
+    ui: { currentPhase, viewMode: 'dashboard', isOrganizing, isLoading },
+    files: { selectedFiles: queue }
+  };
   mockSelectorValues = {
     fileStats,
     smartFolders,
@@ -186,7 +192,8 @@ function setupState({
     isAnalyzing,
     analysisProgress,
     redactPaths,
-    lastOrganizeRun
+    lastOrganizeRun,
+    lastOrganizeRunFiles
   };
 }
 
@@ -389,7 +396,7 @@ describe('DashboardView', () => {
   });
 
   describe('organization pipeline', () => {
-    test('renders the three stage counts and an "in flight" tally', () => {
+    test('renders the three stage counts and how many files are not organized yet', () => {
       setupState({
         fileStats: { total: 5, ready: 2, failed: 0, pending: 3 },
         organizedFiles: [{ newName: 'a.pdf' }, { newName: 'b.pdf' }]
@@ -399,15 +406,72 @@ describe('DashboardView', () => {
       expect(screen.getByText('Awaiting analysis')).toBeInTheDocument();
       expect(screen.getByText('Ready to organize')).toBeInTheDocument();
       expect(screen.getByText('Organized')).toBeInTheDocument();
-      // in-flight = pending + ready, total = stats.total
-      expect(screen.getByText('5 of 5 files in flight')).toBeInTheDocument();
+      // waiting = pending + ready
+      expect(screen.getByText('5 files not organized yet')).toBeInTheDocument();
+      expect(screen.getByText('3 to analyze')).toBeInTheDocument();
     });
 
-    test('shows an "All clear" pipeline badge when nothing is in flight', () => {
+    test('shows an "All clear" pipeline badge when nothing is waiting', () => {
       setupState({ fileStats: { total: 0, ready: 0, failed: 0, pending: 0 } });
       render(<DashboardView />);
       expect(screen.getByText('All clear')).toBeInTheDocument();
-      expect(screen.getByText('0 of 0 files in flight')).toBeInTheDocument();
+      expect(screen.getByText('Nothing waiting')).toBeInTheDocument();
+    });
+
+    // Files waiting for the user are not work in progress.
+    test('ready files read "to review", never "in progress" or "in flight"', () => {
+      setupState({ fileStats: { total: 273, ready: 273, failed: 0, pending: 0 } });
+      render(<DashboardView />);
+      expect(screen.getByText('273 to review')).toBeInTheDocument();
+      expect(screen.getByText('273 files not organized yet')).toBeInTheDocument();
+      expect(screen.queryByText(/in progress|in flight/)).not.toBeInTheDocument();
+    });
+
+    test('files awaiting analysis lead the badge', () => {
+      setupState({ fileStats: { total: 6, ready: 2, failed: 0, pending: 4 } });
+      render(<DashboardView />);
+      expect(screen.getByText('4 to analyze')).toBeInTheDocument();
+    });
+
+    test('one waiting file reads in the singular', () => {
+      setupState({ fileStats: { total: 1, ready: 1, failed: 0, pending: 0 } });
+      render(<DashboardView />);
+      expect(screen.getByText('1 file not organized yet')).toBeInTheDocument();
+    });
+
+    test('files the last run did not move are counted in the footer and lead to Organize', () => {
+      setupState({
+        currentPhase: 'welcome',
+        fileStats: { total: 2, ready: 2, failed: 0, pending: 0 },
+        lastOrganizeRun: {
+          outcome: 'partial',
+          count: 1,
+          notMovedCount: 2,
+          headline: 'Moved 1 file; 2 could not be moved',
+          detail: 'Access denied.',
+          finishedAt: 1
+        }
+      });
+      render(<DashboardView />);
+
+      const notMoved = screen.getByText('2 not moved').closest('button');
+      expect(notMoved).not.toBeNull();
+      fireEvent.click(notMoved);
+      expect(phasePayloads().at(-1)).toBe('organize');
+    });
+
+    test('no "not moved" control after a run that moved everything', () => {
+      setupState({
+        lastOrganizeRun: {
+          outcome: 'moved',
+          count: 2,
+          headline: 'Moved 2 files',
+          detail: '',
+          finishedAt: Date.now()
+        }
+      });
+      render(<DashboardView />);
+      expect(screen.queryByText(/not moved$/)).not.toBeInTheDocument();
     });
 
     test('the footer Failed chip opens Discover, where the alert says to retry them', () => {
@@ -557,6 +621,38 @@ describe('DashboardView', () => {
       expect(screen.queryByText('Last run left files unmoved')).not.toBeInTheDocument();
       expect(banner()).toBeInTheDocument();
       expect(screen.getByRole('alert')).toHaveTextContent("1 file couldn't be analyzed");
+    });
+
+    test('once the files that were not moved leave the queue, the banner says where they are', () => {
+      const run = {
+        ...partialRun,
+        detail: 'Access denied. Files that were not moved are still listed.'
+      };
+      const runFiles = [
+        {
+          name: 'a.csv',
+          originalPath: '/in/a.csv',
+          finalPath: null,
+          outcome: 'failed',
+          reason: 'x'
+        }
+      ];
+      setupState({ lastOrganizeRun: run, lastOrganizeRunFiles: runFiles, queue: [] });
+      const { unmount } = render(<DashboardView />);
+      expect(
+        screen.getByText(
+          'Access denied. The files that were not moved are no longer in the queue. They are still in their original folders.'
+        )
+      ).toBeInTheDocument();
+      unmount();
+
+      setupState({
+        lastOrganizeRun: run,
+        lastOrganizeRunFiles: runFiles,
+        queue: [{ path: '/in/a.csv' }]
+      });
+      render(<DashboardView />);
+      expect(screen.getByText(run.detail)).toBeInTheDocument();
     });
 
     test('a run with no known finish time is labelled without one', () => {
@@ -723,6 +819,23 @@ describe('DashboardView', () => {
       expect(screen.getByText('Unknown')).toBeInTheDocument();
       expect(mockFormatDisplayFileName).toHaveBeenCalledWith('scan.pdf', { redact: false });
       expect(mockFormatDisplayFileName).toHaveBeenCalledWith('Unknown', { redact: false });
+    });
+
+    // A removed duplicate was not moved, so it does not get the moved mark.
+    test('a removed duplicate is marked as one, a moved file is not', () => {
+      setupState({
+        organizedFiles: [
+          { newName: 'moved.csv' },
+          { newName: 'a.csv', duplicateRemoval: 'trashed' }
+        ]
+      });
+      render(<DashboardView />);
+
+      expect(screen.getAllByText('Duplicate removed')).toHaveLength(1);
+      const duplicateRow = screen.getByText('a.csv').parentElement;
+      expect(duplicateRow).toHaveTextContent('Duplicate removed');
+      expect(duplicateRow).toHaveAttribute('data-outcome', 'duplicate');
+      expect(screen.getByText('moved.csv').parentElement).toHaveAttribute('data-outcome', 'moved');
     });
   });
 

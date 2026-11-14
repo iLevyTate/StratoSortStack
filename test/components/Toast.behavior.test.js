@@ -28,12 +28,22 @@ describe('Toast (visual component)', () => {
   });
 
   describe('non-actionable rendering', () => {
-    test('defaults to role="alert" with tabIndex=-1', () => {
-      render(<Toast message="hello" duration={0} onClose={jest.fn()} />);
+    // Only an error interrupts a screen reader; info/success/warning are
+    // read politely. The container is the polite live region, so a toast
+    // carries no aria-live of its own.
+    test('error uses role=alert, info/success/warning use role=status', () => {
+      const { rerender } = render(
+        <Toast message="hello" severity="error" duration={0} onClose={jest.fn()} />
+      );
       const el = screen.getByRole('alert');
-      expect(el).toBeInTheDocument();
       expect(el).toHaveAttribute('tabIndex', '-1');
-      expect(el).toHaveAttribute('aria-live', 'polite');
+      expect(el).not.toHaveAttribute('aria-live');
+
+      for (const severity of ['info', 'success', 'warning']) {
+        rerender(<Toast message="hello" severity={severity} duration={0} onClose={jest.fn()} />);
+        expect(screen.queryByRole('alert')).toBeNull();
+        expect(screen.getByRole('status')).toHaveAttribute('tabIndex', '-1');
+      }
     });
 
     test('renders the message text', () => {
@@ -144,15 +154,15 @@ describe('Toast (visual component)', () => {
           duration={0}
         />
       );
-      fireEvent.keyDown(screen.getByRole('alert'), { key: 'Enter' });
-      fireEvent.keyDown(screen.getByRole('alert'), { key: ' ' });
+      fireEvent.keyDown(screen.getByRole('status'), { key: 'Enter' });
+      fireEvent.keyDown(screen.getByRole('status'), { key: ' ' });
       expect(onActivate).not.toHaveBeenCalled();
     });
 
     test('non-actionable toast click does nothing', () => {
       const onActivate = jest.fn();
       render(<Toast message="static" onActivate={onActivate} onClose={jest.fn()} duration={0} />);
-      fireEvent.click(screen.getByRole('alert'));
+      fireEvent.click(screen.getByRole('status'));
       expect(onActivate).not.toHaveBeenCalled();
     });
   });
@@ -162,7 +172,7 @@ describe('Toast (visual component)', () => {
       jest.useFakeTimers();
       const onClose = jest.fn();
       render(<Toast message="esc me" duration={0} onClose={onClose} />);
-      fireEvent.keyDown(screen.getByRole('alert'), { key: 'Escape' });
+      fireEvent.keyDown(screen.getByRole('status'), { key: 'Escape' });
       // handleClose starts an animation-out timer before firing onClose
       act(() => {
         jest.runAllTimers();
@@ -264,7 +274,7 @@ describe('Toast (visual component)', () => {
       );
       expect(container.firstChild).toBeNull();
       rerender(<Toast message="fade" duration={0} onClose={jest.fn()} show={true} />);
-      expect(container.querySelector('[role="alert"]')).toBeTruthy();
+      expect(container.querySelector('[role="status"]')).toBeTruthy();
     });
   });
 });
@@ -333,5 +343,153 @@ describe('ToastContainer (rendering-focused)', () => {
     // m-1, m-2 were dropped
     expect(screen.queryByText('m-1')).not.toBeInTheDocument();
     expect(screen.queryByText('m-2')).not.toBeInTheDocument();
+  });
+});
+
+describe('Toast pause while read', () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  test('auto-dismiss pauses while hovered and restarts on mouse leave', () => {
+    jest.useFakeTimers();
+    const onClose = jest.fn();
+    render(<Toast message="hover me" severity="info" duration={1000} onClose={onClose} />);
+    const el = screen.getByRole('status');
+
+    fireEvent.mouseEnter(el);
+    act(() => {
+      jest.advanceTimersByTime(5000);
+    });
+    expect(onClose).not.toHaveBeenCalled();
+
+    fireEvent.mouseLeave(el);
+    act(() => {
+      jest.advanceTimersByTime(900);
+    });
+    expect(onClose).not.toHaveBeenCalled();
+    act(() => {
+      jest.runAllTimers();
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  test('auto-dismiss pauses while a button inside has keyboard focus', () => {
+    jest.useFakeTimers();
+    const onClose = jest.fn();
+    render(<Toast message="focus me" severity="info" duration={1000} onClose={onClose} />);
+    const dismiss = screen.getByRole('button', { name: /dismiss/i });
+
+    fireEvent.focus(dismiss);
+    act(() => {
+      jest.advanceTimersByTime(5000);
+    });
+    expect(onClose).not.toHaveBeenCalled();
+
+    fireEvent.blur(dismiss);
+    act(() => {
+      jest.runAllTimers();
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Toast copy button', () => {
+  let writeText;
+
+  beforeEach(() => {
+    writeText = jest.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true
+    });
+  });
+
+  afterEach(() => {
+    delete navigator.clipboard;
+  });
+
+  test('error toast Copy button writes message and details to the clipboard', async () => {
+    render(
+      <Toast
+        message="Could not move /Volumes/SSD/a.xlsx"
+        details="EPERM"
+        severity="error"
+        duration={0}
+        onClose={jest.fn()}
+      />
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Copy message' }));
+    });
+    expect(writeText).toHaveBeenCalledWith('Could not move /Volumes/SSD/a.xlsx\n\nEPERM');
+    expect(screen.getByRole('button', { name: 'Copied' })).toBeInTheDocument();
+  });
+
+  test('warning toast copies the text of an object message', async () => {
+    render(
+      <Toast
+        message={{ message: 'Index save is slow' }}
+        severity="warning"
+        duration={0}
+        onClose={jest.fn()}
+      />
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Copy message' }));
+    });
+    expect(writeText).toHaveBeenCalledWith('Index save is slow');
+  });
+
+  test('success and info toasts have no Copy button', () => {
+    const { rerender } = render(
+      <Toast message="Done" severity="success" duration={0} onClose={jest.fn()} />
+    );
+    expect(screen.queryByRole('button', { name: 'Copy message' })).toBeNull();
+    rerender(<Toast message="FYI" severity="info" duration={0} onClose={jest.fn()} />);
+    expect(screen.queryByRole('button', { name: 'Copy message' })).toBeNull();
+  });
+
+  test('a React element message with no details has nothing to copy', () => {
+    render(<Toast message={<span>rich</span>} severity="error" duration={0} onClose={jest.fn()} />);
+    expect(screen.queryByRole('button', { name: 'Copy message' })).toBeNull();
+  });
+
+  test('Copy click does not activate an actionable toast', async () => {
+    const onActivate = jest.fn();
+    render(
+      <Toast
+        message="open me"
+        severity="error"
+        actionable
+        onActivate={onActivate}
+        duration={0}
+        onClose={jest.fn()}
+      />
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Copy message' }));
+    });
+    expect(writeText).toHaveBeenCalledWith('open me');
+    expect(onActivate).not.toHaveBeenCalled();
+  });
+});
+
+describe('ToastContainer landmark and details', () => {
+  test('is a labelled region and forwards details to the toast', async () => {
+    const writeText = jest.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    render(
+      <ToastContainer
+        toasts={[{ id: 1, message: 'Failed', details: 'ENOSPC', severity: 'error', duration: 0 }]}
+        onRemoveToast={jest.fn()}
+      />
+    );
+    expect(screen.getByRole('region', { name: 'Notifications' })).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Copy message' }));
+    });
+    expect(writeText).toHaveBeenCalledWith('Failed\n\nENOSPC');
+    delete navigator.clipboard;
   });
 });

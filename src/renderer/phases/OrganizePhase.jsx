@@ -31,10 +31,15 @@ import {
   OrganizeSummaryBanner,
   InPlaceMoveNotice,
   VirtualizedFileGrid,
-  VirtualizedProcessedFiles,
+  RunResultsList,
   UncategorizedActionsBar
 } from '../components/organize';
-import { setSmartFolders as setSmartFoldersAction } from '../store/slices/filesSlice';
+import { useRunResultsExport } from '../components/organize/RunResultsList';
+import { organizedEntryToRow, withQueueNote } from '../utils/organizeRunResults';
+import {
+  setSmartFolders as setSmartFoldersAction,
+  setLastOrganizeRunFiles as setLastOrganizeRunFilesAction
+} from '../store/slices/filesSlice';
 import { UndoRedoToolbar, useUndoRedo } from '../components/UndoRedoSystem';
 import Modal from '../components/ui/Modal';
 import OrganizePreviewModal from '../components/organize/OrganizePreviewModal';
@@ -63,12 +68,14 @@ import { formatDisplayPath } from '../utils/pathDisplay';
 import { toCanonicalPath } from '../utils/canonicalPath';
 import { useFileActions } from '../hooks/useFileActions';
 import { useLastOrganizeRun } from '../hooks/useLastOrganizeRun';
+import { filesIpc } from '../services/ipc';
 import { useAnalysisRun } from './discover/AnalysisRunProvider';
 
 const logger = createLogger('OrganizePhase');
+const NO_RUN_FILES = [];
 function OrganizePhase() {
   const { addNotification } = useNotification();
-  const { reanalyzeFiles } = useAnalysisRun();
+  const { reanalyzeFiles, cancelAnalysis } = useAnalysisRun();
   const { executeAction } = useUndoRedo();
   const [viewingFileDetails, setViewingFileDetails] = React.useState(null);
   const redactPaths = useAppSelector(selectRedactPaths);
@@ -116,6 +123,54 @@ function OrganizePhase() {
   } = useOrganizeState();
   const { lastOrganizeRun, finishedWhileOpen, setLastOrganizeRun, dismissLastOrganizeRun } =
     useLastOrganizeRun();
+  // Every file of the last run, behind the banner's "See every file".
+  const storedRunFiles = useAppSelector((state) => state?.files?.lastOrganizeRunFiles);
+  const lastRunFiles = Array.isArray(storedRunFiles) ? storedRunFiles : NO_RUN_FILES;
+  const queuedFiles = useAppSelector((state) => state?.files?.selectedFiles);
+  const [showRunResults, setShowRunResults] = React.useState(false);
+  const setLastOrganizeRunFiles = useCallback(
+    (rows) => dispatch(setLastOrganizeRunFilesAction(rows)),
+    [dispatch]
+  );
+  // "Files that were not moved are still listed" stops being true once the
+  // user removes them from the queue; the banner then says where they are.
+  const runSummary = useMemo(
+    () =>
+      withQueueNote(
+        lastOrganizeRun,
+        lastRunFiles,
+        (Array.isArray(queuedFiles) ? queuedFiles : []).map((file) => file?.path)
+      ),
+    [lastOrganizeRun, lastRunFiles, queuedFiles]
+  );
+  const runSummaryAction = useMemo(
+    () =>
+      lastRunFiles.length > 0
+        ? { label: 'See every file', onClick: () => setShowRunResults(true) }
+        : undefined,
+    [lastRunFiles.length]
+  );
+  const exportLastRun = useRunResultsExport(lastRunFiles);
+  const openResultFolder = useCallback(
+    async (folder) => {
+      try {
+        const result = await filesIpc.openFolder(folder);
+        if (result && result.success === false) {
+          throw new Error(result.error || 'openFolder failed');
+        }
+      } catch (error) {
+        logger.warn('[OrganizePhase] Failed to open a destination folder', {
+          error: error?.message || String(error)
+        });
+        addNotification(
+          'Could not open the folder. It may have moved or been deleted.',
+          'error',
+          5000
+        );
+      }
+    },
+    [addNotification]
+  );
   const safeSmartFolders = useMemo(
     () => (Array.isArray(smartFolders) ? smartFolders : []),
     [smartFolders]
@@ -155,6 +210,12 @@ function OrganizePhase() {
   const { unprocessedFiles: baseUnprocessedFiles, processedFiles } = useMemo(() => {
     return getFilteredFiles(filesWithAnalysis);
   }, [getFilteredFiles, filesWithAnalysis]);
+  // The "Previously organized files" list, with each file's full location.
+  const historyRows = useMemo(
+    () => (Array.isArray(processedFiles) ? processedFiles.map(organizedEntryToRow) : []),
+    [processedFiles]
+  );
+  const exportHistory = useRunResultsExport(historyRows);
 
   // Shared by single-card edits and the bulk category change.
   const persistFileEdit = useCallback(
@@ -265,7 +326,8 @@ function OrganizePhase() {
     addOrganizedFiles,
     removeOrganizedFiles,
     setOrganizingState,
-    setLastOrganizeRun
+    setLastOrganizeRun,
+    setLastOrganizeRunFiles
   });
 
   const filesBeingOrganized = useMemo(() => {
@@ -537,12 +599,19 @@ function OrganizePhase() {
           files are relocated.
         </Text>
         {isAnalysisRunning && (
-          <div className="flex items-center justify-center gap-compact mt-2">
+          <div className="flex flex-wrap items-center justify-center gap-compact mt-2">
             <div className="flex items-center gap-compact rounded-lg border border-stratosort-blue/30 bg-stratosort-blue/8 px-3 py-1.5 text-sm text-stratosort-blue">
-              <span className="loading-spinner h-4 w-4 border-t-transparent" />
-              Analysis continuing in background: {analysisProgressFromDiscover.current}/
-              {analysisProgressFromDiscover.total} files
+              <span className="loading-spinner h-4 w-4 border-t-transparent" aria-hidden="true" />
+              <span role="status">
+                Analyzing in the background: {analysisProgressFromDiscover.current} of{' '}
+                {analysisProgressFromDiscover.total} files
+              </span>
             </div>
+            {/* Same control as Discover's, so a long batch can be stopped
+                from here. Files already analyzed stay in the review list. */}
+            <Button onClick={cancelAnalysis} variant="danger" size="sm">
+              Stop analysis
+            </Button>
           </div>
         )}
       </Stack>
@@ -643,10 +712,11 @@ function OrganizePhase() {
         <UndoRedoToolbar className="flex-shrink-0" />
       </Inline>
 
-      {lastOrganizeRun && (
+      {runSummary && (
         <OrganizeSummaryBanner
-          summary={lastOrganizeRun}
+          summary={runSummary}
           onDismiss={dismissLastOrganizeRun}
+          action={runSummaryAction}
           announce={finishedWhileOpen}
         />
       )}
@@ -1048,12 +1118,45 @@ function OrganizePhase() {
             {processedFiles.length} file
             {processedFiles.length !== 1 ? 's have' : ' has'} been successfully organized.
           </Text>
-          <div className="flex-1 min-h-0 overflow-y-auto modern-scrollbar -mx-6 px-6">
+          <div className="flex-1 min-h-0 overflow-y-auto modern-scrollbar -mx-6">
             <ErrorBoundaryCore variant="simple" contextName="Processed Files">
-              <VirtualizedProcessedFiles files={processedFiles} />
+              <RunResultsList
+                rows={historyRows}
+                onReveal={revealFile}
+                onOpenFolder={openResultFolder}
+                onExport={exportHistory}
+                redactPaths={Boolean(redactPaths)}
+              />
             </ErrorBoundaryCore>
           </div>
         </Stack>
+      </Modal>
+
+      {/* Every file of the last run: where it went, or why it did not move */}
+      <Modal
+        isOpen={showRunResults && lastRunFiles.length > 0}
+        onClose={() => setShowRunResults(false)}
+        title="Last organize run"
+        size="lg"
+        footer={
+          <Inline className="justify-end" gap="default" wrap={false}>
+            <Button onClick={() => setShowRunResults(false)} variant="secondary" size="sm">
+              Close
+            </Button>
+          </Inline>
+        }
+      >
+        <div className="h-full min-h-0 overflow-y-auto modern-scrollbar -mx-6">
+          <ErrorBoundaryCore variant="simple" contextName="Last organize run">
+            <RunResultsList
+              rows={lastRunFiles}
+              onReveal={revealFile}
+              onOpenFolder={openResultFolder}
+              onExport={exportLastRun}
+              redactPaths={Boolean(redactPaths)}
+            />
+          </ErrorBoundaryCore>
+        </div>
       </Modal>
     </div>
   );

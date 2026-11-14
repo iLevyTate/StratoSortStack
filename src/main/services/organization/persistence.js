@@ -177,49 +177,6 @@ class PatternPersistence {
     return null;
   }
 
-  /**
-   * Merge two pattern payloads, preferring the newer per-key entry when
-   * both sides define the same key. Non-keyed arrays (feedbackHistory) are
-   * concatenated and de-duplicated by timestamp+file-name.
-   * @private
-   */
-  _mergePendingSaveData(/** @type {any} */ previous, /** @type {any} */ next) {
-    if (!previous || typeof previous !== 'object') return next;
-    if (!next || typeof next !== 'object') return previous;
-
-    const mergeKeyedTuples = (/** @type {any} */ a = [], /** @type {any} */ b = []) => {
-      const result = new Map();
-      for (const entry of Array.isArray(a) ? a : []) {
-        if (Array.isArray(entry) && entry.length >= 1) result.set(entry[0], entry[1]);
-      }
-      for (const entry of Array.isArray(b) ? b : []) {
-        if (Array.isArray(entry) && entry.length >= 1) result.set(entry[0], entry[1]);
-      }
-      return Array.from(result.entries()).map(([k, v]) => [k, v]);
-    };
-
-    const mergeFeedback = (/** @type {any} */ a = [], /** @type {any} */ b = []) => {
-      const seen = new Set();
-      const out = [];
-      for (const entry of [...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])]) {
-        if (!entry || typeof entry !== 'object') continue;
-        const key = `${entry.timestamp || ''}|${entry.file?.name || ''}|${entry.accepted}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        out.push(entry);
-      }
-      return out;
-    };
-
-    return {
-      ...previous,
-      ...next,
-      patterns: mergeKeyedTuples(previous.patterns, next.patterns),
-      feedbackHistory: mergeFeedback(previous.feedbackHistory, next.feedbackHistory),
-      folderUsageStats: mergeKeyedTuples(previous.folderUsageStats, next.folderUsageStats)
-    };
-  }
-
   _resolvePendingSaveWaiters(/** @type {any} */ result) {
     if (this._pendingSaveWaiters.length === 0) return;
     const waiters = this._pendingSaveWaiters;
@@ -286,14 +243,10 @@ class PatternPersistence {
       : null;
 
     if (now - this.lastSaveTime < this.saveThrottleMs) {
-      // Merge with any previously-queued payload instead of overwriting it.
-      // Callers historically always dumped the complete PatternMatcher state
-      // so last-write-wins happened to be safe — but the moment a second
-      // writer (e.g. a background metrics sweeper, a feedback ingester, or
-      // an IPC-driven partial update) queues during the same throttle
-      // window, the earlier caller's delta was silently dropped. Merging
-      // by key keeps the contract honest regardless of who's writing.
-      this._pendingSaveData = this._mergePendingSaveData(this._pendingSaveData, data);
+      // Every save is the complete PatternMatcher state, so the newest
+      // snapshot wins. Merging it with an older queued one brought back
+      // patterns deleted in between (an undo inside the throttle window).
+      this._pendingSaveData = data;
       if (!this.pendingSave) {
         const delayMs = this.saveThrottleMs - (now - this.lastSaveTime);
         this.pendingSave = setTimeout(() => {

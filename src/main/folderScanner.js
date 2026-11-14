@@ -3,7 +3,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const { createLogger } = require('../shared/logger');
 const { isPermissionError } = require('../shared/errorClassifier');
-const { TIMEOUTS } = require('../shared/performanceConstants');
+const { TIMEOUTS, isTempFile } = require('../shared/performanceConstants');
 
 const logger = createLogger('FolderScanner');
 const DEFAULT_IGNORE_PATTERNS = [
@@ -12,8 +12,16 @@ const DEFAULT_IGNORE_PATTERNS = [
   'desktop.ini',
   '.git',
   'node_modules',
-  '__pycache__'
-  // Add more common patterns if needed
+  '__pycache__',
+  // Volume system folders macOS and Windows create at the top of a drive
+  // (an external SSD or USB stick). They never hold the user's documents.
+  '.Spotlight-V100',
+  '.Trashes',
+  '.fseventsd',
+  '.TemporaryItems',
+  '.DocumentRevisions-V100',
+  '$RECYCLE.BIN',
+  'System Volume Information'
 ];
 
 const CONCURRENCY_LIMIT = 50;
@@ -144,6 +152,13 @@ async function scanDirectory(
           return itemName === pattern;
         })
       ) {
+        return null;
+      }
+      // Hidden companions that look like documents by extension: macOS
+      // AppleDouble files ("._Report.pdf", on exFAT/FAT drives and network
+      // shares), Office lock files ("~$data.xlsx") and download/editor temp
+      // files. SmartFolderWatcher skips the same names (TEMP_FILE_PATTERNS).
+      if (!dirent.isDirectory() && isTempFile(itemName)) {
         return null;
       }
 
@@ -280,7 +295,8 @@ async function scanDirectory(
     // Optionally, rethrow or return a specific error structure
     if (isPermissionError(error)) {
       // Handle permission errors gracefully, e.g., by skipping the directory
-      return [
+      /** @type {any[]} */
+      const denied = [
         {
           name: path.basename(dirPath),
           path: dirPath,
@@ -289,6 +305,26 @@ async function scanDirectory(
           children: []
         }
       ];
+      // The folder the caller asked for could not be opened at all (on a Mac:
+      // the user declined access, or the drive is not allowed under Privacy &
+      // Security). Say so in the meta so the caller can explain it instead of
+      // reporting an empty folder. A blocked subfolder stays a skipped node.
+      if (!_ctx) {
+        Object.defineProperty(denied, '__scanMeta', {
+          value: {
+            partial: false,
+            reasons: [],
+            rootError: error.code || 'EACCES',
+            durationMs: Date.now() - ctx.startedAt,
+            directoriesVisited: ctx.directoriesVisited,
+            filesIncluded: 0,
+            skippedErrors: 0,
+            errorSamples: []
+          },
+          enumerable: false
+        });
+      }
+      return denied;
     }
     // For other errors, you might want to propagate them
     throw error;

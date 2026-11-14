@@ -1,4 +1,5 @@
 // @ts-check
+const crypto = require('crypto');
 const { getInstance: getLlamaService } = require('../services/LlamaService');
 const { ensureTextModelReadyForAnalysis } = require('../llamaUtils');
 const { globalDeduplicator } = require('../utils/llmOptimization');
@@ -15,6 +16,7 @@ const { getInstance: getAnalysisCache } = require('../services/AnalysisCacheServ
 const { ANALYSIS_SCHEMA_PROMPT } = require('../../shared/analysisSchema');
 const { buildAnalysisFromModelJson } = require('./modelAnalysisResult');
 const { forAnalysisCache } = require('./embeddingHandoff');
+const { selectPromptFolders } = require('../../shared/promptFolders');
 const {
   getOrganizationGuidance,
   formatOrganizationGuidanceBlock
@@ -93,13 +95,38 @@ function cachedAnalysisCopy(value) {
     keywords: Array.isArray(value.keywords) ? [...value.keywords] : value.keywords
   });
 }
+
+/** @param {string} text */
+function hashText(text) {
+  return crypto
+    .createHash('sha256')
+    .update(String(text || ''))
+    .digest('hex');
+}
+
+/**
+ * The answer for one file, handed to an identical file with another name.
+ * The suggested name is dropped (two copies given one name in one folder
+ * would collide), and a date that came from the first file's timestamp
+ * rather than its content is replaced with this file's.
+ * @param {{ result: Record<string, any>, dateFromFile?: boolean }} entry
+ * @param {string | null} fileDate
+ * @returns {Record<string, any>}
+ */
+function reuseForCopy(entry, fileDate) {
+  const copy = cachedAnalysisCopy(entry.result);
+  copy.suggestedName = undefined;
+  if (entry.dateFromFile) copy.date = fileDate || undefined;
+  return copy;
+}
 const AppConfig = {
   ai: {
     textAnalysis: {
       defaultModel: AI_DEFAULTS.TEXT.MODEL,
       timeout: TIMEOUTS.AI_ANALYSIS_LONG,
       maxContentLength: AI_DEFAULTS.TEXT.MAX_CONTENT_LENGTH,
-      temperature: AI_DEFAULTS.TEXT.TEMPERATURE,
+      temperature: AI_DEFAULTS.TEXT.CLASSIFICATION_TEMPERATURE,
+      seed: AI_DEFAULTS.TEXT.CLASSIFICATION_SEED,
       maxTokens: AI_DEFAULTS.TEXT.MAX_TOKENS
     }
   }
@@ -275,14 +302,46 @@ async function analyzeTextWithLlama(
       AppConfig.ai.textAnalysis.defaultModel;
     const contextSize = Number(cfg?.contextSize) || AI_DEFAULTS.TEXT.CONTEXT_SIZE;
 
+    // The folder list is built before the content budget: its length depends
+    // on how many folders the user has and how much they wrote about each, and
+    // the document sample has to make room for it. It is sized to the
+    // context, which is only 2048 tokens on CPU, so it never crowds out the
+    // document (the overflow retry shrinks only the document).
+    let folderCategoriesStr = '';
+    if (smartFolders && smartFolders.length > 0) {
+      const { folders: validFolders, omitted } = selectPromptFolders(smartFolders, {
+        contextTokens: contextSize
+      });
+      // Info, not warn: it repeats for every file, and Live Activity shows
+      // each warning as a Problem line. Setup warns about it once instead.
+      if (omitted > 0) {
+        logger.info('[DocumentLLM] Smart folders left out of prompt', {
+          omitted,
+          listed: validFolders.length
+        });
+      }
+      if (validFolders.length > 0) {
+        const folderListParts = validFolders.map(
+          (f, i) => `${i + 1}. "${f.name}" — ${f.description || 'no description provided'}`
+        );
+        const folderListDetailed = folderListParts.join('\n');
+        folderCategoriesStr = `\n\nAVAILABLE SMART FOLDERS (name — description):\n${folderListDetailed}\n\nSELECTION RULES (CRITICAL):\n- Choose the category by comparing the document's SUBJECT to the folder DESCRIPTIONS above.\n- You MUST read the description of each folder to understand what belongs there.\n- Ignore incidental mentions of a folder's name (citations, journal titles, company names). The description is the contract for what belongs there.\n- Output the category EXACTLY as one of the folder names above (verbatim).\n- Fill the 'reasoning' field with a brief explanation of why the content matches that specific folder's description.\n- Do NOT invent new categories. If unsure or if the document does not fit any folder clearly, return "Uncategorized".`;
+      }
+    }
+
     // Budget calculation: reserve space for the prompt template, schema JSON,
     // smart-folder descriptions, naming context, and the response tokens.
     // PROMPT_OVERHEAD_TOKENS covers everything outside the document content:
-    //   ~500 tok prompt template + ~300 tok schema + ~400 tok smart folders
-    //   + ~100 tok naming context + ~100 tok margin = 1400 minimum.
+    //   ~500 tok prompt template + ~300 tok schema + ~100 tok naming context
+    //   + ~500 tok guidance and margin = 1400, plus the smart-folder block at
+    //   its real length, never less than the 1800 used before folders were
+    //   measured.
     // Using 3 chars/token (conservative; mixed English/JSON/code averages ~3.2).
-    const PROMPT_OVERHEAD_TOKENS = 1800;
     const CHARS_PER_TOKEN = 3;
+    const PROMPT_OVERHEAD_TOKENS = Math.max(
+      1800,
+      1400 + Math.ceil(folderCategoriesStr.length / CHARS_PER_TOKEN)
+    );
     const maxTokens = Math.min(
       AppConfig.ai.textAnalysis.maxTokens,
       Math.max(256, Math.floor(contextSize * 0.25))
@@ -370,6 +429,14 @@ async function analyzeTextWithLlama(
     const orgGuidance = String((await getOrganizationGuidance()) || '');
     const cacheSeed = `${originalFileName || ''}|${fileDate || ''}|${namingContextKey}|${orgGuidance}|${truncated}`;
     const cacheKey = cacheService.generateKey(cacheSeed, modelToUse, smartFolders);
+    // Same content under another file name (a re-download, a copy): keyed on
+    // the full text, the instructions, the model and the Smart Folders, so
+    // changed folders or instructions never reuse an old answer.
+    const contentKey = cacheService.generateKey(
+      `content|${hashText(textContent)}|${orgGuidance}|${truncated}`,
+      modelToUse,
+      smartFolders
+    );
     if (!bypassCache) {
       const cachedResult = cacheService.get(cacheKey);
       if (cachedResult) {
@@ -381,23 +448,13 @@ async function analyzeTextWithLlama(
         });
         return cachedAnalysisCopy(cachedResult);
       }
-    }
-
-    let folderCategoriesStr = '';
-    if (smartFolders && smartFolders.length > 0) {
-      const validFolders = smartFolders
-        .filter((f) => f && typeof f.name === 'string' && f.name.trim().length > 0)
-        .slice(0, 10)
-        .map((f) => ({
-          name: f.name.trim().slice(0, 50),
-          description: (f.description || '').trim().slice(0, 140)
-        }));
-      if (validFolders.length > 0) {
-        const folderListParts = validFolders.map(
-          (f, i) => `${i + 1}. "${f.name}" — ${f.description || 'no description provided'}`
-        );
-        const folderListDetailed = folderListParts.join('\n');
-        folderCategoriesStr = `\n\nAVAILABLE SMART FOLDERS (name — description):\n${folderListDetailed}\n\nSELECTION RULES (CRITICAL):\n- Choose the category by comparing the document's SUBJECT to the folder DESCRIPTIONS above.\n- You MUST read the description of each folder to understand what belongs there.\n- Ignore incidental mentions of a folder's name (citations, journal titles, company names). The description is the contract for what belongs there.\n- Output the category EXACTLY as one of the folder names above (verbatim).\n- Fill the 'reasoning' field with a brief explanation of why the content matches that specific folder's description.\n- Do NOT invent new categories. If unsure or if the document does not fit any folder clearly, return "Uncategorized".`;
+      const sameContent = cacheService.get(contentKey);
+      if (sameContent?.result && sameContent.fileName !== originalFileName) {
+        logger.info('[DocumentLLM] Same content as another file; reusing its analysis', {
+          fileName: originalFileName,
+          category: sameContent.result.category
+        });
+        return reuseForCopy(sameContent, fileDate);
       }
     }
 
@@ -502,18 +559,23 @@ ${truncated}
       const CLOUD_OUTPUT_TOKENS = 2048;
       const CLOUD_OUTPUT_RETRY_TOKENS = 4096;
 
+      // Model calls made for this file (first try, overflow retry, JSON
+      // repair, strict retry), for the timing log.
+      let llmCalls = 0;
       const generateDocumentText = (
         /** @type {string} */ promptText,
         /** @type {number} */ requestedMaxTokens,
         /** @type {string | null} */ dedupeKey = null
-      ) =>
-        withAbortableTimeout(
+      ) => {
+        llmCalls += 1;
+        return withAbortableTimeout(
           (abortController) => {
             const localInference = () =>
               llamaSvc.generateText({
                 prompt: promptText,
                 maxTokens: requestedMaxTokens,
                 temperature: AppConfig.ai.textAnalysis.temperature,
+                seed: AppConfig.ai.textAnalysis.seed,
                 signal: abortController.signal
               });
 
@@ -625,6 +687,7 @@ ${truncated}
           // of letting it burn CPU/VRAM until the timeout.
           { signal: options.signal }
         );
+      };
 
       let usedMaxTokens = routerBackend
         ? Math.min(AppConfig.ai.textAnalysis.maxTokens, Math.max(maxTokens, CLOUD_OUTPUT_TOKENS))
@@ -645,11 +708,6 @@ ${truncated}
       const inferenceStartTime = Date.now();
       try {
         response = await generateDocumentText(prompt, usedMaxTokens, deduplicationKey);
-        logger.info('[documentLlm] LLM inference completed', {
-          fileName: originalFileName,
-          durationMs: Date.now() - inferenceStartTime,
-          model: inferenceProviderId === 'local' ? modelToUse : reportedModel
-        });
       } catch (error) {
         logger.warn('[documentLlm] LLM inference failed or timed out', {
           fileName: originalFileName,
@@ -695,6 +753,14 @@ ${truncated}
           throw error;
         }
       }
+      // After any overflow retry, so the time and call count cover both.
+      logger.info('[documentLlm] LLM inference completed', {
+        fileName: originalFileName,
+        durationMs: Date.now() - inferenceStartTime,
+        model: inferenceProviderId === 'local' ? modelToUse : reportedModel,
+        llmCalls,
+        promptChars: prompt.length
+      });
 
       if (response.response) {
         try {
@@ -707,6 +773,7 @@ ${truncated}
 
           if (!parsedJson) {
             // Attempt JSON repair via LLM using the same pattern as imageAnalysis.js
+            llmCalls += 1;
             const repairedResponse = await attemptJsonRepairWithLlama(llamaSvc, response.response, {
               schema: ANALYSIS_SCHEMA_PROMPT,
               maxTokens: usedMaxTokens,
@@ -796,6 +863,8 @@ ${truncated}
             model: inferenceProviderId === 'local' ? modelToUse : reportedModel,
             contentMeta,
             cached: false,
+            llmCalls,
+            llmMs: Date.now() - inferenceStartTime,
             extraction: {
               category: result.category,
               type: result.type,
@@ -807,6 +876,13 @@ ${truncated}
           });
 
           cacheService.set(cacheKey, cachedAnalysisCopy(result));
+          if (!result.error) {
+            cacheService.set(contentKey, {
+              fileName: originalFileName,
+              dateFromFile: Boolean(fileDate) && result.date === fileDate,
+              result: cachedAnalysisCopy(result)
+            });
+          }
           return result;
         } catch (e) {
           logger.error('[documentLlm] Unexpected error processing response:', e.message);

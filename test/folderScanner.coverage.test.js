@@ -24,7 +24,8 @@ jest.mock('../src/shared/performanceConstants', () => ({
   TIMEOUTS: {
     DIRECTORY_SCAN: 60000,
     FILE_READ: 5000
-  }
+  },
+  isTempFile: jest.requireActual('../src/shared/performanceConstants').isTempFile
 }));
 
 const { scanDirectory, DEFAULT_IGNORE_PATTERNS } = require('../src/main/folderScanner');

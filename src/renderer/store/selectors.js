@@ -335,6 +335,18 @@ export const selectMovedCount = createSelector(
 export const selectLastOrganizeRun = (/** @type {any} */ state) =>
   state?.files?.lastOrganizeRun ?? null;
 
+/** @type {any[]} */
+const NO_RUN_FILES = [];
+
+/**
+ * Every file of the last organize run and what happened to it, or an empty
+ * list (see utils/organizeRunResults).
+ */
+export const selectLastOrganizeRunFiles = (/** @type {any} */ state) =>
+  Array.isArray(state?.files?.lastOrganizeRunFiles)
+    ? state.files.lastOrganizeRunFiles
+    : NO_RUN_FILES;
+
 /**
  * Get redactPaths setting from system state
  * PERF: Memoized selector to prevent re-renders across 8+ components

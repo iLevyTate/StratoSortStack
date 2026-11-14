@@ -24,11 +24,21 @@ const DEFAULT_STATE = {
 };
 
 const TOOLS = [
-  { name: 'search_documents', desc: 'Hybrid semantic + keyword search.' },
-  { name: 'chat_with_documents', desc: 'RAG with citations.' },
-  { name: 'get_document_summary', desc: 'Cached LLM analysis lookup.' },
-  { name: 'list_smart_folders', desc: 'Enumerate user folders.' }
+  { name: 'search_documents', desc: 'Find documents by meaning or by exact words.' },
+  {
+    name: 'chat_with_documents',
+    desc: 'Answer a question from your documents and name the files used.'
+  },
+  { name: 'get_document_summary', desc: 'Read the saved summary of one document.' },
+  { name: 'list_smart_folders', desc: 'List your smart folders and where they are.' }
 ];
+
+// Plain words for the lifecycle states; 'running' shows the address instead.
+const STATUS_TEXT = {
+  starting: 'Starting…',
+  stopped: 'Stopped',
+  error: 'Not running. Untick the box, then tick it again to retry.'
+};
 
 function McpServerSection({ addNotification }) {
   const dispatch = useAppDispatch();
@@ -91,7 +101,10 @@ function McpServerSection({ addNotification }) {
       title="MCP Server"
       description="Let Claude, Cursor, Zed, or other AI tools search and chat with your StratoSort library. StratoSort itself makes no network calls for this and answers chat with the local model. The tool you connect receives paths, summaries, passages and answers from your library and sends them to its own model, which for Claude, Cursor and Zed is in the cloud."
     >
-      <SettingRow label="Enable MCP server">
+      <SettingRow
+        label="Enable MCP server"
+        description="Starts with StratoSort while this box is ticked."
+      >
         <input
           type="checkbox"
           aria-label="Enable MCP server"
@@ -105,7 +118,9 @@ function McpServerSection({ addNotification }) {
           <SettingRow label="Status">
             <div className="flex flex-col gap-compact sm:flex-row sm:items-center sm:gap-cozy">
               <span>
-                {status === 'running' ? `● Running on http://127.0.0.1:${port}/mcp` : status}
+                {status === 'running'
+                  ? `● Running on http://127.0.0.1:${port}/mcp`
+                  : STATUS_TEXT[status] || status}
               </span>
               <Button onClick={onTest} disabled={status !== 'running'} size="sm">
                 Test connection
@@ -114,10 +129,18 @@ function McpServerSection({ addNotification }) {
           </SettingRow>
           <SettingRow label="Bearer token">
             <div className="flex flex-col gap-compact sm:flex-row sm:items-center sm:gap-cozy">
-              <code>{showToken ? tokenMasked : '••••••••'}</code>
-              <Button onClick={() => setShowToken((v) => !v)} size="sm">
-                {showToken ? 'Hide' : 'Show'}
-              </Button>
+              <code>{showToken && tokenMasked ? tokenMasked : '••••••••'}</code>
+              {/* Only the first 4 characters ever reach this screen. After a
+                  start on launch they are not known until the next toggle. */}
+              {tokenMasked && (
+                <Button
+                  onClick={() => setShowToken((v) => !v)}
+                  size="sm"
+                  aria-label={showToken ? 'Hide token start' : 'Show start of token'}
+                >
+                  {showToken ? 'Hide' : 'Show start'}
+                </Button>
+              )}
               <Button onClick={onRotate} size="sm">
                 Rotate
               </Button>
@@ -131,6 +154,9 @@ function McpServerSection({ addNotification }) {
                 </li>
               ))}
             </ul>
+            <p className="mt-2 text-system-gray-500">
+              These tools only read. None of them moves, renames or deletes files.
+            </p>
           </SettingRow>
           <SettingRow label="Client setup" layout="col">
             <div className="flex flex-col gap-compact">

@@ -14,6 +14,7 @@ import {
   validateSmartFolderName,
   namesAreEquivalent
 } from '../../../shared/smartFolderNameValidation';
+import { checkFolderDescription } from '../../../shared/smartFolderDescriptionCheck';
 
 const logger = createLogger('AddSmartFolderModal');
 const getPathSeparator = (path) => (path && path.includes('\\') ? '\\' : '/');
@@ -55,6 +56,8 @@ function AddSmartFolderModal({
   const isMountedRef = useRef(true);
   const formId = useId();
   const folderPathId = useId();
+  const descriptionId = useId();
+  const descriptionHintsId = useId();
 
   // Pre-validate name on every keystroke so the user sees rejection reasons
   // (trailing dot, Windows reserved names, etc.) before they submit, matching
@@ -64,6 +67,19 @@ function AddSmartFolderModal({
     if (!folderName.trim()) return { valid: false, error: null, warning: null };
     return validateSmartFolderName(folderName);
   }, [folderName]);
+
+  // What the AI will have to go on for this folder: warn (never block) when
+  // the description is missing, short, cut off, or reads like another
+  // folder's. Nothing is shown until a name is typed.
+  const descriptionIssues = useMemo(() => {
+    if (!folderName.trim()) return [];
+    return checkFolderDescription({
+      name: folderName,
+      description,
+      otherFolders: existingFolders
+    });
+  }, [folderName, description, existingFolders]);
+  const showDescriptionHints = !isGeneratingDescription && descriptionIssues.length > 0;
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -438,7 +454,12 @@ function AddSmartFolderModal({
 
           <div className="relative">
             <div className="flex items-center justify-between mb-1.5">
-              <Text as="label" variant="small" className="block font-medium text-system-gray-700">
+              <Text
+                as="label"
+                htmlFor={descriptionId}
+                variant="small"
+                className="block font-medium text-system-gray-700"
+              >
                 Description{' '}
                 <span className="text-stratosort-blue font-medium ml-1">(AI uses this)</span>
               </Text>
@@ -476,11 +497,13 @@ function AddSmartFolderModal({
               </div>
             </div>
             <Textarea
+              id={descriptionId}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Describe what types of files should go here..."
               className="w-full"
               rows={3}
+              aria-describedby={showDescriptionHints ? descriptionHintsId : undefined}
             />
             {/* Inline status — only present during an active generation. The
                 long-wait variant explicitly explains why nothing seems to be
@@ -514,6 +537,20 @@ function AddSmartFolderModal({
               >
                 <Info className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
                 <span className="leading-relaxed">{genFallbackHint}</span>
+              </div>
+            )}
+            {showDescriptionHints && (
+              <div
+                id={descriptionHintsId}
+                aria-live="polite"
+                className="border-amber-200 bg-amber-50 text-amber-800 mt-2 flex items-start gap-compact rounded-md border px-3 py-2 text-xs"
+              >
+                <Info className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
+                <ul className="leading-relaxed flex flex-col gap-1">
+                  {descriptionIssues.map((issue) => (
+                    <li key={issue.code}>{issue.message}</li>
+                  ))}
+                </ul>
               </div>
             )}
           </div>

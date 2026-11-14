@@ -112,11 +112,91 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   of the download and shown after the first second, so the first figures could be far off and a
   change in speed took a long time to show. The speed is now measured over the last ten seconds and
   shown once three seconds of data have arrived; until then the row reads "Calculating speed…".
+- **You can see where every file of an organize run went.** The Complete screen lists every file
+  with its full new location instead of the first 12, says how many files went to each folder, and
+  has a button on every row that shows the file in its folder. On the Organize screen, "See every
+  file" lists every file the last run handled: where it went, or why it was not moved, and "Save
+  list as CSV" saves that list with each file's original and final location. "Previously organized
+  files" shows full locations and can open each file's folder. The list of a run that left files
+  unmoved is kept across a restart.
+- **The Dashboard's numbers add up.** It counts the files the last run did not move, with a button
+  that takes you to them; marks a removed duplicate as "Duplicate removed" instead of with the check
+  mark of a moved file; and says how many files wait for you to analyze or review them instead of
+  calling them "in progress" while nothing runs. When an organize run fails outright you see one
+  error instead of two, and the run is still reported on the Organize screen and the Dashboard.
+- **A large batch comes back whole after a restart.** Up to 400 queued files and 1,000 organized
+  files are kept, where the queue could come back with 200 files or none and the Organized count
+  stopped at 200. A file's details still give its full text length after a restart.
+- **Similar exports go to the same folder.** The AI picks folders with steady, repeatable settings;
+  identical files with different names, such as a re-downloaded export, go to the same folder and
+  the second one is sorted without asking the AI again; spreadsheets and CSV files are read with
+  their sheet names and column headings, including semicolon- and tab-separated files and UTF-16
+  exports; and a file is no longer sent to a folder only because their names share a filler word
+  such as "for", "data" or a year. The AI now compares a file with up to 20 Smart Folders, your own
+  ahead of the built-in ones and Uncategorized always included, and reads descriptions of up to 300
+  characters; on a small model the descriptions are shortened so the file itself still fits. Before,
+  folders added after the tenth were left out and descriptions were cut at 140 characters.
+- **The score on an Organize card means something.** Almost every file showed 60%, because the
+  date-based method counted "has a date" and "has a category", which every file has. The score now
+  reflects how well the folder matches the file's content, and a file placed only by its label shows
+  no score. Automatic organizing no longer moves a file into a folder only because that folder could
+  be improved to fit it.
+- **Corrections teach StratoSort, and the app says so.** A folder learned from your corrections no
+  longer loses to another folder when the file's content also points to the learned folder; what was
+  learned is saved before the app quits; an organize run still learns when one search-index update
+  fails; undoing an organize right after it no longer brings the learning back after a restart; and
+  files that only landed in Uncategorized, or that sit there, no longer teach it to suggest
+  Uncategorized. When you change a file's folder, its card says what StratoSort learns from that.
+  Rules typed in Memory & Rules without a dot, such as "CSV files go to Bing", now work, and
+  correction notes no longer replace a rule you wrote.
+- **Setup and Discover say which folders are which.** Setup says Smart Folders are where files go
+  and Discover says it is where you pick the files to sort. The app warns, without blocking, when
+  the folder you sort overlaps a Smart Folder or one Smart Folder sits inside another; when a Smart
+  Folder's description is missing, very short, too long to be read in full or reads like another
+  folder's; and when you have more Smart Folders than the AI can compare at once. Adding or moving a
+  Smart Folder that already holds files says those files are analyzed in the background and nothing
+  is moved.
+- **The built-in Uncategorized folder keeps its name.** It can still be moved, but no longer
+  renamed. A profile where it was renamed gets its name back instead of a second Uncategorized
+  folder, and a profile that already had two keeps only one catch-all; the other becomes an ordinary
+  folder.
+- **External drives and blocked folders on a Mac say what is wrong.** The top of an external drive
+  can be added as a Smart Folder. A folder that cannot be used says why: the drive is read-only, or
+  macOS needs you to allow StratoSort under Privacy & Security, where it used to report "No files
+  found". The macOS access prompts for external and network drives, Documents, Desktop and Downloads
+  now say why StratoSort asks.
+- **Folder scans skip files that are not documents.** The hidden `._` copies a Mac leaves on
+  external drives, Office lock files (`~$…`) and drive system folders such as `.Spotlight-V100` and
+  `$RECYCLE.BIN` are no longer picked up.
+- **Accented file names on a Mac.** Names with accents or umlauts saved by Mac apps, such as
+  "Rechnung März.pdf", leave the Ready list once moved and no longer count as a different place,
+  which caused extra prompts or failed moves. Two files headed for "Report.pdf" and "report.pdf" in
+  one folder are flagged before the move on a Mac. A file with a very long name moved to another
+  drive no longer fails and undoes the whole run.
+- **Error messages can be read and copied.** Errors stay until you close them, are not pushed off by
+  newer messages, wait while you point at them, no longer let the page show through, and wrap long
+  paths. Errors, warnings and the problem banners have a Copy button for the full message and error
+  code. Two different errors close together are both shown, and warnings are no longer shown in red.
+- **Analysis can be stopped from the Organize screen,** which also shows how many files are done,
+  and the progress card says why a run is going: files you added, files added during the last run, a
+  run resumed after a restart, a retry of failed files, or a Reanalyze.
+- **On a Mac, analysis no longer pauses before each file** because the app misread how much memory
+  was free, and the model setup describes Apple Silicon memory as one pool shared by the processor
+  and graphics, instead of "24 GB of RAM and Apple M4 Pro (18 GB)".
+- **Model downloads recover by themselves.** A download that cannot pick up where it stopped starts
+  over instead of failing every time with "HTTP 416", and resuming a nearly finished download no
+  longer asks for room for the whole file.
+- **The MCP server stays on.** It remembers that you turned it on and starts when StratoSort opens,
+  until you untick Enable MCP server. Its settings describe each tool in plain words and say that
+  none of them moves, renames or deletes files.
+- **Discover cards say how search finds a file:** "Search by meaning" or "Keyword search only",
+  instead of "Embed: Local". The Knowledge OS button shows ⌘K on a Mac.
 
 ### Documentation
 
 - **The Install Guide, the README and each release's notes say which Mac file to download:**
   `mac-arm64` for Apple Silicon, `mac-x64` for Intel, and how to check in About This Mac.
+- **The MCP Server guide uses the labels the app shows.**
 
 ## [5.2.0] - 2026-11-10
 

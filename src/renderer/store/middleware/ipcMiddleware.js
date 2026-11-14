@@ -675,13 +675,35 @@ const ipcMiddleware = (/** @type {any} */ store) => {
         const notificationId =
           (typeof validatedData?.id === 'string' && validatedData.id) ||
           `app-error-${Date.now().toString(36)}`;
+        const message = validatedData.message || validatedData.error || 'An error occurred';
+        // ErrorHandler.notifyUser sends warnings and info on this channel too
+        // (as `type`); showing them as red errors overstated them. Anything
+        // else ('critical', 'question', missing) is shown as an error.
+        const TOAST_SEVERITIES = ['error', 'warning', 'info'];
+        const severity = TOAST_SEVERITIES.includes(validatedData.severity)
+          ? validatedData.severity
+          : TOAST_SEVERITIES.includes(validatedData.type)
+            ? validatedData.type
+            : 'error';
+        // What the toast's Copy button adds after the message: the code and
+        // the raw error when the shown message is a friendlier one.
+        const details = [
+          validatedData.code ? `Code: ${validatedData.code}` : '',
+          validatedData.error && validatedData.error !== message ? validatedData.error : ''
+        ]
+          .filter(Boolean)
+          .join('\n');
         const notificationPayload = {
           id: notificationId,
           notificationId,
-          message: validatedData.message || validatedData.error || 'An error occurred',
-          severity: 'error',
+          message,
+          severity,
           duration: 6000,
-          groupKey: 'app-error'
+          // Per message: a grouped toast keeps its first text, so one key for
+          // every app error hid a second, different error behind a count.
+          // Identical repeats still collapse into one toast.
+          groupKey: `app-error:${message}`,
+          ...(details ? { details } : {})
         };
         safeDispatch(addNotification, notificationPayload);
         try {

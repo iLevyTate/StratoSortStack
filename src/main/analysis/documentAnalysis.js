@@ -77,7 +77,8 @@ const CACHE_CONFIG = {
   DEFAULT_CONFIDENCE: 85, // Default confidence for successful analysis
   CACHE_TTL_MS: 30 * 60 * 1000 // 30 minute TTL to prevent memory leaks
 };
-const ANALYSIS_SIGNATURE_VERSION = 'v2';
+// v3: spreadsheet and CSV text now carries sheet names and a column line.
+const ANALYSIS_SIGNATURE_VERSION = 'v3';
 
 // Office extraction is retried once only for OS-level contention (AV scanner
 // holding a freshly copied file, descriptor exhaustion). Parse failures and
@@ -292,13 +293,67 @@ function isPdfNoTextError(error) {
   return message.includes('no extractable text') || message.includes('no text content');
 }
 /**
- * Analyzes a document file using AI or fallback methods
+ * How long each stage of one document analysis took, filled in as the stages
+ * run. A stage that did not run stays null.
+ * @typedef {{
+ *   sizeKB: number | null,
+ *   chars: number | null,
+ *   extractMs: number | null,
+ *   namingMs: number | null,
+ *   llmMs: number | null,
+ *   matchMs: number | null,
+ *   cache: 'miss' | 'file-hit'
+ * }} AnalysisTiming
+ */
+
+/** @param {number} startedAt a performance.now() reading */
+const msSince = (startedAt) => Math.round(performance.now() - startedAt);
+
+/**
+ * Analyzes a document file using AI or fallback methods, and logs one
+ * '[ANALYSIS-TIMING]' line with the time each stage took. The line carries
+ * the extension and sizes only, never the file name or content.
  * @param {string} filePath - Path to the document file
  * @param {any[]} smartFolders - Array of smart folder configurations
  * @param {{ bypassCache?: boolean, smartFolderId?: string | null, isCancelled?: () => boolean, abortSignal?: AbortSignal }} [options]
  * @returns {Promise<AnalysisResult>} Analysis result with metadata
  */
 async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
+  const startedAt = performance.now();
+  /** @type {AnalysisTiming} */
+  const timing = {
+    sizeKB: null,
+    chars: null,
+    extractMs: null,
+    namingMs: null,
+    llmMs: null,
+    matchMs: null,
+    cache: 'miss'
+  };
+  let outcome = 'error';
+  try {
+    const result = await analyzeDocumentStages(filePath, smartFolders, options, timing);
+    outcome = result?.error || result?.isFallback || result?._isFallback ? 'fallback' : 'ok';
+    return result;
+  } finally {
+    logger.info('[ANALYSIS-TIMING]', {
+      ext: path.extname(String(filePath || '')).toLowerCase(),
+      ...timing,
+      totalMs: msSince(startedAt),
+      outcome
+    });
+  }
+}
+
+/**
+ * The stages of analyzeDocumentFile; records each stage's time in `timing`.
+ * @param {string} filePath
+ * @param {any[]} smartFolders
+ * @param {{ bypassCache?: boolean, smartFolderId?: string | null, isCancelled?: () => boolean, abortSignal?: AbortSignal }} options
+ * @param {AnalysisTiming} timing
+ * @returns {Promise<AnalysisResult>}
+ */
+async function analyzeDocumentStages(filePath, smartFolders = [], options = {}, timing) {
   logger.info('Analyzing document file', { path: filePath });
   const bypassCache = Boolean(options?.bypassCache);
   // smartFolderId is optional — callers that have pre-classified the file into a
@@ -359,10 +414,12 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
   let fileStats = null;
   try {
     fileStats = await fs.stat(filePath);
+    if (Number.isFinite(fileStats?.size)) timing.sizeKB = Math.round(fileStats.size / 1024);
     fileSignature = `${ANALYSIS_SIGNATURE_VERSION}|${modelName}|${smartFolderSig}|${guidanceSig}|${filePath}|${fileStats.size}|${fileStats.mtimeMs}`;
     if (!bypassCache) {
       const cachedResult = getFileCache(fileSignature);
       if (cachedResult) {
+        timing.cache = 'file-hit';
         return cachedResult;
       }
       logger.debug('Cache miss, analyzing', { path: filePath });
@@ -420,6 +477,7 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
   }
 
   // Step 2: Main content extraction and analysis (errors handled separately)
+  const extractStartedAt = performance.now();
   try {
     /** @type {string | null} */
     let extractedText = null;
@@ -903,6 +961,9 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
       partialTextRead = true;
     }
 
+    timing.extractMs = msSince(extractStartedAt);
+    timing.chars = typeof extractedText === 'string' ? extractedText.length : 0;
+
     if (extractedText && extractedText.trim().length > 0) {
       logger.info(`[CONTENT-ANALYSIS] Processing`, {
         fileName,
@@ -918,6 +979,7 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
       // Naming consistency via BM25 (no extra embedding — folder matching embeds later)
       /** @type {string[]} */
       let namingContext = [];
+      const namingStartedAt = performance.now();
       try {
         const searchService = container.tryResolve(ServiceIds.SEARCH_SERVICE);
         namingContext = await fetchNamingContextFromBm25(searchService, {
@@ -937,6 +999,7 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
           error: namingError.message
         });
       }
+      timing.namingMs = msSince(namingStartedAt);
 
       // Check for cancellation before expensive LLM call
       if (typeof options.isCancelled === 'function' && options.isCancelled()) {
@@ -978,6 +1041,7 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
 
       // Skip in-flight deduplication during forced reanalysis — we explicitly want fresh results
       let analysis;
+      const llmStartedAt = performance.now();
       if (bypassCache) {
         analysis = await analysisFn();
       } else {
@@ -992,9 +1056,11 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
         });
         analysis = await globalDeduplicator.deduplicate(deduplicationKey, analysisFn);
       }
+      timing.llmMs = msSince(llmStartedAt);
 
       // Semantic folder refinement using embeddings
       if (analysis && typeof analysis === 'object' && !analysis.error) {
+        const matchStartedAt = performance.now();
         try {
           // Round-3 audit fix: thread the abort signal so closing the window
           // mid-analysis cancels the downstream embedding work instead of
@@ -1018,6 +1084,7 @@ async function analyzeDocumentFile(filePath, smartFolders = [], options = {}) {
             filePath
           });
         }
+        timing.matchMs = msSince(matchStartedAt);
       }
 
       // Capture values needed from extractedText and release it for GC

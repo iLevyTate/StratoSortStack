@@ -23,13 +23,20 @@ jest.mock('../../src/renderer/components/UndoRedoSystem', () => ({
 // Organized history in the store (files.organizedFiles), which survives the
 // queue being cleared.
 let mockOrganizedHistory = [];
+// files.lastOrganizeRunFiles and the queue (files.selectedFiles).
+let mockLastRunFiles = [];
+let mockQueue = [];
 
 jest.mock('../../src/renderer/store/hooks', () => ({
   useAppDispatch: jest.fn(() => jest.fn()),
   useAppSelector: jest.fn((selector) =>
     selector({
       ui: { currentPhase: 'organize', organizeFocusRequest: null },
-      files: { organizedFiles: mockOrganizedHistory }
+      files: {
+        organizedFiles: mockOrganizedHistory,
+        lastOrganizeRunFiles: mockLastRunFiles,
+        selectedFiles: mockQueue
+      }
     })
   )
 }));
@@ -124,15 +131,25 @@ jest.mock('../../src/renderer/components/organize', () => ({
   TargetFolderList: () => <div>TARGET_FOLDER_LIST</div>,
   BulkOperations: () => <div>BULK_OPERATIONS</div>,
   OrganizeProgress: () => <div>ORGANIZE_PROGRESS</div>,
-  OrganizeSummaryBanner: ({ summary, onDismiss, announce }) => (
-    <button type="button" onClick={onDismiss} data-announce={String(announce)}>
-      SUMMARY_BANNER:{summary.outcome}
-    </button>
+  OrganizeSummaryBanner: ({ summary, onDismiss, announce, action }) => (
+    <div>
+      <button type="button" onClick={onDismiss} data-announce={String(announce)}>
+        SUMMARY_BANNER:{summary.outcome}
+      </button>
+      <span>{summary.detail}</span>
+      {action && (
+        <button type="button" onClick={action.onClick}>
+          {action.label}
+        </button>
+      )}
+    </div>
   ),
   InPlaceMoveNotice: ({ moves }) =>
     moves?.length ? <div>IN_PLACE_NOTICE:{moves.length}</div> : null,
   VirtualizedFileGrid: () => <div>FILE_GRID</div>,
   VirtualizedProcessedFiles: () => <div>PROCESSED_FILES</div>,
+  RunResultsList: jest.requireActual('../../src/renderer/components/organize/RunResultsList')
+    .default,
   UncategorizedActionsBar: () => <div>UNCATEGORIZED_ACTIONS_BAR</div>
 }));
 
@@ -241,7 +258,8 @@ jest.mock('../../src/renderer/phases/organize/useOrganization', () => ({
 }));
 
 jest.mock('../../src/renderer/utils/pathDisplay', () => ({
-  formatDisplayPath: jest.fn((value) => value)
+  formatDisplayPath: jest.fn((value) => value),
+  formatDisplayFileName: jest.fn((value) => value)
 }));
 
 jest.mock('lucide-react', () => ({
@@ -266,7 +284,14 @@ jest.mock('lucide-react', () => ({
   Bot: () => <span />,
   AlertTriangle: () => <span />,
   FileText: () => <span />,
-  ShieldCheck: () => <span />
+  ShieldCheck: () => <span />,
+  // RunResultsList's icons.
+  AlertCircle: () => <span />,
+  Check: () => <span />,
+  Clock: () => <span />,
+  Copy: () => <span />,
+  Download: () => <span />,
+  Undo2: () => <span />
 }));
 
 import OrganizePhase from '../../src/renderer/phases/OrganizePhase';
@@ -600,5 +625,121 @@ describe('OrganizePhase and license state (CP-19)', () => {
     } finally {
       useAppSelector.mockImplementation(previous);
     }
+  });
+});
+
+// Where every file of the last run went (P3c) and the organized history with
+// full locations (P3b).
+describe('OrganizePhase: every file of the last run', () => {
+  const partialRun = {
+    outcome: 'partial',
+    count: 1,
+    headline: 'Moved 1 file; 1 could not be moved',
+    detail: 'Access denied. Files that were not moved are still listed.',
+    finishedAt: 1
+  };
+  const runFiles = [
+    {
+      name: 'gsc.xlsx',
+      originalPath: '/in/gsc.xlsx',
+      finalPath: '/dest/finance/gsc.xlsx',
+      outcome: 'moved',
+      reason: ''
+    },
+    {
+      name: 'bing.csv',
+      originalPath: '/in/bing.csv',
+      finalPath: null,
+      outcome: 'failed',
+      reason: 'Access denied.'
+    }
+  ];
+
+  function showRun() {
+    const { useLastOrganizeRun } = require('../../src/renderer/hooks/useLastOrganizeRun');
+    useLastOrganizeRun.mockReturnValue({
+      lastOrganizeRun: partialRun,
+      finishedWhileOpen: false,
+      setLastOrganizeRun: jest.fn(),
+      dismissLastOrganizeRun: jest.fn()
+    });
+    mockLastRunFiles = runFiles;
+  }
+
+  afterEach(() => {
+    const { useLastOrganizeRun } = require('../../src/renderer/hooks/useLastOrganizeRun');
+    useLastOrganizeRun.mockReturnValue({
+      lastOrganizeRun: null,
+      finishedWhileOpen: false,
+      setLastOrganizeRun: jest.fn(),
+      dismissLastOrganizeRun: jest.fn()
+    });
+    mockLastRunFiles = [];
+    mockQueue = [];
+    delete window.electronAPI;
+  });
+
+  test('"See every file" lists the file that failed, with its reason', () => {
+    showRun();
+    mockQueue = [{ path: '/in/bing.csv' }];
+    render(<OrganizePhase />);
+
+    expect(screen.getByText(partialRun.detail)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'See every file' }));
+    expect(screen.getByText('Not moved: Access denied.')).toBeInTheDocument();
+    expect(screen.getByText('Still at /in/bing.csv')).toBeInTheDocument();
+    expect(screen.getByText('Now at /dest/finance/gsc.xlsx')).toBeInTheDocument();
+  });
+
+  test('once the unmoved files leave the queue, the banner says where they are', () => {
+    showRun();
+    mockQueue = [];
+    render(<OrganizePhase />);
+
+    expect(
+      screen.getByText(
+        'Access denied. The files that were not moved are no longer in the queue. They are still in their original folders.'
+      )
+    ).toBeInTheDocument();
+  });
+
+  test('no "See every file" without a file list', () => {
+    showRun();
+    mockLastRunFiles = [];
+    render(<OrganizePhase />);
+    expect(screen.queryByRole('button', { name: 'See every file' })).not.toBeInTheDocument();
+  });
+
+  test('the run hands its file list to the store', () => {
+    const { useOrganization } = require('../../src/renderer/phases/organize/useOrganization');
+    render(<OrganizePhase />);
+    expect(typeof useOrganization.mock.calls.at(-1)[0].setLastOrganizeRunFiles).toBe('function');
+  });
+
+  test('previously organized files show their full location and can be revealed', () => {
+    const { useProcessedFiles } = require('../../src/renderer/phases/organize/useFileEditing');
+    const organized = {
+      originalPath: '/in/gsc.xlsx',
+      originalName: 'gsc.xlsx',
+      path: '/dest/finance/GSC 2026.xlsx',
+      smartFolder: 'finance'
+    };
+    mockOrganizedHistory = [organized];
+    useProcessedFiles.mockReturnValue({
+      setProcessedFileIds: jest.fn(),
+      markFilesAsProcessed: jest.fn(),
+      unmarkFilesAsProcessed: jest.fn(),
+      getFilteredFiles: (files) => ({ unprocessedFiles: files, processedFiles: [organized] }),
+      normalizePath: (value) => value
+    });
+    const reveal = jest.fn().mockResolvedValue({ success: true });
+    window.electronAPI = { files: { reveal } };
+
+    render(<OrganizePhase />);
+    fireEvent.click(screen.getByRole('button', { name: /View 1 organized files history/i }));
+
+    expect(screen.getByText('Now at /dest/finance/GSC 2026.xlsx')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Show gsc.xlsx in its folder' }));
+    expect(reveal).toHaveBeenCalledWith('/dest/finance/GSC 2026.xlsx');
   });
 });

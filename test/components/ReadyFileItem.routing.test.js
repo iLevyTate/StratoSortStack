@@ -93,7 +93,11 @@ test('a name match says so and keeps the plain folder list', () => {
     category: 'Taxes',
     routing: { folder: FOLDERS[2], source: 'name', engine: null }
   });
-  expect(screen.getByTestId('organize-routing-note')).toHaveTextContent('Matched by folder name');
+  expect(screen.getByTestId('organize-routing-note')).toHaveTextContent(
+    'Matched by the label the analysis gave this file'
+  );
+  // The label's own confidence is not a match score: show none.
+  expect(screen.queryByText(/% confidence/)).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('combobox', { name: /Category/i }));
   const options = within(screen.getByRole('listbox')).getAllByRole('option');
   expect(options.map((o) => o.textContent)).toEqual(['Archive', 'Finance', 'Taxes']);

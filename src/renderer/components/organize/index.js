@@ -12,4 +12,5 @@ export { default as FolderImprovementSuggestions } from './FolderImprovementSugg
 /** @deprecated Experimental; OrganizePhase uses VirtualizedFileGrid instead. */
 export { default as VirtualizedFileGrid } from './VirtualizedFileGrid';
 export { default as VirtualizedProcessedFiles } from './VirtualizedProcessedFiles';
+export { default as RunResultsList } from './RunResultsList';
 export { default as UncategorizedActionsBar } from './UncategorizedActionsBar';

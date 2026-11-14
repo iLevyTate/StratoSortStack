@@ -104,8 +104,9 @@ function FeedbackMemoryPanel({ className = '', refreshToken }) {
       </div>
 
       <Text variant="tiny" className="text-system-gray-600 mb-3">
-        What StratoSort has learned from your corrections and folder descriptions. Future
-        suggestions follow these; edit or delete any that are wrong.
+        Rules and notes that adjust future suggestions. A rule like &ldquo;CSV files go to
+        Bing&rdquo; applies to every file of that type. Your corrections and folder descriptions are
+        listed here too. Edit or delete any that are wrong.
       </Text>
 
       <div className="space-y-2 mb-4">

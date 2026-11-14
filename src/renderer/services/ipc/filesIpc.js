@@ -16,5 +16,14 @@ export const filesIpc = {
   /** @param {string} folderPath */
   openFolder(folderPath) {
     return requireElectronAPI().files.openFolder(folderPath);
+  },
+  /**
+   * Save an organize run's per-file rows as CSV through a save dialog.
+   * Resolves `{ success, filePath, rowCount }`, `{ success: false, canceled: true }`
+   * or `{ success: false, error }`.
+   * @param {import('../../utils/organizeRunResults').RunResultRow[]} rows
+   */
+  exportOrganizeReport(rows) {
+    return requireElectronAPI().files.exportOrganizeReport({ rows });
   }
 };

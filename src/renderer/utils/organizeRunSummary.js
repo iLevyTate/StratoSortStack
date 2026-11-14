@@ -11,6 +11,9 @@
  * @typedef {object} OrganizeRunSummary
  * @property {'moved' | 'partial' | 'none' | 'rolledBack'} outcome
  * @property {number} count
+ * @property {number} [notMovedCount] - files the run did not move: failed,
+ *   not reached, stopped, or returned by a rollback. Duplicates removed
+ *   instead of moved are not among them.
  * @property {string} headline
  * @property {string} detail
  * @property {number | null} finishedAt - epoch ms; null when it is not known
@@ -37,9 +40,13 @@ export function normalizeOrganizeRunSummary(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   if (!OUTCOMES.includes(value.outcome)) return null;
   if (typeof value.headline !== 'string' || value.headline.length === 0) return null;
+  // Stored only when there is one: a summary without it means none.
+  const notMovedCount =
+    Number.isInteger(value.notMovedCount) && value.notMovedCount > 0 ? value.notMovedCount : 0;
   return {
     outcome: value.outcome,
     count: Number.isInteger(value.count) && value.count >= 0 ? value.count : 0,
+    ...(notMovedCount > 0 ? { notMovedCount } : {}),
     headline: value.headline,
     detail: typeof value.detail === 'string' ? value.detail : '',
     finishedAt: Number.isFinite(value.finishedAt) ? value.finishedAt : null,

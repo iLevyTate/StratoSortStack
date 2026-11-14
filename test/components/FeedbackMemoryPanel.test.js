@@ -73,4 +73,10 @@ describe('FeedbackMemoryPanel', () => {
       expect(screen.getByText('All .stl files go to CAD')).toBeInTheDocument();
     });
   });
+
+  test('says what a rule does without promising more', async () => {
+    render(<FeedbackMemoryPanel refreshToken={0} />);
+    expect(await screen.findByText(/applies to every file of that type/)).toBeInTheDocument();
+    expect(screen.queryByText(/follow these/)).not.toBeInTheDocument();
+  });
 });

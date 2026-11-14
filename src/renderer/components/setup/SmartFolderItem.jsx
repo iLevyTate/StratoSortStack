@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, memo } from 'react';
+import React, { useEffect, useId, useMemo, useRef, useState, memo } from 'react';
 import { useSelector } from 'react-redux';
 import {
   Folder,
@@ -9,7 +9,8 @@ import {
   ChevronUp,
   FolderPlus,
   PenLine,
-  ScrollText
+  ScrollText,
+  Info
 } from 'lucide-react';
 import Button from '../ui/Button';
 import IconButton from '../ui/IconButton';
@@ -22,6 +23,10 @@ import { formatDisplayPath } from '../../utils/pathDisplay';
 import { selectRedactPaths } from '../../store/selectors';
 import { filesIpc, smartFoldersIpc } from '../../services/ipc';
 import SmartFolderAIOverrideField from './SmartFolderAIOverrideField';
+import { isUncategorizedBucket } from '../../utils/smartFolderDestinations';
+import { checkFolderDescription } from '../../../shared/smartFolderDescriptionCheck';
+
+const NO_FOLDERS = [];
 
 const SmartFolderItem = memo(function SmartFolderItem({
   folder,
@@ -39,9 +44,27 @@ const SmartFolderItem = memo(function SmartFolderItem({
   addNotification,
   compact = false,
   isExpanded = true,
-  onToggleExpand
+  onToggleExpand,
+  // Every Smart Folder (this one included), for the look-alike description check.
+  smartFolders = NO_FOLDERS
 }) {
   const isEditing = editingFolder?.id === folder.id;
+  // The catch-all keeps its name; main refuses a rename (see smartFolders IPC).
+  const isCatchAll = isUncategorizedBucket(folder);
+  const nameHintId = useId();
+  const descriptionHintsId = useId();
+  const draftName = isEditing ? editingFolder?.name : folder.name;
+  const draftDescription = isEditing ? editingFolder?.description : folder.description;
+  const descriptionIssues = useMemo(
+    () =>
+      checkFolderDescription({
+        name: draftName,
+        description: draftDescription,
+        otherFolders: smartFolders.filter((other) => other && other.id !== folder.id)
+      }),
+    [draftName, draftDescription, smartFolders, folder.id]
+  );
+  const firstDescriptionIssue = descriptionIssues[0]?.message || null;
   const [hasMounted, setHasMounted] = useState(false);
   const [isGeneratingDescription, setIsGeneratingDescription] = useState(false);
   // 'loading' for first 3s of a description-gen call (cold LLM init can run
@@ -108,6 +131,15 @@ const SmartFolderItem = memo(function SmartFolderItem({
           <Text variant="tiny" className="truncate">
             {displayPath}
           </Text>
+          {firstDescriptionIssue && (
+            <Text
+              variant="tiny"
+              className="truncate text-stratosort-warning"
+              title={firstDescriptionIssue}
+            >
+              {firstDescriptionIssue}
+            </Text>
+          )}
         </div>
         <ChevronDown className="w-4 h-4 text-system-gray-400 shrink-0" />
       </Card>
@@ -148,15 +180,17 @@ const SmartFolderItem = memo(function SmartFolderItem({
             className="flex-1"
             placeholder="Folder name"
             aria-label="Folder name"
-            autoFocus
+            autoFocus={!isCatchAll}
+            disabled={isCatchAll}
+            aria-describedby={isCatchAll ? nameHintId : undefined}
             onKeyDown={(e) => {
               if (e.key === 'Enter') onSaveEdit();
               if (e.key === 'Escape') onCancelEdit();
             }}
           />
-          {/* eslint-enable jsx-a11y/no-autofocus */}
           <div className="flex flex-1 gap-compact">
             <Input
+              autoFocus={isCatchAll}
               type={redactPaths ? 'password' : 'text'}
               value={editingFolder.path || ''}
               onChange={(e) =>
@@ -173,12 +207,18 @@ const SmartFolderItem = memo(function SmartFolderItem({
                 if (e.key === 'Escape') onCancelEdit();
               }}
             />
+            {/* eslint-enable jsx-a11y/no-autofocus */}
             <Button type="button" variant="secondary" size="sm" onClick={handleBrowsePath}>
               <FolderOpen className="w-4 h-4" />
               Browse
             </Button>
           </div>
         </div>
+        {isCatchAll && (
+          <Text id={nameHintId} variant="tiny">
+            Files that fit no other folder go here. Its name cannot change.
+          </Text>
+        )}
 
         <div className="relative">
           <Textarea
@@ -192,6 +232,8 @@ const SmartFolderItem = memo(function SmartFolderItem({
             className="w-full pr-10"
             placeholder="Describe what types of files should go in this folder..."
             rows={2}
+            aria-label="Folder description"
+            aria-describedby={descriptionIssues.length > 0 ? descriptionHintsId : undefined}
           />
           <IconButton
             type="button"
@@ -256,6 +298,21 @@ const SmartFolderItem = memo(function SmartFolderItem({
             disabled={isGeneratingDescription || !editingFolder?.name?.trim()}
           />
         </div>
+
+        {descriptionIssues.length > 0 && (
+          <div
+            id={descriptionHintsId}
+            aria-live="polite"
+            className="border-amber-200 bg-amber-50 text-amber-800 flex items-start gap-compact rounded-md border px-3 py-2 text-xs"
+          >
+            <Info className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
+            <ul className="leading-relaxed flex flex-col gap-1">
+              {descriptionIssues.map((issue) => (
+                <li key={issue.code}>{issue.message}</li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {folder.id && <SmartFolderAIOverrideField folderId={folder.id} />}
 
@@ -327,6 +384,11 @@ const SmartFolderItem = memo(function SmartFolderItem({
           </div>
           <Text variant="small">{folder.description}</Text>
         </div>
+      )}
+      {firstDescriptionIssue && (
+        <Text variant="tiny" className="text-stratosort-warning">
+          {firstDescriptionIssue}
+        </Text>
       )}
 
       <div className="flex items-center justify-between border-t border-border-soft/50 mt-auto pt-3">

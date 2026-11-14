@@ -16,6 +16,7 @@ const { extractAndParseJSON } = require('../utils/jsonRepair');
 const { getInstance: getLlamaService } = require('./LlamaService');
 const { withAbortableTimeout } = require('../../shared/promiseUtils');
 const { TIMEOUTS } = require('../../shared/performanceConstants');
+const { UNCATEGORIZED_CATEGORY } = require('../../shared/uncategorizedFolder');
 
 function cleanText(/** @type {any} */ value, maxLength = 240) {
   if (typeof value !== 'string') return '';
@@ -71,15 +72,27 @@ function resolveExistingFolderName(
   return normalizedMatch?.name || null;
 }
 
+/**
+ * A folder's category as the enhancement may set it. 'uncategorized' belongs
+ * to the catch-all only; a user's folder that got it would be taken for the
+ * catch-all, so it becomes 'general'.
+ * @param {string} category
+ * @returns {string}
+ */
+function userFolderCategory(category) {
+  return category === UNCATEGORIZED_CATEGORY ? 'general' : category;
+}
+
 function normalizeEnhancement(
   /** @type {any} */ raw,
   /** @type {any} */ folderData,
   /** @type {any} */ existingFolders = []
 ) {
-  const suggestedCategory =
+  const suggestedCategory = userFolderCategory(
     cleanText(raw?.suggestedCategory || '', 60).toLowerCase() ||
-    cleanText(folderData?.category || '', 60).toLowerCase() ||
-    'general';
+      cleanText(folderData?.category || '', 60).toLowerCase() ||
+      'general'
+  );
   const relatedFolders = sanitizeStringList(raw?.relatedFolders, { maxItems: 6, maxLength: 80 })
     .map((name) => resolveExistingFolderName(name, existingFolders))
     .filter(Boolean);
@@ -122,7 +135,7 @@ async function enhanceSmartFolderWithLLM(
       new Set(
         existingFolderContext
           .map((f) => cleanText(f.category, 60).toLowerCase())
-          .filter(Boolean)
+          .filter((category) => category && category !== UNCATEGORIZED_CATEGORY)
           .concat('general')
       )
     );

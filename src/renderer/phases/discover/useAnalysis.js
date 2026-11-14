@@ -1035,10 +1035,16 @@ export function useAnalysis(options = {}) {
    * Main analysis function
    */
   const analyzeFiles = useCallback(
-    async (/** @type {any} */ files, /** @type {{ bypassCache?: boolean }} */ runOptions = {}) => {
+    async (
+      /** @type {any} */ files,
+      /** @type {{ bypassCache?: boolean, origin?: 'queued' | 'resume' | 'retry' }} */ runOptions = {}
+    ) => {
       // A reanalysis: every file goes through the per-file request, which
       // carries bypassCache, and the run ends without auto-advance.
       const bypassCache = runOptions?.bypassCache === true;
+      // Why this run started, shown on the progress card (analysisSlice
+      // runOrigin). A plain call is files the person just added.
+      const runOrigin = bypassCache ? 'reanalyze' : runOptions?.origin || 'added';
       if (!files || files.length === 0) {
         addNotification('No files queued for analysis.', 'info', 2000, 'analysis-empty');
         return { started: false, reason: 'empty' };
@@ -1112,7 +1118,7 @@ export function useAnalysis(options = {}) {
           )
         ];
         addNotification(
-          'Analysis already running. Files queued to run next.',
+          'Analysis already running. These files start when it finishes.',
           'info',
           2500,
           'analysis-queued'
@@ -1209,7 +1215,7 @@ export function useAnalysis(options = {}) {
 
       // Pass the real batch total: setIsAnalyzing's internal ref fallback is
       // stale inside this handler and used to zero the progress total.
-      setIsAnalyzing(true, { total: uniqueFiles.length });
+      setIsAnalyzing(true, { total: uniqueFiles.length, origin: runOrigin });
       lastProgressAtRef.current = Date.now();
       lastProgressDispatchRef.current = 0;
       const initialProgress = {
@@ -2079,7 +2085,7 @@ export function useAnalysis(options = {}) {
                 analyzeFilesRef.current &&
                 analysisRunIdRef.current === runId
               ) {
-                analyzeFilesRef.current(filesToProcess);
+                analyzeFilesRef.current(filesToProcess, { origin: 'queued' });
               }
             }, 100);
           }
@@ -2252,7 +2258,7 @@ export function useAnalysis(options = {}) {
     // Re-analyze the failed files
     addNotification(`Retrying ${failedFiles.length} failed file(s)...`, 'info', 2000);
     if (analyzeFilesRef.current) {
-      analyzeFilesRef.current(failedFiles);
+      analyzeFilesRef.current(failedFiles, { origin: 'retry' });
     }
   }, [analysisResults, fileStates, setFileStates, addNotification]);
 
@@ -2403,7 +2409,7 @@ export function useAnalysis(options = {}) {
           'analysis-resume'
         );
         if (analyzeFilesRef.current) {
-          analyzeFilesRef.current(remaining);
+          analyzeFilesRef.current(remaining, { origin: 'resume' });
         }
       } else {
         resetAnalysisState('No remaining files');

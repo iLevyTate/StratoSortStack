@@ -16,6 +16,7 @@ import { extractExtension, extractFileName } from './namingUtils';
 import { normalizePathValue, isAbsolutePath } from '../../utils/pathNormalization';
 import { mapErrorToNotification } from '../../utils/errorMapping';
 import { toCanonicalPath } from '../../utils/canonicalPath';
+import { describeSourceOverlap, sourceOverlapMessage } from '../../utils/folderOverlap';
 
 const logger = createLogger('DiscoverPhase:FileHandlers');
 const ensureFileApi = (/** @type {any} */ addNotification, /** @type {any} */ actionLabel) => {
@@ -56,6 +57,7 @@ const SUPPORTED_EXTENSIONS = ANALYSIS_SUPPORTED_EXTENSIONS || ALL_SUPPORTED_EXTE
 
 const SCAN_TIMEOUT = TIMEOUTS.DIRECTORY_SCAN || 30000;
 const FILE_STATS_BATCH_SIZE = 25;
+const SOURCE_OVERLAP_NOTICE_MS = 8000;
 const buildMissingPathWarning = (/** @type {any} */ count) =>
   `Skipped ${count} item${count > 1 ? 's' : ''} because no stable absolute path was available`;
 
@@ -126,10 +128,26 @@ export function useFileHandlers({
   addSelectedFiles,
   updateFileState,
   addNotification,
-  analyzeFiles
+  analyzeFiles,
+  smartFolders
 }) {
   const [isScanning, setIsScanning] = useState(false);
   const isMountedRef = useRef(true);
+
+  /**
+   * A folder picked for sorting that is, sits inside, or holds a Smart Folder
+   * (where sorted files go) is still analyzed; say what that means for its
+   * files.
+   */
+  const warnIfSourceOverlaps = useCallback(
+    (/** @type {string} */ sourceDir) => {
+      const message = sourceOverlapMessage(describeSourceOverlap(sourceDir, smartFolders));
+      if (message) {
+        addNotification(message, 'warning', SOURCE_OVERLAP_NOTICE_MS, 'source-overlap');
+      }
+    },
+    [smartFolders, addNotification]
+  );
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -438,6 +456,8 @@ export function useFileHandlers({
             continue;
           }
 
+          warnIfSourceOverlaps(dir.path);
+
           if (scanResult?.partial) {
             addNotification(
               'Folder scan returned partial results (slow drive or too many files). Try a smaller folder.',
@@ -490,7 +510,7 @@ export function useFileHandlers({
 
       return expanded;
     },
-    [addNotification]
+    [addNotification, warnIfSourceOverlaps]
   );
 
   /**
@@ -651,6 +671,8 @@ export function useFileHandlers({
           return;
         }
 
+        warnIfSourceOverlaps(result.path);
+
         if (scanResult?.partial) {
           addNotification(
             'Folder scan returned partial results (slow drive or too many files). Try a smaller folder.',
@@ -734,7 +756,8 @@ export function useFileHandlers({
     filterNewFiles,
     analyzeFiles,
     enrichSelectedFiles,
-    setIsScanningSafe
+    setIsScanningSafe,
+    warnIfSourceOverlaps
   ]);
 
   /**

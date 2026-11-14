@@ -95,16 +95,30 @@ function pathFor(platform) {
 }
 
 /**
+ * Same-name fold for a platform, for comparison keys only. macOS: accents
+ * composed (NFC) and lower case; the folder dialog and realpath return
+ * decomposed accents while sanitizeFolderPath composes them, and APFS treats
+ * both spellings as one name. Windows: lower case only, since NTFS keeps the
+ * two accent spellings as different names. Other platforms: unchanged.
+ * @param {string} platform
+ * @returns {(s: string) => string}
+ */
+function foldFor(platform) {
+  if (platform === 'darwin') return (s) => s.normalize('NFC').toLowerCase();
+  if (isCaseInsensitivePlatform(platform)) return (s) => s.toLowerCase();
+  return (s) => s;
+}
+
+/**
  * Lookup key for a directory: resolved, trailing separators dropped, and
- * case-folded on platforms whose file systems ignore case.
+ * folded (see {@link foldFor}) on platforms whose file systems ignore case.
  * @param {string} dirPath
  * @param {string} [platform]
  * @returns {string}
  */
 function dirKey(dirPath, platform = process.platform) {
   const p = pathFor(platform);
-  const resolved = p.resolve(dirPath);
-  return isCaseInsensitivePlatform(platform) ? resolved.toLowerCase() : resolved;
+  return foldFor(platform)(p.resolve(dirPath));
 }
 
 /**
@@ -116,9 +130,7 @@ function dirKey(dirPath, platform = process.platform) {
  */
 function isWithin(childPath, parentPath, platform = process.platform) {
   const p = pathFor(platform);
-  const fold = isCaseInsensitivePlatform(platform)
-    ? (/** @type {string} */ s) => s.toLowerCase()
-    : (/** @type {string} */ s) => s;
+  const fold = foldFor(platform);
   const rel = p.relative(fold(p.resolve(parentPath)), fold(p.resolve(childPath)));
   return rel === '' || (!rel.startsWith('..') && !p.isAbsolute(rel));
 }

@@ -164,3 +164,51 @@ describe('crossDeviceMove rollback on source-unlink failure', () => {
     );
   });
 });
+
+// File names are limited to 255 bytes (APFS, exFAT, ext4; NTFS counts 255
+// UTF-16 units). The staging suffix adds ~38 characters, so a long name used
+// to fail the copy with ENAMETOOLONG, which rolls the whole run back.
+describe('crossDeviceMove staging name length', () => {
+  beforeEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  test.each([
+    ['ASCII', 'a'.repeat(240) + '.pdf'],
+    ['umlauts (2 bytes each)', '\u00e4'.repeat(120) + '.pdf']
+  ])('a long %s name stages under 255 bytes and lands on the full name', async (_label, name) => {
+    const dest = path.join('/mock/dest', name);
+    const copySpy = jest.spyOn(fs, 'copyFile').mockResolvedValue(undefined);
+    jest.spyOn(fs, 'stat').mockResolvedValue({ size: 100 });
+    jest
+      .spyOn(fs, 'access')
+      .mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    const renameSpy = jest.spyOn(fs, 'rename').mockResolvedValue(undefined);
+    jest.spyOn(fs, 'unlink').mockResolvedValue(undefined);
+    jest.spyOn(fs, 'mkdir').mockResolvedValue(undefined);
+
+    await crossDeviceMove('/mock/source/file.pdf', dest);
+
+    const staging = copySpy.mock.calls[0][1];
+    expect(Buffer.byteLength(path.basename(staging))).toBeLessThanOrEqual(255);
+    expect(staging).toMatch(/\.stratosort-\d+-[0-9a-f]{8}\.tmp$/);
+    expect(path.dirname(staging)).toBe(path.dirname(path.normalize(dest)));
+    expect(renameSpy).toHaveBeenCalledWith(staging, path.normalize(dest));
+  });
+
+  test('a short name keeps the full name in the staging name', async () => {
+    const dest = '/mock/dest/report.pdf';
+    const copySpy = jest.spyOn(fs, 'copyFile').mockResolvedValue(undefined);
+    jest.spyOn(fs, 'stat').mockResolvedValue({ size: 100 });
+    jest
+      .spyOn(fs, 'access')
+      .mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    jest.spyOn(fs, 'rename').mockResolvedValue(undefined);
+    jest.spyOn(fs, 'unlink').mockResolvedValue(undefined);
+    jest.spyOn(fs, 'mkdir').mockResolvedValue(undefined);
+
+    await crossDeviceMove('/mock/source/file.pdf', dest);
+
+    expect(path.basename(copySpy.mock.calls[0][1])).toMatch(/^report\.pdf\.stratosort-/);
+  });
+});

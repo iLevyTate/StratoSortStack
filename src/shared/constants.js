@@ -23,7 +23,8 @@ const IPC_CHANNELS = {
     OPEN_FOLDER: 'files:open-folder',
     DELETE_FOLDER: 'files:delete-folder',
     CLEANUP_ANALYSIS: 'files:cleanup-analysis',
-    ADD_TAGS: 'files:add-tags'
+    ADD_TAGS: 'files:add-tags',
+    EXPORT_ORGANIZE_REPORT: 'files:export-organize-report'
   },
   SMART_FOLDERS: {
     GET: 'smart-folders:get',

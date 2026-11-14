@@ -219,11 +219,15 @@ const AnalysisDetails = memo(function AnalysisDetails({
     },
     { label: 'Length', value: contentLength }
   ].filter((item) => isValuePresent(item.value));
-  const extractedTextLength =
+  // savedTextFullLength: the length before a restart trimmed the saved text
+  // to a preview (persistenceMiddleware slimAnalysisResult).
+  const extractedTextLength = Math.max(
     getTextLength(analysis.extractedText) +
-    getTextLength(analysis.ocrText) +
-    getTextLength(analysis.transcript) +
-    getTextLength(analysis.multimodalText);
+      getTextLength(analysis.ocrText) +
+      getTextLength(analysis.transcript) +
+      getTextLength(analysis.multimodalText),
+    Number.isFinite(analysis.savedTextFullLength) ? analysis.savedTextFullLength : 0
+  );
   const extractedPreviewSource =
     analysis.multimodalText ||
     analysis.extractedText ||
@@ -231,6 +235,12 @@ const AnalysisDetails = memo(function AnalysisDetails({
     analysis.transcript ||
     '';
   const keywordSectionOpen = keywordList.length <= 12;
+  // A restored result keeps only the count (persistenceMiddleware).
+  const transcriptSegmentCount = Array.isArray(analysis.transcriptSegments)
+    ? analysis.transcriptSegments.length
+    : Number.isFinite(analysis.transcriptSegmentCount)
+      ? analysis.transcriptSegmentCount
+      : 0;
 
   return (
     <Stack gap="relaxed" className="w-full">
@@ -323,13 +333,12 @@ const AnalysisDetails = memo(function AnalysisDetails({
             {analysis.detectedLanguage && (
               <MetaItem label="Language" value={analysis.detectedLanguage} />
             )}
-            {Array.isArray(analysis.transcriptSegments) &&
-              analysis.transcriptSegments.length > 0 && (
-                <MetaItem
-                  label="Transcript segments"
-                  value={analysis.transcriptSegments.length.toLocaleString()}
-                />
-              )}
+            {transcriptSegmentCount > 0 && (
+              <MetaItem
+                label="Transcript segments"
+                value={transcriptSegmentCount.toLocaleString()}
+              />
+            )}
             {Array.isArray(analysis.keyframes) && analysis.keyframes.length > 0 && (
               <MetaItem label="Keyframes" value={analysis.keyframes.length.toLocaleString()} />
             )}

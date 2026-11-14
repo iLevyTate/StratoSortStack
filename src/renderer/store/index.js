@@ -25,6 +25,7 @@ import {
   normalizeOrganizedPathIndex
 } from '../utils/organizedPathIndex';
 import { normalizeOrganizeRunSummary, summaryForNextLaunch } from '../utils/organizeRunSummary';
+import { normalizeRunResultRows } from '../utils/organizeRunResults';
 
 // Helper to serialize file objects loaded from localStorage
 // Converts Date objects to ISO strings for Redux compatibility
@@ -211,6 +212,7 @@ const loadState = () => {
               ),
               fileStates: normalizeHydratedFileStates(parsedLegacy.phaseData?.fileStates || {}),
               lastOrganizeRun: null,
+              lastOrganizeRunFiles: [],
               namingConvention: parsedLegacy.phaseData?.namingConvention || {
                 convention: 'subject-date',
                 dateFormat: 'YYYY-MM-DD',
@@ -380,6 +382,7 @@ const loadState = () => {
           fileStates: {},
           // The queue the run worked on is gone with the rest of the session.
           lastOrganizeRun: null,
+          lastOrganizeRunFiles: [],
           namingConvention: parsed.files?.namingConvention || {
             convention: 'subject-date',
             dateFormat: 'YYYY-MM-DD',
@@ -506,6 +509,13 @@ const loadState = () => {
         lastOrganizeRun: summaryForNextLaunch(
           normalizeOrganizeRunSummary(parsed.files?.lastOrganizeRun)
         ),
+        // The run's file list, when one was saved, belongs to that summary
+        // and is dropped with it.
+        lastOrganizeRunFiles: summaryForNextLaunch(
+          normalizeOrganizeRunSummary(parsed.files?.lastOrganizeRun)
+        )
+          ? normalizeRunResultRows(parsed.files?.lastOrganizeRunFiles)
+          : [],
         namingConvention: parsed.files?.namingConvention || {
           convention: 'subject-date',
           dateFormat: 'YYYY-MM-DD',

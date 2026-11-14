@@ -370,6 +370,9 @@ export const createOrganizeBatchAction = (
 ) => ({
   type: ACTION_TYPES.BATCH_OPERATION,
   description,
+  // useOrganization reports a thrown batch itself, with a summary that
+  // outlasts the toast; a second message from executeAction only repeated it.
+  reportsOwnErrors: true,
   execute: async () => {
     if (!window?.electronAPI?.files?.performOperation) {
       throw new Error('File operations API not available');
@@ -962,9 +965,12 @@ export function UndoRedoProvider({ children }) {
         // had failed.
         return result;
       } catch (error) {
-        showError(
-          `Failed to ${actionConfig.description.toLowerCase()}: ${error?.message || String(error)}`
-        );
+        // An action that reports its own failure gets no second message.
+        if (!actionConfig.reportsOwnErrors) {
+          showError(
+            `Failed to ${actionConfig.description.toLowerCase()}: ${error?.message || String(error)}`
+          );
+        }
         throw error;
       } finally {
         await releaseUndoRedoLock();

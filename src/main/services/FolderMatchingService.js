@@ -11,6 +11,7 @@ const { getInstance: getParallelEmbeddingService } = require('./ParallelEmbeddin
 const { get: getConfig } = require('../../shared/config/index');
 const { enrichFolderTextForEmbedding } = require('../analysis/semanticExtensionMap');
 const { validateEmbeddingDimensions, meanPoolVectors } = require('../../shared/vectorMath');
+const { isUncategorizedFolder } = require('../../shared/uncategorizedFolder');
 const { capEmbeddingInput } = require('../utils/embeddingInput');
 const { chunkText } = require('../utils/textChunking');
 const { AI_DEFAULTS } = require('../../shared/constants');
@@ -25,6 +26,61 @@ const {
   resolveEmbeddingDimension,
   isKnownEmbeddingModel
 } = require('../../shared/embeddingDimensions');
+
+/**
+ * Words that say nothing about what a folder holds. One of them shared
+ * between a label and a folder name ("Local AI report for 2026" and "Test
+ * Folder for Stratot data") is not a reason to file there, so the token
+ * overlap step ignores them, along with plain numbers such as years.
+ */
+const OVERLAP_IGNORED_TOKENS = new Set([
+  'a',
+  'an',
+  'and',
+  'or',
+  'the',
+  'of',
+  'for',
+  'to',
+  'in',
+  'on',
+  'at',
+  'by',
+  'with',
+  'from',
+  'my',
+  'our',
+  'your',
+  'data',
+  'file',
+  'files',
+  'folder',
+  'folders',
+  'document',
+  'documents',
+  'doc',
+  'docs',
+  'report',
+  'reports',
+  'info',
+  'misc',
+  'other',
+  'stuff',
+  'general',
+  'new',
+  'old'
+]);
+
+/**
+ * Words of a canonical name that can count toward a token-overlap match.
+ * @param {string} canonName
+ * @returns {string[]}
+ */
+function overlapTokens(canonName) {
+  return String(canonName || '')
+    .split(' ')
+    .filter((t) => t && !OVERLAP_IGNORED_TOKENS.has(t) && !/^\d+$/.test(t));
+}
 
 const getEmbeddingDimensionForModel = (/** @type {any} */ modelName) =>
   resolveEmbeddingDimension(modelName, {
@@ -1768,9 +1824,7 @@ class FolderMatchingService {
     const raw = stripCategorySubjectSuffix(rawInput) || rawInput;
     const normalizedRaw = raw.toLowerCase();
 
-    const uncategorized = folders.find(
-      (f) => String(f?.name || '').toLowerCase() === 'uncategorized'
-    );
+    const uncategorized = folders.find((f) => isUncategorizedFolder(f));
 
     // Exact match (case-insensitive) takes priority over every heuristic below,
     // including the generic-bucket guard. When a user's Smart Folders literally
@@ -1804,7 +1858,7 @@ class FolderMatchingService {
     let bestEquivalent = null;
     for (const f of folders) {
       const name = String(f?.name || '').trim();
-      if (!name || name.toLowerCase() === 'uncategorized') continue;
+      if (!name || isUncategorizedFolder(f)) continue;
       if (!namesAreEquivalent(raw, name)) continue;
       if (!bestEquivalent || name.length > bestEquivalent.length) {
         bestEquivalent = name;
@@ -1915,15 +1969,17 @@ class FolderMatchingService {
       return bestPrefix;
     }
 
-    // Token overlap scoring (simple, deterministic)
-    const tokens = new Set(rawCanon.split(' ').filter(Boolean));
+    // Token overlap scoring (simple, deterministic). Filler words and plain
+    // numbers do not count, so a shared "for", "data" or "2026" alone is not
+    // a match.
+    const tokens = new Set(overlapTokens(rawCanon));
     let best = null;
     let bestScore = 0;
     for (const f of folders) {
       const name = String(f?.name || '').trim();
       if (!name) continue;
       const nameCanon = canon(name);
-      const nameTokens = nameCanon.split(' ').filter(Boolean);
+      const nameTokens = overlapTokens(nameCanon);
       if (nameTokens.length === 0) continue;
       let score = 0;
       nameTokens.forEach((t) => {
@@ -2001,8 +2057,7 @@ class FolderMatchingService {
 
     const matched = FolderMatchingService.matchCategoryToFolder(category, folders);
     const uncategorizedName =
-      folders.find((f) => String(f?.name || '').toLowerCase() === 'uncategorized')?.name ||
-      'Uncategorized';
+      folders.find((f) => isUncategorizedFolder(f))?.name || 'Uncategorized';
 
     // The "fallback" branch is detected by the matched name equaling the
     // Uncategorized folder while the raw category was something meaningfully

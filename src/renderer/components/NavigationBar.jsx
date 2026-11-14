@@ -458,8 +458,12 @@ const NavActions = memo(function NavActions({ onSettingsClick }) {
             ? 'h-9 w-9 px-0 bg-stratosort-blue/10 border-stratosort-blue/30 text-stratosort-blue hover:bg-stratosort-blue/15'
             : 'h-9 w-9 px-0'
         }
-        aria-label={isModalOpen ? 'Close Knowledge OS' : 'Open Knowledge OS (Ctrl+K)'}
-        title={isModalOpen ? 'Close Knowledge OS' : 'Open Knowledge OS (Ctrl+K)'}
+        aria-label={
+          isModalOpen ? 'Close Knowledge OS' : `Open Knowledge OS (${isMac ? '⌘K' : 'Ctrl+K'})`
+        }
+        title={
+          isModalOpen ? 'Close Knowledge OS' : `Open Knowledge OS (${isMac ? '⌘K' : 'Ctrl+K'})`
+        }
       />
       <IconButton
         icon={<SettingsIcon className="h-4 w-4" />}

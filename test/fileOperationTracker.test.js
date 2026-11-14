@@ -109,3 +109,39 @@ describe('FileOperationTracker', () => {
     expect(tracker.recentOperations.size).toBeLessThanOrEqual(10_000);
   });
 });
+
+describe('FileOperationTracker accent spellings on macOS', () => {
+  const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', originalPlatform);
+  });
+
+  test('a move recorded under one spelling is found under the other', () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    const tracker = new FileOperationTracker({ cooldownMs: 60000 });
+
+    // The organizer records the composed name; the watcher sees decomposed.
+    tracker.recordOperation('/Users/hans/Vertr\u00e4ge/M\u00e4rz.pdf', 'move', 'organize');
+    expect(tracker.wasRecentlyOperated('/Users/hans/Vertra\u0308ge/Ma\u0308rz.pdf')).toBe(true);
+    tracker.shutdown?.();
+  });
+});
+
+// NTFS keeps the two accent spellings as two different files; only case is
+// ignored there.
+describe('FileOperationTracker accent spellings on Windows', () => {
+  const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', originalPlatform);
+  });
+
+  test('a move under one spelling is not found under the other, but case is ignored', () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    const tracker = new FileOperationTracker({ cooldownMs: 60000 });
+
+    tracker.recordOperation('/Users/hans/Vertr\u00e4ge/M\u00e4rz.pdf', 'move', 'organize');
+    expect(tracker.wasRecentlyOperated('/Users/hans/Vertra\u0308ge/Ma\u0308rz.pdf')).toBe(false);
+    expect(tracker.wasRecentlyOperated('/users/hans/VERTR\u00c4GE/m\u00e4rz.pdf')).toBe(true);
+    tracker.shutdown?.();
+  });
+});

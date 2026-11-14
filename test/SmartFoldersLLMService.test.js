@@ -85,6 +85,34 @@ describe('SmartFoldersLLMService', () => {
     expect(result.confidence).toBeCloseTo(0.92, 2);
   });
 
+  test('never offers or returns the catch-all category for a user folder', async () => {
+    mockLlamaService.generateText.mockResolvedValueOnce({
+      response: JSON.stringify({
+        improvedDescription: 'Anything else',
+        suggestedCategory: 'Uncategorized',
+        confidence: 0.7
+      })
+    });
+
+    const result = await enhanceSmartFolderWithLLM(
+      { name: 'Other', path: '/home/user/Other', description: 'Anything else' },
+      [
+        {
+          name: 'Uncategorized',
+          description: 'Default folder',
+          category: 'uncategorized',
+          isDefault: true
+        }
+      ],
+      () => 'llama3'
+    );
+
+    const prompt = mockLlamaService.generateText.mock.calls[0][0].prompt;
+    const allowed = prompt.split('ALLOWED CATEGORY VALUES:')[1].split('\n')[1];
+    expect(allowed).not.toMatch(/uncategorized/i);
+    expect(result.suggestedCategory).toBe('general');
+  });
+
   test('returns empty similarities when no categories', async () => {
     const result = await calculateFolderSimilarities('finance', [], () => 'llama3');
     expect(result).toEqual([]);

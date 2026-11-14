@@ -4,9 +4,20 @@ import { FolderOpen } from 'lucide-react';
 import Card from '../ui/Card';
 import { Text } from '../ui/Typography';
 
+// Why this run is running (analysisSlice runOrigin). Without it the card only
+// showed counts, and a run of queued or resumed files looked like a rerun.
+const ORIGIN_TEXT = {
+  added: 'Files you added',
+  queued: 'Files you added while the last run was going',
+  resume: 'Continuing a run that was interrupted',
+  retry: 'Trying again the files that failed',
+  reanalyze: 'Analyzing again because you chose Reanalyze'
+};
+
 const AnalysisProgress = memo(function AnalysisProgress({
   progress = { current: 0, total: 0 },
   currentFile = '',
+  origin = null,
   surface = 'card',
   className = ''
 }) {
@@ -18,6 +29,10 @@ const AnalysisProgress = memo(function AnalysisProgress({
   const hasTotals = total > 0;
   const isDone = hasTotals && current >= total;
   const percent = hasTotals ? Math.min(100, Math.round((current / total) * 100)) : 0;
+  const originText =
+    !isDone && typeof origin === 'string' && Object.hasOwn(ORIGIN_TEXT, origin)
+      ? ORIGIN_TEXT[origin]
+      : null;
 
   const Content = (
     <div className={`w-full ${className}`}>
@@ -39,6 +54,11 @@ const AnalysisProgress = memo(function AnalysisProgress({
           <Text variant="tiny" className="text-system-gray-600">
             {hasTotals ? `${percent}% complete` : 'This may take a moment'}
           </Text>
+          {originText && (
+            <Text variant="tiny" className="text-system-gray-600">
+              {originText}
+            </Text>
+          )}
         </div>
       </div>
 
@@ -99,6 +119,7 @@ AnalysisProgress.propTypes = {
     total: PropTypes.number
   }),
   currentFile: PropTypes.string,
+  origin: PropTypes.string,
   surface: PropTypes.oneOf(['card', 'none']),
   className: PropTypes.string
 };

@@ -86,6 +86,10 @@ const ROUTING_MODES = Object.freeze({
 
 const DEFAULT_ROUTING_MODE = ROUTING_MODES.AUTO;
 
+// How long shutdown() waits for the pattern and memory saves. Both payloads
+// are small; the rest of the shared shutdown budget belongs to later services.
+const SHUTDOWN_FLUSH_TIMEOUT_MS = 3000;
+
 /**
  * Calculate optimal concurrency based on CPU cores
  */
@@ -829,11 +833,14 @@ class OrganizationSuggestionServiceCore {
         routing.mode === ROUTING_MODES.LLM
           ? []
           : await this.getSemanticFolderMatches(normalizedFile, smartFolders);
+      // A template that names its folder after the analysis label (or its
+      // purpose sentence) is the label again, at a flat 0.6. The label enters
+      // below through _buildLlmCategorySuggestion, gated on routing mode.
       const strategyMatches = getStrategyBasedSuggestions(
         normalizedFile,
         smartFolders,
         this.config.strategyMatchThreshold
-      );
+      ).filter((match) => match.namedBy !== 'category' && match.namedBy !== 'purpose');
       const patternMatches = this.patternMatcher.getPatternBasedSuggestions(normalizedFile);
 
       const semanticTopScore =
@@ -941,7 +948,12 @@ class OrganizationSuggestionServiceCore {
         rankedSuggestions
       );
 
-      let primary = rankedSuggestions.find((suggestion) => suggestion.isSmartFolder) || null;
+      // A folder that "could be enhanced" for this file is an idea, not a
+      // destination: its +0.2 score could reach the auto-move threshold.
+      let primary =
+        rankedSuggestions.find(
+          (suggestion) => suggestion.isSmartFolder && suggestion.source !== 'improvement'
+        ) || null;
       if (!primary) {
         const defaultSuggestion = await this._getDefaultFolderSuggestion(
           normalizedFile,
@@ -1813,7 +1825,13 @@ class OrganizationSuggestionServiceCore {
     const existing = existingList.find((entry) => entry.id === id);
     if (!existing) return null;
 
-    const { rules, targetFolder } = buildMemoryEntry(normalized, metadata) || {};
+    // The stored source decides whether the text may hold a rule: rewording
+    // a correction note StratoSort wrote must not turn it into one.
+    const { rules, targetFolder } =
+      buildMemoryEntry(normalized, {
+        ...metadata,
+        source: /** @type {any} */ (metadata).source || existing.source
+      }) || {};
     const updatedAt = new Date().toISOString();
     const updated = await this.feedbackMemoryStore.update(
       id,
@@ -2574,20 +2592,39 @@ class OrganizationSuggestionServiceCore {
 
   /**
    * Shutdown the service, cancelling any pending operations
-   * FIX C-1: Call shutdown on persistence layers to prevent timer leaks
+   * FIX C-1: Call shutdown on persistence layers to prevent timer leaks.
+   * Both flush a throttled save, so wait for them: corrections made in the
+   * last few seconds before quit are otherwise lost on restart.
+   * The wait is bounded: later services (the search index's final save)
+   * share the same shutdown budget, so a stalled write must not starve them.
+   * @returns {Promise<void>}
    */
-  shutdown() {
-    try {
-      if (this.persistence) {
-        this.persistence.shutdown();
-      }
-      if (this.feedbackMemoryStore) {
-        this.feedbackMemoryStore.shutdown();
-      }
-      logger.info('[OrganizationSuggestionService] Shutdown complete');
-    } catch (error) {
-      logger.warn('[OrganizationSuggestionService] Error during shutdown:', error.message);
+  async shutdown() {
+    const flushes = [this.persistence, this.feedbackMemoryStore].map(async (store) => {
+      if (store && typeof store.shutdown === 'function') await store.shutdown();
+    });
+    /** @type {ReturnType<typeof setTimeout> | undefined} */
+    let timer;
+    const timedOut = new Promise((resolve) => {
+      timer = setTimeout(() => resolve(null), SHUTDOWN_FLUSH_TIMEOUT_MS);
+    });
+    const results = await Promise.race([Promise.allSettled(flushes), timedOut]);
+    clearTimeout(timer);
+    if (!results) {
+      logger.warn('[OrganizationSuggestionService] Shutdown gave up waiting for saves to finish', {
+        timeoutMs: SHUTDOWN_FLUSH_TIMEOUT_MS
+      });
+      return;
     }
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        logger.warn(
+          '[OrganizationSuggestionService] Error during shutdown:',
+          result.reason?.message || String(result.reason)
+        );
+      }
+    }
+    logger.info('[OrganizationSuggestionService] Shutdown complete');
   }
 
   // Legacy compatibility getters and setters

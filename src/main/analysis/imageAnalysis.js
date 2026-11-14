@@ -20,7 +20,7 @@ const {
   DEFAULT_AI_MODELS,
   SUPPORTED_IMAGE_EXTENSIONS
 } = require('../../shared/constants');
-const { TRUNCATION, TIMEOUTS } = require('../../shared/performanceConstants');
+const { TIMEOUTS } = require('../../shared/performanceConstants');
 const { withAbortableTimeout } = require('../../shared/promiseUtils');
 const { ANALYSIS_SCHEMA_PROMPT } = require('../../shared/analysisSchema');
 const { analyzeTextWithLlama } = require('./documentLlm');
@@ -48,6 +48,7 @@ const { analysisQueue } = require('./embeddingQueue/stageQueues');
 const embeddingQueueManager = require('./embeddingQueue/queueManager');
 const { createLogger } = require('../../shared/logger');
 const { findContainingSmartFolder } = require('../../shared/folderUtils');
+const { selectPromptFolders } = require('../../shared/promptFolders');
 const { createSharpLoader } = require('../../shared/getSharp');
 const { getSemanticFileId } = require('../../shared/fileIdUtils');
 const { shouldEmbed } = require('../services/embedding/embeddingGate');
@@ -134,6 +135,9 @@ const OCR_FILENAME_HINTS = [
   'tax'
 ];
 const OCR_GROUNDING_MAX_CHARS = 600;
+// The smallest vision context LlamaService runs (its VISION_MIN_CONTEXT); the
+// folder list is sized to it when the config does not report one.
+const VISION_PROMPT_CONTEXT_TOKENS = 4608;
 // Largest image handed to OCR, and the longest side it is resized to. The
 // vision model gets a 1024 px copy; Tesseract reads the original resized to
 // A4 at 150 DPI (the same ceiling as the PDF OCR path) because a 1440p
@@ -427,18 +431,29 @@ async function analyzeImageWithLlama(
       namingContextStr = `\n\nNAMING PATTERNS FROM SIMILAR FILES:\nThe following filenames are from semantically similar files. If they follow a clear convention (e.g. "Photo_YYYY-MM", "Screenshot_Topic"), adapt 'suggestedName' to match their style using this image's actual content:\n${examples}`;
     }
 
+    /** @type {Record<string, any>} */
+    let cfg = {};
+    try {
+      cfg = (await getLlamaService().getConfig()) || {};
+    } catch (e) {
+      logger.warn('[IMAGE] Failed to get Llama config, using defaults', { error: e.message });
+    }
+
     // Build folder categories string for the prompt (include descriptions)
     let folderCategoriesStr = '';
     if (smartFolders && smartFolders.length > 0) {
-      const validFolders = smartFolders
-        .filter(
-          (/** @type {any} */ f) => f && typeof f.name === 'string' && f.name.trim().length > 0
-        )
-        .slice(0, TRUNCATION.FOLDERS_DISPLAY)
-        .map((/** @type {any} */ f) => ({
-          name: f.name.trim().slice(0, TRUNCATION.NAME_MAX),
-          description: (f.description || '').trim().slice(0, TRUNCATION.DESCRIPTION_MAX)
-        }));
+      // Same selection as the document prompt: the user's own folders before
+      // the defaults, the catch-all always last, sized to the vision context
+      // (which the image itself shares).
+      const { folders: validFolders, omitted } = selectPromptFolders(smartFolders, {
+        contextTokens: Number(cfg?.visionContextSize) || VISION_PROMPT_CONTEXT_TOKENS
+      });
+      if (omitted > 0) {
+        logger.info('[IMAGE] Smart folders left out of prompt', {
+          omitted,
+          listed: validFolders.length
+        });
+      }
       if (validFolders.length > 0) {
         const folderListDetailed = validFolders
           .map(
@@ -479,13 +494,6 @@ Rules:
 
     let modelToUse = options?.visionModel;
     if (!modelToUse) {
-      /** @type {AnalysisResult} */
-      let cfg = {};
-      try {
-        cfg = await getLlamaService().getConfig();
-      } catch (e) {
-        logger.warn('[IMAGE] Failed to get Llama config, using defaults', { error: e.message });
-      }
       modelToUse =
         cfg.visionModel ||
         AppConfig.ai.imageAnalysis.defaultModel ||

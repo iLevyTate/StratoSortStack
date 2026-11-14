@@ -54,6 +54,22 @@ const SOURCE_CONFIDENCE_WEIGHTS = Object.freeze({
 });
 
 /**
+ * The catch-all folder (seeded as "Uncategorized"; users may rename it but it
+ * keeps category 'uncategorized'). A file sitting there fit no folder, so its
+ * presence says nothing about where files like it belong.
+ * @param {Record<string, any>|null|undefined} folder
+ * @returns {boolean}
+ */
+function isCatchAllFolder(folder) {
+  return (
+    String(folder?.category || '').toLowerCase() === 'uncategorized' ||
+    String(folder?.name || '')
+      .trim()
+      .toLowerCase() === 'uncategorized'
+  );
+}
+
+/**
  * Build a file metadata object for pattern learning
  * @param {string} filePath - Full path to the file
  * @param {Record<string, any>|null} [analysis] - Analysis result if available
@@ -194,6 +210,19 @@ class LearningFeedbackService {
     if (!this._isValidSmartFolder(smartFolder)) {
       logger.debug('[LearningFeedback] Folder not in registered smart folders', {
         folder: smartFolder.path
+      });
+      return false;
+    }
+
+    // Finding a file in the catch-all is not a choice. A user's own move
+    // there still is, so only the passive sources are skipped.
+    if (
+      (source === FEEDBACK_SOURCES.WATCHER_DETECTION || source === FEEDBACK_SOURCES.STARTUP_SCAN) &&
+      isCatchAllFolder(smartFolder)
+    ) {
+      logger.debug('[LearningFeedback] Not learning from the catch-all folder', {
+        folder: smartFolder.name,
+        source
       });
       return false;
     }

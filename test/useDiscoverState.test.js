@@ -219,6 +219,30 @@ describe('useDiscoverState', () => {
       expect(mockDispatch).toHaveBeenCalled();
     });
 
+    test('setIsAnalyzing passes why the run started to the store', () => {
+      const { startAnalysis } = require('../src/renderer/store/slices/analysisSlice');
+      const { result } = renderHook(() => useDiscoverState());
+
+      act(() => {
+        result.current.setIsAnalyzing(true, { total: 39, origin: 'queued' });
+      });
+
+      expect(startAnalysis).toHaveBeenCalledWith({ total: 39, origin: 'queued' });
+    });
+
+    test('exposes the run origin, or null when none is stored', () => {
+      const { result } = renderHook(() => useDiscoverState());
+      expect(result.current.analysisRunOrigin).toBeNull();
+
+      defaultState.analysis.runOrigin = 'resume';
+      try {
+        const { result: withOrigin } = renderHook(() => useDiscoverState());
+        expect(withOrigin.current.analysisRunOrigin).toBe('resume');
+      } finally {
+        delete defaultState.analysis.runOrigin;
+      }
+    });
+
     test('setIsAnalyzing stops analysis when false', () => {
       const { result } = renderHook(() => useDiscoverState());
 

@@ -191,9 +191,10 @@ function _canonicalizeForOverlapCheck(p) {
   // renameNoReplace probes would see "free", and the loser would silently
   // replace the winner. We don't need full realpath here — the caller runs
   // before path validation normalizes each op; forward slashes + case folding
-  // is enough.
+  // is enough. Composed (NFC) first: macOS returns decomposed accents and
+  // APFS treats both spellings as one name.
   const unified = p.replace(/\\/g, '/');
-  return isCaseInsensitiveFileSystem() ? unified.toLowerCase() : unified;
+  return isCaseInsensitiveFileSystem() ? unified.normalize('NFC').toLowerCase() : unified;
 }
 
 /**
@@ -334,10 +335,11 @@ async function verifyMoveCompletion(source, destination, log) {
   }
 
   // Verify source is gone unless this is a same-file target (including
-  // case-only renames on case-insensitive filesystems, where access(source)
-  // still succeeds after the rename).
+  // renames that change only case or accent encoding on case-insensitive
+  // filesystems, where access(source) still succeeds after the rename).
   const shouldVerifySource = isCaseInsensitiveFileSystem()
-    ? String(source).toLowerCase() !== String(destination).toLowerCase()
+    ? String(source).normalize('NFC').toLowerCase() !==
+      String(destination).normalize('NFC').toLowerCase()
     : source !== destination;
   if (shouldVerifySource) {
     for (let attempt = 1; attempt <= VERIFY_MAX_ATTEMPTS; attempt++) {
@@ -2302,12 +2304,11 @@ async function recordUndoAndUpdateDatabase(
     // routing model from confirmed organize decisions — including the corrections
     // surfaced by the coordinator's `divergences` (LLM said X, user/destination
     // said Y). Best-effort: a learning failure must never block file operations.
-    if (
-      coordinatorResult?.success &&
-      meta.pathIndexUpdated &&
-      Array.isArray(pathChanges) &&
-      pathChanges.length > 0
-    ) {
+    // Not gated on the path-index update: the files are already in their new
+    // folders, so one failed index write (or a missing index) must not throw
+    // away what the whole run teaches. Without divergences each file is
+    // learned under its destination category.
+    if (Array.isArray(pathChanges) && pathChanges.length > 0) {
       try {
         const {
           getInstance: getLearningFeedbackService,
@@ -2317,8 +2318,9 @@ async function recordUndoAndUpdateDatabase(
         if (learningService) {
           const FolderMatchingService = require('../../services/FolderMatchingService');
           const { isDefaultCategoryName } = require('../../../shared/categoryFolderMatching');
+          const { isUncategorizedFolder } = require('../../../shared/uncategorizedFolder');
           const divergencesByPath = new Map(
-            (coordinatorResult.divergences || []).map((d) => [d.filePath, d])
+            (coordinatorResult?.divergences || []).map((d) => [d.filePath, d])
           );
           // What the app suggested for each file (Organize sends it per op).
           // Keyed by where the file landed, like the divergences above.
@@ -2335,6 +2337,22 @@ async function recordUndoAndUpdateDatabase(
           for (const change of pathChanges) {
             if (!change.newSmartFolder) continue; // Only smart-folder destinations
             try {
+              // Uncategorized is the fallback. Learn it only when the user
+              // picked it over a different suggestion; accepting it (or a move
+              // with no suggestion) would teach the app its own fallback.
+              const destFolderName = String(change.newSmartFolder);
+              const destFolder = smartFoldersForBatch.find(
+                (f) => String(f?.name || '').toLowerCase() === destFolderName.toLowerCase()
+              );
+              if (isUncategorizedFolder(destFolder || { name: destFolderName })) {
+                const suggestedName = suggestionsByNewPath.get(change.newPath)?.folder;
+                const choseOverSuggestion =
+                  typeof suggestedName === 'string' &&
+                  suggestedName.trim() !== '' &&
+                  !isUncategorizedFolder({ name: suggestedName }) &&
+                  suggestedName.trim().toLowerCase() !== destFolderName.toLowerCase();
+                if (!choseOverSuggestion) continue;
+              }
               // Learn "files the analysis called X go to this folder". The
               // analysis label is the divergence's oldCategory when it differed
               // from the destination; otherwise the two agree. Passing no

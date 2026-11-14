@@ -1984,7 +1984,14 @@ app
           const MEMORY_HEARTBEAT_INTERVAL_MS = 15000;
           const { createMemoryPressureSampler } = require('./core/memoryHeartbeat');
           const memoryHeartbeat = trackInterval(
-            createMemoryPressureSampler({ logger }),
+            createMemoryPressureSampler({
+              logger,
+              getAppMetrics: () => app.getAppMetrics(),
+              // The vision runtime is a separate llama-server process, so its
+              // memory is not in this process's RSS or in app.getAppMetrics().
+              getVisionPid: () =>
+                require('./services/VisionService').getInstance()?._process?.pid ?? null
+            }),
             MEMORY_HEARTBEAT_INTERVAL_MS
           );
           try {

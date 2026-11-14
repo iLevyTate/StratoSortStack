@@ -489,7 +489,7 @@ test.describe('Smart Folder Add - Folder Creation', () => {
 
         // Check for toast notification
         const notificationState = await window.evaluate(() => {
-          const toasts = document.querySelectorAll('[role="alert"]');
+          const toasts = document.querySelectorAll('[role="alert"], [role="status"]');
           const toastMessages = Array.from(toasts)
             .map((t) => t.textContent?.trim())
             .filter(Boolean);

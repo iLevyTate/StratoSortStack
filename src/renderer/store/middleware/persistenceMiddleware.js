@@ -9,6 +9,7 @@ import {
   normalizeOrganizedPathIndex
 } from '../../utils/organizedPathIndex';
 import { summaryForNextLaunch } from '../../utils/organizeRunSummary';
+import { normalizeRunResultRows } from '../../utils/organizeRunResults';
 
 const SAVE_DEBOUNCE_MS = DEFAULT_SETTINGS.saveDebounceMs || 1000;
 const MAX_DEBOUNCE_WAIT_MS = 5000;
@@ -20,6 +21,96 @@ const MAX_DEBOUNCE_WAIT_MS = 5000;
 // normal cadence.
 const ANALYSIS_RUN_SAVE_INTERVAL_MS = 30000;
 const MAX_LOCALSTORAGE_BYTES = 4 * 1024 * 1024;
+// Rows of the last organize run ("See every file"), about 400 bytes each.
+// Kept only with a summary that is kept for the next launch.
+const MAX_PERSISTED_RUN_FILES = 2000;
+// Files kept in the saved queue (selectedFiles) and analysis results. An
+// analysis result held in memory carries the file's full extracted text,
+// measured at about 130 KB (estimated bytes) for a typical spreadsheet
+// export, so 200 of them were ~26 MB against the 4 MB budget and the save fell
+// through to the quota fallbacks. Saved slim (slimAnalysisResult) a result is
+// about 6 KB. 400 results plus 1,000 history rows fit the budget with room
+// for longer summaries; 500 already measured 3.85 MB of the 4 MB
+// (test/persistenceMiddleware.slimSnapshot.test.js).
+const MAX_PERSISTED_QUEUE_FILES = 400;
+// Organized-history rows kept. They are small (compactOrganizedEntry), and
+// the Dashboard's Organized figure is their count.
+const MAX_PERSISTED_ORGANIZED_FILES = 1000;
+// Long text fields of an analysis result. The renderer only shows the start
+// of them (the file details panel's "Extracted text" preview); search, chat
+// and the organize engine read the full text in main, never from here.
+const PREVIEW_TEXT_FIELDS = ['extractedText', 'ocrText', 'transcript', 'multimodalText'];
+const PREVIEW_TEXT_CHARS = 500;
+// Bulky analysis fields nothing in the renderer reads after a restart
+// (rawText is a second copy of the start of extractedText). The details
+// panel shows only the count of transcriptSegments, saved as
+// transcriptSegmentCount; keyframes are kept slim (see slimAnalysisResult).
+const DROPPED_ANALYSIS_FIELDS = [
+  'rawText',
+  'transcriptSegments',
+  'embedding',
+  'chunks',
+  '_embeddingForPersistence'
+];
+// Keyframes the details panel lists (main already caps them at 50).
+const MAX_PERSISTED_KEYFRAMES = 50;
+
+/**
+ * The saved form of an analysis result: long text cut to a preview, bulky
+ * arrays left out. The live state keeps everything.
+ * @param {any} result
+ * @returns {any}
+ */
+function slimAnalysisResult(result) {
+  const analysis = result?.analysis;
+  if (!analysis || typeof analysis !== 'object') return result;
+  /** @type {Record<string, any>} */
+  const slim = { ...analysis };
+  for (const key of DROPPED_ANALYSIS_FIELDS) delete slim[key];
+  if (Array.isArray(analysis.transcriptSegments)) {
+    slim.transcriptSegmentCount = analysis.transcriptSegments.length;
+  }
+  if (Array.isArray(analysis.keyframes)) {
+    // Timestamp and caption only: all the details panel shows.
+    slim.keyframes = analysis.keyframes
+      .slice(0, MAX_PERSISTED_KEYFRAMES)
+      .map((/** @type {any} */ k) => ({
+        timestamp: k?.timestamp ?? null,
+        caption: typeof k?.caption === 'string' ? k.caption : null
+      }));
+  }
+  let fullTextLength = 0;
+  let trimmed = false;
+  for (const key of PREVIEW_TEXT_FIELDS) {
+    if (typeof slim[key] !== 'string') continue;
+    fullTextLength += slim[key].length;
+    if (slim[key].length > PREVIEW_TEXT_CHARS) {
+      slim[key] = slim[key].slice(0, PREVIEW_TEXT_CHARS);
+      trimmed = true;
+    }
+  }
+  // The details panel's "N characters total" would otherwise report the
+  // preview length after a restart.
+  if (trimmed) slim.savedTextFullLength = fullTextLength;
+  return { ...result, analysis: slim };
+}
+
+/**
+ * The saved form of an organized-history row: its own plain fields (paths,
+ * names, folder, time, duplicateRemoval), without nested objects such as an
+ * analysis payload a caller may have attached.
+ * @param {any} entry
+ * @returns {any}
+ */
+function compactOrganizedEntry(entry) {
+  if (!entry || typeof entry !== 'object') return entry;
+  /** @type {Record<string, any>} */
+  const compact = {};
+  for (const [key, value] of Object.entries(entry)) {
+    if (value === null || typeof value !== 'object') compact[key] = value;
+  }
+  return compact;
+}
 /** @type {NodeJS.Timeout | null} */
 let saveTimeout = null;
 let firstPendingRequestTime = 0; // Track when the first unsaved debounce request was made
@@ -50,6 +141,20 @@ let lastSavedNamingConventionRef = null;
 /** @type {any} */
 let lastSavedLastOrganizeRunRef = null;
 /** @type {any} */
+let lastSavedLastOrganizeRunFilesRef = null;
+
+/**
+ * The run's file list as far as the next launch is concerned: the live array
+ * while its summary is kept, otherwise null (a run that moved everything does
+ * not trigger a save when its list changes).
+ * @param {any} state
+ */
+function runFilesForNextLaunch(state) {
+  return summaryForNextLaunch(state.files.lastOrganizeRun ?? null)
+    ? (state.files.lastOrganizeRunFiles ?? null)
+    : null;
+}
+/** @type {any} */
 let lastSavedGraphTourDismissed = null;
 /** @type {any} */
 let lastSavedGraphInsightsSection = null;
@@ -73,7 +178,7 @@ let isSaving = false;
 // replaced — leaving no fallback. Clear here once we know a healthy save
 // has actually landed.
 let migrationBackupCleared = false;
-// One-shot per session — fires when the unconditional MAX_FILES cap in
+// One-shot per session — fires when the unconditional queue cap in
 // buildStateSnapshot first drops items from selectedFiles or analysis.results.
 // Without this, users with >200 files in either slice silently lose the tail
 // on every reload but only quota-driven truncation got a notification.
@@ -289,7 +394,7 @@ let currentStore = null;
  */
 function buildStateSnapshot(freshState, options = {}) {
   const { prioritizeFileStates = true } = options;
-  const MAX_FILES = 200;
+  const MAX_FILES = MAX_PERSISTED_QUEUE_FILES;
   const MAX_STATES = 100;
 
   const stateToSave = {
@@ -320,18 +425,26 @@ function buildStateSnapshot(freshState, options = {}) {
       // Tail slice: organizedFiles is append-ordered, so the most recent
       // organize results are at the end. Uncapped, a long organize history
       // blows the 4 MB pre-truncation budget and triggers the quota-fallback
-      // ladder, which can wipe the rest of the session state.
-      organizedFiles: (freshState.files.organizedFiles || []).slice(-MAX_FILES),
+      // ladder, which can wipe the rest of the session state. Rows are saved
+      // compact so the Organized count and history survive a restart whole
+      // up to MAX_PERSISTED_ORGANIZED_FILES.
+      organizedFiles: (freshState.files.organizedFiles || [])
+        .slice(-MAX_PERSISTED_ORGANIZED_FILES)
+        .map(compactOrganizedEntry),
       // Compact path keys survive the rich-history cap (strings only).
       organizedPathIndex: normalizeOrganizedPathIndex(freshState.files.organizedPathIndex, {
         max: MAX_ORGANIZED_PATH_INDEX
       }),
       namingConvention: freshState.files.namingConvention,
       lastOrganizeRun: summaryForNextLaunch(freshState.files.lastOrganizeRun ?? null),
+      lastOrganizeRunFiles: normalizeRunResultRows(
+        runFilesForNextLaunch(freshState),
+        MAX_PERSISTED_RUN_FILES
+      ),
       fileStates: {}
     },
     analysis: {
-      results: freshState.analysis.results.slice(-MAX_FILES),
+      results: freshState.analysis.results.slice(-MAX_FILES).map(slimAnalysisResult),
       isAnalyzing: freshState.analysis.isAnalyzing,
       analysisProgress: freshState.analysis.analysisProgress,
       currentAnalysisFile: freshState.analysis.currentAnalysisFile
@@ -392,7 +505,8 @@ function detectUnsavedChanges(state) {
     state.files.organizedPathIndex !== lastSavedOrganizedPathIndexRef ||
     state.files.smartFolders !== lastSavedSmartFoldersRef ||
     state.files.namingConvention !== lastSavedNamingConventionRef ||
-    summaryForNextLaunch(state.files.lastOrganizeRun ?? null) !== lastSavedLastOrganizeRunRef;
+    summaryForNextLaunch(state.files.lastOrganizeRun ?? null) !== lastSavedLastOrganizeRunRef ||
+    runFilesForNextLaunch(state) !== lastSavedLastOrganizeRunFilesRef;
   const analysisChurn =
     state.analysis.results !== lastSavedResultsRef ||
     state.files.fileStates !== lastSavedFileStatesRef ||
@@ -526,7 +640,7 @@ const persistenceMiddleware = (/** @type {any} */ store) => {
 
           const stateToSave = buildStateSnapshot(freshState, { prioritizeFileStates: true });
 
-          // Detect (once per session) that the hard MAX_FILES cap actually
+          // Detect (once per session) that the hard queue cap actually
           // discarded items from one of the persisted lists. Quota-driven
           // truncation already notifies via saveResult.degraded; this catches
           // the orthogonal case where state fits comfortably in storage but
@@ -540,8 +654,7 @@ const persistenceMiddleware = (/** @type {any} */ store) => {
               hasNotifiedHardCap = true;
               store.dispatch(
                 addNotification({
-                  message:
-                    'Working set is large — only the most recent 200 files per list will be restored on the next launch.',
+                  message: `More than ${MAX_PERSISTED_QUEUE_FILES} files are in this session. If you close StratoSort, only the ${MAX_PERSISTED_QUEUE_FILES} added most recently come back when you open it again.`,
                   severity: 'warning',
                   duration: 8000
                 })
@@ -604,6 +717,7 @@ const persistenceMiddleware = (/** @type {any} */ store) => {
             lastSavedFileStatesRef = freshState.files.fileStates;
             lastSavedNamingConventionRef = freshState.files.namingConvention;
             lastSavedLastOrganizeRunRef = stateToSave.files.lastOrganizeRun;
+            lastSavedLastOrganizeRunFilesRef = runFilesForNextLaunch(freshState);
             lastSavedResultsRef = freshState.analysis.results;
           }
         } finally {
@@ -722,6 +836,7 @@ export const cancelPendingPersistence = () => {
   lastSavedFileStatesRef = null;
   lastSavedNamingConventionRef = null;
   lastSavedLastOrganizeRunRef = null;
+  lastSavedLastOrganizeRunFilesRef = null;
   firstPendingRequestTime = 0;
   hasNotifiedHardCap = false;
 };
@@ -773,6 +888,7 @@ export const cleanupPersistence = (/** @type {any} */ store) => {
   lastSavedFileStatesRef = null;
   lastSavedNamingConventionRef = null;
   lastSavedLastOrganizeRunRef = null;
+  lastSavedLastOrganizeRunFilesRef = null;
   firstPendingRequestTime = 0;
   hasNotifiedHardCap = false;
 };
