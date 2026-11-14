@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-13T15:00:16.257Z",
+  "generatedAt": "2026-11-13T23:41:00.470Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
@@ -13397,7 +13397,7 @@
     },
     {
       "packageName": "electron",
-      "version": "45.2.3",
+      "version": "45.3.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -14695,7 +14695,7 @@
     },
     {
       "packageName": "framer-motion",
-      "version": "14.11.1",
+      "version": "14.12.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -17427,7 +17427,7 @@
     },
     {
       "packageName": "knip",
-      "version": "6.44.2",
+      "version": "6.45.0",
       "license": "ISC",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -17789,7 +17789,7 @@
     },
     {
       "packageName": "lucide-react",
-      "version": "1.70.0",
+      "version": "1.71.0",
       "license": "ISC",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -18031,7 +18031,7 @@
     },
     {
       "packageName": "minimatch",
-      "version": "11.0.5",
+      "version": "11.0.7",
       "license": "BlueOak-1.0.0",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -18181,7 +18181,7 @@
     },
     {
       "packageName": "motion-dom",
-      "version": "14.11.1",
+      "version": "14.12.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -19395,7 +19395,7 @@
     },
     {
       "packageName": "postal-mime",
-      "version": "4.2.0",
+      "version": "4.2.1",
       "license": "MIT-0",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -22023,7 +22023,7 @@
     },
     {
       "packageName": "unbash",
-      "version": "6.0.1",
+      "version": "6.0.4",
       "license": "ISC",
       "riskLevel": "allowed",
       "directRuntime": false,
