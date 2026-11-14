@@ -1971,29 +1971,48 @@ class FolderMatchingService {
 
     // Token overlap scoring (simple, deterministic). Filler words and plain
     // numbers do not count, so a shared "for", "data" or "2026" alone is not
-    // a match.
+    // a match. Nor does a word two or more folder names share: with "GSC
+    // exports", "Bing exports" and "Clarity exports", "exports" does not tell
+    // them apart, and counting it filed "Search Console exports" in whichever
+    // of them came first.
+    const nameTokensByFolder = folders.map((f) =>
+      overlapTokens(canon(String(f?.name || '').trim()))
+    );
+    /** @type {Map<string, number>} */
+    const foldersPerToken = new Map();
+    for (const nameTokens of nameTokensByFolder) {
+      for (const t of new Set(nameTokens)) {
+        foldersPerToken.set(t, (foldersPerToken.get(t) || 0) + 1);
+      }
+    }
     const tokens = new Set(overlapTokens(rawCanon));
     let best = null;
     let bestScore = 0;
-    for (const f of folders) {
+    let bestShared = 0;
+    let tiedShared = false;
+    folders.forEach((f, index) => {
       const name = String(f?.name || '').trim();
-      if (!name) continue;
-      const nameCanon = canon(name);
-      const nameTokens = overlapTokens(nameCanon);
-      if (nameTokens.length === 0) continue;
-      let score = 0;
+      const nameTokens = nameTokensByFolder[index];
+      if (!name || nameTokens.length === 0) return;
+      let shared = 0;
       nameTokens.forEach((t) => {
-        if (tokens.has(t)) score += 1;
+        if (tokens.has(t) && (foldersPerToken.get(t) || 0) < 2) shared += 1;
       });
+      if (shared === 0) return;
       // Small bias for shorter names to avoid always matching long "Financial Documents" when raw is "Financial"
-      score -= Math.min(0.25, nameTokens.length * 0.01);
+      const score = shared - Math.min(0.25, nameTokens.length * 0.01);
+      if (shared === bestShared) tiedShared = true;
       if (score > bestScore) {
+        if (shared > bestShared) tiedShared = false;
         bestScore = score;
+        bestShared = shared;
         best = name;
       }
-    }
+    });
 
-    if (bestScore > 0.5 && best) {
+    // Two folders matching as many words each is a guess, not a match: the
+    // description step below can tell them apart, or nothing does.
+    if (bestScore > 0.5 && best && !tiedShared) {
       logger.debug('[FolderMatching] Token overlap match', {
         rawCategory: raw,
         matchedFolder: best,

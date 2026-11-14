@@ -280,4 +280,132 @@ describe('dropPromptEchoes', () => {
   test('passes a missing answer through', () => {
     expect(dropPromptEchoes(null, folders)).toBeNull();
   });
+
+  // Folders whose descriptions name the columns their files carry: a correct
+  // answer reads the same words out of the file.
+  describe('with well-described folders', () => {
+    const exportFolders = [
+      {
+        name: 'GSC exports',
+        description:
+          'Google Search Console performance exports in Excel: queries, pages, clicks, impressions, CTR and position.'
+      },
+      {
+        name: 'Bing exports',
+        description:
+          'Bing Webmaster Tools exports: keywords, pages, clicks and impressions from Bing search.'
+      },
+      {
+        name: 'Clarity exports',
+        description:
+          'Microsoft Clarity CSV exports: sessions, users, scroll depth, browsers and devices.'
+      },
+      {
+        name: 'SEO audits',
+        description: 'PDF SEO audit reports with site scores, backlinks and recommendations.'
+      }
+    ];
+    const bingDocument =
+      'bing-webmaster-tools-keywords.csv\nBing Webmaster Tools - Search Performance\nKeyword,Clicks,Impressions,CTR,Avg position\nlocal ai organizer,12,340,3.5%,4.2';
+    const clarityDocument =
+      'clarity-dashboard-export.csv\nMicrosoft Clarity dashboard\nSessions,Users,Scroll depth,Browsers\n1520,1203,54%,Chrome';
+    const gscDocument =
+      'Queries.xlsx\nTop queries,Clicks,Impressions,CTR,Position\nfile organizer,40,1200,3.3%,6.1';
+
+    test.each([
+      [
+        'reasoning that cites the folder description',
+        'reasoning',
+        'Contains Bing Webmaster Tools keywords, clicks and impressions from Bing search.',
+        bingDocument
+      ],
+      [
+        'a summary in the folder description words',
+        'summary',
+        'Bing Webmaster Tools export of keywords, pages, clicks and impressions.',
+        bingDocument
+      ],
+      [
+        'a summary naming the file columns',
+        'summary',
+        'Microsoft Clarity CSV export: sessions, users, scroll depth and browsers.',
+        clarityDocument
+      ],
+      [
+        'a terse dashboard summary',
+        'summary',
+        'Microsoft Clarity dashboard export: sessions, users, scroll depth and browsers.',
+        clarityDocument
+      ],
+      [
+        'a purpose naming the file columns',
+        'purpose',
+        'Search Console export of queries, clicks, impressions, CTR and position.',
+        gscDocument
+      ]
+    ])('keeps %s', (_label, field, value, documentText) => {
+      const input = { category: 'Bing exports', confidence: 90, [field]: value };
+      expect(dropPromptEchoes(input, exportFolders, documentText)).toBe(input);
+    });
+
+    test('keeps reasoning that cites a folder description without document text', () => {
+      const input = {
+        category: 'Bing exports',
+        confidence: 90,
+        reasoning:
+          'Contains Bing Webmaster Tools keywords, clicks and impressions from Bing search.'
+      };
+      expect(dropPromptEchoes(input, exportFolders)).toBe(input);
+    });
+
+    test('still clears a description copied with no support in the document', () => {
+      const result = dropPromptEchoes(
+        {
+          category: 'SEO audits',
+          confidence: 90,
+          summary: 'PDF SEO audit reports with site scores, backlinks and recommendations.'
+        },
+        exportFolders,
+        'vacation-photos.txt\nPacking list for the beach trip: towels, sunscreen, snacks.'
+      );
+      expect(result.summary).toBeNull();
+      expect(result.confidence).toBe(50);
+      expect(result.promptEchoFields).toEqual(['summary']);
+    });
+
+    test('still clears a copied description when no document text is given', () => {
+      const result = dropPromptEchoes(
+        {
+          confidence: 90,
+          summary: 'Bing Webmaster Tools export of keywords, pages, clicks and impressions.'
+        },
+        exportFolders
+      );
+      expect(result.summary).toBeNull();
+      expect(result.confidence).toBe(50);
+    });
+
+    test('still clears a copied schema instruction in the reasoning', () => {
+      const result = dropPromptEchoes(
+        {
+          confidence: 90,
+          reasoning:
+            'Brief explanation of why this category was chosen based on the content and folder description.'
+        },
+        exportFolders,
+        bingDocument
+      );
+      expect(result.reasoning).toBeNull();
+      expect(result.promptEchoFields).toEqual(['reasoning']);
+    });
+
+    test('does not let common document words hide a copied schema instruction', () => {
+      const result = dropPromptEchoes(
+        { confidence: 90, summary: "A concise 1-2 sentence summary of the document's content." },
+        exportFolders,
+        'Write a concise summary of the document content in 1 or 2 sentences.'
+      );
+      expect(result.summary).toBeNull();
+    });
+  });
 });

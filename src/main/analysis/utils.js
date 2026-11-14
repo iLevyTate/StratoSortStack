@@ -95,6 +95,9 @@ const ECHO_STOPWORDS = new Set(
   )
 );
 const ECHO_FIELDS = ['summary', 'purpose', 'project', 'reasoning', 'type', 'entity'];
+// The prompt asks for the reasoning to cite the chosen folder's description,
+// so it is only checked against the schema instructions.
+const ECHO_SCHEMA_ONLY_FIELDS = new Set(['reasoning']);
 // A value is an echo when nearly all of its words come from one source text
 // AND it reproduces a good part of that text. The second test keeps a real
 // answer that merely shares vocabulary ("A logo for a company or
@@ -127,42 +130,71 @@ function echoWords(text) {
  * guess so the file is flagged for review. Same idea as
  * normalizeImageContentType, applied to the free-text fields.
  *
+ * A well-described folder shares its vocabulary with the files that belong
+ * in it: a GSC export's summary names the same queries, clicks and
+ * impressions the folder's description lists. When the caller has the
+ * document's text, a word the document itself contains is the model reading
+ * the file, not the folder description, so it is not counted as copied from
+ * one. Callers without text (images, media) keep the stricter check. The
+ * schema instructions are generic words any long document contains, so
+ * they are always checked in full.
+ *
  * @param {Record<string, any>} result - Model output (mutated copy returned)
  * @param {Array<{ description?: string }>} [smartFolders]
+ * @param {string | null} [documentText] - The file's extracted text and name
  * @returns {Record<string, any>}
  */
-function dropPromptEchoes(result, smartFolders = []) {
+function dropPromptEchoes(result, smartFolders = [], documentText = null) {
   if (!result || typeof result !== 'object') return result;
-  const sources = [
-    // The instructions without their "(e.g., ...)" examples: an example like
-    // 'sunset_beach' is a legitimate thing for a picture to show.
-    ...Object.values(ANALYSIS_SCHEMA_PROMPT)
+  /** @param {string[]} texts */
+  const toSources = (texts) =>
+    texts.map((text) => new Set(echoWords(text))).filter((source) => source.size > 0);
+  // The instructions without their "(e.g., ...)" examples: an example like
+  // 'sunset_beach' is a legitimate thing for a picture to show.
+  const schemaSources = toSources(
+    Object.values(ANALYSIS_SCHEMA_PROMPT)
       .filter((v) => typeof v === 'string')
-      .map((v) => v.replace(/\(e\.g\.[^)]*\)/gi, ' ')),
-    ...(Array.isArray(smartFolders) ? smartFolders : [])
+      .map((v) => v.replace(/\(e\.g\.[^)]*\)/gi, ' '))
+  );
+  const folderSources = toSources(
+    (Array.isArray(smartFolders) ? smartFolders : [])
       .map((f) => f?.description)
       .filter((d) => typeof d === 'string' && d.trim())
-  ]
-    .map((text) => new Set(echoWords(text)))
-    .filter((source) => source.size > 0);
+  );
+  /** @type {Set<string>} */
+  const documentWords = new Set(
+    typeof documentText === 'string' && documentText ? echoWords(documentText) : []
+  );
 
-  /** @param {unknown} value */
-  const isEcho = (value) => {
+  /**
+   * @param {Set<string>} words
+   * @param {Set<string>[]} sources
+   * @param {Set<string>} [grounded] - Words not counted as shared
+   */
+  const copiesAny = (words, sources, grounded) =>
+    sources.some((source) => {
+      let shared = 0;
+      for (const word of words) if (source.has(word) && !grounded?.has(word)) shared += 1;
+      return (
+        shared / words.size >= ECHO_CONTAINMENT && shared / source.size >= ECHO_SOURCE_COVERAGE
+      );
+    });
+
+  /** @param {string} field */
+  const isEcho = (field) => {
+    const value = result[field];
     if (typeof value !== 'string') return false;
     // Compared without "(e.g., ...)" on both sides: a copied instruction
     // carries its examples along.
     const words = new Set(echoWords(value.replace(/\(e\.g\.[^)]*\)/gi, ' ')));
     if (words.size < ECHO_MIN_WORDS) return false;
-    return sources.some((source) => {
-      let shared = 0;
-      for (const word of words) if (source.has(word)) shared += 1;
-      return (
-        shared / words.size >= ECHO_CONTAINMENT && shared / source.size >= ECHO_SOURCE_COVERAGE
-      );
-    });
+    return (
+      copiesAny(words, schemaSources) ||
+      (!ECHO_SCHEMA_ONLY_FIELDS.has(field) && copiesAny(words, folderSources, documentWords))
+    );
   };
 
-  const echoed = ECHO_FIELDS.filter((field) => isEcho(result[field]));
+  const echoed = ECHO_FIELDS.filter(isEcho);
   if (echoed.length === 0) return result;
 
   const cleaned = { ...result };

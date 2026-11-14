@@ -159,6 +159,25 @@ describe('documentAnalysis (behavior)', () => {
     );
   });
 
+  test('gives the prompt-echo guard the file name and extracted text', async () => {
+    const { dropPromptEchoes } = require('../src/main/analysis/utils');
+    extractors.extractTextFromPdf.mockResolvedValue('Keyword,Clicks,Impressions');
+    documentLlm.analyzeTextWithLlama.mockResolvedValue({
+      summary: 'Keyword clicks and impressions',
+      category: 'Bing exports',
+      confidence: 90
+    });
+    const folders = [{ name: 'Bing exports', description: 'Bing keyword exports' }];
+
+    await analyzeDocumentFile('bing-keywords.pdf', folders);
+
+    expect(dropPromptEchoes).toHaveBeenCalledWith(
+      expect.objectContaining({ category: 'Bing exports' }),
+      folders,
+      expect.stringMatching(/bing-keywords\.pdf[\s\S]*Keyword,Clicks,Impressions/)
+    );
+  });
+
   test('uses OCR fallback when PDF extraction returns empty text', async () => {
     const filePath = 'scanned.pdf';
     extractors.extractTextFromPdf.mockResolvedValue(''); // Empty result
