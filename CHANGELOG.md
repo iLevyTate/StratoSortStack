@@ -12,6 +12,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [5.3.1] - 2026-11-14
+
+### Fixed
+
+- **Preview shows the names a Move gives when the folder already has a file of that name.** When two
+  files of one run got the same new name (the second numbered `_1`) and the folder already held
+  `report.pdf`, Preview showed both files going to `report_1.pdf` while the move gave one of them
+  `report_2.pdf`. With `report_1.pdf` taken as well, a file was named `report_1_1.pdf`. The move now
+  skips the names other files of the run are headed for and counts on from the original name
+  (`report_2.pdf`, `report_3.pdf`), and Preview shows the same names. A run resumed after a crash
+  numbers files the same way. No file was overwritten or lost.
+
 ## [5.3.0] - 2026-11-13
 
 ### Fixed
@@ -1681,7 +1693,8 @@ notes.
 Note: versions before 5.0.0 were released from predecessor repositories whose tags are not part of
 this repository's history, so they are listed without links.
 
-[Unreleased]: https://github.com/iLevyTate/StratoSortStack/compare/v5.3.0...HEAD
+[Unreleased]: https://github.com/iLevyTate/StratoSortStack/compare/v5.3.1...HEAD
+[5.3.1]: https://github.com/iLevyTate/StratoSortStack/compare/v5.3.0...v5.3.1
 [5.3.0]: https://github.com/iLevyTate/StratoSortStack/compare/v5.2.0...v5.3.0
 [5.2.0]: https://github.com/iLevyTate/StratoSortStack/compare/v5.1.2...v5.2.0
 [5.1.2]: https://github.com/iLevyTate/StratoSortStack/compare/v5.1.1...v5.1.2
