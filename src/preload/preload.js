@@ -1829,8 +1829,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
       secureIPC.safeInvoke(IPC_CHANNELS.SMART_FOLDERS.SCAN_STRUCTURE, rootPath),
     add: (/** @type {any} */ folder) =>
       secureIPC.safeInvoke(IPC_CHANNELS.SMART_FOLDERS.ADD, folder),
-    edit: (/** @type {any} */ folderId, /** @type {any} */ updatedFolder) =>
-      secureIPC.safeInvoke(IPC_CHANNELS.SMART_FOLDERS.EDIT, folderId, updatedFolder),
+    // `options.pathChange` ('move' | 'new') answers PATH_CHANGE_CHOICE_REQUIRED.
+    edit: (
+      /** @type {any} */ folderId,
+      /** @type {any} */ updatedFolder,
+      /** @type {any} */ options
+    ) =>
+      options === undefined
+        ? secureIPC.safeInvoke(IPC_CHANNELS.SMART_FOLDERS.EDIT, folderId, updatedFolder)
+        : secureIPC.safeInvoke(IPC_CHANNELS.SMART_FOLDERS.EDIT, folderId, updatedFolder, options),
     delete: (/** @type {any} */ folderId) =>
       secureIPC.safeInvoke(IPC_CHANNELS.SMART_FOLDERS.DELETE, folderId),
     match: (/** @type {any} */ text, /** @type {any} */ folders) =>

@@ -34,7 +34,7 @@ const {
   findInPlaceMoves,
   useOrganization
 } = require('../src/renderer/phases/organize/useOrganization');
-const { toCanonicalPath } = require('../src/renderer/utils/canonicalPath');
+const { toCanonicalPath, toFolderKey } = require('../src/renderer/utils/canonicalPath');
 
 const INPUT = { id: 'in', name: 'Strato Input', path: '/Users/alex/Strato Input' };
 const BING = { id: 'bing', name: 'Bing data', path: '/Users/alex/Sorted/Bing data' };
@@ -71,9 +71,28 @@ describe('findInPlaceMoves', () => {
     const renamed = file('/Users/alex/Strato Input/a.csv', 'Strato Input', 'Keywords 2025.csv');
     const untouched = file('/Users/alex/Strato Input/b.csv', 'Strato Input');
 
+    // Each one names its smart folder, so the user's choice about such files
+    // (leave them there or skip them) can be read and kept there.
+    const where = {
+      folderId: 'in',
+      folderKey: toFolderKey('/Users/alex/Strato Input'),
+      choice: null
+    };
     expect(findInPlaceMoves(plan([renamed, untouched]))).toEqual([
-      { sourcePath: renamed.path, fileName: 'a.csv', folderName: 'Strato Input', renamed: true },
-      { sourcePath: untouched.path, fileName: 'b.csv', folderName: 'Strato Input', renamed: false }
+      {
+        sourcePath: renamed.path,
+        fileName: 'a.csv',
+        folderName: 'Strato Input',
+        renamed: true,
+        ...where
+      },
+      {
+        sourcePath: untouched.path,
+        fileName: 'b.csv',
+        folderName: 'Strato Input',
+        renamed: false,
+        ...where
+      }
     ]);
   });
 
@@ -108,7 +127,12 @@ describe('findInPlaceMoves', () => {
     const filed = file('/Users/alex/Documents/Reports/q3.pdf', 'Reports');
 
     expect(findInPlaceMoves(plan([filed], { smartFolders: [reports] }))).toEqual([
-      { sourcePath: filed.path, fileName: 'q3.pdf', folderName: 'Reports', renamed: false }
+      expect.objectContaining({
+        sourcePath: filed.path,
+        fileName: 'q3.pdf',
+        folderName: 'Reports',
+        renamed: false
+      })
     ]);
   });
 
@@ -116,7 +140,12 @@ describe('findInPlaceMoves', () => {
     const stray = file('/Users/alex/Documents/Uncategorized/notes.txt', 'Recipes');
 
     expect(findInPlaceMoves(plan([stray]))).toEqual([
-      { sourcePath: stray.path, fileName: 'notes.txt', folderName: 'Uncategorized', renamed: false }
+      expect.objectContaining({
+        sourcePath: stray.path,
+        fileName: 'notes.txt',
+        folderName: 'Uncategorized',
+        renamed: false
+      })
     ]);
   });
 
@@ -129,7 +158,12 @@ describe('findInPlaceMoves', () => {
         plan([filed], { smartFolders, defaultLocation: 'C:\\Users\\Alex\\Documents' })
       )
     ).toEqual([
-      { sourcePath: filed.path, fileName: 'a.csv', folderName: 'Strato Input', renamed: false }
+      expect.objectContaining({
+        sourcePath: filed.path,
+        fileName: 'a.csv',
+        folderName: 'Strato Input',
+        renamed: false
+      })
     ]);
   });
 
@@ -180,7 +214,12 @@ describe('useOrganization: inPlaceMoves', () => {
     const { result } = renderHook(() => useOrganization(options));
 
     expect(result.current.inPlaceMoves).toEqual([
-      { sourcePath: ready.path, fileName: 'a.csv', folderName: 'Strato Input', renamed: false }
+      expect.objectContaining({
+        sourcePath: ready.path,
+        fileName: 'a.csv',
+        folderName: 'Strato Input',
+        renamed: false
+      })
     ]);
   });
 

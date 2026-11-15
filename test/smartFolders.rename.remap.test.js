@@ -184,7 +184,7 @@ describe('smart folder rename re-keys the knowledge under it [F-188]', () => {
     armSuccessfulRename();
     const handler = getHandler(IPC_CHANNELS.SMART_FOLDERS.EDIT);
 
-    const result = await handler({}, '1', { path: NEW_PATH });
+    const result = await handler({}, '1', { path: NEW_PATH }, { pathChange: 'move' });
 
     expect(result.success).toBe(true);
     expect(fs.rename).toHaveBeenCalledTimes(1);
@@ -210,7 +210,7 @@ describe('smart folder rename re-keys the knowledge under it [F-188]', () => {
     armSuccessfulRename();
     const handler = getHandler(IPC_CHANNELS.SMART_FOLDERS.EDIT);
 
-    const result = await handler({}, '1', { path: NEW_PATH });
+    const result = await handler({}, '1', { path: NEW_PATH }, { pathChange: 'move' });
 
     expect(result.success).toBe(true);
     expect(coordinator.batchPathUpdate).not.toHaveBeenCalled();
@@ -226,7 +226,7 @@ describe('smart folder rename re-keys the knowledge under it [F-188]', () => {
     armSuccessfulRename();
     const handler = getHandler(IPC_CHANNELS.SMART_FOLDERS.EDIT);
 
-    const result = await handler({}, '1', { path: NEW_PATH });
+    const result = await handler({}, '1', { path: NEW_PATH }, { pathChange: 'move' });
 
     expect(result.success).toBe(true);
     expect(logger.warn).toHaveBeenCalledWith(
@@ -240,7 +240,7 @@ describe('smart folder rename re-keys the knowledge under it [F-188]', () => {
     armSuccessfulRename();
     const handler = getHandler(IPC_CHANNELS.SMART_FOLDERS.EDIT);
 
-    const result = await handler({}, '1', { path: NEW_PATH });
+    const result = await handler({}, '1', { path: NEW_PATH }, { pathChange: 'move' });
 
     expect(result.success).toBe(true);
     expect(logger.warn).toHaveBeenCalledWith(
@@ -258,7 +258,7 @@ describe('smart folder rename re-keys the knowledge under it [F-188]', () => {
       .mockResolvedValueOnce({ isDirectory: () => true });
     const handler = getHandler(IPC_CHANNELS.SMART_FOLDERS.EDIT);
 
-    const result = await handler({}, '1', { path: NEW_PATH });
+    const result = await handler({}, '1', { path: NEW_PATH }, { pathChange: 'move' });
 
     expect(result.success).toBe(true);
     expect(fs.rename).not.toHaveBeenCalled();

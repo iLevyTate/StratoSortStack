@@ -179,7 +179,8 @@ describe('Smart Folder root confirmation follows the request abort', () => {
     const result = await getHandler(IPC_CHANNELS.SMART_FOLDERS.EDIT)(
       { abortSignal: controller.signal },
       '1',
-      { path: ELSEWHERE }
+      { path: ELSEWHERE },
+      { pathChange: 'move' }
     );
 
     expect(result).toEqual(

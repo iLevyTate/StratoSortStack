@@ -57,6 +57,7 @@ import {
   useProcessedFiles
 } from './organize/useFileEditing';
 import { useOrganization } from './organize/useOrganization';
+import { useRememberSmartFolderChoice } from '../hooks/useRememberSmartFolderChoice';
 import { useOrganizeSuggestions } from './organize/useOrganizeSuggestions';
 import { resolveOrganizeDestination } from './organize/organizeDestination';
 import { useOrganizeNotificationFocus } from './organize/useOrganizeNotificationFocus';
@@ -295,6 +296,7 @@ function OrganizePhase() {
     ]
   );
 
+  const rememberSmartFolderChoice = useRememberSmartFolderChoice();
   const {
     isOrganizing,
     batchProgress,
@@ -303,6 +305,7 @@ function OrganizePhase() {
     handlePreviewOrganize,
     organizeConflicts,
     inPlaceMoves,
+    setInPlaceChoice,
     cancelOrganize,
     isCancelling,
     pauseOrganize,
@@ -334,7 +337,8 @@ function OrganizePhase() {
     removeOrganizedFiles,
     setOrganizingState,
     setLastOrganizeRun,
-    setLastOrganizeRunFiles
+    setLastOrganizeRunFiles,
+    rememberSmartFolderChoice
   });
 
   const filesBeingOrganized = useMemo(() => {
@@ -492,6 +496,25 @@ function OrganizePhase() {
   // ready count (also drops in-flight processedFileIds before Redux index updates).
   // Prefer this over fileStats.ready during an active move so the CTA shrinks immediately.
   const readyFilesCount = unprocessedFiles.length;
+  // Files already in the folder chosen for them, among the ones Move would
+  // send (the selection, or every ready file): until the user says whether
+  // to leave them there or skip them, Move stays off; skipped ones are not
+  // counted on the button.
+  const inPlaceForMove = useMemo(() => {
+    const moves = Array.isArray(inPlaceMoves) ? inPlaceMoves : [];
+    const inTarget =
+      selectedFiles.size > 0
+        ? moves.filter((m) => selectedFiles.has(toCanonicalPath(m.sourcePath)))
+        : moves;
+    return {
+      undecided: inTarget.filter((m) => !m.choice).length,
+      skipped: inTarget.filter((m) => m.choice === 'skip').length
+    };
+  }, [inPlaceMoves, selectedFiles]);
+  const moveCount = Math.max(
+    0,
+    (selectedFiles.size > 0 ? selectedFiles.size : readyFilesCount) - inPlaceForMove.skipped
+  );
   const [progressLinger, setProgressLinger] = React.useState(false);
   const wasOrganizingRef = useRef(false);
   useEffect(() => {
@@ -900,7 +923,11 @@ function OrganizePhase() {
               </div>
             )}
             {!isOrganizing && !isPaused && (
-              <InPlaceMoveNotice moves={inPlaceMoves} className="mb-4" />
+              <InPlaceMoveNotice
+                moves={inPlaceMoves}
+                onChoose={setInPlaceChoice}
+                className="mb-4"
+              />
             )}
             {(isOrganizing || isPaused || progressLinger) && (
               <div className="mb-4" data-testid="organize-progress-panel">
@@ -950,7 +977,15 @@ function OrganizePhase() {
                     size="md"
                     className="px-6"
                     disabled={
-                      (selectedFiles.size === 0 ? readyFilesCount === 0 : false) || isOrganizing
+                      (selectedFiles.size === 0 ? readyFilesCount === 0 : false) ||
+                      isOrganizing ||
+                      inPlaceForMove.undecided > 0 ||
+                      moveCount === 0
+                    }
+                    title={
+                      inPlaceForMove.undecided > 0
+                        ? 'Choose what happens to the files already in their folder first.'
+                        : undefined
                     }
                     isLoading={isOrganizing}
                   >
@@ -961,8 +996,8 @@ function OrganizePhase() {
                         <FolderInput className="w-5 h-5 mr-2" />
                         <span>
                           {selectedFiles.size > 0
-                            ? `Move ${selectedFiles.size} selected file${selectedFiles.size !== 1 ? 's' : ''}`
-                            : `Move ${readyFilesCount} file${readyFilesCount !== 1 ? 's' : ''}`}
+                            ? `Move ${moveCount} selected file${moveCount !== 1 ? 's' : ''}`
+                            : `Move ${moveCount} file${moveCount !== 1 ? 's' : ''}`}
                         </span>
                       </>
                     )}

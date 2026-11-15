@@ -58,6 +58,10 @@ const ERROR_CODES = {
   PARENT_NOT_DIRECTORY: 'PARENT_NOT_DIRECTORY',
   ORIGINAL_NOT_DIRECTORY: 'ORIGINAL_NOT_DIRECTORY',
   RENAME_FAILED: 'RENAME_FAILED',
+  // A Smart Folder's path was changed to a folder that does not exist yet.
+  // Nothing was changed: the caller must say whether to move the old folder
+  // there with its files, or start with a new empty folder.
+  PATH_CHANGE_CHOICE_REQUIRED: 'PATH_CHANGE_CHOICE_REQUIRED',
 
   // ── Validation Errors ──
   VALIDATION_ERROR: 'VALIDATION_ERROR',

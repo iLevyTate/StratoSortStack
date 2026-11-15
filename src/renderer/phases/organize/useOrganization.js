@@ -611,6 +611,9 @@ function processFileForOrganization({
     newName,
     normalized,
     destinationDir,
+    // The smart folder record the file is sent to; none for an Uncategorized
+    // that only exists under the default location.
+    folderId: typeof resolvedFolder?.id === 'string' ? resolvedFolder.id : undefined,
     categoryChanged,
     originalCategory,
     finalCategory: currentCategory,
@@ -620,14 +623,43 @@ function processFileForOrganization({
 
 /**
  * A file the plan leaves in the folder it is already in, because that folder
- * is also the smart folder chosen for it. The run renames it there, or leaves
- * it as it is when its name does not change either, and reports it as moved.
+ * is also the smart folder chosen for it. What happens to it is the user's
+ * choice, kept on the smart folder (`inPlaceFiles`): 'leave' keeps it in the
+ * run, which renames it there (or leaves it as it is when its name does not
+ * change either) and reports it as moved; 'skip' leaves it out of the run.
+ * Until the user chooses, Move stays off.
+ * @typedef {'leave' | 'skip'} InPlaceChoice
  * @typedef {object} InPlaceMove
  * @property {string} sourcePath
  * @property {string} fileName
  * @property {string} folderName - the smart folder it stays in
  * @property {boolean} renamed - whether the run gives it a new name
+ * @property {string | undefined} folderId - that smart folder's record, if any
+ * @property {string} folderKey - toFolderKey of the folder it stays in
+ * @property {InPlaceChoice | null} choice - null until the user chooses
  */
+
+/**
+ * @param {unknown} value
+ * @returns {InPlaceChoice | null}
+ */
+const toInPlaceChoice = (value) => (value === 'leave' || value === 'skip' ? value : null);
+
+/**
+ * Apply choices made on this screen that the saved folder list may not show
+ * yet (keyed by folderKey; null means "ask again").
+ * @param {InPlaceMove[]} moves
+ * @param {Map<string, InPlaceChoice | null>} [overrides]
+ * @returns {InPlaceMove[]}
+ */
+export function applyInPlaceChoices(moves, overrides) {
+  if (!overrides || overrides.size === 0) return moves;
+  return moves.map((move) =>
+    overrides.has(move.folderKey)
+      ? { ...move, choice: toInPlaceChoice(overrides.get(move.folderKey)) }
+      : move
+  );
+}
 
 /**
  * The files whose destination folder is the folder that holds them now.
@@ -652,18 +684,22 @@ export function findInPlaceMoves({ files, smartFolders = [], defaultLocation, ..
   for (const file of Array.isArray(files) ? files : []) {
     const parentKey = toParentFolderKey(file?.path);
     if (parentKey === null || !targetKeys.has(parentKey)) continue;
-    const { newName, destinationDir, finalCategory } = processFileForOrganization({
+    const { newName, destinationDir, finalCategory, folderId } = processFileForOrganization({
       ...planParams,
       file,
       smartFolders,
       defaultLocation
     });
     if (toFolderKey(destinationDir) !== parentKey) continue;
+    const folder = folderId ? smartFolders.find((f) => f?.id === folderId) : null;
     inPlace.push({
       sourcePath: file.path,
       fileName: file.name,
       folderName: finalCategory,
-      renamed: newName !== file.name
+      renamed: newName !== file.name,
+      folderId,
+      folderKey: parentKey,
+      choice: toInPlaceChoice(folder?.inPlaceFiles)
     });
   }
   return inPlace;
@@ -905,7 +941,11 @@ export function useOrganization({
   setOrganizingState = () => {},
   setLastOrganizeRun = () => {},
   // Every file of the last run and what happened to it (files.lastOrganizeRunFiles).
-  setLastOrganizeRunFiles = (/** @type {any[]} */ _rows) => {}
+  setLastOrganizeRunFiles = (/** @type {any[]} */ _rows) => {},
+  // Keeps an in-place choice on the smart folders (useRememberSmartFolderChoice).
+  rememberSmartFolderChoice = /** @type {null | ((ids: unknown[], choice: any) => Promise<boolean>)} */ (
+    null
+  )
 } = {}) {
   const {
     batchProgress,
@@ -923,6 +963,12 @@ export function useOrganization({
   useEffect(() => {
     currentPhaseRef.current = currentPhase;
   }, [currentPhase]);
+
+  // In-place choices made on this screen, by folder key, until the saved
+  // smart folder list shows them (and for an Uncategorized with no record).
+  const [inPlaceOverrides, setInPlaceOverrides] = useState(
+    () => /** @type {Map<string, InPlaceChoice | null>} */ (new Map())
+  );
 
   // Cancellation tracking for in-flight organize batches. Previously the user
   // had no way to back out of a long batch — they could only wait for it to
@@ -1018,6 +1064,56 @@ export function useOrganization({
       let runOperations = /** @type {any[]} */ ([]);
       let runFilesStored = false;
 
+      // Files the plan leaves in the folder they are in need the user's
+      // choice before anything runs (or the last run's report is cleared);
+      // the ones they chose to skip are left out of the run.
+      /** @type {Set<string>} */
+      let inPlaceSkipped = new Set();
+      if (!resumeInfo) {
+        const candidates =
+          actualFilesToOrganize ||
+          (unprocessedFiles || []).filter((/** @type {any} */ f) => f && f.analysis);
+        const moves = applyInPlaceChoices(
+          findInPlaceMoves({
+            files: candidates,
+            editingFiles,
+            getFileWithEdits,
+            findSmartFolderForCategory,
+            findSmartFolderForFile,
+            defaultLocation,
+            smartFolders,
+            suggestionsByPath
+          }),
+          inPlaceOverrides
+        );
+        if (moves.some((move) => !move.choice)) {
+          addNotification(
+            'Some files are already in the folder chosen for them. Choose whether to leave them there or skip them, then move files.',
+            'warning',
+            6000,
+            'organize-in-place-choice'
+          );
+          return;
+        }
+        inPlaceSkipped = new Set(
+          moves
+            .filter((move) => move.choice === 'skip')
+            .map((move) => toCanonicalPath(move.sourcePath))
+        );
+        if (
+          inPlaceSkipped.size > 0 &&
+          candidates.every((/** @type {any} */ f) => inPlaceSkipped.has(toCanonicalPath(f?.path)))
+        ) {
+          addNotification(
+            'You chose to skip every one of these files, so nothing was moved.',
+            'info',
+            4000,
+            'organize-in-place-choice'
+          );
+          return;
+        }
+      }
+
       try {
         setIsOrganizing(true);
         setOrganizingState(true);
@@ -1028,7 +1124,9 @@ export function useOrganization({
 
         const filesToProcess = resumeInfo
           ? []
-          : actualFilesToOrganize || unprocessedFiles.filter((/** @type {any} */ f) => f.analysis);
+          : (
+              actualFilesToOrganize || unprocessedFiles.filter((/** @type {any} */ f) => f.analysis)
+            ).filter((/** @type {any} */ f) => !inPlaceSkipped.has(toCanonicalPath(f?.path)));
 
         logger.info('[ORGANIZE] Files to process', {
           count: filesToProcess.length
@@ -1767,7 +1865,8 @@ export function useOrganization({
       setOrganizePreview,
       setOrganizeConflicts,
       resetChunkedResults,
-      chunkedResultsRef
+      chunkedResultsRef,
+      inPlaceOverrides
     ]
   );
 
@@ -1790,10 +1889,32 @@ export function useOrganization({
    */
   const handlePreviewOrganize = useCallback(
     async (/** @type {any} */ filesToOrganize = null) => {
-      const filesToProcess =
+      const candidates =
         Array.isArray(filesToOrganize) && filesToOrganize.length > 0
           ? filesToOrganize
           : unprocessedFiles || [];
+      // The files the user chose to skip are not part of the move, so they
+      // are not in its preview either.
+      const skipped = new Set(
+        applyInPlaceChoices(
+          findInPlaceMoves({
+            files: candidates.filter((/** @type {any} */ f) => f && f.analysis),
+            editingFiles,
+            getFileWithEdits,
+            findSmartFolderForCategory,
+            findSmartFolderForFile,
+            defaultLocation,
+            smartFolders,
+            suggestionsByPath
+          }),
+          inPlaceOverrides
+        )
+          .filter((move) => move.choice === 'skip')
+          .map((move) => toCanonicalPath(move.sourcePath))
+      );
+      const filesToProcess = candidates.filter(
+        (/** @type {any} */ f) => !skipped.has(toCanonicalPath(f?.path))
+      );
       if (filesToProcess.length === 0) return null;
 
       const planInputs = {
@@ -1839,7 +1960,8 @@ export function useOrganization({
       findSmartFolderForFile,
       defaultLocation,
       smartFolders,
-      suggestionsByPath
+      suggestionsByPath,
+      inPlaceOverrides
     ]
   );
 
@@ -1848,20 +1970,23 @@ export function useOrganization({
     [handleOrganizeFiles]
   );
 
-  // Ready files the plan leaves in the folder they are in, so the screen can
-  // say so before the run reports them as moved.
+  // Ready files the plan leaves in the folder they are in, with what the
+  // user chose for them, so the screen can ask before Move.
   const inPlaceMoves = useMemo(
     () =>
-      findInPlaceMoves({
-        files: (unprocessedFiles || []).filter((/** @type {any} */ f) => f && f.analysis),
-        editingFiles,
-        getFileWithEdits,
-        findSmartFolderForCategory,
-        findSmartFolderForFile,
-        defaultLocation,
-        smartFolders,
-        suggestionsByPath
-      }),
+      applyInPlaceChoices(
+        findInPlaceMoves({
+          files: (unprocessedFiles || []).filter((/** @type {any} */ f) => f && f.analysis),
+          editingFiles,
+          getFileWithEdits,
+          findSmartFolderForCategory,
+          findSmartFolderForFile,
+          defaultLocation,
+          smartFolders,
+          suggestionsByPath
+        }),
+        inPlaceOverrides
+      ),
     [
       unprocessedFiles,
       editingFiles,
@@ -1870,8 +1995,46 @@ export function useOrganization({
       findSmartFolderForFile,
       defaultLocation,
       smartFolders,
-      suggestionsByPath
+      suggestionsByPath,
+      inPlaceOverrides
     ]
+  );
+
+  /**
+   * Choose what happens to files already in the folder chosen for them:
+   * 'leave', 'skip', or null to be asked again. Applies to `moves` (default:
+   * every in-place file on screen) and is kept on their smart folders.
+   */
+  const setInPlaceChoice = useCallback(
+    async (
+      /** @type {InPlaceChoice | null} */ choice,
+      /** @type {InPlaceMove[] | undefined} */ moves = undefined
+    ) => {
+      const targets = (Array.isArray(moves) ? moves : inPlaceMoves).filter(
+        (move) => move && typeof move.folderKey === 'string'
+      );
+      if (targets.length === 0) return;
+      const value = toInPlaceChoice(choice);
+      setInPlaceOverrides((prev) => {
+        const next = new Map(prev);
+        targets.forEach((move) => next.set(move.folderKey, value));
+        return next;
+      });
+      if (typeof rememberSmartFolderChoice !== 'function') return;
+      const saved = await rememberSmartFolderChoice(
+        targets.map((move) => move.folderId),
+        { inPlaceFiles: value }
+      );
+      if (!saved) {
+        addNotification(
+          'Your choice was not saved. StratoSort will ask again next time.',
+          'warning',
+          5000,
+          'organize-in-place-save'
+        );
+      }
+    },
+    [inPlaceMoves, rememberSmartFolderChoice, addNotification]
   );
 
   return {
@@ -1883,6 +2046,7 @@ export function useOrganization({
     setBatchProgress,
     organizeConflicts,
     inPlaceMoves,
+    setInPlaceChoice,
     cancelOrganize,
     isCancelling,
     pauseOrganize,

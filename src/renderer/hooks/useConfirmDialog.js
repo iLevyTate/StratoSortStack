@@ -4,59 +4,99 @@ import { createLogger } from '../../shared/logger';
 import { ConfirmModal } from '../components/ui/Modal';
 
 const logger = createLogger('useConfirmDialog');
+
+/**
+ * @typedef {{ title?: string, message: any, confirmText?: string, cancelText?: string,
+ *   variant?: string, fileName?: any }} ConfirmOptions
+ * @typedef {ConfirmOptions & { alternativeText: string }} ChoiceOptions
+ */
+
 export function useConfirmDialog() {
   const [confirmState, setConfirmState] = React.useState({
     isOpen: false,
     title: '',
-    message: '',
+    message: /** @type {any} */ (''),
     confirmText: 'Confirm',
     cancelText: 'Cancel',
+    alternativeText: /** @type {string | null} */ (null),
     variant: 'default',
     fileName: null,
-    onConfirm: null
+    onConfirm: /** @type {null | (() => void)} */ (null),
+    onAlternative: /** @type {null | (() => void)} */ (null)
   });
-  const resolverRef = React.useRef(null);
+  // Resolves the open dialog's promise with its "closed" value.
+  const resolverRef = React.useRef(/** @type {null | ((value: any) => void)} */ (null));
+  const closedValueRef = React.useRef(/** @type {any} */ (false));
 
-  const showConfirm = React.useCallback(
+  /**
+   * Open the dialog. `answers` maps each button to the value the promise
+   * resolves with; closing it (Cancel, Escape) resolves with `closed`.
+   */
+  const open = React.useCallback(
     (
-      /** @type {{ title?: string, message: string, confirmText?: string, cancelText?: string, variant?: string, fileName?: any }} */
+      /** @type {ConfirmOptions & { alternativeText?: string | null }} */
       {
         title = 'Confirm action',
         message,
         confirmText = 'Confirm',
         cancelText = 'Cancel',
+        alternativeText = null,
         variant = 'default',
         fileName = null
-      }
-    ) => {
-      return new Promise((resolve) => {
+      },
+      /** @type {{ confirm: any, alternative: any, closed: any }} */ answers
+    ) =>
+      new Promise((resolve) => {
         if (typeof resolverRef.current === 'function') {
-          resolverRef.current(false);
+          resolverRef.current(closedValueRef.current);
         }
         resolverRef.current = resolve;
+        closedValueRef.current = answers.closed;
+        /** @param {any} value */
+        const answer = (value) => () => {
+          resolve(value);
+          resolverRef.current = null;
+          setConfirmState((prev) => ({ ...prev, isOpen: false }));
+        };
         setConfirmState({
           isOpen: true,
           title,
           message,
           confirmText,
           cancelText,
+          alternativeText,
           variant,
           fileName,
-          onConfirm: () => {
-            resolve(true);
-            resolverRef.current = null;
-            setConfirmState((prev) => ({ ...prev, isOpen: false }));
-          }
+          onConfirm: answer(answers.confirm),
+          onAlternative: alternativeText ? answer(answers.alternative) : null
         });
-      });
-    },
+      }),
     []
+  );
+
+  /** Resolves true on confirm, false when closed. */
+  const showConfirm = React.useCallback(
+    (/** @type {ConfirmOptions} */ options) =>
+      open(options, { confirm: true, alternative: true, closed: false }),
+    [open]
+  );
+
+  /**
+   * A dialog with two real choices and a way out: resolves 'confirm',
+   * 'alternative', or null when closed (Cancel, Escape).
+   */
+  const showChoice = React.useCallback(
+    (/** @type {ChoiceOptions} */ options) =>
+      /** @type {Promise<'confirm' | 'alternative' | null>} */ (
+        open(options, { confirm: 'confirm', alternative: 'alternative', closed: null })
+      ),
+    [open]
   );
 
   const hideConfirm = React.useCallback(() => {
     if (typeof resolverRef.current === 'function') {
       try {
-        resolverRef.current(false);
+        resolverRef.current(closedValueRef.current);
       } catch (error) {
         // Fixed: Log resolver errors instead of silently swallowing
         logger.warn('Error calling resolver', {
@@ -85,7 +125,13 @@ export function useConfirmDialog() {
             confirmText: confirmState.confirmText,
             cancelText: confirmState.cancelText,
             variant: confirmState.variant,
-            fileName: confirmState.fileName
+            fileName: confirmState.fileName,
+            ...(confirmState.onAlternative
+              ? {
+                  alternativeText: confirmState.alternativeText,
+                  onAlternative: confirmState.onAlternative
+                }
+              : {})
           }}
         />
       ) : null,
@@ -96,5 +142,5 @@ export function useConfirmDialog() {
   // and the new recommended API (confirmDialog as JSX element)
   const ConfirmDialog = React.useCallback(() => confirmDialog, [confirmDialog]);
 
-  return { showConfirm, ConfirmDialog, confirmDialog };
+  return { showConfirm, showChoice, ConfirmDialog, confirmDialog };
 }

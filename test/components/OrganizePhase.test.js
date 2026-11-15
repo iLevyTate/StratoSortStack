@@ -499,6 +499,44 @@ describe('OrganizePhase premium preflight copy', () => {
     expect(screen.queryByText(/IN_PLACE_NOTICE/)).not.toBeInTheDocument();
   });
 
+  test('Move stays off until the user chooses what happens to files that stay in their folder', () => {
+    const { useOrganization } = require('../../src/renderer/phases/organize/useOrganization');
+    const base = {
+      isOrganizing: false,
+      isPaused: false,
+      batchProgress: null,
+      organizePreview: [],
+      handleOrganizeFiles: jest.fn(),
+      organizeConflicts: []
+    };
+    const stays = (choice) => ({
+      sourcePath: '/in/a.csv',
+      fileName: 'a.csv',
+      folderName: 'Strato Input',
+      renamed: false,
+      folderKey: '/in',
+      choice
+    });
+
+    useOrganization.mockReturnValue({ ...base, inPlaceMoves: [stays(null)] });
+    const { rerender } = render(<OrganizePhase />);
+    const waiting = screen.getByRole('button', { name: /Move 2 files/i });
+    expect(waiting).toBeDisabled();
+    expect(waiting).toHaveAttribute(
+      'title',
+      'Choose what happens to the files already in their folder first.'
+    );
+
+    useOrganization.mockReturnValue({ ...base, inPlaceMoves: [stays('leave')] });
+    rerender(<OrganizePhase />);
+    expect(screen.getByRole('button', { name: /Move 2 files/i })).toBeEnabled();
+
+    // A skipped file is not counted on the button.
+    useOrganization.mockReturnValue({ ...base, inPlaceMoves: [stays('skip')] });
+    rerender(<OrganizePhase />);
+    expect(screen.getByRole('button', { name: /Move 1 file(?!s)/i })).toBeEnabled();
+  });
+
   test('keeps edits for files hidden only while their move is in flight (L11)', () => {
     const { useOrganization } = require('../../src/renderer/phases/organize/useOrganization');
     const { useFileEditing } = require('../../src/renderer/phases/organize/useFileEditing');

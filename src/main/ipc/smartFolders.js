@@ -128,15 +128,19 @@ const WATCHER_STOP_REPLY_WAIT_MS = 20_000;
  * Windows is always case-insensitive. macOS APFS/HFS+ defaults to
  * case-insensitive (case-sensitive volumes are rare and opt-in), so darwin
  * is treated the same way to prevent silent duplicate-path entries that the
- * underlying filesystem would treat as the same location.
+ * underlying filesystem would treat as the same location. On macOS accents
+ * are composed (NFC) first: Finder and the file system hand back decomposed
+ * names, and APFS treats both spellings as one name.
  * @param {string} a
  * @param {string} b
  * @returns {boolean}
  */
 function areEquivalentPaths(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string') return false;
-  const normA = path.resolve(a);
-  const normB = path.resolve(b);
+  const compose = (/** @type {string} */ p) =>
+    process.platform === 'darwin' ? p.normalize('NFC') : p;
+  const normA = compose(path.resolve(a));
+  const normB = compose(path.resolve(b));
   if (isCaseInsensitiveFileSystem()) {
     return normA.toLowerCase() === normB.toLowerCase();
   }
@@ -1514,10 +1518,57 @@ async function rememberFolderDescriptionChange({
 }
 
 /**
+ * Does changing a Smart Folder from `oldPath` to `newPath` need the user to
+ * say what happens to the old folder? Only when the old folder is there and
+ * the new one is not: the edit could then move the old folder, files and
+ * all, or start a new empty one. Any other state (old one gone, new one
+ * already there) has one outcome, and an error reading either path is left
+ * for the edit to report.
+ * @param {string} oldPath
+ * @param {string} newPath
+ * @returns {Promise<boolean>}
+ */
+async function pathChangeNeedsChoice(oldPath, newPath) {
+  try {
+    const oldStats = await fs.stat(oldPath);
+    if (!oldStats.isDirectory()) return false;
+  } catch {
+    return false;
+  }
+  try {
+    await fs.stat(newPath);
+    return false;
+  } catch (error) {
+    return /** @type {any} */ (error)?.code === 'ENOENT';
+  }
+}
+
+/**
+ * The reply when a path change needs the user's choice. Nothing has changed
+ * on disk or in the folder list.
+ * @param {string} oldPath
+ * @param {string} newPath
+ */
+function pathChangeChoiceRequired(oldPath, newPath) {
+  return {
+    success: false,
+    error:
+      'The new location does not exist yet. Choose whether to move the folder and its files there, or start with a new empty folder.',
+    errorCode: ERROR_CODES.PATH_CHANGE_CHOICE_REQUIRED,
+    oldPath,
+    newPath
+  };
+}
+
+/**
  * @param {SmartFoldersHandlerContext} ctx
  * @param {IpcMainInvokeEvent} event
  * @param {string} folderId
  * @param {Record<string, any>} updatedFolder
+ * @param {{ pathChange?: 'move' | 'new' }} [options] - when the new path does
+ *   not exist yet: 'move' moves the old folder there with its files, 'new'
+ *   creates a new empty folder and leaves the old one where it is. Without
+ *   it such an edit changes nothing and asks (PATH_CHANGE_CHOICE_REQUIRED).
  */
 async function handleSmartFoldersEdit(
   {
@@ -1532,8 +1583,11 @@ async function handleSmartFoldersEdit(
   },
   event,
   folderId,
-  updatedFolder
+  updatedFolder,
+  options = {}
 ) {
+  const pathChange =
+    options?.pathChange === 'move' || options?.pathChange === 'new' ? options.pathChange : null;
   try {
     if (!folderId || typeof folderId !== 'string')
       return {
@@ -1609,6 +1663,15 @@ async function handleSmartFoldersEdit(
         // A new root is held to the destination policy before any directory
         // is created for it; a rename beside the old root passes on its own.
         if (!areEquivalentPaths(normalizedPath, customFolders[folderIndex].path)) {
+          // Asked before the destination policy (which can show its own
+          // prompt) and before any directory is created, so a cancelled
+          // choice leaves everything as it was.
+          if (
+            !pathChange &&
+            (await pathChangeNeedsChoice(customFolders[folderIndex].path, normalizedPath))
+          ) {
+            return pathChangeChoiceRequired(customFolders[folderIndex].path, normalizedPath);
+          }
           const rootRefusal = await vetSmartFolderRoot({
             folderPath: normalizedPath,
             previousPath: customFolders[folderIndex].path,
@@ -1694,7 +1757,17 @@ async function handleSmartFoldersEdit(
           };
         }
 
-        if (oldExists && oldIsDirectory && !newExists) {
+        if (oldExists && oldIsDirectory && !newExists && pathChange !== 'move') {
+          // Only a 'move' carries the old folder and its files along. Without
+          // a choice (the new path vanished after the check above) nothing is
+          // changed; with 'new' the old folder stays where it is.
+          if (!pathChange) return pathChangeChoiceRequired(oldPath, newPath);
+          await fs.mkdir(newPath, { recursive: true });
+          logger.info('[SMART-FOLDERS] Pointed Smart Folder at a new empty folder', {
+            oldPath,
+            newPath
+          });
+        } else if (oldExists && oldIsDirectory && !newExists) {
           // Revalidate oldPath at the moment of rename. It comes from
           // persisted customFolders on disk and was sanitized when
           // written, but the JSON file is user-writable — a tampered
@@ -1824,6 +1897,8 @@ async function handleSmartFoldersEdit(
       return {
         success: true,
         folder: customFolders[folderIndex],
+        // The old folder was moved to the new path with its files.
+        movedFolder: renamedOnDisk,
         message: 'Smart folder updated successfully'
       };
     } catch (saveError) {
@@ -2439,7 +2514,7 @@ function registerSmartFoldersIpc(servicesOrParams) {
       logger,
       context,
       schema: schemaEditFolder,
-      handler: (event, folderId, updatedFolder) =>
+      handler: (event, folderId, updatedFolder, options) =>
         handleSmartFoldersEdit(
           {
             logger,
@@ -2453,7 +2528,8 @@ function registerSmartFoldersIpc(servicesOrParams) {
           },
           event,
           folderId,
-          updatedFolder
+          updatedFolder,
+          options
         )
     })
   );

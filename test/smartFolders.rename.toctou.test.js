@@ -202,7 +202,7 @@ describe('smartFolders directory rename TOCTOU overwrite guard [Position 04 Gap 
     // silently replacing the squatter — this is the very bug we're guarding.
     fs.rename.mockResolvedValue();
 
-    const result = await handler({}, '1', { path: newPath });
+    const result = await handler({}, '1', { path: newPath }, { pathChange: 'move' });
 
     expect(result.success).toBe(false);
     expect(result.errorCode).toBe('RENAME_FAILED');

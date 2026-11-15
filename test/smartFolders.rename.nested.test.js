@@ -180,9 +180,12 @@ describe('smart folder rename re-points the Smart Folders nested under it', () =
     fs.access.mockRejectedValue(enoent());
     fs.rename.mockResolvedValue();
 
-    const result = await getHandler(IPC_CHANNELS.SMART_FOLDERS.EDIT)({}, 'parent', {
-      path: NEW_PATH
-    });
+    const result = await getHandler(IPC_CHANNELS.SMART_FOLDERS.EDIT)(
+      {},
+      'parent',
+      { path: NEW_PATH },
+      { pathChange: 'move' }
+    );
 
     expect(result.success).toBe(true);
     expect(fs.rename).toHaveBeenCalledTimes(1);
@@ -207,9 +210,12 @@ describe('smart folder rename re-points the Smart Folders nested under it', () =
       .mockResolvedValueOnce({ isDirectory: () => true })
       .mockResolvedValueOnce({ isDirectory: () => true });
 
-    const result = await getHandler(IPC_CHANNELS.SMART_FOLDERS.EDIT)({}, 'parent', {
-      path: NEW_PATH
-    });
+    const result = await getHandler(IPC_CHANNELS.SMART_FOLDERS.EDIT)(
+      {},
+      'parent',
+      { path: NEW_PATH },
+      { pathChange: 'move' }
+    );
 
     expect(result.success).toBe(true);
     expect(fs.rename).not.toHaveBeenCalled();

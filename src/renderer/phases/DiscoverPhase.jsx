@@ -6,6 +6,7 @@ import { createLogger } from '../../shared/logger';
 import { useNotification } from '../contexts/NotificationContext';
 import { useFloatingSearch } from '../contexts/FloatingSearchContext';
 import { useConfirmDialog, useDragAndDrop, useSettingsSubscription } from '../hooks';
+import { useRememberSmartFolderChoice } from '../hooks/useRememberSmartFolderChoice';
 import { Button, IconButton, MinimizableGuideCard } from '../components/ui';
 import { Heading, Text } from '../components/ui/Typography';
 import Card from '../components/ui/Card';
@@ -65,6 +66,7 @@ function DiscoverPhase() {
 
   const { addNotification } = useNotification();
   const { showConfirm, ConfirmDialog } = useConfirmDialog();
+  const rememberSmartFolderChoice = useRememberSmartFolderChoice();
   const { openSearchModal } = useFloatingSearch();
 
   const [showNamingSettings, setShowNamingSettings] = useState(false);
@@ -301,7 +303,10 @@ function DiscoverPhase() {
     updateFileState,
     addNotification,
     analyzeFiles,
-    smartFolders
+    smartFolders,
+    // A folder that overlaps a Smart Folder is sorted only on purpose.
+    showConfirm,
+    rememberSmartFolderChoice
   });
 
   const { handleFileAction } = useFileActions({

@@ -20,7 +20,17 @@ jest.mock('../src/shared/logger', () => {
 
 // Mock Modal component with testable buttons
 jest.mock('../src/renderer/components/ui/Modal', () => ({
-  ConfirmModal: ({ isOpen, onConfirm, onClose, title, confirmText, cancelText, variant }) => {
+  ConfirmModal: ({
+    isOpen,
+    onConfirm,
+    onClose,
+    title,
+    confirmText,
+    cancelText,
+    variant,
+    alternativeText,
+    onAlternative
+  }) => {
     if (!isOpen) return null;
     return (
       <div data-testid="confirm-modal">
@@ -32,6 +42,11 @@ jest.mock('../src/renderer/components/ui/Modal', () => ({
         <button data-testid="cancel-btn" onClick={onClose}>
           {cancelText}
         </button>
+        {onAlternative && (
+          <button data-testid="alternative-btn" onClick={onAlternative}>
+            {alternativeText}
+          </button>
+        )}
       </div>
     );
   }
@@ -150,5 +165,50 @@ describe('useConfirmDialog', () => {
     expect(screen.getByText('Confirm')).toBeDefined();
     expect(screen.getByText('Cancel')).toBeDefined();
     expect(screen.getByTestId('variant').textContent).toBe('default');
+  });
+
+  describe('showChoice: two real choices and a way out', () => {
+    const open = (result) => {
+      let answer;
+      act(() => {
+        answer = result.current.showChoice({
+          title: 'Move the folder or start a new one?',
+          message: 'The new location does not exist yet.',
+          confirmText: 'Move the folder and its files',
+          alternativeText: 'Use a new empty folder',
+          cancelText: 'Cancel'
+        });
+      });
+      const DialogComponent = result.current.ConfirmDialog;
+      render(<DialogComponent />);
+      return answer;
+    };
+
+    test.each([
+      ['confirm-btn', 'confirm'],
+      ['alternative-btn', 'alternative'],
+      ['cancel-btn', null]
+    ])('%s resolves %p', async (button, expected) => {
+      const { result } = renderHook(() => useConfirmDialog());
+      const answer = open(result);
+
+      expect(screen.getByText('Use a new empty folder')).toBeDefined();
+      act(() => {
+        fireEvent.click(screen.getByTestId(button));
+      });
+
+      await expect(answer).resolves.toBe(expected);
+    });
+
+    test('showConfirm shows no third button', () => {
+      const { result } = renderHook(() => useConfirmDialog());
+      act(() => {
+        result.current.showConfirm({ message: 'Sure?' });
+      });
+      const DialogComponent = result.current.ConfirmDialog;
+      render(<DialogComponent />);
+
+      expect(screen.queryByTestId('alternative-btn')).toBeNull();
+    });
   });
 });

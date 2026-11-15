@@ -16,7 +16,12 @@ import { extractExtension, extractFileName } from './namingUtils';
 import { normalizePathValue, isAbsolutePath } from '../../utils/pathNormalization';
 import { mapErrorToNotification } from '../../utils/errorMapping';
 import { toCanonicalPath } from '../../utils/canonicalPath';
-import { describeSourceOverlap, sourceOverlapMessage } from '../../utils/folderOverlap';
+import {
+  describeSourceOverlap,
+  foldersToConfirm,
+  sourceOverlapMessage,
+  sourceOverlapQuestion
+} from '../../utils/folderOverlap';
 
 const logger = createLogger('DiscoverPhase:FileHandlers');
 const ensureFileApi = (/** @type {any} */ addNotification, /** @type {any} */ actionLabel) => {
@@ -129,24 +134,62 @@ export function useFileHandlers({
   updateFileState,
   addNotification,
   analyzeFiles,
-  smartFolders
+  smartFolders,
+  showConfirm,
+  rememberSmartFolderChoice
 }) {
   const [isScanning, setIsScanning] = useState(false);
   const isMountedRef = useRef(true);
+  // Smart Folders the user said may overlap a folder they sort, this session,
+  // so a second folder in the same drop is not asked about before the saved
+  // list catches up.
+  const overlapChosenRef = useRef(/** @type {Set<string>} */ (new Set()));
 
   /**
    * A folder picked for sorting that is, sits inside, or holds a Smart Folder
-   * (where sorted files go) is still analyzed; say what that means for its
-   * files.
+   * (where sorted files go) is sorted only once the user says it is on
+   * purpose. The answer is kept on each Smart Folder (`sourceOverlapOk`), so
+   * it is asked once; after that the overlap is only described. Resolves
+   * true to sort the folder, false to leave it out.
    */
-  const warnIfSourceOverlaps = useCallback(
-    (/** @type {string} */ sourceDir) => {
-      const message = sourceOverlapMessage(describeSourceOverlap(sourceDir, smartFolders));
-      if (message) {
-        addNotification(message, 'warning', SOURCE_OVERLAP_NOTICE_MS, 'source-overlap');
+  const confirmSourceOverlap = useCallback(
+    async (/** @type {string} */ sourceDir, /** @type {string} */ declineText) => {
+      const overlap = describeSourceOverlap(sourceDir, smartFolders);
+      if (!overlap) return true;
+      const toConfirm = foldersToConfirm(overlap, overlapChosenRef.current);
+      if (toConfirm.length === 0 || typeof showConfirm !== 'function') {
+        const message = sourceOverlapMessage(overlap);
+        if (message) {
+          addNotification(message, 'warning', SOURCE_OVERLAP_NOTICE_MS, 'source-overlap');
+        }
+        return true;
       }
+      const sortIt = await showConfirm({
+        title: 'This folder overlaps a Smart Folder',
+        message: sourceOverlapQuestion(sourceDir, overlap),
+        confirmText: 'Sort this folder',
+        cancelText: declineText,
+        variant: 'warning'
+      });
+      if (!sortIt) return false;
+      const ids = toConfirm
+        .map((folder) => folder?.id)
+        .filter((id) => typeof id === 'string' && id.length > 0);
+      ids.forEach((id) => overlapChosenRef.current.add(id));
+      if (ids.length > 0 && typeof rememberSmartFolderChoice === 'function') {
+        const saved = await rememberSmartFolderChoice(ids, { sourceOverlapOk: true });
+        if (!saved) {
+          addNotification(
+            'Your choice was not saved. StratoSort will ask again next time.',
+            'warning',
+            5000,
+            'source-overlap-save'
+          );
+        }
+      }
+      return true;
     },
-    [smartFolders, addNotification]
+    [smartFolders, addNotification, showConfirm, rememberSmartFolderChoice]
   );
 
   useEffect(() => {
@@ -456,7 +499,7 @@ export function useFileHandlers({
             continue;
           }
 
-          warnIfSourceOverlaps(dir.path);
+          if (!(await confirmSourceOverlap(dir.path, 'Skip this folder'))) continue;
 
           if (scanResult?.partial) {
             addNotification(
@@ -510,7 +553,7 @@ export function useFileHandlers({
 
       return expanded;
     },
-    [addNotification, warnIfSourceOverlaps]
+    [addNotification, confirmSourceOverlap]
   );
 
   /**
@@ -634,16 +677,12 @@ export function useFileHandlers({
       if (!ensureFileApi(addNotification, 'handleFolderSelection')) {
         return;
       }
-      // The folder is scanned for files to analyze, not written to.
-      const result = await window.electronAPI.files.selectDirectory({ purpose: 'source' });
-
-      if (result?.success && result?.path) {
+      const scanFolder = (/** @type {string} */ folderPath) => {
         /** @type {NodeJS.Timeout | undefined} */
         let scanTimeoutId;
-
-        const scanResult = await Promise.race([
+        return Promise.race([
           ensureSmartFolderApi(addNotification, 'scanStructure')
-            ? window.electronAPI.smartFolders.scanStructure(result.path)
+            ? window.electronAPI.smartFolders.scanStructure(folderPath)
             : Promise.resolve({ files: [] }),
           new Promise((_, reject) => {
             scanTimeoutId = setTimeout(
@@ -659,6 +698,16 @@ export function useFileHandlers({
         ]).finally(() => {
           if (scanTimeoutId) clearTimeout(scanTimeoutId);
         });
+      };
+
+      // The folder is scanned for files to analyze, not written to.
+      let result = await window.electronAPI.files.selectDirectory({ purpose: 'source' });
+      /** @type {any} */
+      let scanResult = null;
+      // A folder that overlaps a Smart Folder is sorted only on purpose;
+      // "Pick another folder" opens the picker again.
+      while (result?.success && result?.path) {
+        scanResult = await scanFolder(result.path);
 
         const failureReason = getScanFailureReason(scanResult);
         if (failureReason) {
@@ -671,8 +720,11 @@ export function useFileHandlers({
           return;
         }
 
-        warnIfSourceOverlaps(result.path);
+        if (await confirmSourceOverlap(result.path, 'Pick another folder')) break;
+        result = await window.electronAPI.files.selectDirectory({ purpose: 'source' });
+      }
 
+      if (result?.success && result?.path) {
         if (scanResult?.partial) {
           addNotification(
             'Folder scan returned partial results (slow drive or too many files). Try a smaller folder.',
@@ -757,7 +809,7 @@ export function useFileHandlers({
     analyzeFiles,
     enrichSelectedFiles,
     setIsScanningSafe,
-    warnIfSourceOverlaps
+    confirmSourceOverlap
   ]);
 
   /**

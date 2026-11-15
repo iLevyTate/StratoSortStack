@@ -5,7 +5,7 @@
  * are in because that folder is also the smart folder chosen for them.
  */
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
 
 import InPlaceMoveNotice from '../../src/renderer/components/organize/InPlaceMoveNotice';
@@ -94,5 +94,71 @@ describe('InPlaceMoveNotice', () => {
     render(<InPlaceMoveNotice moves={[move('Strato Input')]} className="mb-4" />);
 
     expect(screen.getByRole('status')).toHaveClass('mb-4');
+  });
+});
+
+describe('InPlaceMoveNotice: the choice before Move', () => {
+  const chosen = (folderName, choice, renamed = false) => ({
+    ...move(folderName, renamed),
+    choice
+  });
+
+  test('asks to leave the files there or skip them, and says Move waits for it', () => {
+    const onChoose = jest.fn();
+    const moves = [chosen('Strato Input', null), chosen('Strato Input', null)];
+    render(<InPlaceMoveNotice moves={moves} onChoose={onChoose} />);
+
+    const notice = screen.getByRole('status');
+    expect(notice).toHaveTextContent('Move stays off until you choose.');
+    expect(notice).toHaveTextContent('StratoSort keeps your choice for each folder.');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Skip them' }));
+    expect(onChoose).toHaveBeenCalledWith('skip', moves);
+    fireEvent.click(screen.getByRole('button', { name: 'Leave them there' }));
+    expect(onChoose).toHaveBeenCalledWith('leave', moves);
+  });
+
+  test('asks only about the files with no choice yet', () => {
+    const onChoose = jest.fn();
+    const open = chosen('Bing data', null);
+    render(
+      <InPlaceMoveNotice moves={[chosen('Strato Input', 'skip'), open]} onChoose={onChoose} />
+    );
+
+    expect(screen.getByRole('status')).toHaveTextContent(
+      '1 file is already in the folder chosen for it: Bing data'
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Leave it there' }));
+    expect(onChoose).toHaveBeenCalledWith('leave', [open]);
+  });
+
+  test('once chosen, says what will happen and offers to change it', () => {
+    const onChoose = jest.fn();
+    const moves = [chosen('Strato Input', 'skip')];
+    render(<InPlaceMoveNotice moves={moves} onChoose={onChoose} />);
+
+    expect(screen.getByRole('status')).toHaveTextContent('It will be skipped and keep its name.');
+    expect(screen.queryByRole('button', { name: 'Skip it' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Change this choice' }));
+    expect(onChoose).toHaveBeenCalledWith(null, moves);
+  });
+
+  test('files left there are described as before, and a mix is counted', () => {
+    const { rerender } = render(
+      <InPlaceMoveNotice moves={[chosen('Strato Input', 'leave', true)]} onChoose={jest.fn()} />
+    );
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'It will be renamed there, not moved to another folder.'
+    );
+
+    rerender(
+      <InPlaceMoveNotice
+        moves={[chosen('Strato Input', 'leave'), chosen('Bing data', 'skip')]}
+        onChoose={jest.fn()}
+      />
+    );
+    expect(screen.getByRole('status')).toHaveTextContent(
+      '1 will stay where it is, and 1 will be skipped.'
+    );
   });
 });
