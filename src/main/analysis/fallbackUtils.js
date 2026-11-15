@@ -14,6 +14,7 @@
 
 const path = require('path');
 const { isUncategorizedFolder } = require('../../shared/uncategorizedFolder');
+const { extractExtension } = require('../../shared/namingConventions');
 // Use shared semantic extension mapping
 const {
   getSemanticExtensionScore,
@@ -550,6 +551,18 @@ function getIntelligentKeywords(fileName, extension) {
  * @param {string} extension
  */
 function safeSuggestedName(fileName, extension) {
+  // Callers pass path.extname, which is only '.gz' for logs.tar.gz. Widen it
+  // to the whole compound extension so the name keeps '.tar.gz' instead of
+  // folding '.tar' into the base as 'logs_tar.gz'.
+  const fullExtension = extractExtension(fileName);
+  if (
+    extension &&
+    fullExtension.length > extension.length &&
+    fullExtension.toLowerCase().endsWith(extension.toLowerCase())
+  ) {
+    extension = fullExtension;
+  }
+
   // If the filename is already just the extension or empty, use a default topic
   if (!fileName || fileName === extension) {
     return `unnamed_file${extension}`;

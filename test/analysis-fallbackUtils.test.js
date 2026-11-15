@@ -374,6 +374,13 @@ describe('Analysis Fallback Utils', () => {
       expect(result).not.toContain('/');
       expect(result).not.toContain('\\');
     });
+
+    test('keeps a compound archive extension when given only its last part', () => {
+      // path.extname('server_logs.tar.gz') is '.gz'
+      expect(safeSuggestedName('server_logs.tar.gz', '.gz')).toBe('server_logs.tar.gz');
+      expect(safeSuggestedName('Backup.TAR.XZ', '.xz')).toBe('Backup.TAR.XZ');
+      expect(safeSuggestedName('notes.gz', '.gz')).toBe('notes.gz');
+    });
   });
 });
 

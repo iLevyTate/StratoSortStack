@@ -21,6 +21,13 @@ const { LRUCache } = require('../../shared/LRUCache');
 const { getInstance: getCacheInvalidationBus } = require('../../shared/cacheInvalidation');
 
 const logger = createLogger('QueryProcessor');
+
+/**
+ * Whether a word occurs in the user's indexed files: true or false, or null
+ * when the index cannot answer.
+ * @typedef {(word: string) => boolean | null} IndexedTermLookup
+ */
+
 /**
  * QueryProcessor handles spell correction, synonym expansion, and query normalization
  */
@@ -332,12 +339,21 @@ class QueryProcessor {
   /**
    * Process a search query with spell correction and synonym expansion
    *
+   * `isIndexedTerm` lets the caller check a word against the user's indexed
+   * files: it returns true or false, or null when the index cannot answer
+   * (not built yet), in which case correction ignores it.
+   *
    * @param {string} query - Raw user query
-   * @param {{ expandSynonyms?: boolean, correctSpelling?: boolean, maxSynonymsPerWord?: number }} [options]
+   * @param {{ expandSynonyms?: boolean, correctSpelling?: boolean, maxSynonymsPerWord?: number, isIndexedTerm?: IndexedTermLookup }} [options]
    * @returns {Promise<{original: string, corrected: string, expanded: string, corrections: Array<any>, synonymsAdded: Array<any>}>}
    */
   async processQuery(query, options = {}) {
-    const { expandSynonyms = true, correctSpelling = false, maxSynonymsPerWord = 3 } = options;
+    const {
+      expandSynonyms = true,
+      correctSpelling = false,
+      maxSynonymsPerWord = 3,
+      isIndexedTerm
+    } = options;
 
     if (!query || typeof query !== 'string') {
       return {
@@ -368,7 +384,7 @@ class QueryProcessor {
 
       // Step 1: Spell correction (typos)
       if (correctSpelling) {
-        const corrected = this._correctSpelling(word);
+        const corrected = this._correctSpelling(word, isIndexedTerm);
         if (corrected !== word) {
           corrections.push({ original: word, corrected });
           this.stats.correctionsApplied++;
@@ -434,14 +450,18 @@ class QueryProcessor {
    * 1. NEVER correct stop words (common English function words)
    * 2. NEVER correct very short words (< 6 chars) - too risky
    * 3. NEVER correct a word the English lexicon knows ("audit", "protect")
-   * 4. Only correct if edit distance is 1 (single typo) to avoid false matches
-   * 5. Only match against longer domain words (>= 5 chars) to avoid short word confusion
-   * 6. Phonetic matching (longer words, 8+ chars) must also be within edit distance 2
+   * 4. NEVER correct a word that occurs in the user's indexed files (a
+   *    surname, product code or project name)
+   * 5. Only correct if edit distance is 1 (single typo) to avoid false matches
+   * 6. Only match against longer domain words (>= 5 chars) to avoid short word confusion
+   * 7. Phonetic matching (longer words, 8+ chars) must also be within edit distance 2
+   * 8. Among candidates, prefer one that occurs in the indexed files
    *
    * @param {string} word - Word to correct
+   * @param {IndexedTermLookup} [isIndexedTerm] - Index vocabulary check
    * @returns {string} Corrected word or original if no correction found
    */
-  _correctSpelling(word) {
+  _correctSpelling(word, isIndexedTerm) {
     // Rule 1: NEVER correct stop words (they're valid English)
     // This check MUST happen first before any other logic
     if (this.stopWords.has(word.toLowerCase())) {
@@ -466,6 +486,13 @@ class QueryProcessor {
       return word;
     }
 
+    // Rule 5: A word the user's files contain is a real term there, even
+    // when it is one edit from a domain word ("Budgen" vs "budget").
+    const inIndex = (/** @type {string} */ term) => this._lookupIndexedTerm(isIndexedTerm, term);
+    if (inIndex(word) === true) {
+      return word;
+    }
+
     // Find closest match using edit distance (Levenshtein)
     // ONLY consider corrections with 1 character difference (single typo)
     // ONLY match against longer domain words (>= 5 chars) to avoid contamination
@@ -481,13 +508,18 @@ class QueryProcessor {
 
       const d = distance(word.toLowerCase(), known.toLowerCase());
       if (d === 1) {
-        // Only accept single-character typos
-        bestMatch = known;
-        break; // Take first match to avoid over-correction
+        // Only accept single-character typos. Keep the first match, but a
+        // later match the indexed files contain wins, since only that one
+        // can add keyword hits.
+        if (bestMatch === word) bestMatch = known;
+        if (inIndex(known) !== false) {
+          bestMatch = known;
+          break;
+        }
       }
     }
 
-    // Rule 5: Only use phonetic matching for longer words where the user
+    // Rule 6: Only use phonetic matching for longer words where the user
     // might have made a worse mistake. A Soundex code alone is too loose
     // ("personality" and "presentation" share one), so the match must also
     // be within two edits.
@@ -499,6 +531,25 @@ class QueryProcessor {
     }
 
     return bestMatch;
+  }
+
+  /**
+   * Ask the caller's index vocabulary about a term. Any failure counts as
+   * "cannot answer" so correction falls back to the index-free rules.
+   *
+   * @param {IndexedTermLookup | undefined} isIndexedTerm
+   * @param {string} term
+   * @returns {boolean|null}
+   */
+  _lookupIndexedTerm(isIndexedTerm, term) {
+    if (typeof isIndexedTerm !== 'function') return null;
+    try {
+      const answer = isIndexedTerm(term.toLowerCase());
+      return typeof answer === 'boolean' ? answer : null;
+    } catch (error) {
+      logger.debug('[QueryProcessor] Index vocabulary lookup failed for:', term, error.message);
+      return null;
+    }
   }
 
   /**

@@ -87,6 +87,17 @@ export function useSearchTab({ isOpen, activeTab, defaultTopK, error, setError }
   const [searchRefreshTrigger, setSearchRefreshTrigger] = useState(0);
   const [focusedResultIndex, setFocusedResultIndex] = useState(-1);
   const [viewMode, setViewMode] = useState('all'); // 'all' or 'grouped'
+  // Query the user chose to search exactly as typed (spelling correction
+  // off), with the corrected text it replaced so the notice can offer it back.
+  const [exactSearchState, setExactSearchState] = useState(
+    /** @type {{ query: string, corrected: string } | null} */ (null)
+  );
+
+  // Only the query it was chosen for is searched exactly; any other query
+  // gets spelling correction again.
+  const exactSearch =
+    exactSearchState && exactSearchState.query === debouncedQuery ? exactSearchState : null;
+  const exactQuery = exactSearch?.query ?? null;
 
   const lastSearchRef = useRef(0);
   const searchRequestCounterRef = useRef(0);
@@ -173,7 +184,7 @@ export function useSearchTab({ isOpen, activeTab, defaultTopK, error, setError }
         const searchPromise = window.electronAPI?.embeddings?.search?.(q, {
           topK: defaultTopK,
           mode: 'hybrid',
-          correctSpelling: true,
+          correctSpelling: q !== exactQuery,
           expandSynonyms: true,
           abortKey
         });
@@ -279,7 +290,22 @@ export function useSearchTab({ isOpen, activeTab, defaultTopK, error, setError }
     };
     // searchRefreshTrigger triggers re-search when files are moved/deleted
     // eslint-disable-next-line react-hooks/exhaustive-deps -- setError is a stable setState-backed callback
-  }, [debouncedQuery, isOpen, defaultTopK, activeTab, searchRefreshTrigger]);
+  }, [debouncedQuery, isOpen, defaultTopK, activeTab, searchRefreshTrigger, exactQuery]);
+
+  // "Search for <typed> instead": re-run the current query without spelling
+  // correction.
+  const searchExactly = useCallback(() => {
+    if (!debouncedQuery || !queryMeta?.corrections?.length) return;
+    setExactSearchState({
+      query: debouncedQuery,
+      corrected: typeof queryMeta.corrected === 'string' ? queryMeta.corrected : ''
+    });
+  }, [debouncedQuery, queryMeta]);
+
+  // Undo searchExactly: search the current query with correction again.
+  const searchWithCorrection = useCallback(() => {
+    setExactSearchState(null);
+  }, []);
 
   const searchStatusLabel = useMemo(() => {
     if (isSearching) return 'Searching...';
@@ -343,6 +369,7 @@ export function useSearchTab({ isOpen, activeTab, defaultTopK, error, setError }
     setQueryMeta(null);
     setSearchMeta(null);
     setBulkSelectedIds(new Set());
+    setExactSearchState(null);
   }, []);
 
   return {
@@ -357,6 +384,9 @@ export function useSearchTab({ isOpen, activeTab, defaultTopK, error, setError }
     isSearching,
     queryMeta,
     searchMeta,
+    exactSearch,
+    searchExactly,
+    searchWithCorrection,
     bulkSelectedIds,
     setBulkSelectedIds,
     focusedResultIndex,

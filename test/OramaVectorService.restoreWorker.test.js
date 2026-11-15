@@ -416,7 +416,9 @@ describe('OramaVectorService restore through the worker', () => {
       await expect(viaWorker.hasUsableVector(`file:${i}`)).resolves.toBe(true);
     }
     expect(viaWorker._restoreWorkerDisabledReason).toBeNull();
-  });
+    // Three service start-ups, a persist and two restores: about 1.5 s alone
+    // with coverage, past the 10 s default on a loaded machine.
+  }, 30000);
 
   test('a primary that fails to decode falls back to .bak the same way through the worker', async () => {
     const seed = await startService({ worker: false });

@@ -46,6 +46,20 @@ describe('main/workers/textExtractionWorker', () => {
       expect(out).not.toMatch(/script|style/i);
     });
 
+    test('strips script and style bodies whose end tags carry spaces, attributes or upper case', () => {
+      const html =
+        '<p>Before</p><script>alert(1)</script ><SCRIPT type="x">steal()</SCRIPT foo="bar">' +
+        '<script>evil()</script\t\n bar><style>.a{}</style ><p>After</p>';
+      const out = runTextExtraction({ type: 'html', payload: { text: html } });
+      expect(out).toBe('Before After');
+    });
+
+    test('a script end tag needs a word boundary, so </scripts> does not end it', () => {
+      const html = '<p>A</p><script>x()</scripts>y()</script><p>B</p>';
+      const out = runTextExtraction({ type: 'html', payload: { text: html } });
+      expect(out).toBe('A B');
+    });
+
     test('returns input verbatim on catastrophic HTML (falls through try/catch)', () => {
       // The worker's try/catch guarantees we always return a string even if
       // the input would otherwise blow up downstream regex engines.

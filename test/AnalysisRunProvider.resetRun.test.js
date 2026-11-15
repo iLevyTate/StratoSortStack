@@ -11,9 +11,10 @@ import { render } from '@testing-library/react';
 
 const mockRunReset = jest.fn();
 const mockReduxOnlyReset = jest.fn();
+let mockAnalysisState = { isAnalyzing: false };
 
 jest.mock('react-redux', () => ({
-  useStore: () => ({ getState: () => ({ analysis: { isAnalyzing: false } }) })
+  useStore: () => ({ getState: () => ({ analysis: mockAnalysisState }) })
 }));
 
 jest.mock('../src/renderer/contexts/NotificationContext', () => ({
@@ -24,8 +25,8 @@ jest.mock('../src/renderer/phases/discover/useDiscoverState', () => ({
   useDiscoverState: () => ({
     selectedFiles: [],
     analysisResults: [],
-    isAnalyzing: false,
-    analysisProgress: { current: 0, total: 0 },
+    isAnalyzing: mockAnalysisState.isAnalyzing,
+    analysisProgress: mockAnalysisState.analysisProgress || { current: 0, total: 0 },
     fileStates: {},
     namingSettings: {},
     setIsAnalyzing: jest.fn(),
@@ -57,6 +58,12 @@ import {
   useAnalysisRun
 } from '../src/renderer/phases/discover/AnalysisRunProvider';
 
+afterEach(() => {
+  mockRunReset.mockReset();
+  mockReduxOnlyReset.mockReset();
+  mockAnalysisState = { isAnalyzing: false };
+});
+
 test('resetRun is the run reset from useAnalysis, not the Redux-only one', () => {
   let run;
   function Probe() {
@@ -73,4 +80,22 @@ test('resetRun is the run reset from useAnalysis, not the Redux-only one', () =>
 
   expect(mockRunReset).toHaveBeenCalledWith('Analyze more files');
   expect(mockReduxOnlyReset).not.toHaveBeenCalled();
+});
+
+test('the stuck-run watchdog uses the run reset, which keeps finished results', () => {
+  // The Redux-only reset returns the slice to its initial state, which wiped
+  // every result, and left the run's lock held so a retry was refused.
+  mockAnalysisState = {
+    isAnalyzing: true,
+    analysisProgress: { current: 3, total: 10, lastActivity: Date.now() - 6 * 60 * 1000 }
+  };
+  const { unmount } = render(
+    <AnalysisRunProvider>
+      <div />
+    </AnalysisRunProvider>
+  );
+
+  expect(mockRunReset).toHaveBeenCalledWith(expect.stringMatching(/stuck|stalled/i));
+  expect(mockReduxOnlyReset).not.toHaveBeenCalled();
+  unmount();
 });

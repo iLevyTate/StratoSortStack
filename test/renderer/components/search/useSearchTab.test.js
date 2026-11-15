@@ -118,4 +118,90 @@ describe('useSearchTab', () => {
     );
     expect(result.current.searchResults).toEqual([]);
   });
+  test('searchExactly re-runs the query with spelling correction off, and only for it', async () => {
+    window.electronAPI.embeddings.search = jest.fn(async (q, options) => ({
+      success: true,
+      results: [{ id: 'r1', metadata: { name: 'beach.jpg', path: '/p/beach.jpg' }, score: 0.9 }],
+      mode: 'hybrid',
+      meta: {},
+      queryMeta: options.correctSpelling
+        ? {
+            original: q,
+            corrected: 'vacation photos',
+            corrections: [{ original: 'vacaton', corrected: 'vacation' }]
+          }
+        : { original: q, corrected: q, corrections: [] }
+    }));
+    const { result } = mount();
+
+    act(() => {
+      result.current.setQuery('vacaton photos');
+    });
+    await waitFor(() => expect(result.current.queryMeta?.corrections).toHaveLength(1));
+    expect(window.electronAPI.embeddings.search).toHaveBeenLastCalledWith(
+      'vacaton photos',
+      expect.objectContaining({ correctSpelling: true })
+    );
+
+    act(() => {
+      result.current.searchExactly();
+    });
+    await waitFor(() => expect(window.electronAPI.embeddings.search).toHaveBeenCalledTimes(2));
+    expect(window.electronAPI.embeddings.search).toHaveBeenLastCalledWith(
+      'vacaton photos',
+      expect.objectContaining({ correctSpelling: false })
+    );
+    await waitFor(() => expect(result.current.queryMeta?.corrections).toEqual([]));
+    expect(result.current.exactSearch).toEqual({
+      query: 'vacaton photos',
+      corrected: 'vacation photos'
+    });
+
+    // A different query is corrected again.
+    act(() => {
+      result.current.setQuery('vacaton videos');
+    });
+    await waitFor(() => expect(window.electronAPI.embeddings.search).toHaveBeenCalledTimes(3));
+    expect(window.electronAPI.embeddings.search).toHaveBeenLastCalledWith(
+      'vacaton videos',
+      expect.objectContaining({ correctSpelling: true })
+    );
+    expect(result.current.exactSearch).toBeNull();
+  });
+
+  test('searchWithCorrection turns spelling correction back on', async () => {
+    window.electronAPI.embeddings.search = jest.fn(async (q, options) => ({
+      success: true,
+      results: [{ id: 'r1', metadata: { name: 'a.pdf', path: '/p/a.pdf' }, score: 0.9 }],
+      mode: 'hybrid',
+      meta: {},
+      queryMeta: options.correctSpelling
+        ? {
+            original: q,
+            corrected: 'budget report',
+            corrections: [{ original: 'budgett', corrected: 'budget' }]
+          }
+        : { original: q, corrected: q, corrections: [] }
+    }));
+    const { result } = mount();
+
+    act(() => {
+      result.current.setQuery('budgett report');
+    });
+    await waitFor(() => expect(result.current.queryMeta?.corrections).toHaveLength(1));
+    act(() => {
+      result.current.searchExactly();
+    });
+    await waitFor(() => expect(window.electronAPI.embeddings.search).toHaveBeenCalledTimes(2));
+
+    act(() => {
+      result.current.searchWithCorrection();
+    });
+    await waitFor(() => expect(window.electronAPI.embeddings.search).toHaveBeenCalledTimes(3));
+    expect(window.electronAPI.embeddings.search).toHaveBeenLastCalledWith(
+      'budgett report',
+      expect.objectContaining({ correctSpelling: true })
+    );
+    expect(result.current.exactSearch).toBeNull();
+  });
 });

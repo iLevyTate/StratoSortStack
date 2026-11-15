@@ -434,6 +434,31 @@ function createFailedItemHandler(config) {
   }
 
   /**
+   * Remove every failed-items and dead-letter entry whose item matches, so it
+   * is neither retried nor offered for a manual retry. Both writes join the
+   * owner's debounced persist.
+   * @param {(item: any) => boolean} predicate
+   * @returns {{ failed: number, deadLetter: number }} Entries removed
+   */
+  function dropItems(predicate) {
+    let failed = 0;
+    for (const [id, data] of failedItems) {
+      if (predicate(data?.item)) {
+        failedItems.delete(id);
+        failed += 1;
+      }
+    }
+    const keptDeadLetter = deadLetterQueue.filter((entry) => !predicate(entry?.item));
+    const deadLetter = deadLetterQueue.length - keptDeadLetter.length;
+    if (failed > 0) markFailedItemsChanged();
+    if (deadLetter > 0) {
+      deadLetterQueue = keptDeadLetter;
+      markDeadLetterChanged();
+    }
+    return { failed, deadLetter };
+  }
+
+  /**
    * Set the dead letter queue (for initialization)
    * @param {any[]} items - Items to set
    */
@@ -476,6 +501,7 @@ function createFailedItemHandler(config) {
     clearDeadLetterQueue,
     retryDeadLetterItem,
     retryAllDeadLetterItems,
+    dropItems,
     setDeadLetterQueue,
     persistAll,
     persistPending,

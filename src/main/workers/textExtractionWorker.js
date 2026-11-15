@@ -7,8 +7,10 @@ const { rtfToText } = require('../analysis/extractors/rtfText');
 const { decodeHtmlEntities } = require('../analysis/extractors/htmlEntities');
 
 const REGEX_PATTERNS = {
-  scriptTags: /<script[\s\S]*?<\/script>/gi,
-  styleTags: /<style[\s\S]*?<\/style>/gi,
+  // End tags may carry whitespace or junk before '>' ("</script >",
+  // "</SCRIPT foo>"); browsers still close the element there, so match it too.
+  scriptTags: /<script[\s\S]*?<\/script\b[^>]*>/gi,
+  styleTags: /<style[\s\S]*?<\/style\b[^>]*>/gi,
   htmlTags: /<[^>]+>/g,
   whitespace: /\s+/g
 };

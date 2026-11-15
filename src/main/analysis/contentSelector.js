@@ -48,6 +48,25 @@ const MAX_HEADINGS = 25;
 // ---------------------------------------------------------------------------
 
 /**
+ * Remove HTML tags, repeating until nothing changes so no tag-like text can
+ * survive (for example "<scr<script>ipt>" never leaves "<script" behind).
+ * For this pattern one pass is usually already stable, so the loop is cheap;
+ * it is the form static analysis recognises as a complete sanitizer.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+function stripHtmlTags(text) {
+  let result = text;
+  let previous;
+  do {
+    previous = result;
+    result = result.replace(/<[^>]+>/g, '');
+  } while (result !== previous);
+  return result;
+}
+
+/**
  * Lightweight text cleaning that preserves paragraph structure.
  *
  * Unlike `cleanTextContent` (from textNormalization.js) which collapses
@@ -165,8 +184,7 @@ function extractDocumentOutline(text, maxLength) {
       let heading = (match[1] || match[0]).trim();
 
       // Strip residual HTML tags and Markdown #
-      heading = heading
-        .replace(/<[^>]+>/g, '')
+      heading = stripHtmlTags(heading)
         .replace(/^#+\s*/, '')
         .trim();
 

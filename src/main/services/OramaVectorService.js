@@ -1865,6 +1865,18 @@ class OramaVectorService extends EventEmitter {
   }
 
   /**
+   * The embedding model this index holds vectors for, or null before the
+   * store has resolved it. The embedding queue drops pending vectors from any
+   * other model instead of writing them here.
+   * @returns {string | null}
+   */
+  getEmbeddingModel() {
+    return typeof this._embeddingModel === 'string' && this._embeddingModel
+      ? this._embeddingModel
+      : null;
+  }
+
+  /**
    * Reconcile the vector store with a change of embedding model. If the new
    * model's dimension or identity differs, every collection is reset —
    * destructive by design, since stored vectors are incomparable across

@@ -57,7 +57,6 @@ function DiscoverPhase() {
     setSeparator,
     setFileStates,
     updateFileState,
-    resetAnalysisState,
     actions,
     organizedFiles,
     organizedPathIndex,
@@ -285,6 +284,7 @@ function DiscoverPhase() {
     retryFailedFiles,
     reanalyzeFiles,
     pruneBatchResultsForPath,
+    resetRun,
     totalAnalysisFailure,
     setTotalAnalysisFailure
   } = useAnalysisRun();
@@ -615,7 +615,9 @@ function DiscoverPhase() {
                         Date.now() - analysisProgress.lastActivity >
                           TIMEOUTS.STUCK_ANALYSIS_CHECK && (
                           <Button
-                            onClick={() => resetAnalysisState('User forced reset')}
+                            // The run's reset: it releases the lock and keeps
+                            // finished results, unlike the Redux-only one.
+                            onClick={() => resetRun('User forced reset')}
                             variant="warning"
                             size="sm"
                           >

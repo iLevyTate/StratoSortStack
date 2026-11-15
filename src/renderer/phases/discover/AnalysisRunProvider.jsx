@@ -37,7 +37,6 @@ export function AnalysisRunProvider({ children }) {
     setAnalysisResults,
     setFileStates,
     updateFileState,
-    resetAnalysisState,
     actions,
     getCurrentPhase
   } = useDiscoverState();
@@ -65,8 +64,9 @@ export function AnalysisRunProvider({ children }) {
     retryFailedFiles,
     reanalyzeFiles,
     pruneBatchResultsForPath,
-    // The run's own reset, not useDiscoverState's Redux-only one above: it
-    // also aborts the run, releases its lock and drops its queued files.
+    // The run's own reset, not useDiscoverState's Redux-only one: it also
+    // aborts the run, releases its lock and drops its queued files, and it
+    // keeps finished results (the Redux one clears them all).
     resetAnalysisState: resetRun
   } = useAnalysis({
     selectedFiles,
@@ -90,7 +90,8 @@ export function AnalysisRunProvider({ children }) {
 
   // Stuck-run checks. They belong with the run, not with the Discover
   // screen: a run that keeps going while the user is on Organize still
-  // needs its watchdog.
+  // needs its watchdog. They reset through the run, so a retry is not
+  // blocked by its lock and finished results stay.
   const initialStuckCheckRef = useRef(false);
   useEffect(() => {
     if (initialStuckCheckRef.current) return;
@@ -100,10 +101,10 @@ export function AnalysisRunProvider({ children }) {
       const lastActivity = analysisProgress?.lastActivity || Date.now();
       if (Date.now() - lastActivity > 2 * 60 * 1000) {
         logger.info('Detected stuck analysis state on mount, resetting');
-        resetAnalysisState('Stuck analysis detected on mount');
+        resetRun('Stuck analysis detected on mount');
       }
     }
-  }, [isAnalyzing, analysisProgress, resetAnalysisState]);
+  }, [isAnalyzing, analysisProgress, resetRun]);
 
   const analysisProgressRef = useRef(analysisProgress);
   analysisProgressRef.current = analysisProgress;
@@ -125,13 +126,13 @@ export function AnalysisRunProvider({ children }) {
 
       if (current === 0 && total > 0 && timeSinceActivity > TIMEOUTS.STUCK_ANALYSIS_CHECK) {
         addNotification('Analysis paused. Restarting...', 'info', 3000, 'analysis-stalled');
-        resetAnalysisState('Analysis stalled with no progress after 2 minutes');
+        resetRun('Analysis stalled with no progress after 2 minutes');
         return;
       }
 
       if (timeSinceActivity > TIMEOUTS.ANALYSIS_LOCK) {
         addNotification('Analysis timed out. Ready to retry.', 'info', 3000, 'analysis-auto-reset');
-        resetAnalysisState('Stuck analysis state after 5 minutes of inactivity');
+        resetRun('Stuck analysis state after 5 minutes of inactivity');
       }
     };
 
@@ -139,7 +140,7 @@ export function AnalysisRunProvider({ children }) {
     // Defer so the interval handler returns quickly (avoids Long Task violations).
     const intervalId = setInterval(() => setTimeout(checkStalled, 0), TIMEOUTS.SERVICE_STARTUP);
     return () => clearInterval(intervalId);
-  }, [isAnalyzing, addNotification, resetAnalysisState, store]);
+  }, [isAnalyzing, addNotification, resetRun, store]);
 
   const value = useMemo(
     () => ({

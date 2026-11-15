@@ -271,6 +271,21 @@ class FolderMatchingService {
                   // Continue - the cache is still cleared, and users can manually rebuild
                 }
               }
+
+              // Vectors still waiting in the embedding queues (and their retry
+              // and dead-letter stores) came from the previous model; writing
+              // them would mix two vector spaces in the new index. The rebuild
+              // offered above re-embeds those files with the new model.
+              try {
+                require('../analysis/embeddingQueue/queueManager').dropOtherModelEmbeddings(
+                  newModel
+                );
+              } catch (queueError) {
+                logger.warn(
+                  '[FolderMatchingService] Failed to drop queued embeddings from the previous model:',
+                  queueError.message
+                );
+              }
             }
           }
         );

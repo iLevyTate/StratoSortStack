@@ -56,6 +56,18 @@ describe('extractDocumentOutline', () => {
     expect(outline).toContain('Subtitle');
   });
 
+  test('strips nested tags from HTML headings without leaving a tag behind', () => {
+    const text =
+      '<h1>Annual <b>Report</b></h1>\n<h2>Quarter<scr<script>ipt> Notes</h2>\n' +
+      '<h3><<i>em>Plain heading</h3>';
+    const outline = extractDocumentOutline(text, 500);
+    expect(outline).toContain('Annual Report');
+    expect(outline).toContain('Quarteript> Notes');
+    expect(outline).toContain('em>Plain heading');
+    expect(outline).not.toMatch(/<script/i);
+    expect(outline).not.toMatch(/<[^>]+>/);
+  });
+
   test('deduplicates headings (case-insensitive)', () => {
     const text = '# Introduction\n\n# INTRODUCTION\n\n# introduction\n';
     const outline = extractDocumentOutline(text, 500);

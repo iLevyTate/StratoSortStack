@@ -1276,11 +1276,14 @@ if (!z) {
 
   /**
    * Trash duplicates: user-initiated bulk delete via shell.trashItem, recorded
-   * as a single TRASH_BATCH undo entry.
+   * as a single TRASH_BATCH undo entry. A network-share path is accepted so a
+   * set that spans a share still trashes its local copies; TrashService leaves
+   * the share copy in place and reports it, since Windows has no Recycle Bin
+   * there.
    */
   const trashDuplicatesSchema = z.object({
     paths: z
-      .array(z.string().min(1).max(2048).refine(isSafeAbsoluteFsPath, SAFE_ABSOLUTE_PATH_MESSAGE))
+      .array(z.string().min(1).max(2048).refine(isSafeFileOpPath, SAFE_FILE_OP_PATH_MESSAGE))
       .min(1)
       .max(1000),
     summary: z
@@ -1294,15 +1297,9 @@ if (!z) {
     verifyIdentical: z
       .array(
         z.object({
-          keep: z
-            .string()
-            .min(1)
-            .max(2048)
-            .refine(isSafeAbsoluteFsPath, SAFE_ABSOLUTE_PATH_MESSAGE),
+          keep: z.string().min(1).max(2048).refine(isSafeFileOpPath, SAFE_FILE_OP_PATH_MESSAGE),
           paths: z
-            .array(
-              z.string().min(1).max(2048).refine(isSafeAbsoluteFsPath, SAFE_ABSOLUTE_PATH_MESSAGE)
-            )
+            .array(z.string().min(1).max(2048).refine(isSafeFileOpPath, SAFE_FILE_OP_PATH_MESSAGE))
             .max(1000)
         })
       )

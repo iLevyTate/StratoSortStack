@@ -244,9 +244,10 @@ const REGEX_PATTERNS = {
   rtfBraces: /[{}]/g,
   rtfControlWords: /\\[a-zA-Z]+-?\d* ?/g,
 
-  // HTML patterns
-  scriptTags: /<script[\s\S]*?<\/script>/gi,
-  styleTags: /<style[\s\S]*?<\/style>/gi,
+  // HTML patterns. End tags may carry whitespace or junk before '>'
+  // ("</script >", "</SCRIPT foo>"); browsers still close the element there.
+  scriptTags: /<script[\s\S]*?<\/script\b[^>]*>/gi,
+  styleTags: /<style[\s\S]*?<\/style\b[^>]*>/gi,
   htmlTags: /<[^>]+>/g,
 
   // Whitespace patterns

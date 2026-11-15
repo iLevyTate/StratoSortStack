@@ -79,3 +79,49 @@ describe('QueryProcessor spell correction keeps real words', () => {
     expect(result.expanded.split(' ')).toEqual(expect.arrayContaining(['vacaton', 'vacation']));
   });
 });
+
+describe('QueryProcessor spell correction checks the indexed vocabulary', () => {
+  let processor;
+
+  beforeEach(() => {
+    resetInstance();
+    processor = new QueryProcessor();
+  });
+
+  afterEach(() => {
+    processor.cleanup();
+    resetInstance();
+  });
+
+  test('does not correct a word that occurs in the indexed files', async () => {
+    // "budgen" is one edit from the domain word "budget" and is not English,
+    // but here it is a surname in the user's files.
+    const isIndexedTerm = (word) => word === 'budgen';
+    expect(processor._correctSpelling('budgen', isIndexedTerm)).toBe('budgen');
+
+    const result = await processor.processQuery('Budgen projekt', {
+      expandSynonyms: false,
+      correctSpelling: true,
+      isIndexedTerm: (word) => word === 'budgen' || word === 'projekt'
+    });
+    expect(result.corrections).toEqual([]);
+    expect(result.corrected).toBe('Budgen projekt');
+  });
+
+  test('prefers a correction that occurs in the indexed files', () => {
+    processor.domainWords.add('marker');
+    processor.domainWords.add('market');
+
+    expect(processor._correctSpelling('markex')).toBe('marker');
+    expect(processor._correctSpelling('markex', (word) => word === 'market')).toBe('market');
+  });
+
+  test('keeps the index-free behavior when the index cannot answer', () => {
+    expect(processor._correctSpelling('budgen', () => null)).toBe('budget');
+    expect(
+      processor._correctSpelling('budgen', () => {
+        throw new Error('index not ready');
+      })
+    ).toBe('budget');
+  });
+});

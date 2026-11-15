@@ -24,7 +24,9 @@ function main() {
   }
   const html = fs.readFileSync(indexPath, 'utf8');
   const inlineBodies = [];
-  const re = /<script([^>]*)>([\s\S]*?)<\/script>/gi;
+  // The end tag may carry whitespace or junk before '>' ("</script >"); the
+  // browser still ends the script there, so the hashed body must end there too.
+  const re = /<script([^>]*)>([\s\S]*?)<\/script\b[^>]*>/gi;
   let m;
   while ((m = re.exec(html)) !== null) {
     const attrs = m[1];

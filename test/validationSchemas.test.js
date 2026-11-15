@@ -672,14 +672,23 @@ describe('validationSchemas (Zod path)', () => {
       });
     });
 
-    test('trash and triage schemas keep refusing UNC on Windows', () => {
+    test('triage start keeps refusing UNC on Windows', () => {
       setPlatform('win32');
-      expect(schemas.trashDuplicates.safeParse({ paths: ['\\\\NAS\\Docs\\a.pdf'] }).success).toBe(
-        false
-      );
       expect(schemas.downloadsTriageStart.safeParse({ folderPath: '\\\\NAS\\Docs' }).success).toBe(
         false
       );
+    });
+
+    // A duplicate set can span a Smart Folder on a share. The schema lets the
+    // request through so the local copies are trashed; TrashService leaves the
+    // share copy in place, because Windows has no Recycle Bin there.
+    test('trash duplicates accepts a share path but not an admin share or device path', () => {
+      setPlatform('win32');
+      const parse = (p) => schemas.trashDuplicates.safeParse({ paths: [p] }).success;
+      expect(parse('\\\\NAS\\Docs\\a.pdf')).toBe(true);
+      expect(parse('\\\\NAS\\C$\\Windows\\a.dll')).toBe(false);
+      expect(parse('\\\\?\\C:\\Windows\\a.dll')).toBe(false);
+      expect(parse('\\\\NAS\\Docs\\..\\..\\a.pdf')).toBe(false);
     });
 
     // The renderer sends suggestedFolderPath with every triage action, so a
