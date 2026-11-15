@@ -55,14 +55,21 @@ const uncompressSync = (input) => {
   return buffer;
 };
 
+// lz4-napi's async compress() and uncompress() never free their native work
+// buffers: compressing a 60 MB index 12 times grew the process by 1.1 GB,
+// while compressSync() stayed flat. The search index saves itself every few
+// files during a batch, so the app grew by about 35 MB per file analyzed.
+// The async wrappers below therefore call the sync binding. LZ4 runs at
+// hundreds of MB/s, so a 200 MB index blocks for well under a second.
+
 /** @param {Buffer | ArrayBufferView | ArrayBuffer | string | null | undefined} input */
 const compress = async (input) => {
   const buffer = toBuffer(input);
-  if (lz4Binding && typeof lz4Binding.compress === 'function') {
-    return lz4Binding.compress(buffer);
-  }
   if (lz4Binding && typeof lz4Binding.compressSync === 'function') {
     return lz4Binding.compressSync(buffer);
+  }
+  if (lz4Binding && typeof lz4Binding.compress === 'function') {
+    return lz4Binding.compress(buffer);
   }
   return buffer;
 };
@@ -70,11 +77,11 @@ const compress = async (input) => {
 /** @param {Buffer | ArrayBufferView | ArrayBuffer | string | null | undefined} input */
 const uncompress = async (input) => {
   const buffer = toBuffer(input);
-  if (lz4Binding && typeof lz4Binding.uncompress === 'function') {
-    return lz4Binding.uncompress(buffer);
-  }
   if (lz4Binding && typeof lz4Binding.uncompressSync === 'function') {
     return lz4Binding.uncompressSync(buffer);
+  }
+  if (lz4Binding && typeof lz4Binding.uncompress === 'function') {
+    return lz4Binding.uncompress(buffer);
   }
   return buffer;
 };

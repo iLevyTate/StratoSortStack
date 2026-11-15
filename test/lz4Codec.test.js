@@ -47,13 +47,34 @@ describe('shared/lz4Codec', () => {
     expect(codec.uncompressSync(Buffer.from('sync:payload', 'utf8')).toString('utf8')).toBe(
       'payload'
     );
-    await expect(codec.compress(input)).resolves.toEqual(Buffer.from('async:payload', 'utf8'));
-    await expect(codec.uncompress(Buffer.from('async:payload', 'utf8'))).resolves.toEqual(
+    // The async wrappers call the sync binding: lz4-napi's async compress()
+    // and uncompress() leak their native buffers (about 100 MB per call on a
+    // 60 MB search index), which grew the app by ~35 MB per analyzed file.
+    await expect(codec.compress(input)).resolves.toEqual(Buffer.from('sync:payload', 'utf8'));
+    await expect(codec.uncompress(Buffer.from('sync:payload', 'utf8'))).resolves.toEqual(
       Buffer.from('payload', 'utf8')
     );
-    expect(mockBinding.compressSync).toHaveBeenCalledTimes(1);
-    expect(mockBinding.uncompressSync).toHaveBeenCalledTimes(1);
-    expect(mockBinding.compress).toHaveBeenCalledTimes(1);
-    expect(mockBinding.uncompress).toHaveBeenCalledTimes(1);
+    expect(mockBinding.compressSync).toHaveBeenCalledTimes(2);
+    expect(mockBinding.uncompressSync).toHaveBeenCalledTimes(2);
+    expect(mockBinding.compress).not.toHaveBeenCalled();
+    expect(mockBinding.uncompress).not.toHaveBeenCalled();
+  });
+
+  test('uses the async binding only when the sync one is missing', async () => {
+    const mockBinding = {
+      compress: jest.fn(async (buf) => Buffer.from(`async:${buf.toString('utf8')}`, 'utf8')),
+      uncompress: jest.fn(async (buf) =>
+        Buffer.from(buf.toString('utf8').replace(/^async:/, ''), 'utf8')
+      )
+    };
+    jest.doMock('lz4-napi', () => mockBinding);
+
+    const codec = require('../src/shared/lz4Codec');
+    await expect(codec.compress(Buffer.from('payload'))).resolves.toEqual(
+      Buffer.from('async:payload', 'utf8')
+    );
+    await expect(codec.uncompress(Buffer.from('async:payload'))).resolves.toEqual(
+      Buffer.from('payload', 'utf8')
+    );
   });
 });
