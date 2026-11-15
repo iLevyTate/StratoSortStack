@@ -44,9 +44,10 @@ function enforceResultsLimit(/** @type {any} */ results) {
 /**
  * Why the current run started, so the progress card can say so: files the
  * person added, files added while the last run was going, a run resumed after
- * a restart, a retry of failed files, or a Reanalyze. Not persisted.
+ * a restart, a retry of failed files, a Reanalyze, or a few files tried
+ * before a large batch (the sample run). Not persisted.
  */
-const RUN_ORIGINS = ['added', 'queued', 'resume', 'retry', 'reanalyze'];
+const RUN_ORIGINS = ['added', 'queued', 'resume', 'retry', 'reanalyze', 'sample'];
 
 /** @type {any} */
 const initialState = {

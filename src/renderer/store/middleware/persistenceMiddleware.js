@@ -163,6 +163,8 @@ let lastSavedGraphLegendHintDismissed = null;
 /** @type {any} */
 let lastSavedGraphInsightsDockCollapsed = null;
 /** @type {any} */
+let lastSavedSmartFolderSampleHash = null;
+/** @type {any} */
 let lastSavedViewMode = null;
 /** @type {any} */
 let lastSavedSelectedTheme = null;
@@ -414,6 +416,12 @@ function buildStateSnapshot(freshState, options = {}) {
       graphInsightsSection: freshState.ui.graphInsightsSection ?? null,
       graphLegendHintDismissed: Boolean(freshState.ui.graphLegendHintDismissed),
       graphInsightsDockCollapsed: Boolean(freshState.ui.graphInsightsDockCollapsed),
+      // Additive and optional: an older blob without it hydrates to null
+      // (no sample tried yet), so no migration step is needed.
+      smartFolderSampleHash:
+        typeof freshState.ui.smartFolderSampleHash === 'string'
+          ? freshState.ui.smartFolderSampleHash
+          : null,
       viewMode: freshState.ui.viewMode === 'dashboard' ? 'dashboard' : 'phased',
       selectedTheme: ['primary', 'light', 'dark'].includes(freshState.ui.selectedTheme)
         ? freshState.ui.selectedTheme
@@ -496,6 +504,7 @@ function detectUnsavedChanges(state) {
     state.ui.graphInsightsSection !== lastSavedGraphInsightsSection ||
     state.ui.graphLegendHintDismissed !== lastSavedGraphLegendHintDismissed ||
     state.ui.graphInsightsDockCollapsed !== lastSavedGraphInsightsDockCollapsed ||
+    (state.ui.smartFolderSampleHash ?? null) !== lastSavedSmartFolderSampleHash ||
     state.ui.viewMode !== lastSavedViewMode ||
     state.ui.selectedTheme !== lastSavedSelectedTheme ||
     state.ui.settings !== lastSavedSettingsRef ||
@@ -707,6 +716,7 @@ const persistenceMiddleware = (/** @type {any} */ store) => {
             lastSavedGraphInsightsSection = freshState.ui.graphInsightsSection;
             lastSavedGraphLegendHintDismissed = freshState.ui.graphLegendHintDismissed;
             lastSavedGraphInsightsDockCollapsed = freshState.ui.graphInsightsDockCollapsed;
+            lastSavedSmartFolderSampleHash = freshState.ui.smartFolderSampleHash ?? null;
             lastSavedViewMode = freshState.ui.viewMode;
             lastSavedSelectedTheme = freshState.ui.selectedTheme;
             lastSavedSettingsRef = freshState.ui.settings;
@@ -825,6 +835,7 @@ export const cancelPendingPersistence = () => {
   lastSavedGraphInsightsSection = null;
   lastSavedGraphLegendHintDismissed = null;
   lastSavedGraphInsightsDockCollapsed = null;
+  lastSavedSmartFolderSampleHash = null;
   lastSavedViewMode = null;
   lastSavedSelectedTheme = null;
   lastSavedSettingsRef = null;
@@ -877,6 +888,7 @@ export const cleanupPersistence = (/** @type {any} */ store) => {
   lastSavedGraphInsightsSection = null;
   lastSavedGraphLegendHintDismissed = null;
   lastSavedGraphInsightsDockCollapsed = null;
+  lastSavedSmartFolderSampleHash = null;
   lastSavedViewMode = null;
   lastSavedSelectedTheme = null;
   lastSavedSettingsRef = null;

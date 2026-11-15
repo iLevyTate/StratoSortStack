@@ -58,7 +58,10 @@ import {
 } from './organize/useFileEditing';
 import { useOrganization } from './organize/useOrganization';
 import { useOrganizeSuggestions } from './organize/useOrganizeSuggestions';
-import { resolveOrganizeDestination } from './organize/organizeDestination';
+import { findStaleFiles, resolveOrganizeDestination } from './organize/organizeDestination';
+import { getFolderDefinitionsHash } from '../../shared/smartFolderDefinitions';
+import StaleSuggestionsNotice from '../components/organize/StaleSuggestionsNotice';
+import { useConfirmDialog } from '../hooks/useConfirmDialog';
 import { useOrganizeNotificationFocus } from './organize/useOrganizeNotificationFocus';
 import { setFileStates as setFileStatesAction } from '../store/slices/filesSlice';
 import { updateAnalysisResult, updateAnalysisResultsByPaths } from '../store/slices/analysisSlice';
@@ -272,7 +275,16 @@ function OrganizePhase() {
 
   // D1: the suggestion engine ranks each ready file's destination; name
   // matching stays as the fallback when it has nothing.
-  const { suggestionsByPath } = useOrganizeSuggestions(baseUnprocessedFiles, safeSmartFolders);
+  const { suggestionsByPath, isRanking } = useOrganizeSuggestions(
+    baseUnprocessedFiles,
+    safeSmartFolders
+  );
+  // The Smart Folder definitions now; each analysis carries the ones it was
+  // made under (analysis.smartFolderHash). See isStaleDestination.
+  const folderDefinitionsHash = useMemo(
+    () => getFolderDefinitionsHash(safeSmartFolders),
+    [safeSmartFolders]
+  );
   const resolveDestination = useCallback(
     (file) => {
       const key = toCanonicalPath(file?.path);
@@ -509,6 +521,44 @@ function OrganizePhase() {
     return undefined;
   }, [isOrganizing, isPaused]);
 
+  // Files whose folder still comes from Smart Folder definitions that have
+  // changed since they were analyzed (organizeDestination isStaleDestination).
+  // They are listed with a one-click Analyze again, and Move asks first.
+  const staleFiles = useMemo(
+    () => findStaleFiles(unprocessedFiles, resolveDestination, folderDefinitionsHash),
+    [unprocessedFiles, resolveDestination, folderDefinitionsHash]
+  );
+  const { showConfirm, confirmDialog } = useConfirmDialog();
+  const refreshStaleFiles = useCallback(() => {
+    reanalyzeFiles?.(staleFiles.map((file) => file.path));
+  }, [reanalyzeFiles, staleFiles]);
+
+  // Runs `proceed` at once when `files` holds no stale file; otherwise only
+  // after the user chooses to move anyway.
+  const moveAfterStaleCheck = useCallback(
+    (files, proceed) => {
+      const stale = findStaleFiles(files, resolveDestination, folderDefinitionsHash);
+      if (stale.length === 0) {
+        proceed();
+        return;
+      }
+      const one = stale.length === 1;
+      void (async () => {
+        const moveAnyway = await showConfirm({
+          title: 'Move files sorted by your old Smart Folders?',
+          message: `${stale.length} of these files ${one ? 'goes' : 'go'} where your old Smart Folders sent ${
+            one ? 'it' : 'them'
+          }. To use your current folders, cancel and analyze ${one ? 'it' : 'them'} again.`,
+          confirmText: 'Move anyway',
+          cancelText: 'Cancel',
+          variant: 'warning'
+        });
+        if (moveAnyway) proceed();
+      })();
+    },
+    [resolveDestination, folderDefinitionsHash, showConfirm]
+  );
+
   const approveSelectedFiles = useCallback(() => {
     if (selectedFiles.size === 0) return;
     const filesToProcess = unprocessedFiles.filter(
@@ -520,9 +570,18 @@ function OrganizePhase() {
       return;
     }
 
-    handleOrganizeFiles(filesToProcess);
-    setSelectedFiles(new Set());
-  }, [selectedFiles, unprocessedFiles, addNotification, handleOrganizeFiles, setSelectedFiles]);
+    moveAfterStaleCheck(filesToProcess, () => {
+      handleOrganizeFiles(filesToProcess);
+      setSelectedFiles(new Set());
+    });
+  }, [
+    selectedFiles,
+    unprocessedFiles,
+    addNotification,
+    handleOrganizeFiles,
+    setSelectedFiles,
+    moveAfterStaleCheck
+  ]);
 
   // Not license-gated (CP-19): moving already-analyzed files is the user's
   // own file operation, not new AI work. The gate applies to Analyze and
@@ -531,9 +590,15 @@ function OrganizePhase() {
     if (selectedFiles.size > 0) {
       approveSelectedFiles();
     } else {
-      handleOrganizeFiles();
+      moveAfterStaleCheck(unprocessedFiles, () => handleOrganizeFiles());
     }
-  }, [selectedFiles.size, approveSelectedFiles, handleOrganizeFiles]);
+  }, [
+    selectedFiles.size,
+    approveSelectedFiles,
+    handleOrganizeFiles,
+    moveAfterStaleCheck,
+    unprocessedFiles
+  ]);
 
   // The plan checks every file on disk, so a large queue takes a moment: the
   // button shows it is working, and a second press waits for the first.
@@ -811,6 +876,13 @@ function OrganizePhase() {
               </div>
             ) : (
               <div className="flex flex-col flex-1 min-h-0 overflow-hidden p-4 sm:p-6 pb-6">
+                <StaleSuggestionsNotice
+                  count={staleFiles.length}
+                  isRanking={isRanking}
+                  isAnalyzing={isAnalysisRunning}
+                  onRefresh={refreshStaleFiles}
+                  className="mb-4 flex-shrink-0"
+                />
                 <ErrorBoundaryCore variant="simple" contextName="Uncategorized actions bar">
                   <UncategorizedActionsBar
                     unprocessedFiles={unprocessedFiles}
@@ -1171,6 +1243,9 @@ function OrganizePhase() {
           </ErrorBoundaryCore>
         </div>
       </Modal>
+
+      {/* Asks before moving files sorted by old Smart Folder definitions */}
+      {confirmDialog}
     </div>
   );
 }

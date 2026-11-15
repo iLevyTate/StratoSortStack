@@ -184,3 +184,107 @@ export function suggestionForOperation(destination, smartFolders) {
     source: 'engine'
   };
 }
+
+/**
+ * Why a file goes where `resolveOrganizeDestination` sends it, in the words
+ * the Organize card shows. The sample run before a large batch uses it too,
+ * so both say the same thing about the same file.
+ *
+ * @param {OrganizeDestination|null|undefined} routing
+ * @param {unknown} [category] - the label the card shows (edit or analysis)
+ * @returns {string|null}
+ */
+export function describeRouting(routing, category) {
+  if (!routing) return null;
+  const engine = routing.engine;
+  if (routing.source === 'engine' && engine) {
+    return engine.explanation || 'Ranked by what the file contains';
+  }
+  if (routing.source === 'user') {
+    return engine?.folder && engine.folder !== routing.folder?.name
+      ? `Your choice (suggested: ${engine.folder})`
+      : 'Your choice';
+  }
+  if (routing.source === 'name') {
+    // A name match is either the analysis label or the file's own name/type.
+    const fromLabel =
+      typeof category === 'string' &&
+      category.trim().toLowerCase() ===
+        String(routing.folder?.name || '')
+          .trim()
+          .toLowerCase();
+    return fromLabel
+      ? 'Matched by the label the analysis gave this file'
+      : 'Matched by folder name';
+  }
+  return null;
+}
+
+/**
+ * The engine's fit for the folder it picked, 0..1, or null where a number
+ * would not measure the folder: a name match, the user's own pick, or the
+ * catch-all default.
+ *
+ * @param {OrganizeDestination|null|undefined} routing
+ * @returns {number|null}
+ */
+export function routingScore(routing) {
+  if (routing?.source !== 'engine' || !routing.engine) return null;
+  if (routing.engine.source === 'default') return null;
+  const value = routing.engine.confidence;
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * Stale results (decision, 2026-11-15): an explicit warning with a one-click
+ * refresh, not a silent automatic one.
+ *
+ * Every analysis is stamped with the Smart Folder definitions it was made
+ * under (`analysis.smartFolderHash`, see shared/smartFolderDefinitions). When
+ * the definitions change, Organize already re-ranks every file through the
+ * suggestion engine with the new folders (useOrganizeSuggestions), so an
+ * engine pick is current. What can still be old is the fallback: the label
+ * the analysis picked from the old folders (source 'name'), or no folder at
+ * all from that label (source 'none'). Those files are stale. While the
+ * re-rank is still running, files waiting for it count too.
+ *
+ * A stale file is not moved unnoticed: Organize lists them with one button
+ * that analyzes them again (the existing Reanalyze), and Move asks first.
+ * Refreshing automatically would mean analyzing again without asking, which
+ * on a large batch takes as long as the first run did.
+ *
+ * Analyses made before the stamp existed carry no hash and are not flagged.
+ * The user's own folder choice is never stale. Auto-organize (downloads and
+ * watched folders, in main) needs no check: it analyzes each new file with
+ * the folders current at that moment, and the analysis cache is keyed on the
+ * whole folder descriptions, so an edit never returns an old pick.
+ *
+ * @param {any} file - the file as Organize lists it (with `analysis`)
+ * @param {OrganizeDestination|null|undefined} destination
+ * @param {string} currentHash - getFolderDefinitionsHash of the current folders
+ * @returns {boolean}
+ */
+export function isStaleDestination(file, destination, currentHash) {
+  const stamped = file?.analysis?.smartFolderHash;
+  if (typeof stamped !== 'string' || !stamped || !currentHash) return false;
+  if (stamped === currentHash) return false;
+  return destination?.source === 'name' || destination?.source === 'none';
+}
+
+/**
+ * The files among `files` whose destination is stale (see isStaleDestination).
+ *
+ * @param {any[]} files
+ * @param {(file: any) => OrganizeDestination} resolveDestination
+ * @param {string} currentHash
+ * @returns {any[]}
+ */
+export function findStaleFiles(files, resolveDestination, currentHash) {
+  if (!currentHash || !Array.isArray(files) || typeof resolveDestination !== 'function') return [];
+  return files.filter((file) => {
+    const stamped = file?.analysis?.smartFolderHash;
+    // Only a file stamped with other definitions needs its destination worked out.
+    if (typeof stamped !== 'string' || !stamped || stamped === currentHash) return false;
+    return isStaleDestination(file, resolveDestination(file), currentHash);
+  });
+}

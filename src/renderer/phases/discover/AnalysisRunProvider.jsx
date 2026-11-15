@@ -6,6 +6,8 @@ import { createLogger } from '../../../shared/logger';
 import { useNotification } from '../../contexts/NotificationContext';
 import { useDiscoverState } from './useDiscoverState';
 import { useAnalysis } from './useAnalysis';
+import { useSampleRun } from './useSampleRun';
+import SampleRunDialog from '../../components/discover/SampleRunDialog';
 
 const logger = createLogger('AnalysisRunProvider');
 
@@ -58,7 +60,7 @@ export function AnalysisRunProvider({ children }) {
   );
 
   const {
-    analyzeFiles,
+    analyzeFiles: runAnalyzeFiles,
     cancelAnalysis,
     clearAnalysisQueue,
     retryFailedFiles,
@@ -87,6 +89,16 @@ export function AnalysisRunProvider({ children }) {
     actions: extendedActions,
     getCurrentPhase
   });
+
+  // Before a large batch, offer to try a few files first. Every caller that
+  // starts analysis for files the user added goes through this analyzeFiles;
+  // runs the analysis starts itself (queued, resumed, retried) do not.
+  const sampleRun = useSampleRun({
+    analyzeFiles: runAnalyzeFiles,
+    cancelAnalysis,
+    advancePhase: actions?.advancePhase
+  });
+  const analyzeFiles = sampleRun.analyzeFiles;
 
   // Stuck-run checks. They belong with the run, not with the Discover
   // screen: a run that keeps going while the user is on Organize still
@@ -166,7 +178,23 @@ export function AnalysisRunProvider({ children }) {
     ]
   );
 
-  return <AnalysisRunContext.Provider value={value}>{children}</AnalysisRunContext.Provider>;
+  return (
+    <AnalysisRunContext.Provider value={value}>
+      {children}
+      {sampleRun.session && (
+        <SampleRunDialog
+          session={sampleRun.session}
+          progress={analysisProgress}
+          onSample={sampleRun.startSample}
+          onSkip={sampleRun.skipSample}
+          onStop={sampleRun.stopSample}
+          onContinue={sampleRun.continueWithRest}
+          onEditFolders={sampleRun.editFolders}
+          onClose={sampleRun.dismiss}
+        />
+      )}
+    </AnalysisRunContext.Provider>
+  );
 }
 
 AnalysisRunProvider.propTypes = {
