@@ -652,80 +652,106 @@ class ErrorHandler {
    * across every hard crash and occupy megabytes per incident, which is
    * especially painful on users who have set the app to launch at startup.
    *
+   * Crashpad keeps dumps in report subfolders, not the root: `reports/` on
+   * Windows and `new/`, `pending/`, `completed/` on macOS/Linux. The root
+   * `metadata` and `settings.dat` files are Crashpad's database and are
+   * never touched.
+   *
    * @param {string} crashDumpsDir - Absolute path to the crash-dumps directory.
-   * @param {number} [daysToKeep=30] - Delete files with mtime older than this.
+   * @param {number} [daysToKeep=30] - Delete dumps with mtime older than this.
    * @param {number} [maxFiles=20] - After age cleanup, keep at most this many
-   *        (newest by mtime). Dumps are the only recovery signal for field
-   *        issues, so the cap is intentionally higher than for verbose logs.
+   *        dumps across all report folders (newest by mtime). Dumps are the
+   *        only recovery signal for field issues, so the cap is intentionally
+   *        higher than for verbose logs.
    */
   async cleanupCrashDumps(crashDumpsDir, daysToKeep = 30, maxFiles = 20) {
     if (!crashDumpsDir) return;
     try {
-      let files;
-      try {
-        files = await fs.readdir(crashDumpsDir);
-      } catch (readErr) {
-        if (readErr?.code === 'ENOENT') return;
-        throw readErr;
-      }
-
-      const cutoff = Date.now() - daysToKeep * 24 * 60 * 60 * 1000;
-      // Electron writes `.dmp` on Windows/Linux and `.ips`/`.dmp` on macOS;
-      // the CrashReporter also leaves `metadata` files alongside dumps. Keep
-      // the filter scoped to known crash-artifact extensions so we never
-      // clobber anything an admin placed in this directory.
+      // '' is the root, scanned only for stray dumps from older layouts.
+      const REPORT_FOLDERS = ['', 'reports', 'completed', 'pending', 'new'];
+      // Crashpad may still be writing a dump in new/ right after a crash.
+      const IN_PROGRESS_GRACE_MS = 5 * 60 * 1000;
+      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       /** @param {string} name */
       const isDumpFile = (name) =>
-        name.endsWith('.dmp') ||
-        name.endsWith('.ips') ||
-        name.endsWith('.ips.synced') ||
-        name === 'metadata' ||
-        name === 'completed';
+        name.endsWith('.dmp') || name.endsWith('.ips') || name.endsWith('.ips.synced');
 
-      const candidates = files.filter(isDumpFile);
+      const now = Date.now();
+      const cutoff = now - daysToKeep * 24 * 60 * 60 * 1000;
 
-      await Promise.all(
-        candidates.map(async (file) => {
-          const filePath = path.join(crashDumpsDir, file);
+      /** @type {Array<{ file: string, filePath: string, mtimeMs: number }>} */
+      const dumps = [];
+      for (const folder of REPORT_FOLDERS) {
+        const dir = folder ? path.join(crashDumpsDir, folder) : crashDumpsDir;
+        let names;
+        try {
+          names = await fs.readdir(dir);
+        } catch (readErr) {
+          if (readErr?.code === 'ENOENT') continue;
+          throw readErr;
+        }
+        for (const name of names.filter(isDumpFile)) {
+          const filePath = path.join(dir, name);
           try {
             const stats = await fs.stat(filePath);
-            if (stats.isFile() && stats.mtimeMs < cutoff) {
-              await fs.unlink(filePath);
-              await this.log('info', `Cleaned up stale crash dump: ${file}`);
-            }
-          } catch (fileErr) {
-            logger.debug('Failed to cleanup crash dump entry:', {
-              file,
-              error: fileErr.message
+            if (!stats.isFile()) continue;
+            if (folder === 'new' && now - stats.mtimeMs < IN_PROGRESS_GRACE_MS) continue;
+            dumps.push({
+              file: folder ? `${folder}/${name}` : name,
+              filePath,
+              mtimeMs: stats.mtimeMs
             });
+          } catch {
+            // Ignore: entry may have been removed mid-sweep.
           }
-        })
-      );
-
-      // Secondary cap: even fresh dumps should be bounded.
-      const remaining = (await fs.readdir(crashDumpsDir)).filter(isDumpFile);
-      if (remaining.length <= maxFiles) return;
-
-      const withStats = [];
-      for (const file of remaining) {
-        const filePath = path.join(crashDumpsDir, file);
-        try {
-          const stats = await fs.stat(filePath);
-          if (stats.isFile()) {
-            withStats.push({ file, filePath, mtimeMs: stats.mtimeMs });
-          }
-        } catch {
-          // Ignore: entry may have been removed mid-sweep.
         }
       }
-      withStats.sort((a, b) => a.mtimeMs - b.mtimeMs);
-      let toRemove = withStats.length - maxFiles;
-      for (const item of withStats) {
+
+      /** @param {{ filePath: string }} dump */
+      const removeDump = async (dump) => {
+        await fs.unlink(dump.filePath);
+        if (!dump.filePath.endsWith('.dmp')) return;
+        const base = path.basename(dump.filePath, '.dmp');
+        // Companion files: the .meta beside a macOS/Linux report and the
+        // attachments/<uuid> folder. Both are best-effort.
+        await fs.unlink(path.join(path.dirname(dump.filePath), `${base}.meta`)).catch(() => {});
+        if (UUID_RE.test(base)) {
+          await fs
+            .rm(path.join(crashDumpsDir, 'attachments', base), { recursive: true, force: true })
+            .catch(() => {});
+        }
+      };
+
+      /** @type {typeof dumps} */
+      const kept = [];
+      for (const dump of dumps) {
+        if (dump.mtimeMs >= cutoff) {
+          kept.push(dump);
+          continue;
+        }
+        try {
+          await removeDump(dump);
+          await this.log('info', `Cleaned up stale crash dump: ${dump.file}`);
+        } catch (fileErr) {
+          logger.debug('Failed to cleanup crash dump entry:', {
+            file: dump.file,
+            error: fileErr.message
+          });
+        }
+      }
+
+      // Secondary cap across all folders: even fresh dumps should be bounded.
+      if (kept.length <= maxFiles) return;
+      kept.sort((a, b) => a.mtimeMs - b.mtimeMs);
+      let toRemove = kept.length - maxFiles;
+      for (const item of kept) {
         if (toRemove <= 0) break;
         try {
-          await fs.unlink(item.filePath);
-          await this.log('info', `Removed excess crash dump (retention cap): ${item.file}`);
+          await removeDump(item);
+          // Count the removal before logging so a logging failure cannot
+          // make the loop delete one dump too many.
           toRemove -= 1;
+          await this.log('info', `Removed excess crash dump (retention cap): ${item.file}`);
         } catch (fileErr) {
           logger.debug('Failed to remove excess crash dump:', {
             file: item.file,

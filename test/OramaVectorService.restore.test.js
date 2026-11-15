@@ -339,18 +339,13 @@ describe('OramaVectorService restore behavior', () => {
       };
     }
 
-    mockPersist.mockResolvedValueOnce({
-      docs: {
-        docs
-      }
-    });
-
     const service = new OramaVectorService();
     service._dimension = 3;
     service._schemas = {
       files: { id: 'string', embedding: 'vector[3]', hasVector: 'boolean', filePath: 'string' }
     };
-    service._databases = { files: { _name: 'files-db' } };
+    // Orama's in-memory docs store shape; the repair reads it directly rather than persist()ing.
+    service._databases = { files: { _name: 'files-db', data: { docs: { docs } } } };
     service._embeddingStore = { files: new Map() };
     service._collectionDimensions = {};
     service._clearQueryCache = jest.fn();
@@ -364,7 +359,7 @@ describe('OramaVectorService restore behavior', () => {
         repairedDocs: docCount
       })
     );
-    expect(mockPersist).toHaveBeenCalledWith({ _name: 'files-db' });
+    expect(mockPersist).not.toHaveBeenCalled();
     expect(mockSearch).not.toHaveBeenCalled();
     expect(mockInsert).toHaveBeenCalledTimes(docCount);
     expect(service.persistAll).toHaveBeenCalledTimes(1);

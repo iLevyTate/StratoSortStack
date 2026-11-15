@@ -96,6 +96,11 @@ class ProcessingStateService {
     /** @type {Promise<any>} */
     this._stateMutationLock = Promise.resolve();
 
+    // Organize batches this process started. In memory only: startup resume
+    // replays crash-interrupted batches from an earlier run, never a live one.
+    /** @type {Set<string>} */
+    this._sessionOrganizeBatchIds = new Set();
+
     // Debounce persistence: coalesce rapid state transitions into a single
     // disk write. Callers that await saveState() wait up to one window, so
     // the window bounds organize throughput: five workers each awaiting the
@@ -1272,6 +1277,7 @@ class ProcessingStateService {
           startedAt: now,
           completedAt: null
         };
+        this._sessionOrganizeBatchIds.add(batchId);
         this.state.organize.lastUpdated = now;
         await this.saveState();
       }
@@ -1450,6 +1456,16 @@ class ProcessingStateService {
       });
     });
     return this._stateMutationLock;
+  }
+
+  /**
+   * Whether this process created the organize batch (as opposed to loading
+   * it from an earlier run's journal).
+   * @param {string} batchId
+   * @returns {boolean}
+   */
+  isSessionOrganizeBatch(batchId) {
+    return this._sessionOrganizeBatchIds.has(batchId);
   }
 
   getIncompleteOrganizeBatches() {

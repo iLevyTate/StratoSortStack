@@ -1188,11 +1188,15 @@ if (!z) {
             .min(1)
             .max(2048)
             .refine(isSafeAbsoluteFsPath, SAFE_ABSOLUTE_PATH_MESSAGE),
+          // A Smart Folder may live on a network share, and the renderer
+          // sends this for every action, so one share-hosted suggestion must
+          // not fail a whole Trash or Ignore request. Main checks it again
+          // (validateFileOperationPath and the session's own suggestion).
           suggestedFolderPath: z
             .string()
             .min(1)
             .max(2048)
-            .refine(isSafeAbsoluteFsPath, SAFE_ABSOLUTE_PATH_MESSAGE)
+            .refine(isSafeFileOpPath, SAFE_FILE_OP_PATH_MESSAGE)
             .optional(),
           size: z.number().min(0).optional()
         })

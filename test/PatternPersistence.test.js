@@ -84,6 +84,18 @@ describe('PatternPersistence', () => {
     expect(loaded.feedbackHistory).toEqual([withKey, withoutKey]);
   });
 
+  it('keeps the startup-scan learned keys across a load, and loads files saved without them', async () => {
+    fs.readFile.mockResolvedValueOnce(
+      JSON.stringify({ patterns: [], feedbackHistory: [], scanLearnedKeys: ['a.pdf\u0000finance'] })
+    );
+    const withKeys = await new PatternPersistence().load();
+    expect(withKeys.scanLearnedKeys).toEqual(['a.pdf\u0000finance']);
+
+    fs.readFile.mockResolvedValueOnce(JSON.stringify({ patterns: [], feedbackHistory: [] }));
+    const older = await new PatternPersistence().load();
+    expect(older.scanLearnedKeys).toEqual([]);
+  });
+
   it('awaits deferred throttled save completion', async () => {
     jest.useFakeTimers();
     try {

@@ -145,10 +145,15 @@ function createFailedItemHandler(config) {
     const normalized = message.toLowerCase();
     const isDimensionMismatch =
       normalized.includes('dimension_mismatch') || normalized.includes('dimension mismatch');
+    // invalid_vector, invalid_vector_format, invalid_vector_values: a retry
+    // re-queues the same vector, skipping the enqueue checks, so it can only
+    // fail again or (before the store checked values) be stored as NaN.
+    const invalidVectorCode = normalized.match(/invalid_vector\w*/)?.[0] || null;
     return {
       message,
       requiresRebuild: isDimensionMismatch,
-      errorCode: isDimensionMismatch ? 'dimension_mismatch' : null
+      nonRetryable: isDimensionMismatch || invalidVectorCode !== null,
+      errorCode: isDimensionMismatch ? 'dimension_mismatch' : invalidVectorCode
     };
   }
 
@@ -164,9 +169,9 @@ function createFailedItemHandler(config) {
     // A dead-lettered item leaves the failed-items map too. Both writes must
     // be marked: writing only the dead-letter queue left the item in the
     // on-disk failed-items map, so after a crash it was retried again.
-    if (normalizedError.requiresRebuild) {
+    if (normalizedError.nonRetryable) {
       addToDeadLetterQueue(item, normalizedError.message, retryCount, {
-        requiresRebuild: true,
+        requiresRebuild: normalizedError.requiresRebuild,
         errorCode: normalizedError.errorCode
       });
       if (failedItems.delete(item.id)) markFailedItemsChanged();

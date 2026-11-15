@@ -1,7 +1,7 @@
 // @ts-check
 const path = require('path');
 const fs = require('fs').promises;
-const { atomicFileOps } = require('../../shared/atomicFileOperations');
+const { atomicFileOps, isCaseOnlyRenameOfSelf } = require('../../shared/atomicFileOperations');
 const { IPC_EVENTS } = require('../../shared/constants');
 const { safeSend } = require('../ipc/ipcWrappers');
 const { computeFileChecksum, handleDuplicateMove } = require('../utils/fileDedup');
@@ -11,6 +11,10 @@ const { acquireBatchLock, releaseBatchLock } = require('../ipc/files/batchLockMa
 const { deferGhostCleanup, resumeGhostCleanup } = require('../../shared/ghostCleanupGuard');
 const { migrateLegacyPersistedBatch } = require('./ProcessingStateService');
 const { numberingBaseOf } = require('../ipc/files/collisionNames');
+const {
+  authorizeDestination,
+  buildStrictFileOpsAllowlist
+} = require('../ipc/files/destinationPolicy');
 
 /**
  * Resume runs replay operations from a persisted journal, so the source and
@@ -41,6 +45,90 @@ async function validateResumeOperationPath(candidate, role, logger) {
     throw new Error(`Unsafe ${role} path for resume: ${validation.error}`);
   }
   return validation.normalizedPath;
+}
+
+/**
+ * Errors the live handler (or an earlier resume) journals when a path or
+ * destination rule refuses an op: a folder the user declined, a startup
+ * folder, a symlinked source. Those ops were refused on purpose, not
+ * interrupted, so resume must never replay them.
+ */
+const REFUSAL_ERROR_PREFIXES = ['Invalid source path', 'Invalid destination path', 'Unsafe '];
+
+/**
+ * @param {any} op
+ * @returns {boolean}
+ */
+function isRefusedOp(op) {
+  return (
+    op?.status === 'failed' &&
+    typeof op.error === 'string' &&
+    REFUSAL_ERROR_PREFIXES.some((prefix) => op.error.startsWith(prefix))
+  );
+}
+
+/**
+ * Apply the live handler's move rules before a replayed move: a source
+ * that is a symlink to somewhere unsafe, the STRATOSORT_STRICT_FILE_OPS
+ * allowlist, and the destination policy. Folders approved in a dialog last
+ * session are not remembered, and nobody asked for this replay, so a
+ * destination that would need confirming is refused rather than prompted
+ * for. Throws with the live handler's message prefixes so the op is
+ * journaled as a refusal.
+ * @param {any} op
+ * @param {any} serviceIntegration
+ * @param {any} logger
+ * @returns {Promise<void>}
+ */
+async function authorizeResumeMove(op, serviceIntegration, logger) {
+  const getServiceIntegration = () => serviceIntegration;
+  const strictFileOps = buildStrictFileOpsAllowlist(getServiceIntegration);
+  const strictPathOptions = strictFileOps.enabled
+    ? { allowedBasePaths: strictFileOps.allowlist }
+    : {};
+  const sourceValidation = await validateFileOperationPath(op.source, {
+    checkSymlinks: true,
+    ...strictPathOptions
+  });
+  if (!sourceValidation.valid) {
+    throw new Error(`Invalid source path: ${sourceValidation.error}`);
+  }
+  const destValidation = await validateFileOperationPath(op.destination, {
+    checkSymlinks: false,
+    ...strictPathOptions
+  });
+  if (!destValidation.valid) {
+    throw new Error(`Invalid destination path: ${destValidation.error}`);
+  }
+  const decision = await authorizeDestination(destValidation.normalizedPath, {
+    sourcePath: sourceValidation.normalizedPath,
+    getServiceIntegration,
+    log: logger,
+    // No showMessageBox: a folder that needs the user's say is refused.
+    dialog: {}
+  });
+  if (!decision.allowed) {
+    logger?.warn?.('[RESUME] Destination refused; not replaying op', {
+      destination: op.destination,
+      reason: decision.reason
+    });
+    throw new Error(`Invalid destination path: ${decision.error}`);
+  }
+}
+
+/**
+ * Whether the batch was closed (completed or rolled back) after the
+ * incomplete list was read. Checks the current journal entry too, in case
+ * the state object was replaced since.
+ * @param {any} batch
+ * @param {any} processingState
+ * @returns {boolean}
+ */
+function isBatchClosed(batch, processingState) {
+  const current = processingState?.state?.organize?.batches?.[batch.id];
+  return Boolean(
+    batch.completedAt || batch.rolledBackAt || current?.completedAt || current?.rolledBackAt
+  );
 }
 
 /**
@@ -269,6 +357,15 @@ async function resumeIncompleteBatches(
     logger.warn(`[RESUME] Resuming ${incomplete.length} incomplete organize batch(es)`);
 
     for (const batch of incomplete) {
+      // A batch this process started is a live run, not one a crash cut
+      // short: its handler (or the user's Resume) owns it. Replaying or
+      // finalizing it here would move files the user cancelled, or close a
+      // paused batch the renderer still offers to resume.
+      if (serviceIntegration.processingState.isSessionOrganizeBatch?.(batch.id)) {
+        logger?.info?.('[RESUME] Skipping batch started in this session', { batchId: batch.id });
+        continue;
+      }
+
       // A rolled-back batch is normally closed by the rollback path itself
       // and filtered out by getIncompleteOrganizeBatches; seeing one here
       // means the journal was written by an older build (or a crash landed
@@ -306,6 +403,16 @@ async function resumeIncompleteBatches(
         });
         continue;
       }
+      // The wait for the lock can outlast a live run that closed this entry
+      // (completed, cancelled or rolled back); replaying it then would move
+      // files the user cancelled.
+      if (isBatchClosed(batch, serviceIntegration.processingState)) {
+        logger?.info?.('[RESUME] Batch closed while waiting for the lock; skipping', {
+          batchId: batch.id
+        });
+        releaseBatchLock(batch.id);
+        continue;
+      }
       deferGhostCleanup();
       try {
         await resumeBatch(batch, serviceIntegration, logger, getMainWindow);
@@ -320,8 +427,8 @@ async function resumeIncompleteBatches(
 }
 
 /**
- * Replay one incomplete batch: skip done ops, re-run pending/failed ones,
- * then persist and close the journal entry. Caller holds the batch lock.
+ * Replay one incomplete batch: skip done ops and ops a path or destination
+ * rule refused, re-run the other pending/failed ones, then persist and close the journal entry. Caller holds the batch lock.
  */
 async function resumeBatch(
   /** @type {any} */ batch,
@@ -351,10 +458,21 @@ async function resumeBatch(
   // Files this replay has still to move: the duplicate check must not count
   // one of them as a copy already in its destination folder.
   const pendingSources = batch.operations
-    .filter((/** @type {any} */ op) => op.status !== 'done' && typeof op.source === 'string')
+    .filter(
+      (/** @type {any} */ op) =>
+        op.status !== 'done' && !isRefusedOp(op) && typeof op.source === 'string'
+    )
     .map((/** @type {any} */ op) => op.source);
   for (let i = 0; i < total; i += 1) {
     const op = batch.operations[i];
+    if (isRefusedOp(op)) {
+      logger?.info?.('[RESUME] Leaving refused op failed', {
+        batchId: batch.id,
+        index: i,
+        error: op.error
+      });
+      continue;
+    }
     if (op.status === 'done') {
       const win = getMainWindow?.();
       if (win && !win.isDestroyed()) {
@@ -379,10 +497,15 @@ async function resumeBatch(
       await validateResumeOperationPath(op.source, 'source', logger);
       await validateResumeOperationPath(op.destination, 'destination', logger);
 
-      await serviceIntegration.processingState.markOrganizeOpStarted(batch.id, i);
-
       const sourceExists = await pathExists(op.source, logger, 'source');
       const destinationExists = await pathExists(op.destination, logger, 'destination');
+      // Only a move still to make needs the live rules; a source already gone
+      // means the move happened and resume just records it.
+      if (sourceExists) {
+        await authorizeResumeMove(op, serviceIntegration, logger);
+      }
+
+      await serviceIntegration.processingState.markOrganizeOpStarted(batch.id, i);
 
       if (!sourceExists) {
         const recorded = recordedSourceMetadata(op);
@@ -523,8 +646,11 @@ async function resumeBatch(
 
       // Check destination collision and adjust. Resolve against the
       // local `finalDestination` first so we don't leave a
-      // half-updated `op.destination` visible to observers.
-      if (destinationExists) {
+      // half-updated `op.destination` visible to observers. A case-only
+      // rename (Invoice.pdf -> invoice.pdf) on a case-insensitive
+      // filesystem finds the source itself at the destination; that name is
+      // free, and numbering it would resume to `invoice_1.pdf`.
+      if (destinationExists && !(await isCaseOnlyRenameOfSelf(op.source, finalDestination))) {
         let counter = 1;
         let uniqueDestination;
         // Numbered as the live batch numbers it: from the name before an

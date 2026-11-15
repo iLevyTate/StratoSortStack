@@ -44,6 +44,35 @@ class DataMigrationService {
     this._userDataPath = null;
   }
 
+  /**
+   * Legacy names still in use as the live vector folder. vectorDbPersistPath
+   * accepts any folder name, so a hand-edited 'vector_storage' would
+   * otherwise be wiped (and fully re-embedded) on every launch.
+   * @returns {Promise<Set<string>>}
+   */
+  async _getInUseLegacyNames() {
+    const inUse = new Set();
+    try {
+      const SettingsService = require('../SettingsService');
+      const settings = await SettingsService.getInstance?.()?.load?.();
+      const raw = settings?.vectorDbPersistPath;
+      if (typeof raw === 'string' && raw.trim()) {
+        const configured = raw
+          .trim()
+          .replace(/[\\/]+$/, '')
+          .toLowerCase();
+        for (const name of LEGACY_PATHS) {
+          if (name.toLowerCase() === configured) inUse.add(name);
+        }
+      }
+    } catch (error) {
+      logger.debug('[DataMigrationService] Could not read vectorDbPersistPath', {
+        error: error?.message
+      });
+    }
+    return inUse;
+  }
+
   async _getUserDataPath() {
     if (this._userDataPath) return this._userDataPath;
     // Handle both main process and renderer/test environments if needed
@@ -63,8 +92,10 @@ class DataMigrationService {
   async needsMigration() {
     try {
       const userData = await this._getUserDataPath();
+      const inUse = await this._getInUseLegacyNames();
 
       for (const legacyName of LEGACY_PATHS) {
+        if (inUse.has(legacyName)) continue;
         const legacyPath = path.join(userData, legacyName);
         try {
           await fs.access(legacyPath);
@@ -117,6 +148,7 @@ class DataMigrationService {
 
     try {
       const userData = await this._getUserDataPath();
+      const inUse = await this._getInUseLegacyNames();
       let foundLegacy = false;
       const removedPaths = [];
 
@@ -127,6 +159,10 @@ class DataMigrationService {
       for (const legacyName of LEGACY_PATHS) {
         const legacyPath = path.join(userData, legacyName);
         currentStep++;
+        if (inUse.has(legacyName)) {
+          logger.info(`[DataMigrationService] Keeping ${legacyName}: it is the live vector folder`);
+          continue;
+        }
         const progressPercent = Math.round((currentStep / totalSteps) * 100);
 
         try {

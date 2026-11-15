@@ -123,8 +123,9 @@ describe('analyzeVideoWithCloud applies the transcript route checks', () => {
     // Not one of the user's folders: lands in Uncategorized, offered as a new folder.
     expect(result.category).toBe('Uncategorized');
     expect(result.suggestedNewFolder).toBe('Cooking Videos');
-    // The video keeps its own extension; ".part1" is not one.
-    expect(result.suggestedName).toBe('lecture.mp4');
+    // The video keeps its own extension; ".part1" is not a file type, so it
+    // stays part of the name instead of replacing .mp4 or being cut off.
+    expect(result.suggestedName).toBe('lecture.part1.mp4');
     expect(result).not.toHaveProperty('isFallback');
     expect(result).not.toHaveProperty('embeddingPolicy');
     expect(result).not.toHaveProperty('_embeddingForPersistence');

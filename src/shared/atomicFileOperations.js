@@ -1108,8 +1108,13 @@ class AtomicFileOperations {
       const attemptDestination = finalDestination;
       try {
         return await this._withDestinationLock(attemptDestination, async () => {
-          // Check existence first to prevent silent overwrite (Node's fs.rename overwrites by default)
-          if (await this.fileExists(attemptDestination)) {
+          // Check existence first to prevent silent overwrite (Node's fs.rename overwrites by default).
+          // A case-only rename finds the source itself here; that name is
+          // free, or the file would be renamed to `invoice_1.pdf` instead.
+          if (
+            (await this.fileExists(attemptDestination)) &&
+            !(await isCaseOnlyRenameOfSelf(normalizedSource, attemptDestination))
+          ) {
             const eexistError = /** @type {NodeJS.ErrnoException} */ (
               new Error(
                 `EEXIST: file already exists, rename '${normalizedSource}' -> '${attemptDestination}'`
@@ -1757,24 +1762,48 @@ class AtomicFileOperations {
 
     for (const id of staleTransactions) {
       const transaction = this.activeTransactions.get(id);
-      try {
-        if (transaction && transaction.status === 'active') {
-          // A stale ACTIVE transaction is abandoned mid-flight (caller
-          // crashed or hung). Deleting its backups + journal outright would
-          // destroy the only rollback material and strand half-applied
-          // operations — roll it back first, then clean up.
-          await this.rollbackTransaction(id);
-        }
-        // Committed / rolled-back / failed: rollback material is no longer
-        // needed, cleanup removes backups, journal, and tracking entry.
+      if (!transaction) continue;
+      const status = transaction.status;
+      if (status === 'committed' || status === 'rolled_back') {
+        // Rollback material is no longer needed: remove backups, journal,
+        // and the tracking entry.
         await this.cleanupBackups(id);
-      } catch (error) {
-        logger.warn('[AtomicFileOps] Stale transaction cleanup failed', {
-          transactionId: id,
-          status: transaction?.status,
-          error: error?.message
-        });
+        continue;
       }
+      if (status === 'rolling_back') {
+        // A rollback is still in flight and will settle the status; a later
+        // pass handles whatever it ends as.
+        continue;
+      }
+      if (status === 'active') {
+        // A stale ACTIVE transaction is abandoned mid-flight (caller
+        // crashed or hung). Deleting its backups + journal outright would
+        // destroy the only rollback material and strand half-applied
+        // operations — roll it back first, then clean up.
+        try {
+          await this.rollbackTransaction(id);
+          await this.cleanupBackups(id);
+          continue;
+        } catch (error) {
+          // rollbackTransaction sets 'rolled_back' before it throws; record
+          // the real outcome so the journal is kept for startup recovery.
+          transaction.status = 'rollback_failed';
+          transaction.rollbackFailure = {
+            originalError: 'Stale transaction',
+            rollbackError: error?.message,
+            timestamp: Date.now()
+          };
+          await this.writeJournal(id);
+          logger.warn('[AtomicFileOps] Stale transaction rollback failed', {
+            transactionId: id,
+            error: error?.message
+          });
+        }
+      }
+      // 'rollback_failed' (or unknown): the backups may be the only copy of
+      // what was replaced. Stop tracking it in memory but leave the backups
+      // and journal on disk for recoverFromJournals at the next startup.
+      this.activeTransactions.delete(id);
     }
 
     return staleTransactions.length;
@@ -2033,6 +2062,30 @@ async function isDifferentFile(source, dest) {
 }
 
 /**
+ * Whether `dest` is only `source` under a different casing, as it is for a
+ * case-only rename (Invoice.pdf -> invoice.pdf) on a case-insensitive
+ * filesystem: there the existence probe finds the source itself, so the name
+ * is not taken. The stat check (same dev + ino) keeps a case-sensitive volume,
+ * where the other-cased name can be a different file, counted as occupied.
+ * Any stat failure answers false, so callers fall back to "taken".
+ * @param {string} source
+ * @param {string} dest
+ * @returns {Promise<boolean>}
+ */
+async function isCaseOnlyRenameOfSelf(source, dest) {
+  const normalizedSource = resolveFsPath(source);
+  const normalizedDest = resolveFsPath(dest);
+  if (normalizedSource === normalizedDest) return false;
+  if (!isCaseInsensitiveFileSystem()) return false;
+  if (foldPathForCompare(normalizedSource) !== foldPathForCompare(normalizedDest)) return false;
+  try {
+    return !(await isDifferentFile(normalizedSource, normalizedDest));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Rename that refuses to replace an existing destination.
  *
  * Node's fs.rename silently REPLACES an occupied destination on every
@@ -2111,6 +2164,7 @@ module.exports = {
   atomicFileOps,
   crossDeviceMove,
   renameNoReplace,
+  isCaseOnlyRenameOfSelf,
   // Shared per-name lock: anything that claims a destination name by
   // probe-then-write outside renameNoReplace/atomicMove must take it too.
   withPathLock,

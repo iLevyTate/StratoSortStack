@@ -233,7 +233,14 @@ function OrganizePhase() {
         );
       }
       if (field === 'suggestedName') {
-        dispatch(updateAnalysisResult({ path: filePath, changes: { suggestedName: value } }));
+        // userSuggestedName marks the name as typed, so Discover's naming
+        // re-apply leaves it alone when the analysis provider remounts.
+        dispatch(
+          updateAnalysisResult({
+            path: filePath,
+            changes: { suggestedName: value, userSuggestedName: value }
+          })
+        );
       }
     },
     [dispatch]

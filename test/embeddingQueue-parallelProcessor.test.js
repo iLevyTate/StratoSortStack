@@ -117,6 +117,45 @@ describe('embeddingQueue parallelProcessor', () => {
     expect(failedItemIds.has('file:b')).toBe(true);
   });
 
+  test('a batch where one item has the wrong dimension fails only that item', async () => {
+    const vectorDbService = {
+      batchUpsertFiles: jest.fn().mockResolvedValue({
+        success: false,
+        count: 2,
+        failed: [{ id: 'file:stale', error: 'dimension_mismatch', requiresRebuild: true }]
+      }),
+      upsertFile: jest.fn().mockResolvedValue({ success: true })
+    };
+    const onProgress = jest.fn();
+    const onItemFailed = jest.fn();
+    const failedItemIds = new Set();
+
+    const items = [
+      { id: 'file:a', vector: [1, 2, 3], meta: { path: 'a' } },
+      { id: 'file:stale', vector: [1, 2], meta: { path: 'stale' } },
+      { id: 'file:b', vector: [1, 2, 3], meta: { path: 'b' } }
+    ];
+
+    const processed = await processItemsInParallel({
+      items,
+      type: 'file',
+      vectorDbService,
+      failedItemIds,
+      startProcessedCount: 0,
+      totalBatchSize: 3,
+      concurrency: 2,
+      onProgress,
+      onItemFailed
+    });
+
+    expect(processed).toBe(2);
+    expect(onItemFailed).toHaveBeenCalledTimes(1);
+    expect(onItemFailed).toHaveBeenCalledWith(items[1], 'dimension_mismatch');
+    expect(Array.from(failedItemIds)).toEqual(['file:stale']);
+    // The written items are not upserted a second time through the fallback.
+    expect(vectorDbService.upsertFile).not.toHaveBeenCalled();
+  });
+
   test('marks failed items when individual upsert returns success:false', async () => {
     const vectorDbService = {
       upsertFile: jest.fn().mockResolvedValueOnce({ success: false, error: 'bad_vector' })

@@ -21,6 +21,7 @@ import { useFileActions } from '../hooks/useFileActions';
 import { isRemovedDuplicate } from '../utils/duplicateRemoval';
 import { organizedEntryToRow } from '../utils/organizeRunResults';
 import RunResultsList, { useRunResultsExport } from '../components/organize/RunResultsList';
+import { useAnalysisRun } from './discover/AnalysisRunProvider';
 
 /**
  * Pick a folder path safe to hand to shell.openPath — prefers `newLocation`
@@ -49,6 +50,7 @@ function baseName(p) {
 function CompletePhase() {
   const dispatch = useAppDispatch();
   const { showError } = useNotification();
+  const { resetRun } = useAnalysisRun();
   const organizedFiles = useAppSelector((state) => state.files.organizedFiles);
   const organizedPathIndex = useAppSelector((state) => state.files.organizedPathIndex);
   const organizedCount = useAppSelector(selectOrganizedCount);
@@ -145,6 +147,10 @@ function CompletePhase() {
       // Clear this finished batch and go straight to Discover for the next
       // one. Landing on Welcome made the user find Discover in the phase bar.
       analyzeMoreFiles: () => {
+        // The run outlives the phases, so files can still be analyzing here.
+        // Clearing only Redux left it running unseen: no progress card or
+        // Stop button, and its lock queued the next files behind it.
+        resetRun('Analyze more files', { discard: true });
         // React 18+ batches state updates automatically
         dispatch(resetUi());
         dispatch(resetFilesState());
@@ -162,7 +168,7 @@ function CompletePhase() {
         }
       }
     }),
-    [dispatch]
+    [dispatch, resetRun]
   );
 
   // Opens one destination folder: the footer button's, or a folder in the

@@ -237,7 +237,10 @@ function registerAnalysisHistoryIpc(servicesOrParams) {
       normalize: (payload) => {
         if (!payload || typeof payload !== 'object') return payload;
         return {
-          filePath: normalizeText(payload.filePath || '', { maxLength: 2000 }),
+          // The path is passed through exactly: the service matches entries by
+          // exact string, so collapsing a double space or cutting a long path
+          // would miss the entry (the Zod schema already requires a string).
+          filePath: typeof payload.filePath === 'string' ? payload.filePath : '',
           policy: normalizeText(payload.policy || '', { maxLength: 20 })
         };
       },
@@ -254,6 +257,16 @@ function registerAnalysisHistoryIpc(servicesOrParams) {
           }
 
           const result = await service.setEmbeddingPolicyByPath(filePath, policy);
+          // No entry matched, so nothing was stored: report it, or the renderer
+          // shows a policy that organize will not honor.
+          if (!result?.updated) {
+            return {
+              ...result,
+              success: false,
+              notFound: true,
+              error: 'No analysis history entry for this path'
+            };
+          }
           return { success: true, ...result };
         } catch (error) {
           logger.error('Failed to set embedding policy:', error);

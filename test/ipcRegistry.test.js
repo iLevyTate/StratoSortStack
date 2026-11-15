@@ -463,6 +463,23 @@ describe('ipcRegistry', () => {
       ipcRegistry.setShuttingDown(false);
     });
 
+    test('system:log still reaches its handler during shutdown', async () => {
+      // lifecycle keeps system:log registered past IPC cleanup for late
+      // renderer logs; the gate must not reject it as APP_SHUTTING_DOWN.
+      const handler = jest.fn().mockResolvedValue({ success: true });
+      ipcRegistry.registerHandler(mockIpcMain, 'system:log', handler);
+      const wrappedHandler = mockIpcMain.handle.mock.calls[0][1];
+
+      ipcRegistry.setShuttingDown(true);
+      try {
+        const result = await wrappedHandler({ sender: {} }, { level: 'info', message: 'late' });
+        expect(handler).toHaveBeenCalledTimes(1);
+        expect(result).toEqual({ success: true });
+      } finally {
+        ipcRegistry.setShuttingDown(false);
+      }
+    });
+
     test('wrapped handler calls original handler when not shutting down', async () => {
       const handler = jest.fn().mockResolvedValue({ success: true, data: 'test' });
       ipcRegistry.registerHandler(mockIpcMain, 'normal-channel', handler);

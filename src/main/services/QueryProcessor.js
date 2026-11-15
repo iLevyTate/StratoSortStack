@@ -29,6 +29,8 @@ class QueryProcessor {
   constructor(options = {}) {
     this._nlp = null; // Lazy loaded
     this._nlpUnavailable = false;
+    /** @type {any} Empty wink doc whose isOOV() answers lexicon lookups */
+    this._lexiconDoc = null;
 
     // Common English stop words that should NEVER be spell-corrected
     // These are function words that provide grammatical structure
@@ -370,6 +372,10 @@ class QueryProcessor {
         if (corrected !== word) {
           corrections.push({ original: word, corrected });
           this.stats.correctionsApplied++;
+          // Keep the typed term in the keyword (BM25) query next to the
+          // correction: a word the vocabulary does not know can still be a
+          // real term in the user's files, and exact matches must keep hitting.
+          processed.push(word);
         }
         currentWord = corrected;
       }
@@ -427,9 +433,10 @@ class QueryProcessor {
    * Strategy:
    * 1. NEVER correct stop words (common English function words)
    * 2. NEVER correct very short words (< 6 chars) - too risky
-   * 3. Only correct if edit distance is 1 (single typo) to avoid false matches
-   * 4. Only match against longer domain words (>= 5 chars) to avoid short word confusion
-   * 5. Use phonetic matching only for longer words (8+ chars)
+   * 3. NEVER correct a word the English lexicon knows ("audit", "protect")
+   * 4. Only correct if edit distance is 1 (single typo) to avoid false matches
+   * 5. Only match against longer domain words (>= 5 chars) to avoid short word confusion
+   * 6. Phonetic matching (longer words, 8+ chars) must also be within edit distance 2
    *
    * @param {string} word - Word to correct
    * @returns {string} Corrected word or original if no correction found
@@ -450,6 +457,12 @@ class QueryProcessor {
     // They're usually valid abbreviations, acronyms, or common words
     // This prevents "are" -> "api", "that" -> "tax", "like" -> "file"
     if (word.length < 5) {
+      return word;
+    }
+
+    // Rule 4: A real English word is not a typo, even when it sits one edit
+    // away from a domain word ("audit" vs "audio", "protect" vs "project").
+    if (this._isKnownEnglishWord(word)) {
       return word;
     }
 
@@ -474,16 +487,38 @@ class QueryProcessor {
       }
     }
 
-    // Rule 4: Only use phonetic matching for longer words where
-    // the user might have made more severe spelling mistakes
+    // Rule 5: Only use phonetic matching for longer words where the user
+    // might have made a worse mistake. A Soundex code alone is too loose
+    // ("personality" and "presentation" share one), so the match must also
+    // be within two edits.
     if (bestMatch === word && word.length >= 8) {
       const phoneticMatch = this._phoneticMatch(word);
-      if (phoneticMatch) {
+      if (phoneticMatch && distance(word.toLowerCase(), phoneticMatch.toLowerCase()) <= 2) {
         bestMatch = phoneticMatch;
       }
     }
 
     return bestMatch;
+  }
+
+  /**
+   * Whether the bundled English lexicon (wink-nlp model) knows this word.
+   * Words the model only learned from earlier input count as unknown.
+   *
+   * @param {string} word
+   * @returns {boolean} false when the lexicon is unavailable
+   */
+  _isKnownEnglishWord(word) {
+    const nlp = this._getNlp();
+    if (!nlp) return false;
+    try {
+      if (!this._lexiconDoc) this._lexiconDoc = nlp.readDoc('');
+      if (typeof this._lexiconDoc?.isOOV !== 'function') return false;
+      return !this._lexiconDoc.isOOV(word.toLowerCase());
+    } catch (error) {
+      logger.debug('[QueryProcessor] Lexicon lookup failed for:', word, error.message);
+      return false;
+    }
   }
 
   /**
@@ -714,6 +749,7 @@ class QueryProcessor {
     }
     this.synonymCache.clear();
     this._nlp = null;
+    this._lexiconDoc = null;
     this._nlpUnavailable = false;
     logger.info('[QueryProcessor] Cleanup complete');
   }

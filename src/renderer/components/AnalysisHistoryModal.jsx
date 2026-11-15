@@ -150,10 +150,10 @@ function AnalysisHistoryModal({ onClose, analysisStats, setAnalysisStats }) {
       if (actual && typeof actual === 'string') {
         const normalized = actual.replace(/\\+/g, '/');
         const segments = normalized.split('/').filter(Boolean);
+        // organization.actual is the moved file's path, so the folder is its
+        // parent. Guessing by extension named LICENSE or Makefile as the folder.
         if (segments.length > 1) {
-          const last = segments[segments.length - 1];
-          const isFile = /\.[A-Za-z0-9]+$/.test(last);
-          const folder = isFile ? segments[segments.length - 2] : last;
+          const folder = segments[segments.length - 2];
           if (folder) return folder;
         }
       }

@@ -163,8 +163,29 @@ function createIpcSanitizer({ log }) {
   // Prose that mentions a Windows path ("What is in D:\Docs?") matches the
   // path heuristic and used to be blanked before it left the renderer. Exact
   // names only; every other key keeps the heuristic, and a key containing
-  // "path" or "file" always wins.
-  const FREE_TEXT_KEYS = new Set(['query', 'description', 'text', 'message', 'note']);
+  // "path" or "file" always wins. Matched on key.toLowerCase(), so entries
+  // are lowercase.
+  //
+  // The settings prose fields (organization and persona guidance, persona
+  // label) were blanked when they named a path and also held `?`, `*` or
+  // `..`; an empty persona guidance then dropped the whole persona in main.
+  // Exclusion glob lists (settings `downloadsTriageExclusions`, triage
+  // `exclusionGlobs`) hold `\` and `*` by design; a blanked entry failed the
+  // settings schema (min length 1), so every later save failed. Main
+  // re-validates all of these (sanitizeCustomPersonas, sanitizeExclusionGlobs).
+  const FREE_TEXT_KEYS = new Set([
+    'query',
+    'description',
+    'text',
+    'message',
+    'note',
+    'organizationcustomguidance',
+    'chatpersonacustomguidance',
+    'guidance',
+    'label',
+    'downloadstriageexclusions',
+    'exclusionglobs'
+  ]);
 
   /**
    * @param {any} obj

@@ -149,6 +149,11 @@ jest.mock('../../src/renderer/services/ipc', () => ({
   }
 }));
 
+// PhaseRenderer mounts the run provider above Complete.
+jest.mock('../../src/renderer/phases/discover/AnalysisRunProvider', () => ({
+  useAnalysisRun: () => ({ resetRun: jest.fn() })
+}));
+
 import CompletePhase from '../../src/renderer/phases/CompletePhase';
 
 describe('CompletePhase premium finish', () => {

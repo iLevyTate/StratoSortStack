@@ -106,6 +106,29 @@ describe('SettingsBackupService pre-restore snapshot', () => {
     expect(snapshot.settings.confidenceThreshold).toBe(0.6);
   });
 
+  test('restoring the oldest automatic backup does not rotate it out', async () => {
+    const oldest = await writeUserBackup({ confidenceThreshold: 0.33 });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await writeUserBackup({ confidenceThreshold: 0.4 });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    // Two kept: the snapshot taken before the restore would push the oldest out.
+    const service = new SettingsBackupService({
+      backupDir: BACKUP_DIR,
+      maxBackups: 2,
+      defaults: { confidenceThreshold: 0.75 },
+      loadSettings: async () => ({ confidenceThreshold: 0.6 })
+    });
+    const saveSettings = jest.fn().mockResolvedValue({ success: true });
+    const result = await service.restoreFromBackup(oldest, saveSettings);
+
+    expect(result.success).toBe(true);
+    expect(fsSync.existsSync(oldest)).toBe(true);
+    // Restoring it a second time still works.
+    const again = await service.restoreFromBackup(oldest, saveSettings);
+    expect(again.success).toBe(true);
+  });
+
   test('preRestoreBackup: false restores without writing a snapshot', async () => {
     const userBackup = await writeUserBackup({ confidenceThreshold: 0.33 });
     const loadSettings = jest.fn(async () => ({ confidenceThreshold: 0.75 }));

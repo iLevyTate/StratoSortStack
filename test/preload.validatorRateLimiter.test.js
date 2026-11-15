@@ -131,7 +131,14 @@ describe('createIpcValidator', () => {
     test.each([
       ['files:select-directory', { success: false, path: null }],
       ['smart-folders:get-custom', []],
-      ['analysis-history:get', []],
+      [
+        'analysis-history:get',
+        {
+          success: false,
+          error: 'IPC response rejected: payload exceeded safety limits',
+          reason: 'payload-too-large'
+        }
+      ],
       ['undo-redo:get-history', []],
       ['undo-redo:get-state', { stack: [], pointer: -1, canUndo: false, canRedo: false }],
       [

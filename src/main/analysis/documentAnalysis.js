@@ -1292,7 +1292,9 @@ async function extractCadOrDesignText(filePath, fileExtension) {
       return cad.extractTextFromEps(filePath);
     case '.ai':
       return cad.extractTextFromAi(filePath, {
-        extractTextFromPdf: (/** @type {string} */ p) => extractTextFromPdf(p, path.basename(p))
+        // No OCR follows on this route, so nothing would release a pinned buffer.
+        extractTextFromPdf: (/** @type {string} */ p) =>
+          extractTextFromPdf(p, path.basename(p), { pinForOcr: false })
       });
     default:
       return '';

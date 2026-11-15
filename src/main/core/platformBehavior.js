@@ -37,13 +37,15 @@ function bringWindowToForeground(win) {
     win.moveTop();
     win.show();
     win.setAlwaysOnTop(true);
-    const alwaysOnTopTimerId = setTimeout(() => {
+    // No 'closed' listener to cancel this: the callback already skips a
+    // destroyed window, and a once('closed') per call piles up on the
+    // long-lived main window (one per restore, never removed).
+    setTimeout(() => {
       if (win && !win.isDestroyed()) {
         win.setAlwaysOnTop(false);
         win.focus();
       }
     }, WINDOW.ALWAYS_ON_TOP_DURATION_MS);
-    win.once('closed', () => clearTimeout(alwaysOnTopTimerId));
   }
 
   win.focus();

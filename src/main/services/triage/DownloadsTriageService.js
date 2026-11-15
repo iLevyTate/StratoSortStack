@@ -35,10 +35,9 @@ const {
   DEFAULT_EXCLUSION_GLOBS,
   sanitizeExclusionGlobs
 } = require('../../../shared/config/exclusionRulesSchema');
-const { THRESHOLDS, TIMEOUTS } = require('../../../shared/performanceConstants');
+const { THRESHOLDS } = require('../../../shared/performanceConstants');
 const { ACTION_TYPES } = require('../../../shared/constants');
 const { validateFileOperationPath } = require('../../../shared/pathSanitization');
-const { withTimeout } = require('../../../shared/promiseUtils');
 const { isCaseInsensitiveFileSystem } = require('../../../shared/crossPlatformUtils');
 
 const logger = createLogger('DownloadsTriageService');
@@ -1175,6 +1174,12 @@ class DownloadsTriageService {
         const failed = [];
         let totalBytes = 0;
         const undoOps = [];
+        // Real moves only. A dedup skip lands in `moved` for the renderer,
+        // but its source was removed, not moved, so it is no path change.
+        /** @type {Array<{ oldPath: string, newPath: string }>} */
+        const pathChanges = [];
+        /** @type {string[]} */
+        const dedupRemovedSources = [];
 
         // Fail closed on destination containment: suggestions only ever come
         // from this session's Smart Folder records, so a destination outside
@@ -1265,23 +1270,32 @@ class DownloadsTriageService {
 
             await fs.mkdir(path.dirname(op.destination), { recursive: true });
 
-            const moveResult = await withTimeout(
-              performFileMove(op, logger, computeFileChecksum, null, pendingSources),
-              TIMEOUTS.FILE_COPY || 120000,
-              `Triage organize ${path.basename(op.source)}`
+            // The move is awaited to its end, never raced against a timer: a
+            // timer cannot stop a copy, so a large cross-drive move would be
+            // reported failed while the file went on to move with no undo
+            // entry or path update. Triage has no Stop, so there is no abort
+            // signal to pass here.
+            const moveResult = await performFileMove(
+              op,
+              logger,
+              computeFileChecksum,
+              null,
+              pendingSources
             );
             const finalDest = moveResult?.destination || op.destination;
             const size = Number(f.size) || 0;
             totalBytes += size;
             moved.push({ path: op.source, destination: finalDest, size });
-            if (moveResult?.skipped) {
+            if (moveResult && 'skipped' in moveResult && moveResult.skipped) {
               // Dedup-skip: an identical file already sat at the destination,
               // so the SOURCE was removed and `finalDest` is the surviving
               // sibling this operation never touched. Recording a move undo
               // here made "undo" relocate that untouched sibling out of its
               // home. The source content is not restorable (it was
               // deduplicated away), so no undo op is recorded for this file.
+              dedupRemovedSources.push(op.source);
             } else {
+              pathChanges.push({ oldPath: op.source, newPath: finalDest });
               undoOps.push({
                 type: 'move',
                 originalPath: op.source,
@@ -1323,12 +1337,35 @@ class DownloadsTriageService {
           }
 
           const coordinator = tryResolveFilePathCoordinator();
-          if (coordinator && typeof coordinator.batchPathUpdate === 'function') {
-            const pathChanges = moved.map((m) => ({ oldPath: m.path, newPath: m.destination }));
+          if (
+            pathChanges.length > 0 &&
+            coordinator &&
+            typeof coordinator.batchPathUpdate === 'function'
+          ) {
             try {
               await coordinator.batchPathUpdate(pathChanges, { type: 'move' });
             } catch (err) {
               logger.warn('[DownloadsTriageService] batchPathUpdate after organize failed', {
+                error: err?.message
+              });
+            }
+          }
+        }
+
+        // A dedup-skipped source is gone, so it is a deletion for the indexes.
+        // Re-pointing it at the kept sibling (as a move) made the sibling's
+        // path resolve to the removed file's history entry. This runs outside
+        // the undo guard because an all-skip request records no undo ops.
+        if (dedupRemovedSources.length > 0) {
+          const coordinator = tryResolveFilePathCoordinator();
+          for (const source of dedupRemovedSources) {
+            try {
+              if (coordinator && typeof coordinator.handleFileDeletion === 'function') {
+                await coordinator.handleFileDeletion(source);
+              }
+            } catch (err) {
+              logger.debug('[DownloadsTriageService] dedup source index cleanup failed', {
+                path: source,
                 error: err?.message
               });
             }

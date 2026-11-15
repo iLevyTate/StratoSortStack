@@ -681,6 +681,55 @@ describe('validationSchemas (Zod path)', () => {
         false
       );
     });
+
+    // The renderer sends suggestedFolderPath with every triage action, so a
+    // Smart Folder on a share used to fail a whole Trash or Ignore request.
+    describe('triage act suggestedFolderPath', () => {
+      const act = (suggestedFolderPath, action = 'trash') =>
+        schemas.downloadsTriageAct.safeParse({
+          triageId: 'triage-1',
+          action,
+          files: [
+            { path: 'C:\\Users\\kim\\Downloads\\a.pdf', size: 10 },
+            {
+              path: 'C:\\Users\\kim\\Downloads\\b.pdf',
+              size: 10,
+              suggestedFolderPath
+            }
+          ]
+        });
+
+      test('accepts a Smart Folder on a share on Windows', () => {
+        setPlatform('win32');
+        expect(act('\\\\NAS\\Docs\\Invoices').success).toBe(true);
+        expect(act('\\\\NAS\\Docs\\Invoices', 'ignore').success).toBe(true);
+        expect(act('\\\\NAS\\Docs\\Invoices', 'organize').success).toBe(true);
+      });
+
+      test.each([
+        ['a device namespace path', '\\\\?\\C:\\Users\\kim'],
+        ['an administrative share', '\\\\localhost\\C$\\Windows'],
+        ['traversal out of the share', '\\\\NAS\\Docs\\..\\..\\Other']
+      ])('still rejects %s on Windows', (_label, folder) => {
+        setPlatform('win32');
+        expect(act(folder).success).toBe(false);
+      });
+
+      test('rejects a share path off Windows', () => {
+        setPlatform('linux');
+        expect(act('\\\\NAS\\Docs\\Invoices').success).toBe(false);
+      });
+
+      test('the triaged file itself still may not be on a share', () => {
+        setPlatform('win32');
+        const result = schemas.downloadsTriageAct.safeParse({
+          triageId: 'triage-1',
+          action: 'trash',
+          files: [{ path: '\\\\NAS\\Docs\\a.pdf', size: 10 }]
+        });
+        expect(result.success).toBe(false);
+      });
+    });
   });
 
   describe('batchOrganize schema — IPC-gate path hardening (audit item #1)', () => {

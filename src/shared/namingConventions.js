@@ -7,6 +7,8 @@
  * @module shared/namingConventions
  */
 
+const { isPlausibleContentDate } = require('./contentDateSanity');
+
 /**
  * Format a date according to the specified format
  * @param {Date} date - Date to format
@@ -164,9 +166,10 @@ function generatePreviewName(originalName, settings) {
   const { convention, separator, dateFormat, caseConvention } = settings;
   const safeSeparator = normalizeSeparator(separator);
 
-  const baseName = originalName.replace(/\.[^/.]+$/, '');
   const dotIdx = originalName.lastIndexOf('.');
-  const extension = dotIdx > 0 ? originalName.slice(dotIdx) : '';
+  const extension =
+    getCompoundExtension(originalName) || (dotIdx > 0 ? originalName.slice(dotIdx) : '');
+  const baseName = extension ? originalName.slice(0, -extension.length) : originalName;
   const today = new Date();
 
   let previewName;
@@ -210,9 +213,12 @@ function generateSuggestedNameFromAnalysis({
   const safeOriginalName = String(originalFileName || '').trim();
   if (!safeOriginalName) return '';
 
+  // Keep compound extensions whole: logs.tar.gz renamed must stay a .tar.gz.
   const extDotIdx = safeOriginalName.lastIndexOf('.');
-  const extension = extDotIdx > 0 ? safeOriginalName.slice(extDotIdx) : '';
-  const originalBase = safeOriginalName.replace(/\.[^/.]+$/, '');
+  const extension =
+    getCompoundExtension(safeOriginalName) ||
+    (extDotIdx > 0 ? safeOriginalName.slice(extDotIdx) : '');
+  const originalBase = extension ? safeOriginalName.slice(0, -extension.length) : safeOriginalName;
 
   const convention = settings?.convention || 'keep-original';
   const separator = normalizeSeparator(settings?.separator ?? '-');
@@ -286,6 +292,22 @@ function generateSuggestedNameFromAnalysis({
     return ms >= MIN_DATE_MS && ms <= MAX_DATE_MS;
   };
 
+  /**
+   * Local midnight of a written year, month and day, or null when they do not
+   * name a real day: new Date(2024, 12, 45) silently rolls over to 2025-02-14.
+   * @param {string} y @param {string} mo @param {string} d @returns {Date|null}
+   */
+  const calendarDate = (y, mo, d) => {
+    const year = Number(y);
+    const month = Number(mo);
+    const day = Number(d);
+    const local = new Date(year, month - 1, day);
+    if (local.getFullYear() !== year || local.getMonth() !== month - 1 || local.getDate() !== day) {
+      return null;
+    }
+    return isReasonableDate(local) ? local : null;
+  };
+
   /** @param {any} value @returns {Date|null} */
   const parseDateLike = (value) => {
     if (!value) return null;
@@ -299,32 +321,31 @@ function generateSuggestedNameFromAnalysis({
     if (typeof value !== 'string') return null;
     const raw = value.trim();
     if (!raw) return null;
-    const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (m) {
-      const local = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-      return Number.isNaN(local.getTime()) ? null : local;
-    }
-    const m2 = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
-    if (m2) {
-      const local = new Date(Number(m2[1]), Number(m2[2]) - 1, Number(m2[3]));
-      return Number.isNaN(local.getTime()) ? null : local;
-    }
+    const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/) || raw.match(/^(\d{4})(\d{2})(\d{2})$/);
+    if (m) return calendarDate(m[1], m[2], m[3]);
     const parsed = new Date(raw);
     return Number.isNaN(parsed.getTime()) ? null : parsed;
   };
 
+  // Each written-date form, tried in this order. A date is a whole run of
+  // digits, so an order or tracking number is not read as one; the compact
+  // form may carry a camera time (IMG20240315123456, 17 digits with ms).
+  const FILE_NAME_DATE_PATTERNS = [
+    /(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)/g,
+    /(?<!\d)(\d{4})(\d{2})(\d{2})(?:\d{6}(?:\d{3})?)?(?!\d)/g
+  ];
+
   /** @param {any} nameBase @returns {Date|null} */
   const parseDateFromFileName = (nameBase) => {
     const s = String(nameBase || '');
-    const m = s.match(/(\d{4})-(\d{2})-(\d{2})/);
-    if (m) {
-      const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-      return Number.isNaN(d.getTime()) ? null : d;
-    }
-    const m2 = s.match(/(\d{4})(\d{2})(\d{2})/);
-    if (m2) {
-      const d = new Date(Number(m2[1]), Number(m2[2]) - 1, Number(m2[3]));
-      return Number.isNaN(d.getTime()) ? null : d;
+    for (const pattern of FILE_NAME_DATE_PATTERNS) {
+      for (const m of s.matchAll(pattern)) {
+        // A file name date outranks the file's own times, so it must be a
+        // real day in a plausible year (Order 98765432 is not 9880-07-02).
+        if (!isPlausibleContentDate(m[1])) continue;
+        const d = calendarDate(m[1], m[2], m[3]);
+        if (d) return d;
+      }
     }
     return null;
   };
@@ -343,7 +364,7 @@ function generateSuggestedNameFromAnalysis({
   const MAX_SUBJECT_LENGTH = 50;
   let rawSubject =
     typeof analysis?.suggestedName === 'string' && analysis.suggestedName.trim()
-      ? analysis.suggestedName.trim().replace(/\.[^/.]+$/, '')
+      ? stripSuggestedNameExtension(analysis.suggestedName.trim(), extension)
       : originalBase;
 
   const conventionAddsDate = ['subject-date', 'date-subject', 'project-subject-date'].includes(
@@ -430,6 +451,50 @@ function getCompoundExtension(fileName) {
     }
   }
   return '';
+}
+
+// A suffix written as a file type: one case, letters and digits, starting
+// with a letter (.pdf, .MP3). Not ". Smith", "._Louis", ".Smith" or ".1",
+// which are the dots of initials, abbreviations and version numbers.
+const FILE_EXTENSION_LIKE_RE = /^\.(?:[a-z][a-z0-9]{0,9}|[A-Z][A-Z0-9]{0,9})$/;
+
+/**
+ * The extension a typed or suggested name ends with, or '' when the text
+ * after its last dot is part of the name rather than a file type.
+ * @param {any} name
+ * @returns {string}
+ */
+function trailingFileExtension(name) {
+  if (typeof name !== 'string') return '';
+  const dotIdx = name.lastIndexOf('.');
+  if (dotIdx <= 0) return '';
+  const suffix = name.slice(dotIdx);
+  return FILE_EXTENSION_LIKE_RE.test(suffix) ? suffix : '';
+}
+
+/**
+ * A suggested name without its extension: the file's own one (any case), or
+ * else one that reads as a file type. "St._Louis_trip" and "Report_v2.1"
+ * keep their dots.
+ * @param {string} name
+ * @param {string} extension - the original file's extension, compound-aware
+ * @returns {string}
+ */
+function stripSuggestedNameExtension(name, extension) {
+  if (extension) {
+    const ext = extension.toLowerCase();
+    if (name.toLowerCase().endsWith(ext)) {
+      return name.slice(0, -ext.length);
+    }
+    // Fallback names flatten logs.tar.gz to logs_tar.gz; do not keep "tar"
+    // in the subject when the extension re-added is .tar.gz.
+    if (getCompoundExtension(ext)) {
+      const flattened = new RegExp(`[\\s_-]tar\\${ext.slice('.tar'.length)}$`, 'i');
+      if (flattened.test(name)) return name.replace(flattened, '') || name;
+    }
+  }
+  const typed = trailingFileExtension(name);
+  return typed ? name.slice(0, -typed.length) : name;
 }
 
 /**
@@ -605,6 +670,7 @@ module.exports = {
   mainProcessNamingAlreadyApplied,
   resolveDiscoverSuggestedName,
   extractExtension,
+  trailingFileExtension,
   extractFileName,
   makeUniqueFileName
 };

@@ -49,10 +49,11 @@ describe('startup journal recovery wiring', () => {
 
   test('window is created before the first-paint gate, which precedes coordinated startup', () => {
     // Pins the window-first ordering: heavyweight AI bring-up must not be
-    // queued in the same tick as createWindow(); it waits on the first-paint
-    // gate (core/firstPaintGate.js) so its synchronous stretches cannot delay
-    // the first visible frame.
-    const windowIndex = source.indexOf('createWindow();');
+    // queued in the same tick as createStartupWindow(); it waits on the
+    // first-paint gate (core/firstPaintGate.js) so its synchronous stretches
+    // cannot delay the first visible frame. Matches the startup call site, not
+    // the helper body that wraps createWindow().
+    const windowIndex = source.indexOf('createStartupWindow();');
     const gateIndex = source.indexOf('waitForFirstPaint(');
     const coordinatedIndex = source.indexOf('await runCoordinatedStartupInBackground(');
 
@@ -147,7 +148,8 @@ describe('startup and shutdown wiring around the window', () => {
       "logger.warn('[STARTUP] Creating window in degraded mode due to startup errors')"
     );
     expect(degradedIndex).toBeGreaterThan(-1);
-    const degradedWindow = source.indexOf('createWindow();', degradedIndex);
+    const degradedWindow = source.indexOf('createStartupWindow();', degradedIndex);
+    expect(degradedWindow).toBeGreaterThan(degradedIndex);
     const degradedSweep = source.indexOf(
       'trackTimeout(sweepOldLogsAndCrashDumps, TIMEOUTS.FIRST_PAINT_GATE);',
       degradedIndex

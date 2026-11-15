@@ -7,6 +7,8 @@ const {
   removeProviderKey,
   testProvider,
   getKeyStatus,
+  setRouting,
+  acknowledgeCloud,
   statusPushed
 } = require('../../../src/renderer/store/slices/aiProviderSlice');
 
@@ -123,6 +125,33 @@ describe('aiProviderSlice', () => {
       )
     );
     expect(s.lastError).toBe('keystore unavailable');
+  });
+
+  test.each([
+    ['setRouting', () => setRouting.pending('req', { default: 'local' })],
+    [
+      'setProviderConfig',
+      () => setProviderConfig.pending('req', { provider: 'local', config: {} })
+    ],
+    ['setProviderKey', () => setProviderKey.pending('req', { provider: 'anthropic', key: 'k' })],
+    ['removeProviderKey', () => removeProviderKey.pending('req', { provider: 'anthropic' })],
+    ['acknowledgeCloud', () => acknowledgeCloud.pending('req', undefined)]
+  ])('%s.pending clears a stale lastError from an earlier action', (_name, makeAction) => {
+    const failed = reducer(
+      undefined,
+      setRouting.rejected(
+        null,
+        'old',
+        { default: 'anthropic' },
+        {
+          message: 'Cloud consent declined',
+          code: 'CONSENT_DECLINED'
+        }
+      )
+    );
+    expect(failed.lastError).toBe('Cloud consent declined');
+    const s = reducer(failed, makeAction());
+    expect(s.lastError).toBeNull();
   });
 
   test('statusPushed updates the status sub-tree', () => {

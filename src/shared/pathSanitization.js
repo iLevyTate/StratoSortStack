@@ -185,9 +185,13 @@ function sanitizePath(filePath) {
   }
   const sanitized = processedPath;
 
-  // 2. Unicode normalization (NFD to NFC for consistency)
-  // This helps prevent homograph attacks and ensures consistent encoding
-  let normalized = sanitized.normalize('NFC');
+  // 2. Unicode normalization (NFD to NFC) on macOS only. APFS/HFS+ look names
+  // up normalization-insensitively, so composing there is harmless. NTFS and
+  // ext4 store the bytes as given: an NFD name (unzipped from a Mac, say) is
+  // a different file from its NFC spelling, and composing it here pointed
+  // every later fs call at a file that does not exist. Comparison keys
+  // (normalizePathForIndex) still compose on every platform.
+  let normalized = PLATFORM === 'darwin' ? sanitized.normalize('NFC') : sanitized;
 
   // 3. Normalize the path first (resolves .., ., etc.)
   // This must happen BEFORE the length check so that ".." segments are
@@ -404,9 +408,11 @@ function isPathWithinAllowed(targetPath, allowedBasePaths) {
 
     // Check if target starts with base path
     if (normalizedTarget.startsWith(normalizedBase)) {
-      // Ensure it's a proper subdirectory (not just a prefix match)
+      // Ensure it's a proper subdirectory (not just a prefix match). A drive
+      // or filesystem root ('D:\', '/') keeps its trailing separator after
+      // normalize, so the prefix already ends on a separator boundary.
       const remainder = normalizedTarget.slice(normalizedBase.length);
-      if (remainder === '' || remainder.startsWith(path.sep)) {
+      if (remainder === '' || remainder.startsWith(path.sep) || normalizedBase.endsWith(path.sep)) {
         return true;
       }
     }

@@ -103,6 +103,37 @@ function deletePathKeysOwnedBy(index, filePath, entryId) {
 }
 
 /**
+ * The id list stored under `key`, or null. Tag and category keys come from
+ * model keywords and user tags, so a key such as "constructor" or "toString"
+ * must not resolve to an inherited Object.prototype member: the index maps are
+ * plain objects (from JSON.parse or createEmptyIndex).
+ * @param {Record<string, any>} map - Keyed index (tagIndex, categoryIndex)
+ * @param {string} key - Bucket key
+ * @returns {Array<any>|null}
+ */
+function getIndexBucket(map, key) {
+  if (!map || !Object.prototype.hasOwnProperty.call(map, key)) return null;
+  const bucket = map[key];
+  return Array.isArray(bucket) ? bucket : null;
+}
+
+/**
+ * Store an id list under `key` as an own property. A plain assignment of
+ * "__proto__" would replace the map's prototype instead of adding a key.
+ * @param {Record<string, any>} map - Keyed index
+ * @param {string} key - Bucket key
+ * @param {Array<any>} bucket - Id list
+ */
+function setIndexBucket(map, key, bucket) {
+  Object.defineProperty(map, key, {
+    value: bucket,
+    writable: true,
+    enumerable: true,
+    configurable: true
+  });
+}
+
+/**
  * Update all indexes for a new entry
  * @param {Record<string, any>} index - Analysis index
  * @param {Record<string, any>} entry - Analysis entry
@@ -138,19 +169,18 @@ function updateIndexes(index, entry) {
   // Tag index
   if (entry.analysis.tags) {
     entry.analysis.tags.forEach((/** @type {any} */ tag) => {
-      if (!index.tagIndex[tag]) {
-        index.tagIndex[tag] = [];
-      }
-      index.tagIndex[tag].push(entry.id);
+      const bucket = getIndexBucket(index.tagIndex, tag);
+      if (bucket) bucket.push(entry.id);
+      else setIndexBucket(index.tagIndex, tag, [entry.id]);
     });
   }
 
   // Category index
   if (entry.analysis.category) {
-    if (!index.categoryIndex[entry.analysis.category]) {
-      index.categoryIndex[entry.analysis.category] = [];
-    }
-    index.categoryIndex[entry.analysis.category].push(entry.id);
+    const category = entry.analysis.category;
+    const bucket = getIndexBucket(index.categoryIndex, category);
+    if (bucket) bucket.push(entry.id);
+    else setIndexBucket(index.categoryIndex, category, [entry.id]);
   }
 
   // Date index (by month)
@@ -188,22 +218,22 @@ function removeFromIndexes(index, entry) {
   // Remove from tag index
   if (entry.analysis.tags) {
     entry.analysis.tags.forEach((/** @type {any} */ tag) => {
-      const tagEntries = index.tagIndex[tag] || [];
-      index.tagIndex[tag] = tagEntries.filter((/** @type {any} */ id) => id !== entry.id);
-      if (index.tagIndex[tag].length === 0) {
-        delete index.tagIndex[tag];
-      }
+      const tagEntries = getIndexBucket(index.tagIndex, tag);
+      if (!tagEntries) return;
+      const remaining = tagEntries.filter((/** @type {any} */ id) => id !== entry.id);
+      if (remaining.length === 0) delete index.tagIndex[tag];
+      else setIndexBucket(index.tagIndex, tag, remaining);
     });
   }
 
   // Remove from category index
   if (entry.analysis.category) {
-    const categoryEntries = index.categoryIndex[entry.analysis.category] || [];
-    index.categoryIndex[entry.analysis.category] = categoryEntries.filter(
-      (/** @type {any} */ id) => id !== entry.id
-    );
-    if (index.categoryIndex[entry.analysis.category].length === 0) {
-      delete index.categoryIndex[entry.analysis.category];
+    const category = entry.analysis.category;
+    const categoryEntries = getIndexBucket(index.categoryIndex, category);
+    if (categoryEntries) {
+      const remaining = categoryEntries.filter((/** @type {any} */ id) => id !== entry.id);
+      if (remaining.length === 0) delete index.categoryIndex[category];
+      else setIndexBucket(index.categoryIndex, category, remaining);
     }
   }
 
@@ -270,6 +300,7 @@ module.exports = {
   createEmptyIndex,
   generateFileHash,
   getSizeRange,
+  getIndexBucket,
   updateIndexes,
   removeFromIndexes,
   updatePathIndexForMove,

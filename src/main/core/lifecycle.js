@@ -11,7 +11,7 @@
 const electron = require('electron');
 const { app, BrowserWindow, ipcMain } = electron;
 const { createLogger, shutdownLogging } = require('../../shared/logger');
-const { hasPendingDownloadedUpdate } = require('./autoUpdater');
+const { hasPendingDownloadedUpdate, runPendingInstallOnExit } = require('./autoUpdater');
 const { attachUserDataLockPowerMonitor } = require('./userDataLock');
 const { destroyTray, getTray, unregisterGlobalShortcuts } = require('./systemTray');
 const { withoutJumpListTasks } = require('./jumpList');
@@ -145,6 +145,23 @@ function _shouldRelaunchAfterExit() {
 }
 
 /**
+ * Hide every visible window at the start of a shutdown. Windows already
+ * closed (autoUpdater.quitAndInstall on macOS closes them before before-quit)
+ * or destroyed are skipped; a failure never stops the shutdown.
+ */
+function _hideAllWindowsForShutdown() {
+  try {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win || win.isDestroyed?.()) continue;
+      if (typeof win.isVisible === 'function' && !win.isVisible()) continue;
+      win.hide();
+    }
+  } catch (error) {
+    logger.debug('[SHUTDOWN] Could not hide windows:', error?.message || String(error));
+  }
+}
+
+/**
  * Handle before-quit event - performs all cleanup operations
  * @returns {Promise<void>}
  */
@@ -157,6 +174,12 @@ async function handleBeforeQuit(/** @type {any} */ event) {
   _quitCleanupStarted = true;
 
   lifecycleConfig.setIsQuitting?.(true);
+
+  // From the IPC gate below onward every invoke answers APP_SHUTTING_DOWN,
+  // and cleanup can take many seconds: a window left on screen looks alive
+  // but no longer responds. Hide (not destroy) so the renderer can still
+  // send late log lines and app.exit() closes the windows at the end.
+  _hideAllWindowsForShutdown();
 
   // Stop a startup that is still running (quit within the first seconds) so
   // service integration does not initialise against services being shut down.
@@ -328,12 +351,27 @@ async function handleBeforeQuit(/** @type {any} */ event) {
     // Batch analysis holds pending work that can race against vector/Llama shutdown if
     // left running past phase 3.
     await runPhase('ipcAndBatch', PHASE_BUDGETS.ipcAndBatch, async () => {
+      // The batch service's shutdown also shuts the embedding queues down;
+      // false means no batch service existed this session.
+      let embeddingQueuesShutDown = true;
       try {
         const { shutdownBatchAnalysisService } = require('../ipc/analysis');
-        await shutdownBatchAnalysisService?.();
+        embeddingQueuesShutDown = (await shutdownBatchAnalysisService?.()) !== false;
         logger.info('[CLEANUP] Batch analysis service shut down');
       } catch (error) {
         logger.error('[CLEANUP] Failed to shut down batch analysis service:', error);
+      }
+
+      // The embedding queues restore and flush on every launch, not only
+      // after a batch run, so their persist and SQLite close must not hinge
+      // on a batch service having been created.
+      if (!embeddingQueuesShutDown) {
+        try {
+          await require('../analysis/embeddingQueue/queueManager').shutdown();
+          logger.info('[CLEANUP] Embedding queues shut down');
+        } catch (error) {
+          logger.error('[CLEANUP] Failed to shut down embedding queues:', error);
+        }
       }
 
       try {
@@ -572,6 +610,14 @@ async function handleBeforeQuit(/** @type {any} */ event) {
     } catch {
       // Logging is closed; exiting without the relaunch is all that is left.
     }
+  }
+
+  // "Install now" starts the installer only here: it force-kills the running
+  // app shortly after launch, so starting it before cleanup lost unsaved work.
+  try {
+    runPendingInstallOnExit();
+  } catch {
+    // Logging is closed; exiting is all that is left.
   }
 
   // Cleanup complete — now exit the app (bypasses before-quit to avoid re-entrance)

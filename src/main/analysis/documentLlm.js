@@ -674,11 +674,13 @@ ${truncated}
               return inference();
             }
 
-            return globalDeduplicator.deduplicate(
-              dedupeKey,
-              inference,
-              { type: 'document', fileName: originalFileName } // Metadata for debugging cache hits
-            );
+            return globalDeduplicator.deduplicate(dedupeKey, inference, {
+              type: 'document',
+              fileName: originalFileName,
+              // Lets a caller that joined this call re-run it when the
+              // starter's abort (not its own) ends the shared inference.
+              signal: abortController.signal
+            });
           },
           AppConfig.ai.textAnalysis.timeout,
           `Document analysis for ${originalFileName}`,

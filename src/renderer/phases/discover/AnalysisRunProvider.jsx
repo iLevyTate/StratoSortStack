@@ -64,7 +64,10 @@ export function AnalysisRunProvider({ children }) {
     clearAnalysisQueue,
     retryFailedFiles,
     reanalyzeFiles,
-    pruneBatchResultsForPath
+    pruneBatchResultsForPath,
+    // The run's own reset, not useDiscoverState's Redux-only one above: it
+    // also aborts the run, releases its lock and drops its queued files.
+    resetAnalysisState: resetRun
   } = useAnalysis({
     selectedFiles,
     fileStates,
@@ -146,6 +149,7 @@ export function AnalysisRunProvider({ children }) {
       retryFailedFiles,
       reanalyzeFiles,
       pruneBatchResultsForPath,
+      resetRun,
       totalAnalysisFailure,
       setTotalAnalysisFailure
     }),
@@ -156,6 +160,7 @@ export function AnalysisRunProvider({ children }) {
       retryFailedFiles,
       reanalyzeFiles,
       pruneBatchResultsForPath,
+      resetRun,
       totalAnalysisFailure
     ]
   );
@@ -177,4 +182,12 @@ export function useAnalysisRun() {
     throw new Error('useAnalysisRun must be used inside AnalysisRunProvider');
   }
   return run;
+}
+
+/**
+ * The analysis run, or null outside AnalysisRunProvider. For components such
+ * as the phase error boundary that can render without the provider.
+ */
+export function useOptionalAnalysisRun() {
+  return useContext(AnalysisRunContext);
 }

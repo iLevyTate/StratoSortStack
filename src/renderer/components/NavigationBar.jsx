@@ -33,6 +33,8 @@ import { useUndoRedo } from './UndoRedoSystem';
 import { hasDestinationFolder } from '../utils/smartFolderDestinations';
 
 const logger = createLogger('NavigationBar');
+// How often the AI / vector DB health dots are re-probed while mounted.
+const HEALTH_REPROBE_INTERVAL_MS = 60 * 1000;
 // =============================================================================
 // Icon Components - Using Lucide React for premium icons
 // =============================================================================
@@ -717,7 +719,9 @@ function NavigationBar() {
     [dispatch]
   );
 
-  const didProbeHealth = useRef(false);
+  // A probe still awaiting IPC; the focus listener and the interval skip
+  // instead of stacking a second llama:test-connection on top of it.
+  const healthProbeInFlight = useRef(false);
   const didFetchAiConfig = useRef(false);
   const AI_CONFIG_FETCH_MAX_ATTEMPTS = 3;
 
@@ -752,11 +756,12 @@ function NavigationBar() {
     };
   }, [dispatch, aiProviderLoaded]);
 
+  // AI health is re-probed while the bar is mounted (on window focus and
+  // every HEALTH_REPROBE_INTERVAL_MS), not only once at mount: a probe that
+  // ran while the engine was still starting left the dot offline for good,
+  // and a later failure or recovery never showed.
   useEffect(() => {
-    if (didProbeHealth.current) return;
-    didProbeHealth.current = true;
-
-    const probeHealth = async () => {
+    const runProbe = async () => {
       // LlamaService is in-process - use testConnection to verify model loaded
       if (window.electronAPI?.llama?.testConnection) {
         try {
@@ -808,7 +813,32 @@ function NavigationBar() {
       }
     };
 
-    probeHealth();
+    const probeHealth = async () => {
+      if (healthProbeInFlight.current) return;
+      healthProbeInFlight.current = true;
+      try {
+        await runProbe();
+      } finally {
+        healthProbeInFlight.current = false;
+      }
+    };
+
+    void probeHealth();
+
+    const handleFocus = () => {
+      void probeHealth();
+    };
+    window.addEventListener('focus', handleFocus);
+    const intervalId = setInterval(() => {
+      // A hidden window re-probes on focus; skip the background ticks.
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      void probeHealth();
+    }, HEALTH_REPROBE_INTERVAL_MS);
+
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      clearInterval(intervalId);
+    };
   }, [dispatch]);
 
   // Scroll effect for glass morphism - throttled to prevent excessive re-renders

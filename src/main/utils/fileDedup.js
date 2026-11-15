@@ -234,6 +234,10 @@ async function findDuplicateInDirectory({
   const sourceStat = await statSafe(sourcePath);
   if (!isFileStat(sourceStat)) return null;
   if (typeof sourceStat.size !== 'number') return null;
+  // Every empty file has the same size and hash, so an empty file in the
+  // folder says nothing about the source. Treating it as a copy would trash
+  // an unrelated empty placeholder the user just organized.
+  if (sourceStat.size === 0) return null;
 
   let entries;
   try {
@@ -338,6 +342,10 @@ async function findDuplicateForDestination({
 
   const sourceStat = await statSafe(sourcePath);
   if (!isFileStat(sourceStat)) return null;
+  // Empty files all match each other on size and hash: that is no evidence
+  // of a duplicate, and removing the source would lose the file's name and
+  // place (see findDuplicateInDirectory). The move goes ahead instead.
+  if (sourceStat.size === 0) return null;
 
   const destStat = await statSafe(destinationPath);
   if (

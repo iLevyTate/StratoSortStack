@@ -6,6 +6,7 @@ import { resetUi } from '../store/slices/uiSlice';
 import { resetFilesState } from '../store/slices/filesSlice';
 import { resetAnalysisState, resetToSafeState } from '../store/slices/analysisSlice';
 import { ErrorBoundaryCore } from './ErrorBoundary';
+import { useOptionalAnalysisRun } from '../phases/discover/AnalysisRunProvider';
 
 const logger = createLogger('PhaseErrorBoundary');
 /**
@@ -18,8 +19,18 @@ const logger = createLogger('PhaseErrorBoundary');
  */
 function PhaseErrorBoundary({ children, phaseName }) {
   const dispatch = useAppDispatch();
+  const analysisRun = useOptionalAnalysisRun();
 
   const handleNavigateHome = () => {
+    // Clearing Redux alone leaves a running analysis alive with no progress
+    // card or Stop button, and the next files queue behind it.
+    try {
+      analysisRun?.resetRun?.('Go to Home', { discard: true });
+    } catch (error) {
+      logger.warn('Could not stop the analysis run on Go to Home', {
+        error: error?.message
+      });
+    }
     dispatch(resetUi());
     dispatch(resetFilesState());
     dispatch(resetAnalysisState());

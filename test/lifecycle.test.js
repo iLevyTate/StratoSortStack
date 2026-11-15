@@ -86,6 +86,10 @@ jest.mock('../src/main/utils/workerPools', () => ({
   destroyPools: jest.fn().mockResolvedValue(undefined)
 }));
 
+jest.mock('../src/main/analysis/embeddingQueue/queueManager', () => ({
+  shutdown: jest.fn().mockResolvedValue([])
+}));
+
 describe('lifecycle – verifyShutdownCleanup', () => {
   let verifyShutdownCleanup;
   let initializeLifecycle;
@@ -338,6 +342,87 @@ describe('lifecycle – handleBeforeQuit', () => {
     expect(abortStartup).toHaveBeenCalledTimes(1);
     expect(abortStartup).toHaveBeenCalledWith(expect.any(String));
     expect(order).toEqual(['abortStartup', 'serviceIntegration.shutdown']);
+  });
+
+  function minimalLifecycleConfig() {
+    return {
+      setIsQuitting: jest.fn(),
+      getMetricsInterval: () => null,
+      setMetricsInterval: jest.fn(),
+      getDownloadWatcher: () => null,
+      setDownloadWatcher: jest.fn(),
+      getServiceIntegration: () => null,
+      getSettingsService: () => null,
+      getChildProcessListeners: () => [],
+      setChildProcessListeners: jest.fn(),
+      getGlobalProcessListeners: () => [],
+      setGlobalProcessListeners: jest.fn(),
+      getEventListeners: () => [],
+      setEventListeners: jest.fn()
+    };
+  }
+
+  // Every IPC answers APP_SHUTTING_DOWN once the gate closes; a window left
+  // on screen through the cleanup looks alive but no longer responds.
+  test('hides visible windows before the IPC gate closes, without destroying them', async () => {
+    const order = [];
+    const visible = {
+      isDestroyed: () => false,
+      isVisible: () => true,
+      hide: jest.fn(() => order.push('hide')),
+      destroy: jest.fn(),
+      close: jest.fn()
+    };
+    const alreadyHidden = { isDestroyed: () => false, isVisible: () => false, hide: jest.fn() };
+    const destroyed = { isDestroyed: () => true, isVisible: () => true, hide: jest.fn() };
+    require('electron').BrowserWindow.getAllWindows.mockReturnValue([
+      visible,
+      alreadyHidden,
+      destroyed
+    ]);
+    require('../src/main/core/ipcRegistry').setShuttingDown.mockImplementation(() =>
+      order.push('gate')
+    );
+    initializeLifecycle(minimalLifecycleConfig());
+
+    try {
+      await handleBeforeQuit();
+    } finally {
+      require('electron').BrowserWindow.getAllWindows.mockReturnValue([]);
+    }
+
+    expect(visible.hide).toHaveBeenCalledTimes(1);
+    expect(visible.destroy).not.toHaveBeenCalled();
+    expect(visible.close).not.toHaveBeenCalled();
+    expect(alreadyHidden.hide).not.toHaveBeenCalled();
+    expect(destroyed.hide).not.toHaveBeenCalled();
+    expect(order.indexOf('hide')).toBeLessThan(order.indexOf('gate'));
+  });
+
+  // The embedding queues start every launch; their shutdown used to run only
+  // through the batch service, which returns early when none was created.
+  test('shuts the embedding queues down when no batch service was created', async () => {
+    jest.doMock('../src/main/ipc/analysis', () => ({
+      shutdownBatchAnalysisService: jest.fn().mockResolvedValue(false)
+    }));
+    initializeLifecycle(minimalLifecycleConfig());
+
+    await handleBeforeQuit();
+
+    const queueManager = require('../src/main/analysis/embeddingQueue/queueManager');
+    expect(queueManager.shutdown).toHaveBeenCalledTimes(1);
+  });
+
+  test('does not shut the embedding queues down twice after a batch service shutdown', async () => {
+    jest.doMock('../src/main/ipc/analysis', () => ({
+      shutdownBatchAnalysisService: jest.fn().mockResolvedValue(true)
+    }));
+    initializeLifecycle(minimalLifecycleConfig());
+
+    await handleBeforeQuit();
+
+    const queueManager = require('../src/main/analysis/embeddingQueue/queueManager');
+    expect(queueManager.shutdown).not.toHaveBeenCalled();
   });
 
   test('a throwing startup abort does not stop the shutdown', async () => {

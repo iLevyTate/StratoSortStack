@@ -2,7 +2,7 @@
  * @jest-environment jsdom
  */
 import React from 'react';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import '@testing-library/jest-dom';
 
 const mockDispatch = jest.fn();
@@ -192,6 +192,72 @@ describe('NavigationBar regression guards', () => {
             action && /updateHealth$/.test(action.type) && action.payload?.llama === 'offline'
         )
       ).toBe(true);
+    });
+  });
+
+  // The AI health dot used to be probed once at mount, so an engine still
+  // starting at that moment stayed offline and later failures never showed.
+  describe('AI health re-probing', () => {
+    const llamaStatuses = () =>
+      mockDispatch.mock.calls
+        .map(([action]) => action)
+        .filter((action) => action && /updateHealth$/.test(action.type) && action.payload?.llama)
+        .map((action) => action.payload.llama);
+    const starting = { success: true, status: 'unhealthy', llamaHealth: { initialized: false } };
+    const ready = { success: true, status: 'healthy', llamaHealth: { initialized: true } };
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    test('re-probes on window focus and shows the recovery', async () => {
+      window.electronAPI.llama.testConnection = jest
+        .fn()
+        .mockResolvedValueOnce(starting)
+        .mockResolvedValue(ready);
+      render(<NavigationBar />);
+      await waitFor(() => expect(llamaStatuses()).toEqual(['offline']));
+
+      fireEvent(window, new Event('focus'));
+      await waitFor(() => expect(llamaStatuses()).toEqual(['offline', 'online']));
+      expect(window.electronAPI.llama.testConnection).toHaveBeenCalledTimes(2);
+    });
+
+    test('re-probes on an interval, never overlaps, and stops after unmount', async () => {
+      jest.useFakeTimers();
+      let resolveFirst;
+      window.electronAPI.llama.testConnection = jest
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              resolveFirst = resolve;
+            })
+        )
+        .mockResolvedValue(ready);
+      const { unmount } = render(<NavigationBar />);
+      expect(window.electronAPI.llama.testConnection).toHaveBeenCalledTimes(1);
+
+      // Still in flight: a focus event does not stack a second probe.
+      fireEvent(window, new Event('focus'));
+      expect(window.electronAPI.llama.testConnection).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        resolveFirst(starting);
+      });
+      expect(llamaStatuses()).toEqual(['offline']);
+
+      await act(async () => {
+        jest.advanceTimersByTime(60 * 1000);
+      });
+      expect(window.electronAPI.llama.testConnection).toHaveBeenCalledTimes(2);
+      expect(llamaStatuses()).toEqual(['offline', 'online']);
+
+      unmount();
+      await act(async () => {
+        jest.advanceTimersByTime(5 * 60 * 1000);
+      });
+      fireEvent(window, new Event('focus'));
+      expect(window.electronAPI.llama.testConnection).toHaveBeenCalledTimes(2);
     });
   });
 

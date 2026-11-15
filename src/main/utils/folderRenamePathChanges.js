@@ -79,6 +79,10 @@ function buildFolderRenamePathChanges(entries, oldFolder, newFolder, options = {
 
   const prefix = oldKey + mod.sep;
   const newRoot = normalizeRoot(newFolder, platform);
+  // The relative part is cut by segment count, not by prefix.length:
+  // toLowerCase() is not length-preserving ('İ' becomes two code units), so
+  // slicing the case-preserved path by the folded key's length loses characters.
+  const rootSegmentCount = normalizeRoot(oldFolder, platform).split(mod.sep).length;
 
   /** @type {Map<string, { oldPath: string, newPath: string }>} */
   const byOld = new Map();
@@ -88,7 +92,7 @@ function buildFolderRenamePathChanges(entries, oldFolder, newFolder, options = {
     const key = compareKey(current, platform);
     if (!key.startsWith(prefix) || byOld.has(key)) continue;
     const oldPath = mod.normalize(current);
-    const relative = oldPath.slice(prefix.length);
+    const relative = oldPath.split(mod.sep).slice(rootSegmentCount).join(mod.sep);
     byOld.set(key, { oldPath, newPath: mod.join(newRoot, relative) });
   }
   return [...byOld.values()];

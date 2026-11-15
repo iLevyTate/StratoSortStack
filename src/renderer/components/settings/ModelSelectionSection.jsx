@@ -35,6 +35,20 @@ function clampInt(rawValue, range, fallback) {
 }
 
 /**
+ * Parse a draft that is already a complete, in-range integer written in
+ * canonical form ("4096", "-1"). Returns null for anything else — partial
+ * input ("40" for a 512 minimum), "08", blanks — so those wait for blur/Enter,
+ * where clampInt snaps them.
+ */
+function parseCommittableInt(rawValue, range) {
+  const trimmed = String(rawValue ?? '').trim();
+  const parsed = Number.parseInt(trimmed, 10);
+  if (!Number.isFinite(parsed) || String(parsed) !== trimmed) return null;
+  if (parsed < range.min || parsed > range.max) return null;
+  return parsed;
+}
+
+/**
  * Resolve the embedding dimension for a model name.
  * Primary: exact lookup in MODEL_CATALOG (GGUF filenames).
  * Fallback: partial-match known dimension prefixes.
@@ -117,6 +131,37 @@ function ModelSelectionSection({
     setContextSizeDraft(String(next));
     setSettings((prev) => ({ ...prev, llamaContextSize: next }));
   }, [contextSizeDraft, settings.llamaContextSize, setSettings]);
+
+  // A typed value that is already valid is committed as the user types, so
+  // closing Settings with Escape (which unmounts without a blur) keeps it.
+  // Partial or out-of-range input still waits for blur/Enter.
+  const handleGpuLayersChange = useCallback(
+    (e) => {
+      const raw = e.target.value;
+      setGpuLayersDraft(raw);
+      const valid = parseCommittableInt(raw, GPU_LAYERS_RANGE);
+      if (valid !== null) {
+        setSettings((prev) =>
+          prev.llamaGpuLayers === valid ? prev : { ...prev, llamaGpuLayers: valid }
+        );
+      }
+    },
+    [setSettings]
+  );
+
+  const handleContextSizeChange = useCallback(
+    (e) => {
+      const raw = e.target.value;
+      setContextSizeDraft(raw);
+      const valid = parseCommittableInt(raw, CONTEXT_SIZE_RANGE);
+      if (valid !== null) {
+        setSettings((prev) =>
+          prev.llamaContextSize === valid ? prev : { ...prev, llamaContextSize: valid }
+        );
+      }
+    },
+    [setSettings]
+  );
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -411,7 +456,7 @@ function ModelSelectionSection({
               max={GPU_LAYERS_RANGE.max}
               step={1}
               value={gpuLayersDraft}
-              onChange={(e) => setGpuLayersDraft(e.target.value)}
+              onChange={handleGpuLayersChange}
               onBlur={commitGpuLayers}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') commitGpuLayers();
@@ -432,7 +477,7 @@ function ModelSelectionSection({
               max={CONTEXT_SIZE_RANGE.max}
               step={512}
               value={contextSizeDraft}
-              onChange={(e) => setContextSizeDraft(e.target.value)}
+              onChange={handleContextSizeChange}
               onBlur={commitContextSize}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') commitContextSize();

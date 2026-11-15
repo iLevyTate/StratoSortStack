@@ -209,6 +209,31 @@ describe('OramaVectorService', () => {
       expect(result.success).toBe(false);
       expect(result.error).toBe('dimension_mismatch');
     });
+
+    test('rejects a vector with NaN or Infinity values instead of storing it', async () => {
+      const nanVector = new Array(768).fill(0.1);
+      nanVector[3] = Number.NaN;
+      const infVector = new Array(768).fill(0.1);
+      infVector[5] = Number.POSITIVE_INFINITY;
+
+      const nanResult = await service.upsertFile({
+        ...testFile,
+        id: 'file-nan',
+        vector: nanVector
+      });
+      const infResult = await service.batchUpsertFiles([
+        { ...testFile, id: 'file-inf', vector: infVector }
+      ]);
+
+      expect(nanResult).toEqual(
+        expect.objectContaining({ success: false, error: 'invalid_vector_values' })
+      );
+      expect(infResult.failed).toEqual([
+        expect.objectContaining({ id: 'file-inf', error: 'invalid_vector_values' })
+      ]);
+      expect(await service.getFile('file-nan')).toBeNull();
+      expect(await service.getFile('file-inf')).toBeNull();
+    });
   });
 
   describe('single-doc lookup error handling (F-041)', () => {
@@ -316,6 +341,24 @@ describe('OramaVectorService', () => {
       expect(result.success).toBe(true);
       expect(result.count).toBe(5);
       expect(maxActive).toBeLessThanOrEqual(2);
+    });
+
+    test('batchUpsertFiles fails only the wrong-dimension items and writes the rest', async () => {
+      const files = [
+        { id: 'file-ok-1', vector: new Array(768).fill(0.1), meta: { path: '/docs/ok-1.txt' } },
+        { id: 'file-stale', vector: new Array(384).fill(0.1), meta: { path: '/docs/stale.txt' } },
+        { id: 'file-ok-2', vector: new Array(768).fill(0.2), meta: { path: '/docs/ok-2.txt' } }
+      ];
+
+      const result = await service.batchUpsertFiles(files);
+
+      expect(result.count).toBe(2);
+      expect(result.failed).toEqual([
+        { id: 'file-stale', error: 'dimension_mismatch', requiresRebuild: true }
+      ]);
+      expect(await service.getFile('file-ok-1')).not.toBeNull();
+      expect(await service.getFile('file-ok-2')).not.toBeNull();
+      expect(await service.getFile('file-stale')).toBeNull();
     });
 
     test('batchUpsertFolders uses bounded worker concurrency', async () => {

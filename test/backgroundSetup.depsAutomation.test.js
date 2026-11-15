@@ -184,6 +184,34 @@ describe('backgroundSetup automated dependencies', () => {
     expect(downloadCalls).toEqual(['mmproj-model-f16.gguf']);
   });
 
+  test('a failed background download also emits the terminal model-download-error event', async () => {
+    // Settings' "Add model" defers to this run on `alreadyInProgress` and only
+    // stops waiting on model-download-complete / model-download-error.
+    mockLlamaService.listModels.mockResolvedValueOnce([]);
+    mockDownloadManager.downloadModel.mockImplementation(async (modelName) => {
+      if (modelName === 'Mistral-7B-Instruct-v0.3-Q4_K_M.gguf') {
+        throw new Error('network reset');
+      }
+      if (modelName === 'nomic-embed-text-v1.5-Q8_0.gguf') {
+        throw new Error('Download already in progress');
+      }
+      return { success: true };
+    });
+
+    await runBackgroundSetup();
+
+    const terminalErrors = mockSendSpy.mock.calls
+      .map((call) => call.find((arg) => arg && typeof arg === 'object'))
+      .filter((arg) => arg?.type === 'model-download-error');
+    expect(terminalErrors).toEqual([
+      {
+        type: 'model-download-error',
+        model: 'Mistral-7B-Instruct-v0.3-Q4_K_M.gguf',
+        error: 'network reset'
+      }
+    ]);
+  });
+
   test('companion projector download failure does not block the setup marker', async () => {
     const fsPromises = require('fs').promises;
     mockDownloadManager.downloadModel.mockImplementation(async (modelName) => {

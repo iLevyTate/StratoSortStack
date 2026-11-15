@@ -211,12 +211,43 @@ describe('fileThunks', () => {
       );
     });
 
-    test('does not dispatch when API returns failure', async () => {
+    test('warns instead of updating state when API returns failure', async () => {
       mockSetEmbeddingPolicy.mockResolvedValue({ success: false });
 
       await setEmbeddingPolicyForFile('/file.pdf', 'embed')(dispatch, getState);
 
-      expect(dispatch).not.toHaveBeenCalled();
+      expect(updateEmbeddingState).not.toHaveBeenCalled();
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'system/addNotification',
+          payload: expect.objectContaining({
+            severity: 'warning',
+            message: expect.stringContaining('could not be changed')
+          })
+        })
+      );
+    });
+
+    test('tells the user to analyze first when main reports notFound', async () => {
+      mockSetEmbeddingPolicy.mockResolvedValue({
+        success: false,
+        notFound: true,
+        error: 'No analysis history entry for this path'
+      });
+
+      await setEmbeddingPolicyForFile('/file.pdf', 'skip')(dispatch, getState);
+
+      expect(updateEmbeddingState).not.toHaveBeenCalled();
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'system/addNotification',
+          payload: expect.objectContaining({
+            severity: 'warning',
+            message: expect.stringContaining('no saved analysis yet')
+          })
+        })
+      );
     });
 
     test('handles null result from API', async () => {

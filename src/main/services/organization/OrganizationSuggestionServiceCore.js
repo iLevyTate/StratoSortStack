@@ -1580,7 +1580,45 @@ class OrganizationSuggestionServiceCore {
     /** @type {any} */ accepted,
     /** @type {any} */ note
   ) {
-    // This prevents overwriting patterns that haven't been loaded yet
+    await this._ensurePatternsWritable();
+
+    this.patternMatcher.recordFeedback(file, suggestion, accepted);
+    if (accepted) {
+      await this._maybeStoreAutoFeedbackReason(file, suggestion, note);
+    }
+    if (suggestion?.note || suggestion?.feedbackNote) {
+      logger.debug(
+        '[OrganizationSuggestionService] Suggestion contains note field; use recordFeedbackNote.'
+      );
+    }
+    return this._savePatterns();
+  }
+
+  /**
+   * Learn a file the startup scan found already in a smart folder. Counts as
+   * an accepted placement for the pattern, but writes no feedback-history
+   * row (that capped list is what undo retracts organize feedback from);
+   * `learnKey` is remembered so later scans skip the file.
+   * @param {any} file
+   * @param {any} suggestion
+   * @param {string} learnKey
+   * @returns {Promise<boolean>} false when the file was already learned
+   */
+  async recordScanFeedback(file, suggestion, learnKey) {
+    await this._ensurePatternsWritable();
+    if (!this.patternMatcher.recordScanLearning(file, suggestion, learnKey)) return false;
+    await this._savePatterns();
+    return true;
+  }
+
+  /**
+   * Wait for the saved patterns; when they failed to load, back the file up
+   * and start empty so feedback can still be recorded. Writing before the
+   * load finished would overwrite patterns that were never read.
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _ensurePatternsWritable() {
     await this._ensurePatternsLoaded();
 
     if (!this._patternsLoadedSuccessfully) {
@@ -1604,17 +1642,6 @@ class OrganizationSuggestionServiceCore {
         );
       }
     }
-
-    this.patternMatcher.recordFeedback(file, suggestion, accepted);
-    if (accepted) {
-      await this._maybeStoreAutoFeedbackReason(file, suggestion, note);
-    }
-    if (suggestion?.note || suggestion?.feedbackNote) {
-      logger.debug(
-        '[OrganizationSuggestionService] Suggestion contains note field; use recordFeedbackNote.'
-      );
-    }
-    return this._savePatterns();
   }
 
   async _maybeStoreAutoFeedbackReason(

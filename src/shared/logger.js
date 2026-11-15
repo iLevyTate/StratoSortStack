@@ -1146,10 +1146,15 @@ class Logger {
 
       if (this.logFile && this.enableFile) {
         streams = [];
+        // Streams accept every level so the pino level alone filters:
+        // setLevel only moves `this.pino.level`, and a stream pinned to the
+        // level at init would keep dropping debug records after a runtime
+        // switch to 'debug'.
+        const streamLevel = 'trace';
         try {
           const fileStream = _getSharedFileDestination(this.logFile);
           this._fileStream = fileStream;
-          streams.push({ level: this.level, stream: fileStream });
+          streams.push({ level: streamLevel, stream: fileStream });
         } catch (error) {
           console.error('[Logger] Failed to open log file stream:', error?.message);
           _emitFileError(error);
@@ -1161,16 +1166,16 @@ class Logger {
               const prettyFactory = _safeRequire ? _safeRequire('pino-pretty') : null;
               if (typeof prettyFactory === 'function') {
                 const pretty = prettyFactory({ colorize: true });
-                streams.push({ level: this.level, stream: pretty });
+                streams.push({ level: streamLevel, stream: pretty });
               } else {
                 throw new Error('pino-pretty not available');
               }
             } catch (error) {
               console.warn('[Logger] pino-pretty unavailable, using stdout:', error?.message);
-              streams.push({ level: this.level, stream: process.stdout });
+              streams.push({ level: streamLevel, stream: process.stdout });
             }
           } else {
-            streams.push({ level: this.level, stream: process.stdout });
+            streams.push({ level: streamLevel, stream: process.stdout });
           }
         }
       } else if (isDev) {

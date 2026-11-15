@@ -88,7 +88,11 @@ export function useKeyboardShortcuts() {
     canRedoRef.current = canRedo;
   }, [canRedo]);
 
-  const handleOpenSettings = useCallback(() => dispatch(openSettings()), [dispatch]);
+  const handleOpenSettings = useCallback(
+    (/** @type {{ scrollToId?: string } | undefined} */ payload = undefined) =>
+      dispatch(openSettings(payload)),
+    [dispatch]
+  );
   const handleAdvancePhase = useCallback(
     (/** @type {any} */ phase) => dispatch(setPhase(phase)),
     [dispatch]
@@ -282,6 +286,13 @@ export function useKeyboardShortcuts() {
           // File-menu path needs the same nested-dialog guard as Ctrl+, above.
           if (canHotkeySwapSurface()) {
             actions.openSettings();
+          }
+          break;
+        case 'show-about':
+          // About lives in Settings' Application section (collapsed by
+          // default); the deep link expands it and scrolls there.
+          if (canHotkeySwapSurface()) {
+            actions.openSettings({ scrollToId: 'settings-app' });
           }
           break;
         case 'select-files':

@@ -898,6 +898,12 @@ class LlamaService extends EventEmitter {
     }
     try {
       if (changedTypes.length > 0 && this._modelMemoryManager) {
+        // Drain in-flight work BEFORE taking the load locks. An op that
+        // already holds an inference slot (queued past the gate above) loads
+        // through acquireLoadLock, so waiting for it while holding the lock
+        // was a circular wait that only the timeout broke. The gate keeps new
+        // requests out, so this set drains on its own.
+        const drained = await this._waitForIdleOperations('config-change', 60000);
         // Acquire load locks before unloading to avoid crashing in-flight inference
         const releaseLocks = [];
         try {
@@ -925,7 +931,11 @@ class LlamaService extends EventEmitter {
               );
             }
           }
-          const safeToUnload = await this._waitForIdleOperations('config-change', 60000);
+          // Re-check under the locks. An op that took a slot after the drain
+          // is now blocked on our lock and cannot finish, so wait only
+          // briefly; if it remains, the stale marking below defers the swap.
+          const safeToUnload =
+            drained && (await this._waitForIdleOperations('config-change', 2000));
           if (safeToUnload) {
             await this._modelMemoryManager.unloadAll();
           } else {

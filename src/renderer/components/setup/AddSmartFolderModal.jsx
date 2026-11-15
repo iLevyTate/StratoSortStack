@@ -96,14 +96,32 @@ function AddSmartFolderModal({
     };
   }, []);
 
+  const clearGenTimers = useCallback(() => {
+    if (genPhaseTimerRef.current) {
+      clearTimeout(genPhaseTimerRef.current);
+      genPhaseTimerRef.current = null;
+    }
+    if (genLongWaitTimerRef.current) {
+      clearTimeout(genLongWaitTimerRef.current);
+      genLongWaitTimerRef.current = null;
+    }
+  }, []);
+
   const resetForm = useCallback(() => {
     // Use the seeded name if a caller pre-filled it (e.g., from the
     // pattern-suggestion banner). Empty string otherwise — same as before.
     setFolderName(initialName || '');
     setFolderPath('');
     setDescription('');
+    // Callers keep the modal mounted while closed, so an in-flight "Generate
+    // with AI" call must be invalidated here too; otherwise its late result
+    // lands in the next folder's form.
+    genRequestIdRef.current += 1;
+    clearGenTimers();
     setIsGeneratingDescription(false);
-  }, [initialName]);
+    setGenPhase(null);
+    setGenFallbackHint(null);
+  }, [initialName, clearGenTimers]);
 
   // Reset form state when modal opens to ensure a fresh form each time
   useEffect(() => {
@@ -120,17 +138,6 @@ function AddSmartFolderModal({
         .catch(() => {});
     }
   }, [isOpen, resetForm]);
-
-  const clearGenTimers = () => {
-    if (genPhaseTimerRef.current) {
-      clearTimeout(genPhaseTimerRef.current);
-      genPhaseTimerRef.current = null;
-    }
-    if (genLongWaitTimerRef.current) {
-      clearTimeout(genLongWaitTimerRef.current);
-      genLongWaitTimerRef.current = null;
-    }
-  };
 
   const handleCancelGeneration = () => {
     // Invalidate the in-flight request so its result is ignored when it

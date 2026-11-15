@@ -83,6 +83,8 @@ function makeBatch(overrides = {}) {
 
 function makeServiceIntegration(batches) {
   return {
+    // A Smart Folder, so the destination policy allows the replayed move.
+    smartFolderWatcher: { getSmartFolders: () => [{ path: '/organized' }] },
     processingState: {
       getIncompleteOrganizeBatches: jest.fn().mockReturnValue(batches),
       markOrganizeOpStarted: jest.fn().mockResolvedValue(undefined),

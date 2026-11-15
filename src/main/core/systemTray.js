@@ -145,13 +145,14 @@ async function openSemanticSearch() {
     win.focus();
 
     // Send message to renderer to open semantic search
-    // Small delay to ensure window is ready
-    const searchTimerId = setTimeout(() => {
+    // Small delay to ensure window is ready. The callback skips a destroyed
+    // window, so no once('closed') here: one per shortcut press would pile up
+    // on the long-lived main window.
+    setTimeout(() => {
       if (!win.isDestroyed()) {
         safeSend(win.webContents, IPC_EVENTS.OPEN_SEMANTIC_SEARCH);
       }
     }, 100);
-    win.once('closed', () => clearTimeout(searchTimerId));
   }
 }
 

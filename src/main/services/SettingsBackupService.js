@@ -58,7 +58,8 @@ class SettingsBackupService {
    * `settings-manual-<ts>.json`, never rotated, and goes only when the user
    * deletes it. Before the pools were separate, ten routine saves (a file
    * dialog counts as one) silently removed a backup the user had made.
-   * @param {{ kind?: 'automatic' | 'manual' }} [options]
+   * @param {{ kind?: 'automatic' | 'manual', keepPath?: string }} [options] keepPath
+   *   is spared by the rotation (the backup a restore is reading from).
    * @returns {Promise<{success: boolean, path?: string, timestamp?: string, kind?: string, error?: string}>}
    */
   async createBackup(options = {}) {
@@ -112,7 +113,7 @@ class SettingsBackupService {
       }
 
       // Clean up old backups
-      await this.cleanupOldBackups();
+      await this.cleanupOldBackups({ keepPath: options?.keepPath });
 
       return {
         success: true,
@@ -306,7 +307,9 @@ class SettingsBackupService {
       // known to go ahead: a rejected backup must not add a snapshot that
       // rotates out an older automatic backup.
       if (preRestoreBackup) {
-        await this.createBackup();
+        // Spare the backup being restored: it can be the oldest automatic
+        // one, which this snapshot would otherwise rotate out.
+        await this.createBackup({ keepPath: backupPath });
       }
 
       // Sanitize and merge with defaults
@@ -355,8 +358,10 @@ class SettingsBackupService {
   /**
    * Rotate the automatic backups, keeping only the most recent ones. Manual
    * backups are never touched here.
+   * @param {{ keepPath?: string }} [options]
    */
-  async cleanupOldBackups() {
+  async cleanupOldBackups(options = {}) {
+    const keepPath = options?.keepPath ? path.resolve(options.keepPath) : null;
     try {
       const cleanupStart = Date.now();
       const backups = await this.listBackups({ includeParsedTime: true });
@@ -376,6 +381,13 @@ class SettingsBackupService {
         }
         return true;
       });
+
+      // The backup being restored still counts toward the limit but is never
+      // the one rotated out: move it to the front so the oldest other goes.
+      const keepIndex = keepPath
+        ? safeBackups.findIndex((backup) => path.resolve(backup.path) === keepPath)
+        : -1;
+      if (keepIndex > 0) safeBackups.unshift(...safeBackups.splice(keepIndex, 1));
 
       // Keep only the most recent backups
       if (safeBackups.length > this.maxBackups) {

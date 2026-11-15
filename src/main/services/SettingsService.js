@@ -512,9 +512,11 @@ class SettingsService {
                 }
                 this._isInternalChange = true;
                 try {
+                  // Same on-disk shape as save(): the user's values only, so
+                  // recovery does not stamp every default into the file.
                   const saveResult = await backupAndReplace(
                     this.settingsPath,
-                    JSON.stringify(merged, null, 2)
+                    JSON.stringify(this._stripRuntimeDefaults(merged), null, 2)
                   );
                   if (!saveResult.success) {
                     throw new Error(saveResult.error || 'Failed to save restored settings');
@@ -1151,7 +1153,7 @@ class SettingsService {
           // Same on-disk shape as save(): the user's values only.
           const saveResult = await backupAndReplace(
             this.settingsPath,
-            JSON.stringify(stripDefaultValues(merged), null, 2)
+            JSON.stringify(this._stripRuntimeDefaults(merged), null, 2)
           );
           if (!saveResult.success) {
             throw new Error(saveResult.error || 'Failed to save restored settings');

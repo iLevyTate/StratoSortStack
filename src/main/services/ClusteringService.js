@@ -19,6 +19,7 @@ const {
 } = require('../../shared/vectorMath');
 const { TIMEOUTS } = require('../../shared/performanceConstants');
 const { withAbortableTimeout } = require('../../shared/promiseUtils');
+const { atomicWriteFile } = require('../../shared/atomicFile');
 const { getTextModel } = require('../llamaUtils');
 const { AI_DEFAULTS } = require('../../shared/constants');
 const { isInteractiveTextRequestActive } = require('./textModelActivity');
@@ -395,6 +396,25 @@ const DEFAULT_OPTIONS = {
  */
 const MAX_USER_CLUSTERS = 100;
 
+const USER_LABELS_FILE_NAME = 'cluster-user-labels.json';
+const USER_LABELS_FILE_VERSION = 2;
+// A stored name re-attaches only to a cluster that still holds most of the
+// files it was given to (Jaccard overlap of member ids).
+const USER_LABEL_MIN_OVERLAP = 0.5;
+// Names whose files were since regrouped stay stored in case the group comes
+// back, but only this many, oldest unattached dropped first.
+const MAX_STORED_USER_LABELS = 200;
+
+/**
+ * @typedef {{ label: string, memberIds: string[] }} UserLabelEntry
+ */
+
+/** @param {any} cluster @returns {string[]} */
+const getClusterMemberIds = (cluster) =>
+  (Array.isArray(cluster?.members) ? cluster.members : [])
+    .map((/** @type {any} */ m) => m?.id)
+    .filter((/** @type {any} */ id) => typeof id === 'string' && id.length > 0);
+
 class ClusteringService {
   /**
    * Create a new ClusteringService instance
@@ -416,8 +436,23 @@ class ClusteringService {
     this.clusterLabels = new Map();
     this.lastComputedAt = null;
 
-    // User-supplied cluster labels (survives recomputation)
-    this.userLabels = new Map(); // clusterIdStr -> newLabel
+    // Names the user gave clusters. k-means renumbers clusters on every
+    // recompute, so each name keeps the member ids it was given to and follows
+    // whichever new cluster holds most of those files.
+    /** @type {UserLabelEntry[]} */
+    this._userLabelEntries = [];
+    // Current cluster id -> attached entry, rebuilt after each recompute
+    /** @type {Map<number, UserLabelEntry>} */
+    this._userLabelByClusterId = new Map();
+    // Same attachment as "cluster:N" -> name, for getClustersForGraph
+    /** @type {Map<string, string>} */
+    this.userLabels = new Map();
+    /** @type {Promise<void> | null} */
+    this._userLabelsLoadPromise = null;
+    /** @type {string | null} */
+    this._userLabelsFilePath = null;
+    /** @type {Promise<void>} */
+    this._userLabelsWriteChain = Promise.resolve();
 
     // Staleness threshold (30 minutes)
     this.STALE_MS = 30 * 60 * 1000;
@@ -447,7 +482,8 @@ class ClusteringService {
 
   /**
    * Rename a cluster with a user-supplied label.
-   * Persists the label to disk so it survives recomputation.
+   * Persists the label with the cluster's member ids so it survives restarts
+   * and re-attaches to the same group of files after a recompute.
    *
    * @param {string} clusterIdStr - e.g. "cluster:0"
    * @param {string} newLabel - The new label to use
@@ -455,74 +491,222 @@ class ClusteringService {
    */
   async renameCluster(clusterIdStr, newLabel, labelsFilePath) {
     if (!clusterIdStr || !newLabel) return;
-    this.userLabels.set(clusterIdStr, newLabel);
+    if (labelsFilePath) this._userLabelsFilePath = labelsFilePath;
+    // Load first so this write does not replace the saved names with only this one
+    await this._ensureUserLabelsLoaded(labelsFilePath);
+
+    const numericId = parseInt(String(clusterIdStr).replace(/^cluster:/, ''), 10);
+    const cluster = isNaN(numericId) ? null : this.clusters.find((c) => c.id === numericId);
+    if (!cluster) {
+      // Without its members the name could only be stored by index, which
+      // would land on an unrelated group after the next recompute.
+      throw new Error(`Cluster not found: ${clusterIdStr}`);
+    }
+
+    /** @type {UserLabelEntry} */
+    const entry = { label: newLabel, memberIds: getClusterMemberIds(cluster) };
+    const previous = this._userLabelByClusterId.get(numericId);
+    this._userLabelEntries = this._userLabelEntries.filter((e) => e !== previous);
+    this._userLabelEntries.push(entry);
+    this._userLabelByClusterId.set(numericId, entry);
+    this.userLabels.set(`cluster:${numericId}`, newLabel);
+    this._trimUserLabelEntries();
 
     // Apply immediately to the in-memory cluster object
-    const numericId = parseInt(String(clusterIdStr).replace(/^cluster:/, ''), 10);
-    if (!isNaN(numericId)) {
-      const cluster = this.clusters.find((c) => c.id === numericId);
-      if (cluster) {
-        cluster.label = newLabel;
-        cluster.labelConfidence = 'high';
-      }
-      this.clusterLabels.set(numericId, newLabel);
-    }
+    cluster.label = newLabel;
+    cluster.labelConfidence = 'high';
+    this.clusterLabels.set(numericId, newLabel);
 
-    // Persist to disk (best-effort)
-    if (labelsFilePath) {
-      try {
-        const obj = Object.fromEntries(this.userLabels);
-        await fsPromises.writeFile(labelsFilePath, JSON.stringify(obj, null, 2), 'utf8');
-        logger.info('[ClusteringService] User labels persisted');
-      } catch (e) {
-        logger.warn('[ClusteringService] Failed to persist user labels:', e.message);
-      }
-    }
+    await this._persistUserLabels();
   }
 
   /**
    * Load persisted user labels from disk into memory.
    *
    * @param {string} labelsFilePath - Path to the labels JSON file
+   * @returns {Promise<void>}
    */
-  async loadUserLabels(labelsFilePath) {
+  loadUserLabels(labelsFilePath) {
+    this._userLabelsFilePath = labelsFilePath;
+    this._userLabelsLoadPromise = this._readUserLabels(labelsFilePath);
+    return this._userLabelsLoadPromise;
+  }
+
+  /**
+   * Load the saved names once, from the given path or the default userData file.
+   * @param {string} [labelsFilePath]
+   * @returns {Promise<void>}
+   * @private
+   */
+  _ensureUserLabelsLoaded(labelsFilePath) {
+    if (this._userLabelsLoadPromise) return this._userLabelsLoadPromise;
+    const filePath = labelsFilePath || this._userLabelsFilePath || this._defaultUserLabelsPath();
+    if (!filePath) {
+      this._userLabelsLoadPromise = Promise.resolve();
+      return this._userLabelsLoadPromise;
+    }
+    return this.loadUserLabels(filePath);
+  }
+
+  /**
+   * @returns {string | null}
+   * @private
+   */
+  _defaultUserLabelsPath() {
+    try {
+      const { app } = require('electron');
+      const userData = app?.getPath?.('userData');
+      return userData ? path.join(userData, USER_LABELS_FILE_NAME) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * @param {string} labelsFilePath
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _readUserLabels(labelsFilePath) {
+    /** @type {UserLabelEntry[]} */
+    let entries = [];
     try {
       const raw = await fsPromises.readFile(labelsFilePath, 'utf8');
       // safeJsonTryParse both guards against __proto__ pollution and
-      // distinguishes corrupt content from missing-file errors. Label files
-      // live in userData and are written atomically, but a crash mid-write
-      // can leave truncated JSON — treat that as empty rather than throwing.
+      // distinguishes corrupt content from missing-file errors. A crash
+      // mid-write can leave truncated JSON; treat that as empty rather than throwing.
       const parseResult = safeJsonTryParse(raw);
+      const value = parseResult.success ? parseResult.value : null;
       if (!parseResult.success) {
         logger.warn('[ClusteringService] Discarding corrupt user labels file', {
           error: parseResult.error?.message
         });
-        this.userLabels = new Map();
-        return;
+      } else if (value && typeof value === 'object' && Array.isArray(value.labels)) {
+        entries = value.labels
+          .filter(
+            (/** @type {any} */ e) =>
+              e && typeof e.label === 'string' && e.label && Array.isArray(e.memberIds)
+          )
+          .map((/** @type {any} */ e) => ({
+            label: e.label,
+            memberIds: e.memberIds.filter((/** @type {any} */ id) => typeof id === 'string')
+          }));
+      } else if (value && typeof value === 'object' && Object.keys(value).length > 0) {
+        // The older file keyed names by cluster index only. Those indices
+        // point at different files after any recompute, so they are dropped.
+        logger.info('[ClusteringService] Dropping index-keyed user labels from an older file', {
+          count: Object.keys(value).length
+        });
       }
-      const obj =
-        parseResult.value &&
-        typeof parseResult.value === 'object' &&
-        !Array.isArray(parseResult.value)
-          ? parseResult.value
-          : {};
-      this.userLabels = new Map(Object.entries(obj));
-      // Apply to any already-loaded clusters
-      this.userLabels.forEach((label, idStr) => {
-        const numericId = parseInt(String(idStr).replace(/^cluster:/, ''), 10);
-        if (!isNaN(numericId)) {
-          const cluster = this.clusters.find((c) => c.id === numericId);
-          if (cluster) {
-            cluster.label = label;
-            cluster.labelConfidence = 'high';
-          }
-          this.clusterLabels.set(numericId, label);
-        }
-      });
     } catch {
-      // File doesn't exist yet — start with empty map
-      this.userLabels = new Map();
+      // File doesn't exist yet: start with no saved names
     }
+    this._userLabelEntries = entries.slice(-MAX_STORED_USER_LABELS);
+    this._reattachUserLabels();
+  }
+
+  /**
+   * Attach each saved name to the current cluster whose members overlap its
+   * saved members the most (at least USER_LABEL_MIN_OVERLAP), one name per
+   * cluster. Attached names take the cluster's current members, so a group
+   * that grows a little at a time keeps its name.
+   *
+   * @returns {boolean} Whether any saved member list changed
+   * @private
+   */
+  _reattachUserLabels() {
+    /** @type {Map<string, number>} */
+    const clusterByMemberId = new Map();
+    /** @type {Map<number, string[]>} */
+    const memberIdsByCluster = new Map();
+    for (const cluster of this.clusters) {
+      const ids = getClusterMemberIds(cluster);
+      memberIdsByCluster.set(cluster.id, ids);
+      for (const id of ids) clusterByMemberId.set(id, cluster.id);
+    }
+
+    /** @type {Array<{ entryIdx: number, clusterId: number, score: number }>} */
+    const candidates = [];
+    this._userLabelEntries.forEach((entry, entryIdx) => {
+      const saved = new Set(entry.memberIds);
+      /** @type {Map<number, number>} */
+      const shared = new Map();
+      for (const id of saved) {
+        const clusterId = clusterByMemberId.get(id);
+        if (clusterId !== undefined) shared.set(clusterId, (shared.get(clusterId) || 0) + 1);
+      }
+      for (const [clusterId, count] of shared) {
+        const clusterSize = memberIdsByCluster.get(clusterId)?.length || 0;
+        const score = count / (saved.size + clusterSize - count);
+        if (score >= USER_LABEL_MIN_OVERLAP) candidates.push({ entryIdx, clusterId, score });
+      }
+    });
+    // Best overlap first; on a tie the newer rename wins
+    candidates.sort((a, b) => b.score - a.score || b.entryIdx - a.entryIdx);
+
+    /** @type {Map<number, UserLabelEntry>} */
+    const byClusterId = new Map();
+    const usedEntries = new Set();
+    let changed = false;
+    for (const { entryIdx, clusterId, score } of candidates) {
+      if (usedEntries.has(entryIdx) || byClusterId.has(clusterId)) continue;
+      usedEntries.add(entryIdx);
+      const entry = this._userLabelEntries[entryIdx];
+      byClusterId.set(clusterId, entry);
+      if (score < 1) {
+        entry.memberIds = memberIdsByCluster.get(clusterId) || [];
+        changed = true;
+      }
+    }
+
+    this._userLabelByClusterId = byClusterId;
+    this.userLabels = new Map(
+      Array.from(byClusterId, ([clusterId, entry]) => [`cluster:${clusterId}`, entry.label])
+    );
+    return changed;
+  }
+
+  /**
+   * Keep at most MAX_STORED_USER_LABELS names, dropping the oldest ones that
+   * are not attached to a current cluster.
+   * @private
+   */
+  _trimUserLabelEntries() {
+    let excess = this._userLabelEntries.length - MAX_STORED_USER_LABELS;
+    if (excess <= 0) return;
+    const attached = new Set(this._userLabelByClusterId.values());
+    this._userLabelEntries = this._userLabelEntries.filter((entry) => {
+      if (excess > 0 && !attached.has(entry)) {
+        excess -= 1;
+        return false;
+      }
+      return true;
+    });
+  }
+
+  /**
+   * Write the saved names (best-effort). Writes run one at a time and each
+   * writes the latest names, so an older write never lands last.
+   * @returns {Promise<void>}
+   * @private
+   */
+  _persistUserLabels() {
+    const run = async () => {
+      const filePath = this._userLabelsFilePath;
+      if (!filePath) return;
+      try {
+        await atomicWriteFile(
+          filePath,
+          { version: USER_LABELS_FILE_VERSION, labels: this._userLabelEntries },
+          { pretty: true }
+        );
+        logger.info('[ClusteringService] User labels persisted');
+      } catch (e) {
+        logger.warn('[ClusteringService] Failed to persist user labels:', e.message);
+      }
+    };
+    this._userLabelsWriteChain = this._userLabelsWriteChain.then(run, run);
+    return this._userLabelsWriteChain;
   }
 
   /**
@@ -943,6 +1127,10 @@ class ClusteringService {
     try {
       logger.info('[ClusteringService] Computing clusters...', { k });
 
+      // Saved names must be in memory before the new clusters replace the old
+      // ones, so the re-attach below runs with no gap where they are missing.
+      await this._ensureUserLabelsLoaded();
+
       const files = await this.getAllFileEmbeddings();
 
       if (files.length < 3) {
@@ -977,6 +1165,10 @@ class ClusteringService {
       this.clusters = clusters;
       this.centroids = centroids;
       this.lastComputedAt = Date.now();
+      // Labels from the previous run are keyed by its cluster indices, which
+      // now name different groups of files.
+      this.clusterLabels = new Map();
+      if (this._reattachUserLabels()) await this._persistUserLabels();
 
       logger.info('[ClusteringService] Clustering complete', {
         files: files.length,
@@ -2063,6 +2255,9 @@ Examples of good names: "Q4 Financial Reports", "Employee Onboarding Materials",
     this.clusters = [];
     this.centroids = [];
     this.clusterLabels.clear();
+    // The saved names stay; only their attachment to these cluster ids goes
+    this._userLabelByClusterId = new Map();
+    this.userLabels = new Map();
     this.lastComputedAt = null;
     logger.info('[ClusteringService] Clusters cleared');
   }
@@ -2586,6 +2781,8 @@ Examples of good names: "Q4 Financial Reports", "Employee Onboarding Materials",
     this.clusters = [];
     this.centroids = [];
     this.clusterLabels.clear();
+    this._userLabelByClusterId = new Map();
+    this.userLabels = new Map();
     this.lastComputedAt = null;
     this._computePromise = null;
     this._duplicateScanCache = null;

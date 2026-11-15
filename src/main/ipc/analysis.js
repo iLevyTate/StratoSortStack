@@ -225,8 +225,14 @@ function getBatchAnalysisService() {
   return batchAnalysisService;
 }
 
+/**
+ * Cancel active batch runs and shut the batch service (and with it the
+ * embedding queues) down.
+ * @returns {Promise<boolean>} false when no batch service was ever created,
+ *   so the embedding queues were not shut down here
+ */
 async function shutdownBatchAnalysisService() {
-  if (!batchAnalysisService) return;
+  if (!batchAnalysisService) return false;
   const activeRuns = Array.from(activeBatchRuns.values());
   for (const runState of activeRuns) {
     runState.cancelled = true;
@@ -248,6 +254,7 @@ async function shutdownBatchAnalysisService() {
   const service = batchAnalysisService;
   batchAnalysisService = null;
   await service.shutdown();
+  return true;
 }
 
 /**

@@ -291,8 +291,9 @@ function decodeEntities(text) {
         if (code >= 0xd800 && code <= 0xdfff) return '';
         return String.fromCodePoint(code);
       }
-      const named = NAMED_ENTITIES[body.toLowerCase()];
-      return named === undefined ? whole : named;
+      const lower = body.toLowerCase();
+      // Own keys only, so &constructor; is not answered by Object.prototype.
+      return Object.hasOwn(NAMED_ENTITIES, lower) ? NAMED_ENTITIES[lower] : whole;
     }
   );
 }

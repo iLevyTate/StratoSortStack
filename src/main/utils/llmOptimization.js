@@ -101,25 +101,41 @@ class LLMRequestDeduplicator {
   /**
    * @param {string} key
    * @param {() => any} fn
-   * @param {{ type?: string, fileName?: string }} [metadata]
+   * @param {{ type?: string, fileName?: string, signal?: AbortSignal | null }} [metadata] -
+   *   `signal` is the abort signal `fn` runs under, so a caller that joins
+   *   this request can tell its starter's abort from its own.
    */
   async deduplicate(key, fn, metadata = {}) {
-    // If request is already in flight, return the existing promise
-    if (this.pendingRequests.has(key)) {
-      const entry = /** @type {any} */ (this.pendingRequests.get(key));
+    const ownSignal = metadata.signal || null;
+    // If request is already in flight, join the existing promise
+    let entry = this.pendingRequests.get(key);
+    while (entry) {
       // Check if the cached entry is stale
       if (Date.now() - entry.createdAt > this.maxRequestAgeMs) {
         this.pendingRequests.delete(key);
         logger.warn('[LLM-DEDUP] Evicted stale in-flight request', { key: key.slice(0, 12) });
-      } else {
-        logger.warn('[LLM-DEDUP] Cache hit - returning in-flight request', {
-          key: key.slice(0, 12),
-          type: metadata.type || 'unknown',
-          fileName: metadata.fileName || 'unknown',
-          pendingCount: this.pendingRequests.size
-        });
-        return entry.promise;
+        break;
       }
+      logger.warn('[LLM-DEDUP] Cache hit - returning in-flight request', {
+        key: key.slice(0, 12),
+        type: metadata.type || 'unknown',
+        fileName: metadata.fileName || 'unknown',
+        pendingCount: this.pendingRequests.size
+      });
+      try {
+        return await entry.promise;
+      } catch (error) {
+        // The shared call runs under the signal of the caller that started it
+        // (the watcher, say, which stops or times out). That caller stopping
+        // is not this one stopping: join whoever took the request over, or
+        // run it below.
+        if (!entry.signal?.aborted || ownSignal?.aborted) throw error;
+        logger.debug('[LLM-DEDUP] Joined request was aborted by its starter; retrying', {
+          key: key.slice(0, 12)
+        });
+      }
+      const next = this.pendingRequests.get(key);
+      entry = next === entry ? undefined : next;
     }
 
     // Evict stale entries when approaching capacity
@@ -151,7 +167,11 @@ class LLMRequestDeduplicator {
     placeholder.catch((/** @type {any} */ err) => {
       logger.debug('[LLM-DEDUP] Placeholder rejection suppressed:', err?.message);
     });
-    this.pendingRequests.set(key, { promise: placeholder, createdAt: Date.now() });
+    this.pendingRequests.set(key, {
+      promise: placeholder,
+      createdAt: Date.now(),
+      signal: ownSignal
+    });
 
     try {
       const fnResult = fn();

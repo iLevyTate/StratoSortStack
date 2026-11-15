@@ -27,6 +27,9 @@ class ErrorBoundaryCore extends React.Component {
       chunkReloadExhausted: false
     };
     this.resetTimeoutId = null;
+    // Runs after an automatic reset; if the children stay up this long, the
+    // earlier failures are forgotten and errorCount starts over.
+    this.stableTimeoutId = null;
     this.handleReset = this.handleReset.bind(this);
     this.handleNavigateHome = this.handleNavigateHome.bind(this);
     this.handleReload = this.handleReload.bind(this);
@@ -47,6 +50,8 @@ class ErrorBoundaryCore extends React.Component {
       componentStack: errorInfo?.componentStack,
       timestamp: new Date().toISOString()
     });
+
+    this.clearStableTimer();
 
     this.setState(
       (prevState) => ({
@@ -75,6 +80,14 @@ class ErrorBoundaryCore extends React.Component {
     if (this.resetTimeoutId) {
       clearTimeout(this.resetTimeoutId);
       this.resetTimeoutId = null;
+    }
+    this.clearStableTimer();
+  }
+
+  clearStableTimer() {
+    if (this.stableTimeoutId) {
+      clearTimeout(this.stableTimeoutId);
+      this.stableTimeoutId = null;
     }
   }
 
@@ -158,8 +171,34 @@ class ErrorBoundaryCore extends React.Component {
       clearTimeout(this.resetTimeoutId);
     }
     this.resetTimeoutId = setTimeout(() => {
-      this.handleReset();
+      this.handleAutoReset(delay);
     }, delay);
+  }
+
+  // Unlike a manual reset, keeps errorCount: an error that recurs right after
+  // the remount must count toward the retry cap and the "Multiple errors"
+  // hint, or a child that always throws is remounted forever.
+  handleAutoReset(delay) {
+    this.resetTimeoutId = null;
+    this.clearStableTimer();
+    this.stableTimeoutId = setTimeout(() => {
+      this.stableTimeoutId = null;
+      if (!this.state.hasError) {
+        this.setState({ errorCount: 0 });
+      }
+    }, delay);
+
+    this.setState((prevState) => ({
+      hasError: false,
+      error: null,
+      errorInfo: null,
+      resetKey: prevState.resetKey + 1,
+      chunkReloadExhausted: false
+    }));
+
+    if (this.props.onReset) {
+      this.props.onReset();
+    }
   }
 
   handleReset() {
@@ -167,6 +206,7 @@ class ErrorBoundaryCore extends React.Component {
       clearTimeout(this.resetTimeoutId);
       this.resetTimeoutId = null;
     }
+    this.clearStableTimer();
 
     this.setState((prevState) => ({
       hasError: false,
@@ -183,6 +223,11 @@ class ErrorBoundaryCore extends React.Component {
   }
 
   handleNavigateHome() {
+    if (this.resetTimeoutId) {
+      clearTimeout(this.resetTimeoutId);
+      this.resetTimeoutId = null;
+    }
+    this.clearStableTimer();
     this.setState((prevState) => ({
       hasError: false,
       error: null,

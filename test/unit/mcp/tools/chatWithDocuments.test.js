@@ -44,6 +44,15 @@ describe('chat_with_documents tool', () => {
     );
   });
 
+  test('reports MODEL_NOT_READY while the chat service is not created yet', async () => {
+    // ipc/chat.js getOrCreateChatService() returns null until LlamaService
+    // is registered during startup.
+    registerChatWithDocuments(fakeMcp, { chat: null });
+    const out = await captured({ query: 'what is in q4?' });
+    expect(out.isError).toBe(true);
+    expect(JSON.parse(out.content[0].text).error.code).toBe('MODEL_NOT_READY');
+  });
+
   test('rejects empty query', async () => {
     registerChatWithDocuments(fakeMcp, makeServices());
     const out = await captured({ query: '' });

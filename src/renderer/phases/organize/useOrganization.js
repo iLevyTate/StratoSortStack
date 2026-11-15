@@ -10,7 +10,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { IPC_CHANNELS, PHASES } from '../../../shared/constants';
 import { createLogger } from '../../../shared/logger';
-import { extractExtension } from '../../../shared/namingConventions';
+import { extractExtension, trailingFileExtension } from '../../../shared/namingConventions';
 import { createOrganizeBatchAction, previewBatchOrganize } from '../../components/UndoRedoSystem';
 import { updateResultPathsAfterMove } from '../../store/slices/analysisSlice';
 import { updateFilePathsAfterMove } from '../../store/slices/filesSlice';
@@ -506,8 +506,6 @@ const normalizeForComparison = (/** @type {any} */ path) => {
   return isWindowsPath(path) || isMac ? normalized.toLowerCase() : normalized;
 };
 
-const hasFileExtension = (/** @type {any} */ fileName) => !!extractExtension(fileName);
-
 /**
  * Helper to join paths using the correct separator based on the root
  */
@@ -595,11 +593,16 @@ function processFileForOrganization({
   const suggestedName = edits.suggestedName || fileWithEdits.analysis?.suggestedName || file.name;
   const safeSuggestedName = sanitizeDestinationFileName(suggestedName, file.name);
 
-  // Preserve compound extensions like .tar.gz when suggested name omits extension
+  // Re-add the file's own extension (compound-aware, like .tar.gz) unless the
+  // name already ends with it or with another one typed on purpose. Text
+  // after a dot is not an extension by itself: "Receipt from J. Smith" must
+  // still land as a .pdf.
   const originalExt = extractExtension(file.name);
-  const hasExtension = hasFileExtension(safeSuggestedName);
-  const newName =
-    hasExtension || !originalExt ? safeSuggestedName : `${safeSuggestedName}${originalExt}`;
+  const keepsName =
+    !originalExt ||
+    safeSuggestedName.toLowerCase().endsWith(originalExt.toLowerCase()) ||
+    Boolean(trailingFileExtension(safeSuggestedName));
+  const newName = keepsName ? safeSuggestedName : `${safeSuggestedName}${originalExt}`;
 
   const dest = joinPath(destinationDir, newName);
   const normalized = window.electronAPI?.files?.normalizePath?.(dest) || dest;

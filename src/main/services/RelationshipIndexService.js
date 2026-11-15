@@ -253,9 +253,12 @@ class RelationshipIndexService {
       }
       for (let i = 0; i < files.length; i += 1) {
         for (let j = i + 1; j < files.length; j += 1) {
-          const source = files[i];
-          const target = files[j];
-          const key = source < target ? `${source}|${target}` : `${target}|${source}`;
+          const [source, target] =
+            files[i] < files[j] ? [files[i], files[j]] : [files[j], files[i]];
+          // Join on NUL, not '|': on macOS and Linux a file name may contain
+          // '|', and splitting the key on it cut such a path and dropped the
+          // edge. No path can contain NUL, so the split below is exact.
+          const key = `${source}\u0000${target}`;
           // Cap edge candidates to prevent unbounded memory growth
           if (edgeCounts.size >= DEFAULTS.maxEdgeCandidates && !edgeCounts.has(key)) continue;
           edgeCounts.set(key, (edgeCounts.get(key) || 0) + 1);
@@ -279,7 +282,7 @@ class RelationshipIndexService {
       .sort((a, b) => b[1] - a[1])
       .slice(0, DEFAULTS.maxEdges)
       .map(([key, weight]) => {
-        const [source, target] = key.split('|');
+        const [source, target] = key.split('\u0000');
         return {
           id: `rel:${source}->${target}`,
           source,

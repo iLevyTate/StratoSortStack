@@ -4,6 +4,9 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { z } = require('zod');
 
+// SearchService.hybridSearch rejects shorter queries.
+const MIN_QUERY_LENGTH = 2;
+
 // True when `child` is the same directory as `parent` or strictly inside it.
 // Plain string startsWith is wrong: '/home/user/Doc' would match
 // '/home/user/Documents'. We normalize both sides and require either equal
@@ -62,7 +65,11 @@ function registerSearchDocuments(/** @type {any} */ mcp, /** @type {any} */ serv
       description:
         "Hybrid semantic + keyword search across the user's analyzed documents. Returns ranked file references with snippets and scores.",
       inputSchema: {
-        query: z.string().min(1).max(1000).describe('Natural-language or keyword search query'),
+        query: z
+          .string()
+          .min(MIN_QUERY_LENGTH)
+          .max(1000)
+          .describe('Natural-language or keyword search query (at least 2 characters)'),
         top_k: z
           .number()
           .int()
@@ -85,6 +92,9 @@ function registerSearchDocuments(/** @type {any} */ mcp, /** @type {any} */ serv
     async (/** @type {any} */ args) => {
       const query = (args?.query || '').trim();
       if (!query) return _err('INVALID_QUERY', 'query is required and must not be empty.');
+      if (query.length < MIN_QUERY_LENGTH) {
+        return _err('INVALID_QUERY', `query must be at least ${MIN_QUERY_LENGTH} characters.`);
+      }
       const top_k = Math.min(args?.top_k || 10, 50);
       /** @type {Record<string, string>} */
       const modeMap = { hybrid: 'hybrid', semantic: 'vector', keyword: 'bm25' };
@@ -126,6 +136,13 @@ function registerSearchDocuments(/** @type {any} */ mcp, /** @type {any} */ serv
           topK: folderScope ? Math.max(top_k * 4, 50) : top_k,
           mode
         });
+        // hybridSearch reports a broken index or a rejected query as
+        // { success: false } with an empty result list. Passing that on as
+        // "no matches" would tell the client the library has nothing.
+        if (r?.success === false) {
+          services.logger?.warn?.('[mcp.search] search returned failure', { error: r.error });
+          return _err('SERVICE_UNAVAILABLE', 'search service failed');
+        }
         const rawHits = Array.isArray(r?.results) ? r.results : [];
         const allHits = rawHits.map(_normalizeHit);
         // Path-prefix safety: '/home/user/Doc' must NOT match '/home/user/Documents'.

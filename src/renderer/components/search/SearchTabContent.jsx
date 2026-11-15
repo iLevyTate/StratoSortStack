@@ -30,9 +30,7 @@ import SearchAutocomplete from './SearchAutocomplete';
 import SearchDiagnosticsBanner from './SearchDiagnosticsBanner';
 import SearchModeBanner from './SearchModeBanner';
 import VirtualizedSearchResults from './VirtualizedSearchResults';
-
-// Cap rows per category in grouped view (full counts still shown in header)
-const GROUPED_VIEW_MAX_PER_CATEGORY = 50;
+import { GROUPED_VIEW_MAX_PER_CATEGORY } from './hooks/useSearchTab';
 
 export default function SearchTabContent({
   search,

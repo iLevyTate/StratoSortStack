@@ -184,6 +184,7 @@ export default function UnifiedSearchModal({
     focusedResultIndex,
     setFocusedResultIndex,
     viewMode,
+    navigableResults,
     selectedSearchResultPath,
     triggerSearchRefresh,
     resetSearchState
@@ -1021,10 +1022,11 @@ export default function UnifiedSearchModal({
   // Keyboard Shortcuts
   // ============================================================================
 
-  // Reset focused index when search results change
+  // Reset focused index when search results change, or when the view mode
+  // changes, since the index points into the order on screen.
   useEffect(() => {
     setFocusedResultIndex(-1);
-  }, [searchResults, setFocusedResultIndex]);
+  }, [searchResults, viewMode, setFocusedResultIndex]);
 
   // Scroll focused result into view
   useEffect(() => {
@@ -1135,13 +1137,15 @@ export default function UnifiedSearchModal({
         const autocompleteOpen = document.querySelector('[role="listbox"]');
         if (autocompleteOpen) return; // Let autocomplete handle arrow keys
 
+        // Step through the rows in on-screen order (grouped view reorders
+        // and caps them), not the flat result order.
         if (e.key === 'ArrowDown') {
           e.preventDefault();
           setFocusedResultIndex((prev) => {
-            const next = Math.min(prev + 1, searchResults.length - 1);
+            const next = Math.min(prev + 1, navigableResults.length - 1);
             // Also select when navigating
-            if (searchResults[next]) {
-              setSelectedSearchId(searchResults[next].id);
+            if (navigableResults[next]) {
+              setSelectedSearchId(navigableResults[next].id);
             }
             return next;
           });
@@ -1151,8 +1155,8 @@ export default function UnifiedSearchModal({
           setFocusedResultIndex((prev) => {
             const next = Math.max(prev - 1, -1);
             // Select result or clear selection when at -1
-            if (next >= 0 && searchResults[next]) {
-              setSelectedSearchId(searchResults[next].id);
+            if (next >= 0 && navigableResults[next]) {
+              setSelectedSearchId(navigableResults[next].id);
             } else if (next === -1) {
               setSelectedSearchId(null); // Clear selection when defocusing
             }
@@ -1161,7 +1165,7 @@ export default function UnifiedSearchModal({
         }
         // Enter to open focused result
         if (e.key === 'Enter' && focusedResultIndex >= 0 && !e.ctrlKey && !e.metaKey) {
-          const result = searchResults[focusedResultIndex];
+          const result = navigableResults[focusedResultIndex];
           const resultPath = getMetadataPath(result, result?.id);
           if (resultPath) {
             e.preventDefault();
@@ -1221,6 +1225,7 @@ export default function UnifiedSearchModal({
     selectedNodeId,
     nodes.length,
     searchResults,
+    navigableResults,
     focusedResultIndex,
     openFile,
     graphViewEnabled,

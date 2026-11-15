@@ -29,6 +29,9 @@ import {
 
 const logger = createLogger('useSearchTab');
 
+// Cap rows per category in grouped view (full counts still shown in header)
+export const GROUPED_VIEW_MAX_PER_CATEGORY = 50;
+
 const ENABLE_SEARCH_TRACE_LOGS = process.env.NODE_ENV === 'development';
 
 /** Per-renderer sequence for the abortKey tagging each search-tab invoke. */
@@ -310,12 +313,24 @@ export function useSearchTab({ isOpen, activeTab, defaultTopK, error, setError }
     return sortedGroups;
   }, [searchResults]);
 
-  // Pre-compute ID-to-index map for O(1) lookup in grouped view
+  // Results in the order the list renders them. Grouped view shows them by
+  // category, each capped, so keyboard focus (focusedResultIndex) indexes this
+  // list: the highlight follows the rows on screen and never lands on a
+  // result the cap hides.
+  const navigableResults = useMemo(() => {
+    if (viewMode !== 'grouped') return searchResults;
+    return Object.values(groupedResults).flatMap((results) =>
+      results.slice(0, GROUPED_VIEW_MAX_PER_CATEGORY)
+    );
+  }, [viewMode, searchResults, groupedResults]);
+
+  // Pre-compute ID-to-position map (into navigableResults) for O(1) lookup in
+  // grouped view
   const resultIdToIndex = useMemo(() => {
     const map = new Map();
-    searchResults.forEach((r, i) => map.set(r.id, i));
+    navigableResults.forEach((r, i) => map.set(r.id, i));
     return map;
-  }, [searchResults]);
+  }, [navigableResults]);
 
   // Reset to a clean slate for a fresh open (called from the modal's
   // open-reset effect so the reset ordering stays exactly as before).
@@ -354,6 +369,7 @@ export function useSearchTab({ isOpen, activeTab, defaultTopK, error, setError }
     selectedSearchResultName,
     searchStatusLabel,
     groupedResults,
+    navigableResults,
     resultIdToIndex,
     triggerSearchRefresh,
     resetSearchState
