@@ -193,6 +193,7 @@ const loadState = () => {
               graphInsightsSection: 'insights',
               graphLegendHintDismissed: false,
               graphInsightsDockCollapsed: false,
+              smartFolderSampleHash: null,
               // Session-only flag: a fresh boot is never mid dashboard excursion.
               cameFromDashboard: false,
               viewMode: 'phased',
@@ -362,6 +363,8 @@ const loadState = () => {
           graphInsightsSection: 'insights',
           graphLegendHintDismissed: parsed?.ui?.graphLegendHintDismissed === true,
           graphInsightsDockCollapsed: parsed?.ui?.graphInsightsDockCollapsed === true,
+          // Smart folders survive expiry, so which set was tried on a sample does too.
+          smartFolderSampleHash: readSmartFolderSampleHash(parsed?.ui),
           // Session-only flag: a fresh boot is never mid dashboard excursion.
           cameFromDashboard: false,
           // viewMode is a durable preference, not session state — preserve it
@@ -438,7 +441,8 @@ const loadState = () => {
               selectedTheme: expiredState.ui.selectedTheme,
               graphTourDismissed: expiredState.ui.graphTourDismissed,
               graphLegendHintDismissed: expiredState.ui.graphLegendHintDismissed,
-              graphInsightsDockCollapsed: expiredState.ui.graphInsightsDockCollapsed
+              graphInsightsDockCollapsed: expiredState.ui.graphInsightsDockCollapsed,
+              smartFolderSampleHash: expiredState.ui.smartFolderSampleHash
             },
             files: {
               selectedFiles: [],
@@ -492,6 +496,7 @@ const loadState = () => {
         })(),
         graphLegendHintDismissed: parsed.ui?.graphLegendHintDismissed === true,
         graphInsightsDockCollapsed: parsed.ui?.graphInsightsDockCollapsed === true,
+        smartFolderSampleHash: readSmartFolderSampleHash(parsed.ui),
         // Session-only flag: a fresh boot is never mid dashboard excursion.
         cameFromDashboard: false,
         viewMode: parsed.ui?.viewMode === 'dashboard' ? 'dashboard' : 'phased',
@@ -546,6 +551,17 @@ const __REDUX_DEV_HMR_KEY__ = '__STRATOSORT_REDUX_STORE__';
 const isDev = process.env.NODE_ENV === 'development';
 
 const DURABLE_THEME_VALUES = ['primary', 'light', 'dark'];
+
+/**
+ * The Smart Folder set last tried on a sample (uiSlice smartFolderSampleHash).
+ * Blobs saved before the field existed have none: no sample tried yet.
+ * @param {any} parsedUi
+ * @returns {string|null}
+ */
+function readSmartFolderSampleHash(parsedUi) {
+  const value = parsedUi?.smartFolderSampleHash;
+  return typeof value === 'string' && value ? value : null;
+}
 
 /**
  * Resolve the palette to rehydrate. App.js mirrors the selected theme to a

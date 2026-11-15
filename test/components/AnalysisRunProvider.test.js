@@ -113,7 +113,7 @@ describe('AnalysisRunProvider', () => {
     expect(mockRunLifecycle.unmounts).toBe(0);
   });
 
-  test('Discover reads the run actions from the provider', () => {
+  test('Discover reads the run actions from the provider', async () => {
     let seen;
     function Probe() {
       seen = useAnalysisRun();
@@ -124,7 +124,14 @@ describe('AnalysisRunProvider', () => {
         <Probe />
       </AnalysisRunProvider>
     );
-    expect(seen.analyzeFiles).toBe(mockAnalyzeFiles);
+    // analyzeFiles is the run's, behind the sample offer (useSampleRun),
+    // which lets a small batch straight through.
+    mockAnalyzeFiles.mockResolvedValueOnce({ started: true });
+    const files = [{ path: '/Users/alex/in/a.pdf', name: 'a.pdf' }];
+    await act(async () => {
+      await seen.analyzeFiles(files);
+    });
+    expect(mockAnalyzeFiles).toHaveBeenCalledWith(files, undefined);
   });
 
   test('a total analysis failure reported by the run reaches Discover', () => {

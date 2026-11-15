@@ -14,6 +14,7 @@ import {
   getSelectableSmartFolders,
   isDefaultCategoryName
 } from '../../../shared/categoryFolderMatching';
+import { describeRouting } from '../../phases/organize/organizeDestination';
 
 function ReadyFileItem({
   file,
@@ -102,33 +103,7 @@ function ReadyFileItem({
     }
     return names;
   }, [engine, selectableFolders]);
-  const routingNote = useMemo(() => {
-    if (!routing) return null;
-    if (routing.source === 'review') {
-      return engine?.explanation || 'No Smart Folder matched this file.';
-    }
-    if (routing.source === 'engine' && engine) {
-      return engine.explanation || 'Ranked by what the file contains';
-    }
-    if (routing.source === 'user') {
-      return engine?.folder && !engine.needsReview && engine.folder !== routing.folder?.name
-        ? `Your choice (suggested: ${engine.folder})`
-        : 'Your choice';
-    }
-    if (routing.source === 'name') {
-      // A name match is either the analysis label or the file's own name/type.
-      const fromLabel =
-        typeof category === 'string' &&
-        category.trim().toLowerCase() ===
-          String(routing.folder?.name || '')
-            .trim()
-            .toLowerCase();
-      return fromLabel
-        ? 'Matched by the label the analysis gave this file'
-        : 'Matched by folder name';
-    }
-    return null;
-  }, [routing, engine, category]);
+  const routingNote = useMemo(() => describeRouting(routing, category), [routing, category]);
   // A changed suggestion is learned from the move, but only for files of the
   // same type and label, and only after a few (the engine weighs it against
   // what the file contains). Say so, so the user knows what to expect.
