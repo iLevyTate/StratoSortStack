@@ -213,7 +213,7 @@ class FileSystemError extends Error {
       [FILE_SYSTEM_ERROR_CODES.PERMISSION_DENIED]:
         'You do not have permission to perform this action. Try running as administrator.',
       [FILE_SYSTEM_ERROR_CODES.WRITE_FAILED]:
-        'Failed to save the file. Please check that the location is writable.',
+        'Failed to save the file. Check that the location is writable.',
       [FILE_SYSTEM_ERROR_CODES.READ_FAILED]:
         'Failed to read the file. It may be corrupted or inaccessible.',
       [FILE_SYSTEM_ERROR_CODES.DELETE_FAILED]:
@@ -232,8 +232,7 @@ class FileSystemError extends Error {
         'The folder is not empty. Remove its contents first.',
       [FILE_SYSTEM_ERROR_CODES.NOT_A_DIRECTORY]: 'Expected a folder but found a file.',
       [FILE_SYSTEM_ERROR_CODES.NOT_A_FILE]: 'Expected a file but found a folder.',
-      [FILE_SYSTEM_ERROR_CODES.DISK_FULL]:
-        'Your disk is full. Please free up some space and try again.',
+      [FILE_SYSTEM_ERROR_CODES.DISK_FULL]: 'Your disk is full. Free up some space and try again.',
       [FILE_SYSTEM_ERROR_CODES.QUOTA_EXCEEDED]: 'Your storage quota has been exceeded.',
       [FILE_SYSTEM_ERROR_CODES.TOO_MANY_OPEN_FILES]:
         'Too many files are open. Close some applications and try again.',
@@ -252,8 +251,7 @@ class FileSystemError extends Error {
         'File verification failed. The file may be corrupted.',
       [FILE_SYSTEM_ERROR_CODES.SIZE_MISMATCH]:
         'File size verification failed. The copy may be incomplete.',
-      [FILE_SYSTEM_ERROR_CODES.PARTIAL_WRITE]:
-        'Only part of the file was written. Please try again.',
+      [FILE_SYSTEM_ERROR_CODES.PARTIAL_WRITE]: 'Only part of the file was written. Try again.',
       [FILE_SYSTEM_ERROR_CODES.CORRUPTED_FILE]:
         'The file appears to be corrupted and cannot be processed.',
       [FILE_SYSTEM_ERROR_CODES.WATCHER_FAILED]: 'Failed to monitor the folder for changes.',
@@ -273,7 +271,7 @@ class FileSystemError extends Error {
       [FILE_SYSTEM_ERROR_CODES.UNKNOWN_ERROR]: 'An unexpected file system error occurred.'
     };
 
-    return userMessages[this.code] || 'A file system error occurred. Please try again.';
+    return userMessages[this.code] || 'A file system error occurred. Try again.';
   }
 
   /**

@@ -379,9 +379,7 @@ describe('useOrganization: how a finished run is reported', () => {
       });
 
       const toasts = outcomeToasts(options);
-      expect(toasts).toEqual([
-        ['Organization cancelled — 1 file organized, 2 skipped.', 'warning']
-      ]);
+      expect(toasts).toEqual([['Organization cancelled: 1 file organized, 2 skipped.', 'warning']]);
       expect(lastRun(options)).toMatchObject({ outcome: 'moved', count: 1 });
       expect(options.actions.advancePhase).not.toHaveBeenCalled();
     });

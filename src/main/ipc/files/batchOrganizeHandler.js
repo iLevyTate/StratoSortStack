@@ -572,7 +572,7 @@ async function handleBatchOrganize(params) {
       log.warn('[FILE-OPS] Could not acquire batch lock - another batch operation is in progress');
       return {
         success: false,
-        error: 'Another batch operation is already in progress. Please wait for it to complete.',
+        error: 'Another batch operation is already in progress. Wait for it to finish.',
         errorCode: ERROR_CODES.BATCH_LOCK_TIMEOUT
       };
     }

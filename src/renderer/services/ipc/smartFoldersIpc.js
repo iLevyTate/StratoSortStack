@@ -21,7 +21,7 @@ function withDescriptionTimeout(promise, timeoutMs) {
     timeoutId = setTimeout(() => {
       resolve({
         success: false,
-        error: 'Description generation timed out. Please try again.'
+        error: 'Description generation timed out. Try again.'
       });
     }, effectiveTimeoutMs);
   });

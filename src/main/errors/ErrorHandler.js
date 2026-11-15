@@ -225,7 +225,7 @@ class ErrorHandler {
   parseError(error) {
     const errorInfo = {
       type: ERROR_TYPES.UNKNOWN,
-      message: 'Something went wrong. Please try again.',
+      message: 'Something went wrong. Try again.',
       details: {},
       stack: error?.stack
     };
@@ -286,11 +286,12 @@ class ErrorHandler {
         switch (resolvedCode) {
           case ERROR_CODES.LLAMA_MODEL_INCOMPATIBLE_CPU:
             errorInfo.message =
-              'This build of the AI engine is not compatible with your CPU. Switch to the small Qwen 0.5B profile in Settings > Models.';
+              'This build of the AI engine is not compatible with your CPU. Switch to the small Qwen 0.5B profile in Settings → Default AI models.';
             break;
           case ERROR_CODES.LLAMA_MODEL_NOT_FOUND:
           case ERROR_CODES.LLAMA_MODEL_PATH_MISMATCH:
-            errorInfo.message = 'AI model file is missing. Open Settings > Models to install it.';
+            errorInfo.message =
+              'AI model file is missing. Open Settings → Model management to install it.';
             break;
           case ERROR_CODES.LLAMA_OOM:
             errorInfo.message = 'Out of memory. Try a smaller model or close other applications.';
@@ -301,14 +302,15 @@ class ErrorHandler {
             break;
           case ERROR_CODES.LLAMA_MODEL_LOAD_FAILED:
             errorInfo.message =
-              'Could not load the AI model. Re-download it from Settings > Models.';
+              'Could not load the AI model. Re-download it from Settings → Model management.';
             break;
           case ERROR_CODES.LLAMA_INFERENCE_FAILED:
             errorInfo.message =
-              'AI inference failed. The prompt may be too long for this model — shorten the input or switch to a larger model.';
+              'AI inference failed. The prompt may be too long for this model. Shorten the input or switch to a larger model.';
             break;
           default:
-            errorInfo.message = 'AI engine unavailable. Check Settings > Models and try again.';
+            errorInfo.message =
+              'AI engine unavailable. Check Settings → Local AI engine and try again.';
         }
       } else if (isNetworkError(error)) {
         errorInfo.type = ERROR_TYPES.NETWORK_ERROR;
@@ -316,7 +318,7 @@ class ErrorHandler {
           errorInfo.message =
             'Request timed out. The AI model may be loading or your system is busy.';
         } else {
-          errorInfo.message = 'A network-related error occurred. Please try again.';
+          errorInfo.message = 'A network error occurred. Try again.';
         }
       } else {
         // Keep original message if it's user-friendly, otherwise provide generic

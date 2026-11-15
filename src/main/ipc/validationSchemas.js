@@ -306,7 +306,7 @@ if (!z) {
       if (data === undefined || data === null) return { data };
       const n = typeof data === 'number' ? data : Number(data);
       if (!Number.isFinite(n) || n < 1 || n > 500) {
-        return { error: 'history limit must be a number 1–500' };
+        return { error: 'History limit must be a number from 1 to 500' };
       }
       return { data: n };
     }),
@@ -314,7 +314,7 @@ if (!z) {
       if (data === undefined || data === null) return { data: 50 };
       const n = typeof data === 'number' ? data : Number(data);
       if (!Number.isFinite(n) || n < 1 || n > 200) {
-        return { error: 'undo history limit must be a number 1–200' };
+        return { error: 'Undo history limit must be a number from 1 to 200' };
       }
       return { data: Math.floor(n) };
     }),

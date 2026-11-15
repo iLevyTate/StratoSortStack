@@ -204,7 +204,7 @@ describe('AddSmartFolderModal — Generate with AI feedback', () => {
   test('timed-out response surfaces a hint asking the user to retry or type manually', async () => {
     mockGenerateDescription.mockResolvedValueOnce({
       success: false,
-      error: 'Description generation timed out. Please try again.'
+      error: 'Description generation timed out. Try again.'
     });
 
     const { showNotification } = renderModal();

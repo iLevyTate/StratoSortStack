@@ -200,8 +200,8 @@ function UncategorizedActionsBar({
                   <strong className="text-system-gray-800">{suggestion.displayName}</strong>
                   {suggestion.earlierCount > 0
                     ? ` (${suggestion.earlierCount} analyzed earlier)`
-                    : ''}{' '}
-                  — want a Smart Folder for them?
+                    : ''}
+                  . Want a Smart Folder for them?
                 </span>
               </Text>
             ) : (

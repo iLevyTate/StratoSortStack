@@ -1005,7 +1005,7 @@ function raiseCoordinatedStartupFailure(/** @type {any} */ error) {
       subsystem: 'startup',
       severity: 'error',
       message:
-        'AI services did not fully start — analysis and semantic search may be unavailable. Restart StratoSort to retry.',
+        'AI services did not fully start. Analysis and semantic search may be unavailable. Restart StratoSort to retry.',
       detail: { error: error || null }
     });
   } catch (trackerErr) {
@@ -1036,7 +1036,7 @@ function raiseCoordinatedStartupNotice(startupResult) {
         subsystem: 'startup',
         severity: 'warning',
         message:
-          'AI services are still starting — analysis and semantic search will be ready shortly. ' +
+          'AI services are still starting. Analysis and semantic search will be ready shortly. ' +
           'A large library can take a few minutes; StratoSort keeps loading in the background.',
         detail: { error: startupResult.error || null }
       });

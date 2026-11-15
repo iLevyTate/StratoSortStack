@@ -602,8 +602,7 @@ function OrganizePhase() {
           Review & <span className="text-gradient">Organize</span>
         </Heading>
         <Text variant="lead" className="max-w-xl mx-auto">
-          Review the move plan, refine anything that needs attention, and stay in control before
-          files are relocated.
+          Review the move plan and fix anything that needs attention before files move.
         </Text>
         {isAnalysisRunning && (
           <div className="flex flex-wrap items-center justify-center gap-compact mt-2">
@@ -630,8 +629,8 @@ function OrganizePhase() {
         collapsedSummary={
           <Text variant="small" className="text-system-gray-700">
             {readyFilesCount > 0
-              ? `${readyFilesCount} file${readyFilesCount !== 1 ? 's' : ''} ready for review - expand for organize tips`
-              : 'Waiting for review items - expand for organize tips'}
+              ? `${readyFilesCount} file${readyFilesCount !== 1 ? 's' : ''} ready for review. Expand for organize tips.`
+              : 'Waiting for review items. Expand for organize tips.'}
           </Text>
         }
       >
@@ -646,7 +645,7 @@ function OrganizePhase() {
               </StatusBadge>
             </div>
             <Heading as="h2" variant="h5" className="mb-2">
-              Approve the move plan with confidence
+              Approve the move plan
             </Heading>
             <Text variant="small" className="text-system-gray-600">
               This is the last review step before files move. Focus on anything uncertain, confirm
@@ -928,8 +927,8 @@ function OrganizePhase() {
                 </Text>
                 <Text variant="tiny" className="text-system-gray-500">
                   {isOrganizing
-                    ? 'Please wait — destinations update as each file lands. You can cancel or pause below.'
-                    : `${readyFilesCount} file${readyFilesCount !== 1 ? 's' : ''} prepared for movement. Undo remains available after the batch completes.`}
+                    ? 'Destinations update as each file lands. You can cancel or pause below.'
+                    : `${readyFilesCount} file${readyFilesCount !== 1 ? 's' : ''} ready to move. You can still undo after the batch finishes.`}
                 </Text>
               </div>
               {!isOrganizing && !isPaused ? (

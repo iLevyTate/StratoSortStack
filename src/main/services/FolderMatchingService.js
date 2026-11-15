@@ -1120,7 +1120,7 @@ class FolderMatchingService {
         });
         throw new Error(
           `Embedding dimension mismatch: expected ${expectedDim}, got ${vector?.length}. ` +
-            `Model "${model}" may have changed. Please rebuild your embedding index.`
+            `Model "${model}" may have changed. Rebuild your embedding index.`
         );
       }
 

@@ -717,7 +717,7 @@ class SearchService {
         const errorMsg =
           `Embedding model changed. Your search index uses ${expectedDim}-dimension embeddings, ` +
           `but your current model produces ${vector.length}-dimension embeddings. ` +
-          `Please rebuild your search index to use the new model.`;
+          `Rebuild your search index to use the new model.`;
 
         logger.error('[SearchService] Embedding dimension mismatch - failing vector search', {
           collectionType,
@@ -3389,7 +3389,7 @@ class SearchService {
               'Failed to generate test embedding. The AI engine may be unavailable or the embedding model is missing.'
           });
           diagnostics.recommendations.push(
-            'Ensure the embedding model is downloaded and available in Settings > Models.'
+            'Ensure the embedding model is downloaded and available in Settings → Model management.'
           );
         }
       } catch (e) {
@@ -3558,7 +3558,7 @@ class SearchService {
                 message: `${label}: ${deadLetterCount} embeddings permanently failed (dead letter).`
               });
               diagnostics.recommendations.push(
-                'Review dead letter items in Settings > Advanced to identify recurring failures.'
+                'Check Settings → Diagnostics → Troubleshooting logs to find what keeps failing.'
               );
             }
 

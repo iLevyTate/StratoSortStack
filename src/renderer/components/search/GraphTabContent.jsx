@@ -244,7 +244,7 @@ export default function GraphTabContent({
             tone="error"
             size="lg"
             title="Graph is offline"
-            description="The local AI engine or vector database is currently unavailable. Please check your model downloads in Settings or restart the app."
+            description="The local AI engine or vector database is currently unavailable. Check your model downloads in Settings or restart the app."
             action={
               <Button type="button" variant="secondary" size="sm" onClick={handleOpenSettings}>
                 Open Settings
@@ -400,7 +400,7 @@ export default function GraphTabContent({
                                 {bridge.targetLabel}
                               </>
                             }
-                            description={`${Math.round((bridge.similarity || 0) * 100)}% related — files sit in different folders`}
+                            description={`${Math.round((bridge.similarity || 0) * 100)}% related, but the files sit in different folders`}
                             verb="Highlight on graph"
                             onClick={() => {
                               setBridgeOverlayEnabled(true);
@@ -1382,7 +1382,7 @@ export default function GraphTabContent({
                         className="text-system-gray-500 max-w-md mb-8 leading-relaxed"
                       >
                         Your files are scattered across folders. Clustering reveals how they
-                        naturally belong together-even files you forgot you had. For a
+                        naturally belong together, even files you forgot you had. For a
                         bird&apos;s-eye map of everything at once, the Atlas tab is a great
                         companion view.
                       </Text>
@@ -2575,9 +2575,10 @@ export default function GraphTabContent({
                               </Text>
                               <Text as="div" variant="tiny" className="text-system-gray-600">
                                 Clusters are groups of related files. Solid lines connect similar
-                                files; dashed lines between clusters mean topics overlap — a count
-                                shows files that belong to both groups. Hover or click a line&apos;s
-                                label for why it&apos;s there; click again to pin the details open.
+                                files. Dashed lines between clusters mean topics overlap, and a
+                                count shows how many files belong to both groups. Hover or click a
+                                line&apos;s label for why it&apos;s there; click again to pin the
+                                details open.
                               </Text>
                               <IconButton
                                 onClick={() => dispatch(setGraphLegendHintDismissed(true))}

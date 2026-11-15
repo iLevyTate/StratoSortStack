@@ -200,7 +200,7 @@ function _ffmpegUnavailableMessage() {
     return `${base} Install ffmpeg via your package manager (e.g. \`apt install ffmpeg\` or \`dnf install ffmpeg\`). ${escapeHatch}`;
   }
   if (process.platform === 'darwin') {
-    return `${base} The bundled binary should ship with the app — reinstall, or install ffmpeg via Homebrew (\`brew install ffmpeg\`). ${escapeHatch}`;
+    return `${base} The app should include ffmpeg. Reinstall it, or install ffmpeg via Homebrew (\`brew install ffmpeg\`). ${escapeHatch}`;
   }
   return `${base} Run 'npm run setup:ffmpeg-runtime' (dev), reinstall the app, or install ffmpeg manually. ${escapeHatch}`;
 }

@@ -87,7 +87,7 @@ const EmptySearchState = memo(function EmptySearchState({
         tone="error"
         size="lg"
         title="Search is offline"
-        description="The local AI engine or vector database is currently unavailable. Please check your model downloads in Settings or restart the app."
+        description="The local AI engine or vector database is currently unavailable. Check your model downloads in Settings or restart the app."
         action={
           onOpenSettings && (
             <div className="flex justify-center">

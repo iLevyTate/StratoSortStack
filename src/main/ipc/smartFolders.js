@@ -1585,7 +1585,7 @@ async function handleSmartFoldersEdit(
       if (illegalChars.test(updatedFolder.name)) {
         return {
           success: false,
-          error: 'Folder name contains invalid characters. Please avoid: < > : " | ? *',
+          error: 'Folder name contains invalid characters: < > : " | ? *',
           errorCode: ERROR_CODES.INVALID_FOLDER_NAME_CHARS
         };
       }
@@ -1727,7 +1727,7 @@ async function handleSmartFoldersEdit(
             if (renameFailure?.code === 'EEXIST') {
               return {
                 success: false,
-                error: 'Destination directory now occupied — refusing overwrite',
+                error: 'Destination already exists. Nothing was overwritten.',
                 errorCode: ERROR_CODES.RENAME_FAILED,
                 details: renameFailure.message
               };

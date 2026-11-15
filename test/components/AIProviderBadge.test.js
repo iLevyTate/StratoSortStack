@@ -78,7 +78,7 @@ describe('AIProviderBadge', () => {
         routing: { default: 'anthropic', perFolder: {} }
       }
     });
-    const badge = screen.getByRole('status', { name: /cloud ai — anthropic claude/i });
+    const badge = screen.getByRole('status', { name: /cloud ai: anthropic claude/i });
     expect(badge).toBeInTheDocument();
   });
 
@@ -94,7 +94,7 @@ describe('AIProviderBadge', () => {
         routing: { default: 'openaiCompatible', perFolder: {} }
       }
     });
-    const badge = screen.getByRole('status', { name: /cloud ai — openai/i });
+    const badge = screen.getByRole('status', { name: /cloud ai: openai/i });
     expect(badge).toBeInTheDocument();
   });
 

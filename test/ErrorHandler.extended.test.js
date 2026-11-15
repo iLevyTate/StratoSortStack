@@ -178,7 +178,7 @@ describe('ErrorHandler - extended coverage', () => {
       const result = errorHandler.parseError(error);
 
       expect(result.type).toBe('NETWORK_ERROR');
-      expect(result.message).toContain('network-related error');
+      expect(result.message).toContain('network error');
     });
 
     test('preserves short user-friendly error messages', () => {
@@ -196,21 +196,21 @@ describe('ErrorHandler - extended coverage', () => {
       const result = errorHandler.parseError(error);
 
       expect(result.type).toBe('UNKNOWN');
-      expect(result.message).toBe('Something went wrong. Please try again.');
+      expect(result.message).toBe('Something went wrong. Try again.');
     });
 
     test('replaces messages containing undefined with generic', () => {
       const error = new Error('Cannot read property of undefined');
       const result = errorHandler.parseError(error);
 
-      expect(result.message).toBe('Something went wrong. Please try again.');
+      expect(result.message).toBe('Something went wrong. Try again.');
     });
 
     test('replaces messages containing null with generic', () => {
       const error = new Error('Expected value but got null');
       const result = errorHandler.parseError(error);
 
-      expect(result.message).toBe('Something went wrong. Please try again.');
+      expect(result.message).toBe('Something went wrong. Try again.');
     });
 
     test('includes originalMessage in details', () => {

@@ -216,7 +216,7 @@ function CompletePhase() {
   const openFolderLabel = primaryFolderName ? `Open ${primaryFolderName}` : 'Open folder';
   const openFolderHint =
     destinationCount > 1
-      ? `Opens ${redactPaths ? 'the folder' : primaryDestination} — it received the most files. Use the folder button on a row to see any other file.`
+      ? `Opens ${redactPaths ? 'the folder' : primaryDestination}, which received the most files. Use the folder button on a row to see any other file.`
       : `Opens ${redactPaths ? 'the folder these files were moved to' : primaryDestination}`;
 
   const showCelebration = totalFiles > 0 && !shouldReduceMotion;
@@ -304,7 +304,7 @@ function CompletePhase() {
               A clean finish for this batch
             </Heading>
             <Text variant="small" className="text-system-gray-600">
-              Review what changed, confirm the outcome, and start the next batch when you are ready.
+              Review what changed, then start the next batch when you&apos;re ready.
             </Text>
           </div>
           <div className="min-w-[240px] rounded-2xl border border-border-soft/70 bg-system-gray-100/50 px-4 py-3">

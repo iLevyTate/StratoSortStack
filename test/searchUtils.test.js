@@ -276,7 +276,7 @@ describe('getErrorMessage', () => {
 
   it('returns embedding model changed message', () => {
     const result = getErrorMessage({ message: 'Embedding model changed recently' });
-    expect(result).toMatch(/rebuild your index/);
+    expect(result).toMatch(/Rebuild your index/);
   });
 
   it('falls back to error.message', () => {

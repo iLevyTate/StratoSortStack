@@ -1033,7 +1033,7 @@ describe('ModelSetupWizard download status it cannot trust yet', () => {
 
     expect(screen.getByText(/Choose AI Models/i)).toBeInTheDocument();
     expect(
-      screen.getByText('Required model downloads stopped. Please retry downloads.')
+      screen.getByText('Required model downloads stopped. Retry the downloads.')
     ).toBeInTheDocument();
 
     // The retry starts real downloads: the old message must not sit above them.

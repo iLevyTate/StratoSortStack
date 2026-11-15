@@ -53,7 +53,7 @@ function _raiseUndoRedoDegraded(detail) {
       subsystem: 'undo-redo',
       severity: 'error',
       message:
-        "Undo/redo isn't working — recent file moves can't be reversed from the toolbar. " +
+        "Undo/redo isn't working. Recent file moves can't be reversed from the toolbar. " +
         'Avoid further destructive actions and restart the app to recover history.',
       detail
     });

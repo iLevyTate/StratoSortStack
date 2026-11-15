@@ -114,7 +114,7 @@ function DiagnosticsLogsSection({ addNotification }) {
     >
       <SettingRow
         label="Logs"
-        description="Use these tools when sharing diagnostic details for issue investigation."
+        description="Use these tools when you share diagnostic details to investigate an issue."
       >
         <div className="flex flex-wrap gap-cozy">
           <Button

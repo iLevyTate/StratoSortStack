@@ -90,7 +90,7 @@ function LegalNoticesSection({ addNotification }) {
         <Text variant="tiny" className="leading-relaxed">
           StratoSort Stack is licensed for personal and noncommercial use; commercial use requires a
           paid license. The notices below apply only to third-party tools incorporated into the
-          product—such as Electron, llama.cpp, FFmpeg, and AI model weights—each under its own
+          product (such as Electron, llama.cpp, FFmpeg, and AI model weights), each under its own
           license.
         </Text>
       </div>

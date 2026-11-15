@@ -5,7 +5,7 @@ import { Cloud, Cpu } from 'lucide-react';
 const PROVIDER_META = {
   local: {
     label: 'Local Llama',
-    title: 'Analyzed locally — no data left this machine',
+    title: 'Analyzed locally. No data left this machine.',
     Icon: Cpu,
     tone: 'text-system-gray-500'
   },

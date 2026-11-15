@@ -482,7 +482,7 @@ describe('DashboardView', () => {
       render(<DashboardView />);
 
       expect(screen.getByRole('alert')).toHaveTextContent('2');
-      expect(screen.getByRole('alert')).toHaveTextContent('retry them in Discover');
+      expect(screen.getByRole('alert')).toHaveTextContent('Retry them in Discover');
       const failedChip = screen.getByText('2 failed').closest('button');
       expect(failedChip).not.toBeNull();
       fireEvent.click(failedChip);
@@ -513,7 +513,7 @@ describe('DashboardView', () => {
       render(<DashboardView />);
       const alert = screen.getByRole('alert');
       expect(alert).toHaveTextContent('1 file');
-      expect(alert).toHaveTextContent('retry it in Discover');
+      expect(alert).toHaveTextContent('Retry it in Discover');
     });
   });
 

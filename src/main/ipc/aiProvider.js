@@ -66,7 +66,7 @@ const _SAFE_ERROR_MESSAGES = Object.freeze({
   CONTENT_TOO_LONG: 'Request too large for the provider.',
   BUDGET_EXCEEDED: 'Monthly spend cap reached. Adjust the cap or wait until next month.',
   PROVIDER_DISABLED: 'This provider is not enabled.',
-  NO_PROVIDER_READY: 'No AI provider is ready. Configure one in Settings → AI.',
+  NO_PROVIDER_READY: 'No AI provider is ready. Configure one in Settings → AI Provider.',
   PROVIDER_FAILED: 'The provider returned an error. Try again or switch providers.',
   INVALID_RESPONSE: 'The provider returned an unexpected response.'
 });
@@ -368,7 +368,7 @@ function registerAiProviderIpc(servicesOrParams) {
     _router.on('folder-override-unavailable', (payload) => {
       const providerLabel = payload?.configuredProvider || 'cloud';
       safeSendToMain(getMainWindow, IPC_EVENTS.NOTIFICATION, {
-        message: `Smart folder AI override (${providerLabel}) is unavailable — using local model.`,
+        message: `Smart folder AI override (${providerLabel}) is unavailable. Using the local model.`,
         severity: 'warning',
         duration: 8000,
         source: 'ai-provider',

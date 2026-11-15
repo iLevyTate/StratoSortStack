@@ -928,7 +928,7 @@ class ModelDownloadManager {
         return {
           success: false,
           error: inUse
-            ? 'Model file is in use — it may be loaded by the AI engine. Switch the active model or restart the app, then try again.'
+            ? 'Model file is in use. The AI engine may have it loaded. Switch the active model or restart the app, then try again.'
             : `Could not delete model file: ${error.message}`,
           errorCode: error?.code || 'DELETE_FAILED'
         };
@@ -979,7 +979,7 @@ class ModelDownloadManager {
     const code = error?.code;
     /** @type {Record<string, string>} */
     const messageMap = {
-      ENOSPC: `Disk full — not enough free space to download ${filename}`,
+      ENOSPC: `Disk full: not enough free space to download ${filename}`,
       EACCES: `Permission denied writing ${filename} (check models directory permissions)`,
       EPERM: `Permission denied writing ${filename} (check models directory permissions)`,
       ENOENT: `Models directory missing while writing ${filename}`,

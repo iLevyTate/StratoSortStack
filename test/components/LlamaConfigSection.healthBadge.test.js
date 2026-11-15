@@ -120,7 +120,7 @@ describe('LlamaConfigSection health badge', () => {
       cpuFallbackTypes: []
     });
     const badge = screen.getByTestId('health-badge');
-    expect(badge).toHaveTextContent('Ready (CPU only — GPU backend unavailable)');
+    expect(badge).toHaveTextContent('Ready (CPU only, GPU backend unavailable)');
     expect(badge).not.toHaveTextContent(/cpu unavailable/);
     expect(badge).toHaveAttribute('data-variant', 'warning');
   });

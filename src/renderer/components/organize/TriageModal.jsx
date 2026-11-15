@@ -212,7 +212,7 @@ export default function TriageModal({
         error: error?.message,
         stack: error?.stack
       });
-      setMoveError(error?.message || 'Failed to move files. Please try again.');
+      setMoveError(error?.message || 'Failed to move files. Try again.');
     } finally {
       setIsMoving(false);
     }

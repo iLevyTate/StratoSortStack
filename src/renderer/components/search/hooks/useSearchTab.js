@@ -213,9 +213,7 @@ export function useSearchTab({ isOpen, activeTab, defaultTopK, error, setError }
                 if (invokeInFlight && !cancelled && lastSearchRef.current === requestId) {
                   abortInFlightSearch(abortKey, 'search-timeout');
                 }
-                reject(
-                  new Error('Search timed out. The index may still be loading — please try again.')
-                );
+                reject(new Error('Search timed out. The index may still be loading. Try again.'));
               }, TIMEOUTS.SEMANTIC_QUERY);
             })
           ]);

@@ -631,8 +631,7 @@ function initializeApp() {
 
       const description = document.createElement('p');
       description.className = 'splash-error-message';
-      description.textContent =
-        'The application encountered an error during startup. Please try reloading.';
+      description.textContent = 'StratoSort hit an error during startup. Try reloading.';
 
       const details = document.createElement('details');
       details.className = 'splash-error-details';

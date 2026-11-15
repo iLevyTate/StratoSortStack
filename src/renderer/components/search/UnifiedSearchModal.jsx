@@ -1686,7 +1686,7 @@ export default function UnifiedSearchModal({
                   }}
                   icon={Orbit}
                   label="Atlas"
-                  tooltip="See your whole library as a map — nearby files are similar"
+                  tooltip="See your whole library as a map where nearby files are similar"
                 />
               )}
             </div>

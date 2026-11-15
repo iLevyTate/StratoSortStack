@@ -153,7 +153,7 @@ function AddSmartFolderModal({
 
   const handleGenerateDescription = async () => {
     if (!folderName.trim()) {
-      showNotification?.('Please enter a folder name first', 'warning');
+      showNotification?.('Enter a folder name first', 'warning');
       return;
     }
     setGenFallbackHint(null);
@@ -185,7 +185,7 @@ function AddSmartFolderModal({
           // Backend used the template path. Don't drop the user into "Why
           // does my description look generic?" — explain it inline.
           setGenFallbackHint(
-            "AI was unavailable or too slow — used a template description. Edit it to fit what's actually in this folder."
+            "AI was unavailable or too slow, so a template description was used. Edit it to fit what's actually in this folder."
           );
           showNotification?.('Template description used (AI unavailable)', 'info');
         } else {
@@ -196,7 +196,7 @@ function AddSmartFolderModal({
         const msg = result?.error || 'Failed to generate description';
         if (/timed out/i.test(msg)) {
           setGenFallbackHint(
-            'AI took too long. Try again, or type a description manually — even a short one works.'
+            'AI took too long. Try again, or type a description yourself. Even a short one works.'
           );
         }
         showNotification?.(msg, 'error');
@@ -250,7 +250,7 @@ function AddSmartFolderModal({
     // but keep an explicit guard in case the form is submitted via keyboard
     // shortcut on a stale state.
     if (!nameValidation.valid) {
-      showNotification?.(nameValidation.error || 'Please enter a folder name', 'warning');
+      showNotification?.(nameValidation.error || 'Enter a folder name', 'warning');
       return;
     }
     const validatedName = nameValidation.sanitizedName;
@@ -262,7 +262,7 @@ function AddSmartFolderModal({
     if (!targetPath) {
       if (!defaultLocation || typeof defaultLocation !== 'string') {
         showNotification?.(
-          'Unable to determine folder location. Please browse to select a folder.',
+          'Unable to determine folder location. Browse to select a folder.',
           'error'
         );
         return;
@@ -284,7 +284,7 @@ function AddSmartFolderModal({
 
       if (!isAbsolutePath(resolvedDefaultLocation)) {
         showNotification?.(
-          'Unable to determine folder location. Please browse to select a folder.',
+          'Unable to determine folder location. Browse to select a folder.',
           'error'
         );
         return;
@@ -296,7 +296,7 @@ function AddSmartFolderModal({
 
     if (!isAbsolutePath(targetPath)) {
       showNotification?.(
-        'Unable to determine folder location. Please browse to select a folder.',
+        'Unable to determine folder location. Browse to select a folder.',
         'error'
       );
       return;
@@ -532,7 +532,7 @@ function AddSmartFolderModal({
                   {genPhase === 'loading'
                     ? 'Loading the language model into memory…'
                     : genPhase === 'long-wait'
-                      ? "Still working — this can take up to a minute on machines without a dedicated GPU. You can cancel and type a description yourself if you'd prefer."
+                      ? "Still working. This can take up to a minute on machines without a dedicated GPU. You can cancel and type a description yourself if you'd prefer."
                       : 'Generating description from your folder name…'}
                 </span>
               </div>

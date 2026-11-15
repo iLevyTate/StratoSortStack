@@ -63,7 +63,7 @@ describe('StatusBadge', () => {
     // Exactly one raw occurrence remains: the interactive save-failed retry
     // <button> (documented in-component — StatusBadge renders a static span).
     expect(occurrences).toHaveLength(1);
-    const buttonIdx = src.indexOf('Save failed — retry');
+    const buttonIdx = src.indexOf('Save failed. Retry');
     const recipeIdx = src.indexOf('text-micro font-semibold uppercase tracking-wide');
     expect(Math.abs(buttonIdx - recipeIdx)).toBeLessThan(600);
   });

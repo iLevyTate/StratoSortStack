@@ -1073,7 +1073,7 @@ export function useGraphTab(
   const handleClearFocus = useCallback(() => {
     setFocusNodeId(null);
     setSearchWithinScope(null);
-    setGraphStatus('Focus cleared - showing all nodes');
+    setGraphStatus('Focus cleared. Showing all nodes.');
   }, []);
 
   const handleExpandAllClusters = useCallback(async () => {
@@ -2049,7 +2049,8 @@ export function useGraphTab(
         const end = cluster?.timeRange?.end;
         const startLabel = formatDateLabel(start);
         const endLabel = formatDateLabel(end);
-        if (startLabel && endLabel && startLabel !== endLabel) return `${startLabel} – ${endLabel}`;
+        if (startLabel && endLabel && startLabel !== endLabel)
+          return `${startLabel} to ${endLabel}`;
         if (endLabel) return endLabel;
         return fallback;
       }

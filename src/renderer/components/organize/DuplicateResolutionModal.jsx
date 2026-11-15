@@ -37,7 +37,7 @@ const TIER_CONFIG = {
   related: {
     label: 'Related',
     reasonCopy:
-      'Topically similar — may be drafts or versions. Do not bulk-delete without reviewing.',
+      'Topically similar, so they may be drafts or versions. Do not bulk-delete without reviewing.',
     badgeClass: 'bg-system-gray-100 text-system-gray-600 border-system-gray-200'
   }
 };
@@ -710,7 +710,7 @@ export default function DuplicateResolutionModal({
         relatedHiddenByThreshold > 0
           ? ` (${relatedHiddenByThreshold} related group${
               relatedHiddenByThreshold === 1 ? '' : 's'
-            } below ${Math.round(relatedThreshold * 100)}% — lower the related slider to show)`
+            } below ${Math.round(relatedThreshold * 100)}%; lower the related slider to show them)`
           : ''
       }.${
         dismissedCount > 0

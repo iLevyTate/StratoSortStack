@@ -1036,7 +1036,7 @@ export function useOrganization({
 
         if (!resumeInfo && filesToProcess.length === 0) {
           addNotification(
-            'No files ready to organize. Please ensure files have been analyzed.',
+            'No files ready to organize. Make sure the files have been analyzed.',
             'warning'
           );
           logger.warn('[ORGANIZE] No files to process - returning early');
@@ -1641,7 +1641,7 @@ export function useOrganization({
             });
           }
           addNotification(
-            `Organization paused — ${successCount} file${successCount === 1 ? '' : 's'} organized so far. Resume when ready.`,
+            `Organization paused with ${successCount} file${successCount === 1 ? '' : 's'} organized so far. Resume when ready.`,
             'info',
             5000,
             'organize-paused'
@@ -1672,7 +1672,7 @@ export function useOrganization({
               ? result.cancelledCount
               : Math.max(0, totalResultCount - successCount);
             addNotification(
-              `Organization cancelled — ${successCount} file${successCount === 1 ? '' : 's'} organized, ${remaining} skipped.`,
+              `Organization cancelled: ${successCount} file${successCount === 1 ? '' : 's'} organized, ${remaining} skipped.`,
               'warning'
             );
             return;

@@ -116,7 +116,7 @@ function SmartFolderAIOverrideField({ folderId }) {
       </p>
       {currentOverrideUnavailable && (
         <p className="text-xs leading-snug text-stratosort-warning" role="status">
-          Saved override is not ready — analysis will use the app default or local model until the
+          Saved override is not ready. Analysis will use the app default or local model until the
           provider is configured.
         </p>
       )}

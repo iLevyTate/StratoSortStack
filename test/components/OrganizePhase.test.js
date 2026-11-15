@@ -333,11 +333,11 @@ describe('OrganizePhase premium preflight copy', () => {
   test('allows the top review card to be minimized', () => {
     render(<OrganizePhase />);
 
-    expect(screen.getByText(/Approve the move plan with confidence/i)).toBeInTheDocument();
+    expect(screen.getByText(/Approve the move plan/i)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /minimize .*guide/i }));
 
-    expect(screen.queryByText(/Approve the move plan with confidence/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Approve the move plan/i)).not.toBeInTheDocument();
     expect(screen.getByText(/2 files ready for review/i)).toBeInTheDocument();
   });
 

@@ -338,7 +338,7 @@ describe('useChatTab conversation state', () => {
     await act(async () => {
       result.current.handleResponseModeChange('deep');
     });
-    expect(result.current.chatWarning).toBe('Failed to save chat response mode. Please try again.');
+    expect(result.current.chatWarning).toBe('Failed to save chat response mode. Try again.');
     // Not the chat error banner: its Retry button would regenerate an answer.
     expect(result.current.chatError).toBe('');
   });

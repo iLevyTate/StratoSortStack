@@ -220,7 +220,7 @@ export default function BridgeAnalysisModal({
                     }
                     title={
                       selectedBridge.centroidOnly
-                        ? 'No concrete files to move — this bridge is a topical overlap only.'
+                        ? 'No concrete files to move. This bridge is a topical overlap only.'
                         : `Move ${selectedBridge.bridgeFiles.length} bridge file${selectedBridge.bridgeFiles.length === 1 ? '' : 's'} into a folder of your choice.`
                     }
                     onClick={() =>

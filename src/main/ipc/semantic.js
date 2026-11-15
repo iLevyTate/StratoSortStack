@@ -15,10 +15,17 @@ const getLlamaService = () => container.tryResolve(ServiceIds.LLAMA_SERVICE);
 const getUndoRedoService = () => container.tryResolve(ServiceIds.UNDO_REDO);
 const { getInstance: getAtlasService } = require('../services/AtlasProjectionService');
 
+/** @type {Record<string, string>} */
+const SERVICE_LABELS = {
+  OramaVectorService: 'The search index',
+  ClusteringService: 'Clustering',
+  AtlasProjectionService: 'The Atlas view'
+};
+
 /** @param {string} name */
 const SERVICE_UNAVAILABLE = (name) => ({
   success: false,
-  error: `${name} not available — service may still be initializing`,
+  error: `${SERVICE_LABELS[name] || 'This feature'} isn't ready yet. It may still be starting.`,
   errorCode: 'SERVICE_UNAVAILABLE'
 });
 
@@ -185,7 +192,7 @@ async function verifyEmbeddingModelAvailable(logger, preferredModel = null) {
     return {
       available: false,
       model: preferredModel || AI_DEFAULTS.EMBEDDING.MODEL,
-      error: 'LlamaService not available — AI engine may still be initializing'
+      error: "The AI engine isn't ready yet. It may still be starting."
     };
   }
   const cfg = await llama.getConfig();
@@ -259,7 +266,7 @@ async function verifyEmbeddingModelAvailable(logger, preferredModel = null) {
       return {
         available: false,
         model,
-        error: `Embedding model "${model}" not downloaded. Download it in Settings > Models.`,
+        error: `Embedding model "${model}" not downloaded. Download it in Settings → Model management.`,
         availableModels: modelNames.slice(0, 10)
       };
     }
@@ -293,7 +300,7 @@ async function verifyReanalyzeModelsAvailable(logger) {
       textModel: AI_DEFAULTS.TEXT.MODEL,
       visionModel: AI_DEFAULTS.IMAGE.MODEL,
       embeddingModel: AI_DEFAULTS.EMBEDDING.MODEL,
-      error: 'LlamaService not available — AI engine may still be initializing'
+      error: "The AI engine isn't ready yet. It may still be starting."
     };
   }
   const cfg = await llama.getConfig();
@@ -363,7 +370,7 @@ async function verifyReanalyzeModelsAvailable(logger) {
             available: false,
             model: textModel,
             modelType: 'text',
-            error: `Text model "${textModel}" not downloaded. Download it in Settings > Models.`
+            error: `Text model "${textModel}" not downloaded. Download it in Settings → Model management.`
           };
         }
       }
@@ -395,7 +402,7 @@ async function verifyReanalyzeModelsAvailable(logger) {
             available: false,
             model: visionModel,
             modelType: 'vision',
-            error: `Vision model "${visionModel}" not downloaded. Download it in Settings > Models.`
+            error: `Vision model "${visionModel}" not downloaded. Download it in Settings → Model management.`
           };
         }
       }
@@ -429,7 +436,7 @@ async function verifyReanalyzeModelsAvailable(logger) {
             available: false,
             model: embeddingModel,
             modelType: 'embedding',
-            error: `Embedding model "${embeddingModel}" not downloaded. Download it in Settings > Models.`
+            error: `Embedding model "${embeddingModel}" not downloaded. Download it in Settings → Model management.`
           };
         }
       }
@@ -2561,7 +2568,7 @@ async function handleFullRebuild(
     if (!llamaSvc) {
       return {
         success: false,
-        error: 'AI engine is not available. Please wait for startup to complete and try again.',
+        error: 'AI engine is not available yet. Wait for startup to finish and try again.',
         errorCode: 'SERVICE_NOT_READY'
       };
     }
@@ -4236,7 +4243,7 @@ function registerEmbeddingsIpc(servicesOrParams) {
     } catch (e) {
       return {
         success: false,
-        error: 'Vector DB is not available yet. Please try again in a moment.',
+        error: 'Vector DB is not available yet. Try again in a moment.',
         code: e?.code || 'VECTOR_DB_UNAVAILABLE',
         unavailable: true
       };

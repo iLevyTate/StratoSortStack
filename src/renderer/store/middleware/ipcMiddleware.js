@@ -235,7 +235,7 @@ function safeDispatch(actionCreator, data) {
       eventQueue.push({
         actionCreator: addNotification,
         data: {
-          message: 'System is busy - some updates may be delayed.',
+          message: 'System is busy, so some updates may be delayed.',
           severity: 'warning',
           duration: 5000
         }

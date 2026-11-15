@@ -119,7 +119,7 @@ class AIRouter extends EventEmitter {
     // 5. Nothing works
     throw new AIProviderError(
       'NO_PROVIDER_READY',
-      'No AI provider is ready. Configure a provider in Settings → AI.'
+      'No AI provider is ready. Configure a provider in Settings → AI Provider.'
     );
   }
 
@@ -132,7 +132,7 @@ class AIRouter extends EventEmitter {
     }
     throw new AIProviderError(
       'NO_PROVIDER_READY',
-      'No AI provider is ready. Configure a provider in Settings → AI.'
+      'No AI provider is ready. Configure a provider in Settings → AI Provider.'
     );
   }
 
@@ -168,7 +168,7 @@ class AIRouter extends EventEmitter {
     if (!name) return 'no provider name configured';
     if (!provider) return `provider "${name}" is not registered`;
     const cfg = settings.providers?.[name];
-    if (!cfg?.enabled) return `provider "${name}" is disabled in Settings → AI`;
+    if (!cfg?.enabled) return `provider "${name}" is disabled in Settings → AI Provider`;
     if (!provider.ready()) {
       // The most common ready()=false cause for cloud providers is a missing
       // API key; surface that distinctly.

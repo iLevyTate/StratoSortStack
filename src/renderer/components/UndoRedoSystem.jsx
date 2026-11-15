@@ -925,7 +925,7 @@ export function UndoRedoProvider({ children }) {
   const executeAction = useCallback(
     async (actionConfig) => {
       if (actionMutexRef.current) {
-        showInfo('Please wait for the current action to complete');
+        showInfo('Wait for the current action to finish');
         return null;
       }
 
@@ -981,7 +981,7 @@ export function UndoRedoProvider({ children }) {
 
   const undo = useCallback(async () => {
     if (actionMutexRef.current) {
-      showInfo('Please wait for the current action to complete');
+      showInfo('Wait for the current action to finish');
       return;
     }
 
@@ -1072,7 +1072,7 @@ export function UndoRedoProvider({ children }) {
 
   const redo = useCallback(async () => {
     if (actionMutexRef.current) {
-      showInfo('Please wait for the current action to complete');
+      showInfo('Wait for the current action to finish');
       return;
     }
 
@@ -1159,7 +1159,7 @@ export function UndoRedoProvider({ children }) {
   const jumpToPoint = useCallback(
     async (targetIndex) => {
       if (actionMutexRef.current) {
-        showInfo('Please wait for the current action to complete');
+        showInfo('Wait for the current action to finish');
         return;
       }
 
@@ -1179,7 +1179,7 @@ export function UndoRedoProvider({ children }) {
       beginExecution(
         'jump',
         targetIndex < currentIndex ? 'Jumping back in history…' : 'Jumping forward in history…',
-        `${steps} step${steps === 1 ? '' : 's'} — files will move as each step runs`
+        `${steps} step${steps === 1 ? '' : 's'}: files will move as each step runs`
       );
 
       try {

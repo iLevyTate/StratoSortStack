@@ -316,10 +316,10 @@ const ClusterNode = memo(({ data, selected }) => {
         style={{ margin: '-6px' }}
         title={
           confidence === 'high'
-            ? 'High confidence — AI generated a descriptive label from file content'
+            ? 'High confidence: AI generated a descriptive label from file content'
             : confidence === 'medium'
-              ? 'Medium confidence — label derived from shared tags or categories'
-              : 'Low confidence — label auto-generated from file count only'
+              ? 'Medium confidence: label derived from shared tags or categories'
+              : 'Low confidence: label auto-generated from file count only'
         }
         aria-label={`Cluster confidence: ${confidence}`}
       />

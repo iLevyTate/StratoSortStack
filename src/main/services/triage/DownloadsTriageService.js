@@ -861,7 +861,7 @@ class DownloadsTriageService {
               confidence: score,
               suggestedFolder: { id: top.id, name: top.name, path: top.path },
               signal: 'deep-embedding',
-              why: `Possible match "${top.name || top.id}" (${Math.round(score * 100)}%) — review`
+              why: `Possible match "${top.name || top.id}" (${Math.round(score * 100)}%). Needs review.`
             };
           } else {
             next = {
@@ -1087,7 +1087,7 @@ class DownloadsTriageService {
             }));
             try {
               await undo.recordBatch(ACTION_TYPES.TRASH_BATCH, operations, {
-                summary: summary || { label: 'Downloads triage — Send to Trash' }
+                summary: summary || { label: 'Downloads triage: Send to Trash' }
               });
             } catch (err) {
               undoUnavailable = true;
@@ -1322,7 +1322,7 @@ class DownloadsTriageService {
           if (undo && typeof undo.recordBatch === 'function') {
             try {
               await undo.recordBatch(ACTION_TYPES.MOVE_BATCH, undoOps, {
-                summary: summary || { label: 'Downloads triage — Organize' }
+                summary: summary || { label: 'Downloads triage: Organize' }
               });
             } catch (err) {
               moveUndoUnavailable = true;

@@ -38,7 +38,7 @@ function _raiseAnalysisHistoryDegraded(detailContext) {
       severity: 'error',
       message:
         'Analysis history is temporarily unavailable. Past results may not appear; ' +
-        're-analyzing files will not help. Try restarting the app — if this persists, ' +
+        're-analyzing files will not help. Try restarting the app. If this persists, ' +
         'check the app log.',
       detail: detailContext
     });

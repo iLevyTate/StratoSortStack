@@ -157,7 +157,7 @@ function McpServerSection({ addNotification }) {
             <ul className="space-y-1">
               {TOOLS.map((t) => (
                 <li key={t.name}>
-                  <code className="text-sm">{t.name}</code> — {t.desc}
+                  <code className="text-sm">{t.name}</code>: {t.desc}
                 </li>
               ))}
             </ul>

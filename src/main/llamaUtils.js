@@ -31,8 +31,8 @@ function _raiseLlamaConfigStale(/** @type {any} */ detail) {
       subsystem: 'ai-engine',
       severity: 'warning',
       message:
-        "Couldn't read AI model settings; using last known values. Open Settings → AI to verify " +
-        'the active models — changes you made may not be applied until the settings file is readable.',
+        "Couldn't read AI model settings; using last known values. Open Settings → Default AI models to verify " +
+        'the active models. Changes you made may not apply until the settings file can be read.',
       detail
     });
   } catch {
@@ -285,7 +285,7 @@ function raiseTextModelSubstitutedFlag(configuredModel, fallbackModel) {
       code: TEXT_MODEL_SUBSTITUTED_FLAG,
       subsystem: 'llama',
       severity: 'warning',
-      message: `Configured text model "${configuredModel}" is not installed. Analysis is using "${fallbackModel}" instead; pick a model in Settings → Models to clear this notice.`,
+      message: `Configured text model "${configuredModel}" is not installed. Analysis is using "${fallbackModel}" instead; pick a model in Settings → Default AI models to clear this notice.`,
       detail: {
         errorCode: ERROR_CODES.LLAMA_MODEL_AUTO_FALLBACK,
         type: 'text',
@@ -317,7 +317,7 @@ async function ensureTextModelReadyForAnalysis() {
   if (!service) {
     return {
       ok: false,
-      error: 'AI engine unavailable. Check Settings > Models and try again.'
+      error: 'AI engine unavailable. Check Settings → Local AI engine and try again.'
     };
   }
 
@@ -327,7 +327,7 @@ async function ensureTextModelReadyForAnalysis() {
     } catch (err) {
       return {
         ok: false,
-        error: `AI engine failed to initialize: ${err?.message || String(err)}. Check Settings > Models.`
+        error: `AI engine failed to initialize: ${err?.message || String(err)}. Check Settings → Local AI engine.`
       };
     }
   }
@@ -352,7 +352,7 @@ async function ensureTextModelReadyForAnalysis() {
   } catch (err) {
     return {
       ok: false,
-      error: `Could not verify AI models: ${err?.message || String(err)}. Check Settings > Models.`
+      error: `Could not verify AI models: ${err?.message || String(err)}. Check Settings → Model management.`
     };
   }
 
@@ -407,7 +407,7 @@ async function ensureTextModelReadyForAnalysis() {
       } else {
         return {
           ok: false,
-          error: `Text model "${textModel}" not downloaded. Download it in Settings > Models.`
+          error: `Text model "${textModel}" not downloaded. Download it in Settings → Model management.`
         };
       }
     }

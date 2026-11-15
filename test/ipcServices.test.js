@@ -91,7 +91,7 @@ describe('ipc services', () => {
 
       await expect(pending).resolves.toEqual({
         success: false,
-        error: 'Description generation timed out. Please try again.'
+        error: 'Description generation timed out. Try again.'
       });
     } finally {
       jest.useRealTimers();

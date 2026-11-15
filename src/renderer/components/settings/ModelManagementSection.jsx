@@ -234,7 +234,7 @@ function ModelManagementSection({
   return (
     <SettingsCard
       title="Model management"
-      description="Install AI models from the built-in catalog. Models are downloaded from Hugging Face over HTTPS, verified by SHA-256 checksum, and stored locally in the app's data folder — nothing leaves your device."
+      description="Install AI models from the built-in catalog. Models are downloaded from Hugging Face over HTTPS, verified by SHA-256 checksum, and stored locally in the app's data folder. Nothing leaves your device."
     >
       <div className="space-y-6">
         {groupedCatalog.map((section) => (

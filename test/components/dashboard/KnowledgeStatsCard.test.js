@@ -26,7 +26,7 @@ describe('KnowledgeStatsCard', () => {
 
   test('renders years covered, items, storage, and categories from statistics', async () => {
     render(<KnowledgeStatsCard />);
-    await waitFor(() => expect(screen.getByText(/2016\s*–\s*2026/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/2016 to 2026/)).toBeTruthy());
     expect(screen.getByText(/10 years/i)).toBeTruthy();
     expect(screen.getByText('1,234')).toBeTruthy();
     // formatBytes uses value.toFixed(2) for values < 10 → "5.50 GB"
@@ -81,6 +81,6 @@ describe('KnowledgeStatsCard', () => {
       isEmpty: false
     });
     render(<KnowledgeStatsCard />);
-    await waitFor(() => expect(screen.getByText(/2025\s*–\s*2026/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/2025 to 2026/)).toBeTruthy());
   });
 });

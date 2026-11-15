@@ -86,7 +86,7 @@ function CloudAIConsentModal({ provider, onAccept, onDecline }) {
       persistLocalAcknowledgment();
       onAccept();
     } catch (err) {
-      setError(err?.message || 'Could not record consent. Please try again.');
+      setError(err?.message || 'Could not record consent. Try again.');
     } finally {
       setSubmitting(false);
     }

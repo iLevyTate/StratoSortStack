@@ -35,11 +35,11 @@ export function getErrorMessage(/** @type {any} */ error, context = 'Operation')
     msg.includes('Vector DB') ||
     msg.includes('not available yet')
   ) {
-    return `${context} failed: Knowledge Graph is initializing. Please wait a moment and try again.`;
+    return `${context} failed: Knowledge Graph is initializing. Wait a moment and try again.`;
   }
 
   if (msg.includes('Embedding model changed') || msg.includes('dimension mismatch')) {
-    return 'Embedding model changed. Please rebuild your index in Settings > Embeddings maintenance to use the new model.';
+    return 'Embedding model changed. Rebuild your index in Settings → Embeddings maintenance to use the new model.';
   }
 
   return msg || `${context} failed`;

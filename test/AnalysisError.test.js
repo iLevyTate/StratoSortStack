@@ -31,7 +31,7 @@ describe('AnalysisError', () => {
     const message = error.getUserFriendlyMessage();
     const steps = error.getActionableSteps();
     expect(message).toContain('AI engine');
-    expect(steps).toContain('Check Settings > Models');
+    expect(steps).toContain('Check Settings → Local AI engine');
   });
 
   test('model missing error formats message', () => {

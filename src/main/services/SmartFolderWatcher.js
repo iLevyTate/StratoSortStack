@@ -656,8 +656,7 @@ class SmartFolderWatcher {
       const folders = this.getSmartFolders();
 
       if (!folders || folders.length === 0) {
-        const errorMsg =
-          'No smart folders configured. Please add smart folders in the Setup phase first.';
+        const errorMsg = 'No smart folders set up yet. Add them in the Setup phase first.';
         logger.warn('[SMART-FOLDER-WATCHER] Start failed:', errorMsg);
         this._lastStartError = errorMsg;
         return false;
@@ -666,7 +665,7 @@ class SmartFolderWatcher {
       const validPaths = await this._getValidFolderPaths(folders);
 
       if (validPaths.length === 0) {
-        const errorMsg = `All ${folders.length} smart folder path(s) are inaccessible. Please check that the folders exist and you have read permissions.`;
+        const errorMsg = `All ${folders.length} smart folder path(s) are inaccessible. Check that the folders exist and you have read permissions.`;
         logger.warn('[SMART-FOLDER-WATCHER] Start failed:', errorMsg);
         this._lastStartError = errorMsg;
         return false;

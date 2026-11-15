@@ -180,7 +180,7 @@ export default function KnowledgeStatsCard({ className = '' }) {
   if (hasYears) {
     tiles.push({
       icon: CalendarRange,
-      value: `${startYear} – ${endYear}`,
+      value: `${startYear} to ${endYear}`,
       label: yearLabel
     });
   }

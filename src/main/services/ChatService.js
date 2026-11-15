@@ -919,9 +919,7 @@ Now respond as JSON:`;
             this.chatHistoryStore.addMessage(memory.sessionId, {
               role: 'assistant',
               text: '',
-              modelAnswer: [
-                { text: `Error: ${error.message || 'Response failed'}. Please try again.` }
-              ]
+              modelAnswer: [{ text: `Error: ${error.message || 'Response failed'}. Try again.` }]
             });
           }
         } catch (saveErr) {
@@ -971,7 +969,7 @@ Now respond as JSON:`;
   }) {
     if (!this.llamaService) {
       const err = new Error(
-        'LLM model not loaded — open StratoSort and wait for the model to finish loading.'
+        "The AI model isn't loaded. Open StratoSort and wait for the model to finish loading."
       );
       /** @type {any} */ (err).code = 'NO_MODEL';
       throw err;

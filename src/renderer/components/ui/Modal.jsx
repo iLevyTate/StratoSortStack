@@ -466,7 +466,7 @@ export const ConfirmModal = memo(function ConfirmModal({
         const message =
           (error && typeof error.message === 'string' && error.message.trim()) ||
           (typeof error === 'string' && error.trim()) ||
-          'Something went wrong. Please try again.';
+          'Something went wrong. Try again.';
         setConfirmError(message);
       }
     } finally {

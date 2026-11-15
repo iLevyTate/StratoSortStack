@@ -38,7 +38,7 @@ const STEP_TITLES = {
   downloading: 'Download',
   complete: 'Finish'
 };
-const DOWNLOADS_STOPPED_MESSAGE = 'Required model downloads stopped. Please retry downloads.';
+const DOWNLOADS_STOPPED_MESSAGE = 'Required model downloads stopped. Retry the downloads.';
 // Main says "started" before the download is in its status list (it checks
 // disk space and any partial file first), so for this long after a request an
 // empty list does not mean the download stopped.
@@ -48,7 +48,7 @@ const PROJECTOR_MISSING_MESSAGE =
 // The vision model is optional: when it does not install, setup can still
 // finish on the required models, and this warning says what is missing.
 const VISION_NOT_INSTALLED_MESSAGE =
-  'The image analysis model is not installed, so images cannot be understood yet. Documents are analyzed as usual, and you can download it later from Settings.';
+  'The image analysis model is not installed, so images cannot be analyzed yet. Documents are analyzed as usual, and you can download it later from Settings.';
 const CHECKING_STATUS_MESSAGES = [
   'Detecting available local models...',
   'Checking active background downloads...',
@@ -475,7 +475,7 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
     if (!hasLlamaApi) {
       if (!isMountedRef.current) return;
       applyFallbackSelection();
-      setInitError('AI engine is still starting. Please try again in a moment.');
+      setInitError('AI engine is still starting. Try again in a moment.');
       setStep('select');
       setIsRefreshing(false);
       return;
@@ -657,7 +657,7 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
     if (step === 'checking' && !pendingEmbeddingSwitch) {
       const timer = setTimeout(() => {
         if (isMountedRef.current) {
-          setInitError('AI system check timed out. Please select models manually.');
+          setInitError('AI system check timed out. Select models manually.');
           setStep('select');
           setIsRefreshing(false);
         }

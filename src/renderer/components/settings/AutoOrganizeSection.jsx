@@ -86,11 +86,11 @@ function AutoOrganizeSection({ settings, setSettings }) {
           className="w-full"
         >
           <option value="auto">
-            Auto (recommended) — meaning first when folder vectors are ready
+            Auto (recommended): meaning first when folder vectors are ready
           </option>
-          <option value="embedding">Embedding-first — closest folder by meaning</option>
-          <option value="hybrid">Hybrid — language model first, vectors can override</option>
-          <option value="llm">LLM-only — category and keywords, no vectors</option>
+          <option value="embedding">Embedding-first: closest folder by meaning</option>
+          <option value="hybrid">Hybrid: language model first, vectors can override</option>
+          <option value="llm">LLM-only: category and keywords, no vectors</option>
         </Select>
       </SettingRow>
       {settings.smartFolderRoutingMode !== 'llm' &&
@@ -123,8 +123,8 @@ function AutoOrganizeSection({ settings, setSettings }) {
           {confidenceOutOfSliderRange && (
             <Text variant="tiny" className="text-stratosort-warning">
               The saved value ({confidencePercent}%) is outside the slider&apos;s{' '}
-              {Math.round(CONFIDENCE_MIN * 100)}–{Math.round(CONFIDENCE_MAX * 100)}% range. It still
-              applies as saved; moving the slider will replace it.
+              {Math.round(CONFIDENCE_MIN * 100)} to {Math.round(CONFIDENCE_MAX * 100)}% range. It
+              still applies as saved; moving the slider will replace it.
             </Text>
           )}
           <input
@@ -147,7 +147,7 @@ function AutoOrganizeSection({ settings, setSettings }) {
       <SettingRow
         layout="col"
         label="Organization instructions"
-        description="Optional global guidance the AI applies when choosing a folder for every file (document and image analysis). Use it for workspace-wide rules — unlike a folder's description, which only describes that one folder."
+        description="Optional global guidance the AI applies when choosing a folder for every file (document and image analysis). Use it for workspace-wide rules. A folder's description only describes that one folder."
       >
         <Textarea
           value={orgGuidance}

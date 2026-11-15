@@ -33,7 +33,7 @@ function AIProviderBadge() {
   const distinct = new Set(routes.map((route) => route.providerId));
   const summary =
     distinct.size === 1
-      ? `Cloud AI — ${labelFor(routes[0].providerId)}.`
+      ? `Cloud AI: ${labelFor(routes[0].providerId)}.`
       : `Cloud AI: ${routes
           .map((route) => {
             const where =

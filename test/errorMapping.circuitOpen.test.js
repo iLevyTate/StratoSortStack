@@ -10,7 +10,7 @@
 const { mapErrorToNotification } = require('../src/renderer/utils/errorMapping');
 
 describe('errorMapping: open circuit breaker', () => {
-  const recovering = 'AI service is temporarily recovering. Please wait a moment and try again.';
+  const recovering = 'AI service is temporarily recovering. Wait a moment and try again.';
 
   test('maps the breaker message that CircuitBreaker.execute actually throws', () => {
     expect(

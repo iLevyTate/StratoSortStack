@@ -182,7 +182,7 @@ function withVectorDbInit({ ensureInit, isInitRef, handler }) {
     } catch (e) {
       return {
         success: false,
-        error: 'Vector DB is not available yet. Please try again in a moment.',
+        error: 'Vector DB is not available yet. Try again in a moment.',
         code: e?.code || 'VECTOR_DB_UNAVAILABLE',
         unavailable: true
       };
@@ -191,7 +191,7 @@ function withVectorDbInit({ ensureInit, isInitRef, handler }) {
     if (!isInitRef()) {
       return {
         success: false,
-        error: 'Vector DB initialization pending. Please try again in a few seconds.',
+        error: 'Vector DB is still starting. Try again in a few seconds.',
         code: 'VECTOR_DB_PENDING',
         pending: true
       };

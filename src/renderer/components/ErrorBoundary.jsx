@@ -306,7 +306,7 @@ class ErrorBoundaryCore extends React.Component {
             </Heading>
             <Text variant="body" className="text-system-gray-600">
               {needsRestart
-                ? 'StratoSort was updated while it was running. Please quit and reopen the app to finish updating — reloading won’t resolve this.'
+                ? 'StratoSort was updated while it was running. Quit and reopen the app to finish updating. Reloading won’t fix this.'
                 : isChunk
                   ? 'App assets failed to load. This usually happens after an update.'
                   : 'The application encountered an unexpected error.'}
@@ -316,7 +316,7 @@ class ErrorBoundaryCore extends React.Component {
           {errorCount > 2 && !needsRestart && (
             <div className="mb-4 p-3 bg-stratosort-warning/10 border border-stratosort-warning/20 rounded">
               <Text variant="small" className="text-stratosort-warning">
-                Multiple errors detected. Consider reloading the application.
+                Multiple errors detected. Try reloading the app.
               </Text>
             </div>
           )}
@@ -355,7 +355,7 @@ class ErrorBoundaryCore extends React.Component {
           </div>
 
           <Text variant="tiny" className="text-center text-system-gray-500 mt-4">
-            If this problem persists, please check your settings or contact support.
+            If this keeps happening, check your settings or contact support.
           </Text>
         </Card>
       </div>
@@ -389,7 +389,7 @@ class ErrorBoundaryCore extends React.Component {
                 {isChunk && (
                   <Text variant="small" className="text-system-gray-600 mt-2">
                     {needsRestart
-                      ? 'StratoSort was updated while running. Please quit and reopen the app to finish updating — reloading won’t help.'
+                      ? 'StratoSort was updated while running. Quit and reopen the app to finish updating. Reloading won’t help.'
                       : 'This looks like an app asset mismatch. Reloading usually fixes it after an update.'}
                   </Text>
                 )}

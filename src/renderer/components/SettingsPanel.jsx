@@ -1388,7 +1388,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
         title={`Save failed: ${lastSaveError}. Click to retry.`}
       >
         <CircleAlert className="h-3 w-3" aria-hidden="true" />
-        <span>Save failed — retry</span>
+        <span>Save failed. Retry</span>
       </button>
     );
   } else if (isSaving) {
@@ -1440,7 +1440,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
                     </Heading>
                   </div>
                   <Text variant="tiny" className="text-system-gray-500 mt-1">
-                    Electron API not available. Please restart the application.
+                    Electron API not available. Restart the application.
                   </Text>
                 </div>
                 <IconButton
@@ -1458,7 +1458,7 @@ const SettingsPanel = React.memo(function SettingsPanel() {
                 Settings unavailable
               </Text>
               <Text variant="small" className="text-system-gray-500 mt-2">
-                Electron API not available. Please restart the application.
+                Electron API not available. Restart the application.
               </Text>
             </div>
             <div className="px-6 py-4 border-t border-border-soft bg-surface-muted flex items-center justify-end gap-cozy flex-shrink-0 rounded-b-2xl">
@@ -1636,8 +1636,8 @@ const SettingsPanel = React.memo(function SettingsPanel() {
                     </div>
                     <Text variant="small" className="text-system-gray-600">
                       {isSimpleMode
-                        ? 'Simple mode hides the advanced configuration panels and uses a streamlined retrieval path, while still embedding your files on-device in the background — so nothing needs re-processing if you switch to Advanced later.'
-                        : 'Advanced reveals every configuration panel — AI models, semantic search, chat-with-documents, and the knowledge graph — and enables graph-aware retrieval at search time.'}
+                        ? 'Simple mode hides the advanced configuration panels and uses a simpler retrieval path. It still embeds your files on-device in the background, so nothing needs re-processing if you switch to Advanced later.'
+                        : 'Advanced reveals every configuration panel (AI models, semantic search, chat-with-documents, and the knowledge graph) and enables graph-aware retrieval at search time.'}
                     </Text>
                   </div>
                 </SettingsCard>

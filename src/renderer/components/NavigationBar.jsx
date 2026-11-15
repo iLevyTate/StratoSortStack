@@ -1087,7 +1087,7 @@ function NavigationBar() {
                 ? executionStatus?.label
                   ? `${executionStatus.label} Step navigation is paused until file moves finish.`
                   : 'Step navigation is paused while undo/redo moves files.'
-                : 'Step navigation is paused. Please wait for the current operation to finish.'}
+                : 'Step navigation is paused until the current operation finishes.'}
           </Text>
         </div>
       )}

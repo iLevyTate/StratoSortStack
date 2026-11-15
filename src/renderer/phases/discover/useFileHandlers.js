@@ -23,7 +23,7 @@ const ensureFileApi = (/** @type {any} */ addNotification, /** @type {any} */ ac
   if (!window?.electronAPI?.files) {
     logger.warn('[DiscoverPhase] File API unavailable', { actionLabel });
     addNotification?.(
-      'File system API not ready. Please wait for the app to finish loading.',
+      'File system API not ready. Wait for the app to finish loading.',
       'warning',
       3000,
       'file-api-unavailable'
@@ -40,7 +40,7 @@ const ensureSmartFolderApi = (
   if (!window?.electronAPI?.smartFolders) {
     logger.warn('[DiscoverPhase] Smart folder API unavailable', { actionLabel });
     addNotification?.(
-      'Smart folder API not ready. Please wait for the app to finish loading.',
+      'Smart folder API not ready. Wait for the app to finish loading.',
       'warning',
       3000,
       'smart-folder-api-unavailable'
@@ -435,7 +435,7 @@ export function useFileHandlers({
                 () =>
                   reject(
                     new Error(
-                      'Folder scan timeout - the folder may be on a slow network drive or contain too many files'
+                      'Folder scan timed out. The folder may be on a slow network drive or contain too many files'
                     )
                   ),
                 SCAN_TIMEOUT
@@ -650,7 +650,7 @@ export function useFileHandlers({
               () =>
                 reject(
                   new Error(
-                    'Folder scan timeout - the folder may be on a slow network drive or contain too many files'
+                    'Folder scan timed out. The folder may be on a slow network drive or contain too many files'
                   )
                 ),
               SCAN_TIMEOUT
