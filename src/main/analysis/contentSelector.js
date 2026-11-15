@@ -268,13 +268,74 @@ function sampleMiddleContent(text, startOffset, endOffset, budget, sampleCount) 
   return samples;
 }
 
+// First line of a CSV or spreadsheet as the extractors write it
+// (tableRowText in documentExtractors.js).
+const TABLE_START_RE = /^(?:## Sheet: .+|Columns: .+\|.+)$/;
+const SHEET_HEADING_RE = /^## Sheet: /;
+
+/**
+ * True for the text of a CSV or spreadsheet whose first table has a header
+ * row or a sheet heading.
+ * @param {string} cleaned
+ */
+function isTableText(cleaned) {
+  const firstLine = cleaned.slice(0, 400).split('\n', 1)[0].trim();
+  return TABLE_START_RE.test(firstLine);
+}
+
+/**
+ * The head of every table in a CSV or spreadsheet: its sheet heading, its
+ * columns, its first rows and how many rows were left out. Exports are told
+ * apart by their sheets and columns, not by rows of numbers, and the model
+ * reads every prompt token, so rows past the head of each sheet are dropped.
+ * Every sheet gets an equal share of the budget; a share a sheet does not use
+ * goes to the sheets after it.
+ * @param {string} cleaned
+ * @param {number} budget
+ * @returns {string}
+ */
+function selectTableHeads(cleaned, budget) {
+  /** @type {string[][]} */
+  const tables = [];
+  for (const line of cleaned.split('\n')) {
+    if (SHEET_HEADING_RE.test(line) || tables.length === 0) tables.push([]);
+    if (line.trim()) tables[tables.length - 1].push(line);
+  }
+  const { TABLE_ROWS_PER_SHEET } = CONTENT_SELECTION;
+  /** @type {string[]} */
+  const parts = [];
+  let left = budget;
+  tables.forEach((lines, i) => {
+    const share = Math.floor(left / (tables.length - i));
+    const headerCount = lines.findIndex((l) => !SHEET_HEADING_RE.test(l) && !/^Columns: /.test(l));
+    const header = headerCount === -1 ? lines : lines.slice(0, headerCount);
+    const rows = headerCount === -1 ? [] : lines.slice(headerCount);
+    const kept = [...header];
+    let used = header.join('\n').length;
+    let shown = 0;
+    while (shown < rows.length && shown < TABLE_ROWS_PER_SHEET) {
+      const next = rows[shown];
+      if (used + next.length + 1 > share) break;
+      kept.push(next);
+      used += next.length + 1;
+      shown += 1;
+    }
+    if (rows.length > shown) kept.push(`(${rows.length - shown} more rows)`);
+    const text = kept.join('\n').slice(0, Math.max(share, 0));
+    parts.push(text);
+    left -= text.length + 1;
+  });
+  return parts.join('\n').slice(0, budget);
+}
+
 /**
  * Select representative content from a document to maximize information
  * density within a fixed character budget.
  *
  * For documents that fit within the budget, returns the full cleaned text.
  * For larger documents, strategically samples beginning, middle, and end
- * with a structural outline prepended.
+ * with a structural outline prepended. A CSV or spreadsheet gets the head of
+ * each table instead, within at most TABLE_MAX_CHARS.
  *
  * @param {string} text - Full extracted document text
  * @param {number} budget - Maximum character budget for the output
@@ -288,6 +349,19 @@ function selectRepresentativeContent(text, budget) {
   // Lightweight cleaning that preserves paragraph structure
   const cleaned = lightClean(text);
   const totalLength = cleaned.length;
+
+  if (isTableText(cleaned)) {
+    const tableBudget = Math.min(budget, CONTENT_SELECTION.TABLE_MAX_CHARS);
+    if (totalLength > tableBudget) {
+      const content = selectTableHeads(cleaned, tableBudget);
+      return {
+        content,
+        strategy: 'table-heads',
+        coveragePercent: Math.min(100, Math.round((content.length / totalLength) * 100)),
+        totalLength
+      };
+    }
+  }
 
   // If text fits within budget, return it all — no selection needed
   if (totalLength <= budget) {

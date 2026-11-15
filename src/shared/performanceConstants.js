@@ -386,7 +386,13 @@ const CONTENT_SELECTION = {
   // Map phase: temperature (0 = deterministic, fastest generation)
   MAP_TEMPERATURE: 0,
   // Map phase: chunk size in characters
-  MAP_CHUNK_SIZE: 8000
+  MAP_CHUNK_SIZE: 8000,
+  // CSV and spreadsheet prompts: the head of each sheet (heading, columns,
+  // first rows) within this many characters. On 275 analytics exports the
+  // model call was about 18 s of each file's 19 s, with an 8,100-character
+  // prompt; sheets and columns tell exports apart, rows of numbers do not.
+  TABLE_MAX_CHARS: 2000,
+  TABLE_ROWS_PER_SHEET: 8
 };
 
 const LIMITS = {
