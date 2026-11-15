@@ -388,6 +388,67 @@ function findSmartFolderForLabel(label, smartFolders) {
 }
 
 /**
+ * The one smart folder a label names outright: the same words, ignoring
+ * case, a plural "s", and spaces, dashes or underscores; or every word of the
+ * folder name in the label; or, for a label of two words or more, every word
+ * of the label in the folder name. Description and keyword overlap do not
+ * count, and neither does a one-word label that is only part of a folder
+ * name ("Data" is not "SEO data"). A label that fits more than one folder
+ * ("SEO reports" for "SEO" and "Reports") names none. The default catch-all
+ * never counts: "Uncategorized" means no folder fit.
+ *
+ * Used by needs-review routing, where only an exact or near-exact name is
+ * evidence on its own; `findSmartFolderForLabel` stays the broader matcher.
+ *
+ * @param {string} label
+ * @param {any[]} smartFolders
+ * @returns {any|null}
+ */
+function findSmartFolderNamedByLabel(label, smartFolders) {
+  const folders = (Array.isArray(smartFolders) ? smartFolders : []).filter(
+    (f) =>
+      f &&
+      typeof f.name === 'string' &&
+      f.name.trim() &&
+      !f.isDefault &&
+      !isDefaultCategoryName(f.name)
+  );
+  const raw = String(label || '').trim();
+  if (!raw || folders.length === 0 || isDefaultCategoryName(raw)) return null;
+
+  const seen = new Set();
+  for (const candidate of [raw, stripCategorySubjectSuffix(raw)]) {
+    const key = candidate.toLowerCase();
+    if (!candidate || seen.has(key)) continue;
+    seen.add(key);
+
+    const variants = new Set(buildLabelVariants(candidate));
+    const candidateCanon = canon(candidate);
+    const exact = folders.filter(
+      (folder) =>
+        buildLabelVariants(folder.name).some((variant) => variants.has(variant)) ||
+        (candidateCanon && canon(folder.name) === candidateCanon)
+    );
+    if (exact.length === 1) return exact[0];
+    if (exact.length > 1) return null;
+
+    const labelWords = new Set(candidateCanon.split(/\s+/).filter(Boolean).map(stemToken));
+    if (labelWords.size === 0) continue;
+    const near = folders.filter((folder) => {
+      const folderWords = new Set(canon(folder.name).split(/\s+/).filter(Boolean).map(stemToken));
+      if (folderWords.size === 0) return false;
+      const folderInLabel = [...folderWords].every((word) => labelWords.has(word));
+      const labelInFolder =
+        labelWords.size >= 2 && [...labelWords].every((word) => folderWords.has(word));
+      return folderInLabel || labelInFolder;
+    });
+    if (near.length === 1) return near[0];
+    if (near.length > 1) return null;
+  }
+  return null;
+}
+
+/**
  * @param {string} raw
  * @param {any[]} folders
  */
@@ -691,6 +752,7 @@ module.exports = {
   scoreLabelAgainstFolderSemantics,
   findBestSemanticFolder,
   findSmartFolderForLabel,
+  findSmartFolderNamedByLabel,
   findSmartFolderForExtension,
   findSmartFolderForFile,
   isGenericBucketFolder

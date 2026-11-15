@@ -22,6 +22,8 @@ const CONFIDENCE_THRESHOLDS = {
   FALLBACK: 0.3, // Confidence assigned to fallback destinations
   DEFAULT: 0.75 // Default threshold when not specified
 };
+/** Used when the engine flagged a file for review without saying why. */
+const NEEDS_REVIEW_EXPLANATION = 'No Smart Folder matched this file well; held for review';
 
 /**
  * Process batch suggestion results
@@ -50,6 +52,20 @@ function processBatchResults(batchSuggestions, files, options, results, smartFol
   // Validate groups array defensively
   const groups = Array.isArray(batchSuggestions?.groups) ? batchSuggestions.groups : [];
 
+  // No Smart Folder was a confident match and there is no default folder:
+  // the engine left these unassigned. They are held, never moved.
+  for (const entry of Array.isArray(batchSuggestions?.unassigned)
+    ? batchSuggestions.unassigned
+    : []) {
+    const file = fileMap.get(entry?.path || entry?.name) || entry;
+    if (!file?.path) continue;
+    holdForReview(results, file, {
+      alternatives: entry.alternatives,
+      confidence: 0,
+      explanation: entry.explanation || NEEDS_REVIEW_EXPLANATION
+    });
+  }
+
   for (const group of groups) {
     // Validate group.files is an array before iterating
     if (!Array.isArray(group?.files)) {
@@ -71,6 +87,19 @@ function processBatchResults(batchSuggestions, files, options, results, smartFol
       const sourcePath = file.path || fileWithSuggestion.path;
       if (!sourcePath) {
         logger.warn('[AutoOrganize] Skipping file with no path', { file: file.name || 'unknown' });
+        continue;
+      }
+
+      // No Smart Folder was a confident match. Whatever the threshold, the
+      // file is held: the default folder it was given is not a destination
+      // anyone chose.
+      if (fileWithSuggestion.needsReview === true || suggestion?.needsReview === true) {
+        holdForReview(results, file, {
+          suggestion,
+          alternatives: fileWithSuggestion.alternatives,
+          confidence,
+          explanation: fileWithSuggestion.explanation || NEEDS_REVIEW_EXPLANATION
+        });
         continue;
       }
 
@@ -179,6 +208,17 @@ async function batchOrganize(
   // Track planned destinations across all groups in the batch to prevent cross-group collisions
   const plannedDestinations = new Map();
 
+  // Needs review with no default folder: the engine left these unassigned.
+  const unassigned = Array.isArray(batchSuggestions.unassigned) ? batchSuggestions.unassigned : [];
+  if (unassigned.length > 0) {
+    results.skipped.push({
+      folder: null,
+      files: unassigned,
+      confidence: 0,
+      reason: 'Needs review'
+    });
+  }
+
   // Process groups with error handling
   const groups = Array.isArray(batchSuggestions.groups) ? batchSuggestions.groups : [];
   for (const group of groups) {
@@ -199,7 +239,21 @@ async function batchOrganize(
       });
       continue;
     }
-    const groupFiles = group.files;
+    // A file no Smart Folder matched confidently is never auto-approved, even
+    // in a group whose average clears the threshold.
+    const reviewFiles = group.files.filter(
+      (/** @type {any} */ f) => f?.needsReview === true || f?.suggestion?.needsReview === true
+    );
+    if (reviewFiles.length > 0) {
+      results.skipped.push({
+        folder: group.folder,
+        files: reviewFiles,
+        confidence: group.confidence,
+        reason: 'Needs review'
+      });
+    }
+    const groupFiles = group.files.filter((/** @type {any} */ f) => !reviewFiles.includes(f));
+    if (groupFiles.length === 0) continue;
 
     try {
       if (group.confidence >= confidenceThreshold) {
@@ -210,7 +264,7 @@ async function batchOrganize(
           // folder is held, not dumped into Uncategorized.
           results.skipped.push({
             folder: group.folder,
-            files: group.files,
+            files: groupFiles,
             confidence: group.confidence,
             reason: 'Not a smart folder; held for review'
           });
@@ -293,9 +347,7 @@ async function batchOrganize(
           const failedPaths = new Set(groupFailures.map((failure) => failure.filePath));
           results.groups.push({
             folder: canonicalGroup.folder,
-            files: group.files.filter(
-              (/** @type {any} */ f) => f?.path && !failedPaths.has(f.path)
-            ),
+            files: groupFiles.filter((/** @type {any} */ f) => f?.path && !failedPaths.has(f.path)),
             confidence: group.confidence,
             autoApproved: true,
             partialSuccess: groupFailures.length > 0
@@ -305,7 +357,7 @@ async function batchOrganize(
         // Skip low confidence groups or groups with no valid smart folder, putting them in skipped/manual review
         results.skipped.push({
           folder: group.folder,
-          files: group.files,
+          files: groupFiles,
           confidence: group.confidence,
           reason: group.confidence < confidenceThreshold ? 'Low confidence' : 'Not a smart folder'
         });

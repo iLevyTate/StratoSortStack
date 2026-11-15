@@ -115,20 +115,35 @@ describe('the analysis label does not reach embedding ranking through a strategy
 
     expect(result.primary.folder).toBe('Uncategorized');
     expect(result.primary.source).toBe('default');
-    expect(result.explanation).toBe('No Smart Folder matched what this file contains');
+    expect(result.needsReview).toBe(true);
+    expect(result.explanation).toBe('No Smart Folder matched this file.');
     const sources = [result.primary, ...result.alternatives].map((s) => s?.source);
     expect(sources).not.toContain('strategy');
   });
 
   test('a content match shows its own score, not a flat 60%', async () => {
     const service = makeService([
-      { folderId: 'folder-1', name: 'Invoices', path: '/docs/Invoices', score: 0.52 }
+      { folderId: 'folder-1', name: 'Invoices', path: '/docs/Invoices', score: 0.62 }
     ]);
     const result = await service.getSuggestionsForFile(makeFile(), SMART_FOLDERS, INTERACTIVE);
 
     expect(result.primary.folder).toBe('Invoices');
     expect(result.primary.source).toBe('semantic');
-    expect(result.confidence).toBe(0.52);
+    expect(result.confidence).toBe(0.62);
+  });
+
+  test('a weak content match is not routed even when the label names the folder', async () => {
+    const service = makeService([
+      { folderId: 'folder-1', name: 'Invoices', path: '/docs/Invoices', score: 0.52 }
+    ]);
+    const result = await service.getSuggestionsForFile(makeFile(), SMART_FOLDERS, INTERACTIVE);
+
+    expect(result.needsReview).toBe(true);
+    expect(result.primary.folder).toBe('Uncategorized');
+    expect(result.explanation).toBe(
+      'No Smart Folder matched this file well. The closest was "Invoices".'
+    );
+    expect(result.alternatives.map((s) => s.folder)).toContain('Invoices');
   });
 
   test('LLM routing still uses the label', async () => {

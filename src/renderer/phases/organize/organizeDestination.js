@@ -13,6 +13,12 @@
  *
  * The caller falls back to Uncategorized when all three come up empty.
  *
+ * When the engine says the file needs review (no Smart Folder is a
+ * confident match), name matching does not run: the engine already checked
+ * the names, and the broader matcher here could still pick a folder the file
+ * does not belong in. The file goes to the default folder, or nowhere, until
+ * the user picks one.
+ *
  * @module organize/organizeDestination
  */
 
@@ -29,13 +35,22 @@ import { toCanonicalPath } from '../../utils/canonicalPath';
  */
 
 /**
- * @typedef {EngineCandidate & { explanation: string|null, alternatives: EngineCandidate[] }} EngineSuggestion
+ * @typedef {Object} EngineSuggestionExtra
+ * @property {string|null} explanation
+ * @property {EngineCandidate[]} alternatives
+ * @property {boolean} [needsReview] - no Smart Folder is a confident match
+ * @property {string|null} [reviewReason] - no_match, weak_match or ambiguous
+ */
+
+/**
+ * @typedef {Omit<EngineCandidate, 'folder'|'path'> & { folder: string|null, path: string|null } & EngineSuggestionExtra} EngineSuggestion
  */
 
 /**
  * @typedef {Object} OrganizeDestination
  * @property {any|null} folder - the smart folder, or null for "use Uncategorized"
- * @property {'user'|'engine'|'name'|'none'} source
+ * @property {'user'|'engine'|'name'|'review'|'none'} source - 'review': the
+ *   engine found no confident match; `folder` is the default folder or null
  * @property {EngineSuggestion|null} engine - the engine's ranking for this file, if any
  */
 
@@ -73,10 +88,12 @@ function toCandidate(raw) {
  * @returns {EngineSuggestion|null}
  */
 export function normalizeEngineEntry(entry) {
+  const needsReview = entry?.needsReview === true || entry?.suggestion?.needsReview === true;
   const primary = toCandidate(entry?.suggestion);
-  if (!primary) return null;
-  const confidence = toUnitConfidence(entry?.confidence) ?? primary.confidence;
-  const seen = new Set([toCanonicalPath(primary.path)]);
+  // A file that needs review may have no folder at all (no default folder).
+  if (!primary && !needsReview) return null;
+  const confidence = toUnitConfidence(entry?.confidence) ?? primary?.confidence ?? null;
+  const seen = new Set(primary ? [toCanonicalPath(primary.path)] : []);
   /** @type {EngineCandidate[]} */
   const alternatives = [];
   for (const raw of Array.isArray(entry?.alternatives) ? entry.alternatives : []) {
@@ -87,14 +104,16 @@ export function normalizeEngineEntry(entry) {
     seen.add(key);
     alternatives.push(candidate);
   }
+  const reviewReason = entry?.routingDecision?.reason || entry?.suggestion?.review?.reason || null;
   return {
-    ...primary,
+    ...(primary || { folder: null, path: null, folderId: null, source: null }),
     confidence,
     explanation:
       typeof entry?.explanation === 'string' && entry.explanation.trim()
         ? entry.explanation.trim()
         : null,
-    alternatives
+    alternatives,
+    ...(needsReview ? { needsReview: true, reviewReason } : {})
   };
 }
 
@@ -102,7 +121,7 @@ export function normalizeEngineEntry(entry) {
  * The live smart folder an engine candidate names, matched by id and then by
  * path. A candidate for a folder that has since been removed resolves to null.
  *
- * @param {EngineCandidate|null|undefined} candidate
+ * @param {{ folderId?: string|null, path?: string|null }|null|undefined} candidate
  * @param {any[]} smartFolders
  * @returns {any|null}
  */
@@ -145,6 +164,9 @@ export function resolveOrganizeDestination({
   }
 
   const engineFolder = findFolderForCandidate(engine, smartFolders);
+  if (engine?.needsReview) {
+    return { folder: engineFolder, source: 'review', engine };
+  }
   if (engineFolder && !isGenericBucketFolder(engineFolder)) {
     return { folder: engineFolder, source: 'engine', engine };
   }
@@ -174,6 +196,8 @@ export function resolveOrganizeDestination({
  * @returns {{ folder: string, path?: string, source: string } | undefined}
  */
 export function suggestionForOperation(destination, smartFolders) {
+  // A file that needs review had no engine pick to correct.
+  if (destination?.engine?.needsReview) return undefined;
   const engineFolder = findFolderForCandidate(destination?.engine, smartFolders);
   if (!engineFolder || isGenericBucketFolder(engineFolder)) return undefined;
   return {
