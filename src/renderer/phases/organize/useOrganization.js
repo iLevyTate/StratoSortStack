@@ -668,9 +668,11 @@ export function findInPlaceMoves({ files, smartFolders = [], defaultLocation, ..
 
 /**
  * The Nth numbered form of a destination, in the shape main gives a name
- * that is taken (formatNumberedCollisionCandidate in batchOrganizeHandler.js):
+ * that is taken (formatNumberedCollisionCandidate in collisionNames.js):
  * `_N` before the last extension, so report.pdf becomes report_1.pdf. A name
- * numbered here is the one the move uses, and the one Preview shows.
+ * numbered here is the one the move uses unless it is taken on disk; main
+ * then numbers from report again, past every name of the batch, and Preview
+ * shows the name it will use.
  * @param {string} destination
  * @param {number} counter - 1-based
  * @returns {string}
@@ -772,8 +774,15 @@ function buildOperations({
     suggestionsByPath
   });
   const operations = planned.map((entry) => {
-    const { file, normalized, categoryChanged, originalCategory, finalCategory, suggestion } =
-      entry;
+    const {
+      file,
+      normalized,
+      categoryChanged,
+      originalCategory,
+      finalCategory,
+      suggestion,
+      renumbered
+    } = entry;
     const analysisLabel = analysisLabelOf(file);
 
     if (categoryChanged) {
@@ -789,7 +798,9 @@ function buildOperations({
       source: file.path,
       destination: normalized,
       ...(suggestion ? { suggestion } : {}),
-      ...(analysisLabel ? { analysisLabel } : {})
+      ...(analysisLabel ? { analysisLabel } : {}),
+      // Main numbers a name taken on disk from the name before this `_N`.
+      ...(renumbered ? { renumbered: true } : {})
     };
   });
   const renumberedSources = new Set(

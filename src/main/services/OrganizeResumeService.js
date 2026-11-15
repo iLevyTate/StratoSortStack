@@ -10,6 +10,7 @@ const { validateFileOperationPath } = require('../../shared/pathSanitization');
 const { acquireBatchLock, releaseBatchLock } = require('../ipc/files/batchLockManager');
 const { deferGhostCleanup, resumeGhostCleanup } = require('../../shared/ghostCleanupGuard');
 const { migrateLegacyPersistedBatch } = require('./ProcessingStateService');
+const { numberingBaseOf } = require('../ipc/files/collisionNames');
 
 /**
  * Resume runs replay operations from a persisted journal, so the source and
@@ -122,6 +123,16 @@ async function findMovedSiblings(plannedDestination, recorded, exclude = new Set
     if (await matchesRecordedFile(candidate, recorded)) matches.push(candidate);
   }
   return matches;
+}
+
+/**
+ * The name a journaled op's taken destination is numbered from
+ * (numberingBaseOf). Always in the destination's folder.
+ * @param {{ destination: string, renumbered?: boolean }} op
+ * @returns {string}
+ */
+function numberingBaseFor(op) {
+  return numberingBaseOf(op.destination, op.renumbered);
 }
 
 /**
@@ -383,7 +394,7 @@ async function resumeBatch(
         const siblingMatches =
           recorded && !(destinationExists && (await matchesRecordedFile(op.destination, recorded)))
             ? await findMovedSiblings(
-                op.destination,
+                numberingBaseFor(op),
                 recorded,
                 new Set(
                   batch.operations
@@ -516,12 +527,27 @@ async function resumeBatch(
       if (destinationExists) {
         let counter = 1;
         let uniqueDestination;
-        const ext = path.extname(finalDestination);
+        // Numbered as the live batch numbers it: from the name before an
+        // Organize `_N`, past every name another file of the batch is headed for.
+        const numberingBase = numberingBaseFor({ ...op, destination: finalDestination });
+        const otherDestinations = new Set(
+          batch.operations
+            .filter(
+              (/** @type {any} */ other, /** @type {number} */ j) =>
+                j !== i && typeof other?.destination === 'string'
+            )
+            .map((/** @type {any} */ other) => pathKey(other.destination))
+        );
+        const ext = path.extname(numberingBase);
         const baseName =
-          ext && ext.length > 0 ? finalDestination.slice(0, -ext.length) : finalDestination;
+          ext && ext.length > 0 ? numberingBase.slice(0, -ext.length) : numberingBase;
         while (counter <= 1000) {
-          const base = baseName || finalDestination;
+          const base = baseName || numberingBase;
           uniqueDestination = `${base}_${counter}${ext}`;
+          if (otherDestinations.has(pathKey(uniqueDestination))) {
+            counter += 1;
+            continue;
+          }
           try {
             await fs.access(uniqueDestination);
             counter += 1;

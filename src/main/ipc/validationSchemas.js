@@ -803,7 +803,10 @@ if (!z) {
     // The label the analysis gave the file; a correction is recorded under
     // it. Listed for the same reason as `suggestion`. Organize leaves off a
     // label longer than this rather than have the whole batch refused.
-    analysisLabel: z.string().max(255).optional()
+    analysisLabel: z.string().max(255).optional(),
+    // Organize numbered this destination apart from another file of the
+    // batch (`_N` added), so a taken name is numbered from the name before.
+    renumbered: z.boolean().optional()
   });
 
   const fileOperationSchema = z

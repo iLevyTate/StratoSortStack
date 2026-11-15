@@ -362,6 +362,20 @@ describe('validationSchemas (Zod path)', () => {
       expect(result.data.operations[0].analysisLabel).toBe('Finance');
     });
 
+    // And for the numbered-apart mark: without it main numbers a taken
+    // report_1.pdf as report_1_1.pdf.
+    test('preserves the per-op renumbered mark and refuses a non-boolean one', () => {
+      const parse = (renumbered) =>
+        schemas.fileOperation.safeParse({
+          type: 'batch_organize',
+          operations: [{ source: '/a/r.pdf', destination: '/b/r_1.pdf', renumbered }]
+        });
+      const kept = parse(true);
+      expect(kept.success).toBe(true);
+      expect(kept.data.operations[0].renumbered).toBe(true);
+      expect(parse('yes').success).toBe(false);
+    });
+
     test('rejects a suggestion with a relative path', () => {
       const result = schemas.fileOperation.safeParse({
         type: 'batch_organize',

@@ -300,7 +300,8 @@ describe('useOrganization: the per-file record of a run', () => {
     expect(options.addNotification.mock.calls.map((call) => call[0])).not.toEqual(
       expect.arrayContaining([expect.stringMatching(/Cannot organize/)])
     );
-    expect(options.executeAction.mock.calls[0][0].operations).toEqual([
+    const sent = options.executeAction.mock.calls[0][0].operations;
+    expect(sent).toEqual([
       expect.objectContaining({
         source: exports[0].path,
         destination: '/Documents/Uncategorized/search-performance-2026-09-03.xlsx',
@@ -309,9 +310,12 @@ describe('useOrganization: the per-file record of a run', () => {
       expect.objectContaining({
         source: exports[1].path,
         destination: '/Documents/Uncategorized/search-performance-2026-09-03_1.xlsx',
-        analysisLabel: 'GSC exports'
+        analysisLabel: 'GSC exports',
+        // Main numbers a name taken on disk from the name before this `_1`.
+        renumbered: true
       })
     ]);
+    expect(sent[0]).not.toHaveProperty('renumbered');
   });
 
   describe('a batch main refused before any file', () => {
