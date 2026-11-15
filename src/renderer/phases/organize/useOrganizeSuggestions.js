@@ -8,8 +8,9 @@
  * embeddings, learned placements and feedback memory in seconds rather than
  * one LLM call per file. Each path is fetched once per smart-folder set: a
  * later edit on the card does not refetch, so the ranking stays what the app
- * suggested before the user chose. Files the engine cannot place, and any
- * failed chunk, fall back to name matching in `resolveOrganizeDestination`.
+ * suggested before the user chose. Files the engine has no answer for, and
+ * any failed chunk, fall back to name matching in `resolveOrganizeDestination`.
+ * Files it marks as needing review do not: they wait for the user.
  *
  * @module organize/useOrganizeSuggestions
  */
@@ -154,12 +155,17 @@ export function useOrganizeSuggestions(files, smartFolders) {
 
           /** @type {Map<string, import('./organizeDestination').EngineSuggestion>} */
           const updates = new Map();
-          for (const group of response.groups) {
-            for (const entry of Array.isArray(group?.files) ? group.files : []) {
-              const key = toCanonicalPath(entry?.path);
-              const normalized = normalizeEngineEntry(entry);
-              if (key && normalized) updates.set(key, normalized);
-            }
+          const entries = [
+            ...response.groups.flatMap((/** @type {any} */ group) =>
+              Array.isArray(group?.files) ? group.files : []
+            ),
+            // Files that need review with no default folder to hold them.
+            ...(Array.isArray(response.unassigned) ? response.unassigned : [])
+          ];
+          for (const entry of entries) {
+            const key = toCanonicalPath(entry?.path);
+            const normalized = normalizeEngineEntry(entry);
+            if (key && normalized) updates.set(key, normalized);
           }
           if (updates.size > 0) {
             setSuggestionsByPath((prev) => {

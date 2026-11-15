@@ -227,11 +227,11 @@ describe('OrganizationSuggestionService', () => {
         const result = await service.getSuggestionsForFile(file, smartFolders);
 
         expect(result.success).toBe(true);
-        expect(result.primary).toBeDefined();
-        expect(result.primary.folder).toBeDefined();
-        // With no smart folders, primary may be a non-smart suggestion for review
-        expect(result.primary.isSmartFolder).toBeFalsy();
-        expect(result.confidence).toBeLessThanOrEqual(1.0);
+        // No folder and no default folder: the file stays unassigned and
+        // needs review rather than taking a non-folder suggestion.
+        expect(result.primary).toBeNull();
+        expect(result.needsReview).toBe(true);
+        expect(result.confidence).toBe(0);
 
         // Verify no folder embeddings were attempted
         expect(mockFolderMatchingService.upsertFolderEmbedding).not.toHaveBeenCalled();
@@ -370,7 +370,8 @@ describe('OrganizationSuggestionService', () => {
           {
             folderId: 'folder-3',
             name: 'Semantic Match',
-            score: 0.5, // Lower score
+            // A confident content match, so a smart folder is the primary
+            score: 0.7,
             path: '/docs/Semantic'
           }
         ]);
@@ -842,9 +843,9 @@ describe('OrganizationSuggestionService', () => {
       const result = await service.getSuggestionsForFile(file, []);
 
       expect(result.success).toBe(true);
-      expect(result.primary).toBeDefined();
-      // With no smart folders, primary may be a non-smart suggestion for review
-      expect(result.primary.isSmartFolder).toBeFalsy();
+      // No folder and no default folder: unassigned, needs review.
+      expect(result.primary).toBeNull();
+      expect(result.needsReview).toBe(true);
     });
 
     test('should handle concurrent calls without interference', async () => {

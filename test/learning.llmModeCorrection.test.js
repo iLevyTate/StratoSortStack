@@ -342,7 +342,8 @@ describe('other routing modes', () => {
   test('(l) Embedding mode with no corrections ranks as before', async () => {
     const service = makeService({
       mode: 'embedding',
-      queryFolders: [invoicesMatch(0.62), receiptsMatch(0.6)]
+      // 0.07 apart: far enough to tell apart (0.02 would need review).
+      queryFolders: [invoicesMatch(0.62), receiptsMatch(0.55)]
     });
     const r = await suggest(service);
     expect(r.routing.mode).toBe('embedding');
@@ -350,7 +351,7 @@ describe('other routing modes', () => {
     expect(r.primary.method).toBe('semantic_vector_db');
     expect(r.primary.score).toBeCloseTo(0.62);
     expect(r.alternatives[0].folder).toBe('Receipts');
-    expect(r.alternatives[0].score).toBeCloseTo(0.6);
+    expect(r.alternatives[0].score).toBeCloseTo(0.55);
     expect([r.primary, ...r.alternatives].some((s) => s.learnedOverride)).toBe(false);
     expect(r.explanation).toBe('This file\'s meaning matches "Invoices"');
     await service.shutdown();

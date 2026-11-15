@@ -143,6 +143,62 @@ describe('normalizeEngineEntry', () => {
   });
 });
 
+describe('a file the engine marks as needing review', () => {
+  const REVIEW_TEXT = 'No Smart Folder matched this file well. The closest was "Taxes".';
+
+  function reviewEngine(withDefault = true) {
+    return normalizeEngineEntry({
+      path: '/in/doc.pdf',
+      suggestion: withDefault
+        ? {
+            ...UNCATEGORIZED,
+            folder: UNCATEGORIZED.name,
+            folderId: UNCATEGORIZED.id,
+            isSmartFolder: true,
+            source: 'default'
+          }
+        : null,
+      confidence: withDefault ? 0.1 : 0,
+      explanation: REVIEW_TEXT,
+      alternatives: [{ ...TAXES, folder: TAXES.name, folderId: TAXES.id, isSmartFolder: true }],
+      needsReview: true,
+      routingDecision: { reason: 'weak_match' }
+    });
+  }
+
+  test('stays in the default folder; name matching does not pick one', () => {
+    const result = resolve({
+      analysis: { category: 'Taxes', vendor: 'Acme' },
+      engine: reviewEngine()
+    });
+    expect(result.source).toBe('review');
+    expect(result.folder).toBe(UNCATEGORIZED);
+    expect(result.engine.explanation).toBe(REVIEW_TEXT);
+    expect(result.engine.reviewReason).toBe('weak_match');
+    expect(result.engine.alternatives.map((a) => a.folder)).toEqual(['Taxes']);
+  });
+
+  test('with no default folder it stays unassigned', () => {
+    const engine = reviewEngine(false);
+    expect(engine).not.toBeNull();
+    expect(engine.needsReview).toBe(true);
+    expect(engine.folder).toBeNull();
+    const result = resolve({ analysis: { category: 'Taxes' }, engine });
+    expect(result.source).toBe('review');
+    expect(result.folder).toBeNull();
+  });
+
+  test('the user can still pick a folder', () => {
+    const result = resolve({
+      analysis: { category: 'Taxes' },
+      edits: { category: 'Finance' },
+      engine: reviewEngine()
+    });
+    expect(result.source).toBe('user');
+    expect(result.folder).toBe(FINANCE);
+  });
+});
+
 describe('findFolderForCandidate', () => {
   test('matches by id first, then by path', () => {
     expect(findFolderForCandidate({ folderId: 'f-tax', path: '/elsewhere' }, FOLDERS)).toBe(TAXES);
@@ -164,6 +220,26 @@ describe('suggestionForOperation', () => {
       path: '/library/Finance',
       source: 'engine'
     });
+  });
+
+  test('no suggestion for a file that needs review, even from a non-generic default', () => {
+    const INBOX = { id: 'f-inbox', name: 'Inbox', path: '/library/Inbox' };
+    const engine = normalizeEngineEntry({
+      path: '/in/doc.pdf',
+      suggestion: { ...INBOX, folder: 'Inbox', folderId: INBOX.id, isSmartFolder: true },
+      confidence: 0.1,
+      needsReview: true
+    });
+    const destination = resolveOrganizeDestination({
+      fileWithEdits: { path: '/in/doc.pdf', name: 'doc.pdf', analysis: {} },
+      edits: { category: 'Finance' },
+      engineSuggestion: engine,
+      smartFolders: [...FOLDERS, INBOX],
+      findSmartFolderForCategory: byName,
+      findSmartFolderForFile: byVendor
+    });
+    expect(destination.source).toBe('user');
+    expect(suggestionForOperation(destination, [...FOLDERS, INBOX])).toBe(undefined);
   });
 
   test('no suggestion for a name match or a generic-bucket engine pick', () => {

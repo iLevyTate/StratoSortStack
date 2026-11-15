@@ -222,7 +222,10 @@ class AutoOrganizeServiceCore {
           if (
             !batchSuggestions?.success ||
             !batchSuggestions.groups ||
-            batchSuggestions.groups.length === 0
+            (batchSuggestions.groups.length === 0 &&
+              !(
+                Array.isArray(batchSuggestions.unassigned) && batchSuggestions.unassigned.length > 0
+              ))
           ) {
             // Fallback to individual processing if batch fails
             logger.warn(
@@ -253,6 +256,12 @@ class AutoOrganizeServiceCore {
             for (const fileWithSuggestion of group.files) {
               processedFileIdentifiers.add(fileWithSuggestion.path || fileWithSuggestion.name);
             }
+          }
+          // Held for review by processBatchResults; not asked about again.
+          for (const entry of Array.isArray(batchSuggestions.unassigned)
+            ? batchSuggestions.unassigned
+            : []) {
+            processedFileIdentifiers.add(entry?.path || entry?.name);
           }
 
           // Process any unprocessed files individually as fallback

@@ -176,6 +176,18 @@ async function processFilesIndividually(files, smartFolders, options, results, s
         continue;
       }
 
+      // No Smart Folder was a confident match. Held whatever the threshold:
+      // the default folder it was given is not a destination anyone chose.
+      if (suggestion?.success && suggestion.needsReview === true) {
+        holdForReview(results, file, {
+          suggestion: suggestion.primary || null,
+          alternatives: suggestion.alternatives,
+          confidence: suggestion.confidence || 0,
+          explanation: suggestion.explanation || 'No Smart Folder matched this file well'
+        });
+        continue;
+      }
+
       if (!suggestion || !suggestion.success || !suggestion.primary) {
         // D2: no suggestion, nothing confident. Offer the rule-based folder
         // for review instead of moving there at confidence 0.3.
@@ -355,9 +367,16 @@ async function processNewFile(filePath, smartFolders, options, suggestionService
     });
 
     const canonicalPrimary = resolveSuggestionToSmartFolder(suggestion?.primary, smartFolders);
+    // No Smart Folder was a confident match: never moved, whatever the threshold.
+    const needsReview = suggestion?.needsReview === true;
 
     // Only auto-organize if confidence is very high and destination resolves to a configured smart folder
-    if (suggestion?.success && canonicalPrimary && suggestion.confidence >= effectiveThreshold) {
+    if (
+      suggestion?.success &&
+      !needsReview &&
+      canonicalPrimary &&
+      suggestion.confidence >= effectiveThreshold
+    ) {
       const safePrimary = safeSuggestion(canonicalPrimary);
       const initialDest = buildDestinationPath(file, safePrimary, options.defaultLocation, false);
       const resolved = await resolveDestinationCollision(initialDest);
@@ -399,18 +418,22 @@ async function processNewFile(filePath, smartFolders, options, suggestionService
     // left it both moved and unorganized and contradicted the setting's own
     // copy ("Lower confidence matches require manual review").
     const confidence = suggestion?.confidence || 0;
+    // A file that needs review is not offered its analysis label as the
+    // folder: no folder matched it, and the label may name one anyway.
     const suggestedFolder =
       canonicalPrimary?.name ||
       suggestion?.primary?.folder ||
       suggestion?.primary?.name ||
-      (typeof analysis?.category === 'string' ? analysis.category : null);
+      (!needsReview && typeof analysis?.category === 'string' ? analysis.category : null);
 
     logger.info('[AutoOrganize] Holding file for review (not moved)', {
       file: filePath,
       confidence,
       threshold: effectiveThreshold,
       suggestedFolder,
-      resolvedToSmartFolder: Boolean(canonicalPrimary)
+      resolvedToSmartFolder: Boolean(canonicalPrimary),
+      needsReview,
+      reviewReason: suggestion?.routingDecision?.reason || null
     });
 
     return {
@@ -421,6 +444,8 @@ async function processNewFile(filePath, smartFolders, options, suggestionService
       confidence,
       analysisConfidence: analysis.confidence,
       requiresManualReview: true,
+      needsReview,
+      ...(needsReview && suggestion?.explanation ? { explanation: suggestion.explanation } : {}),
       suggestedFolder
     };
   } catch (error) {
