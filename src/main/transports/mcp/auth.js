@@ -22,7 +22,9 @@ function createAuthMiddleware(/** @type {any} */ getToken) {
   ) {
     const header = req.headers?.authorization || '';
     if (Buffer.byteLength(header, 'utf8') > MAX_AUTH_VALUE_BYTES) return _deny(res);
-    const bearerMatch = /^Bearer\s+(.+)$/.exec(header);
+    // `\S` starts the token, so the space run and the token never overlap
+    // and a header of spaces can't make the match backtrack.
+    const bearerMatch = String(header).match(/^Bearer\s+(\S.*)$/);
     if (!bearerMatch) return _deny(res);
     const provided = bearerMatch[1];
     const expected = getToken();

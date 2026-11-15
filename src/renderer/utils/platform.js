@@ -23,6 +23,10 @@ export function getPathSeparator() {
   return isWindows ? '\\' : '/';
 }
 
+// The separator this platform doesn't use, and runs of the one it does.
+const OTHER_SEPARATOR = isWindows ? /\//g : /\\/g;
+const SEPARATOR_RUN = isWindows ? /\\+/g : /\/+/g;
+
 /**
  * Join path segments using the platform-specific separator
  * Handles both forward and back slashes in input paths
@@ -31,18 +35,17 @@ export function getPathSeparator() {
  */
 export function joinPath(...segments) {
   const sep = getPathSeparator();
-  const otherSep = isWindows ? '/' : '\\';
 
   let result = segments
     .filter((s) => s && typeof s === 'string')
-    .map((s) => s.replace(new RegExp(`[${otherSep.replace('\\', '\\\\')}]`, 'g'), sep))
+    .map((s) => s.replace(OTHER_SEPARATOR, sep))
     .join(sep);
 
   // Preserve UNC path prefix (\\server\share) on Windows before collapsing duplicates
   if (isWindows && result.startsWith('\\\\')) {
     result = '\\\\' + result.slice(2).replace(/\\+/g, '\\');
   } else {
-    result = result.replace(new RegExp(`[${sep.replace('\\', '\\\\')}]+`, 'g'), sep);
+    result = result.replace(SEPARATOR_RUN, sep);
   }
 
   return result;
@@ -57,16 +60,15 @@ export function normalizePath(inputPath) {
   if (!inputPath || typeof inputPath !== 'string') return inputPath;
 
   const sep = getPathSeparator();
-  const otherSep = isWindows ? '/' : '\\';
 
-  let normalized = inputPath.replace(new RegExp(`[${otherSep.replace('\\', '\\\\')}]`, 'g'), sep);
+  let normalized = inputPath.replace(OTHER_SEPARATOR, sep);
 
   // Remove duplicate separators (but preserve UNC paths on Windows)
   if (isWindows && normalized.startsWith('\\\\')) {
     // UNC path - preserve leading \\, normalize the rest
     normalized = `\\\\${normalized.slice(2).replace(/\\+/g, '\\')}`;
   } else {
-    normalized = normalized.replace(new RegExp(`[${sep.replace('\\', '\\\\')}]+`, 'g'), sep);
+    normalized = normalized.replace(SEPARATOR_RUN, sep);
   }
 
   return normalized;

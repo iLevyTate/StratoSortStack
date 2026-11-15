@@ -125,14 +125,17 @@ function createIpcSanitizer({ log }) {
 
     let cleaned = str;
 
-    // Remove dangerous executable tags (script, style, iframe)
-    cleaned = cleaned.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
-    cleaned = cleaned.replace(/<script\b[^>]*>[\s\S]*$/gi, '');
-
-    cleaned = cleaned.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '');
-    cleaned = cleaned.replace(/<style\b[^>]*>[\s\S]*$/gi, '');
-
-    cleaned = cleaned.replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '');
+    // Remove dangerous executable tags (script, style, iframe). Closing tags
+    // may carry spaces or junk before ">" (`</script >`), as browsers accept.
+    // Repeat until nothing changes: removing one element can join the text
+    // around it into another (`<scr<script></script>ipt>`).
+    let previous;
+    do {
+      previous = cleaned;
+      cleaned = cleaned.replace(/<(script|style|iframe)\b[\s\S]*?<\/\1\b[^>]*>/gi, '');
+    } while (cleaned !== previous);
+    // Then an unclosed script or style, to the end of the text.
+    cleaned = cleaned.replace(/<(script|style)\b[^>]*>[\s\S]*$/gi, '');
 
     // IPC data is rendered through React JSX which auto-escapes, so entity encoding
     // is unnecessary. The previous code corrupted user text like "size < 10MB",

@@ -709,8 +709,9 @@ class ChatHistoryStore {
       return { items: [], capped: false, capLimit: SEARCH_DECRYPT_SCAN_CAP, scannedCount: 0 };
     }
 
-    // Escape LIKE special characters to prevent unintended wildcard matching
-    const escapedQuery = query.replace(/[%_]/g, '\\$&');
+    // Escape LIKE special characters, and the ESCAPE character itself, so a
+    // query like "C:\Users" matches the backslash instead of escaping "U".
+    const escapedQuery = query.replace(/[\\%_]/g, '\\$&');
     const pattern = `%${escapedQuery}%`;
 
     // Stage 1: fast SQL search on plain columns only.

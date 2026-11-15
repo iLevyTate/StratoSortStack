@@ -55,7 +55,7 @@ class LLMRequestDeduplicator {
    * Generate a unique key for a request based on its inputs
    */
   generateKey(/** @type {any} */ inputs) {
-    const hasher = crypto.createHash('sha1');
+    const hasher = crypto.createHash('sha256');
 
     // Handle different input types
     if (typeof inputs === 'string') {

@@ -445,3 +445,36 @@ describe('ChatHistoryStore — searchConversations after encryption rollout', ()
     });
   });
 });
+
+describe('ChatHistoryStore — LIKE pattern escaping', () => {
+  // The SQL stage runs `LIKE ? ESCAPE '\'`. The escape character itself has
+  // to be escaped too, or "C:\Users" turns "\U" into a literal "U" and a
+  // message with the real path no longer matches.
+  function patternFor(query) {
+    const fake = makeFakeDb();
+    const prepare = fake.prepare.bind(fake);
+    /** @type {string[]} */
+    const seen = [];
+    fake.prepare = (sql) => {
+      const statement = prepare(sql);
+      const all = statement.all;
+      statement.all = (...args) => {
+        if (String(sql).includes('LIKE ?')) seen.push(String(args[0]));
+        return all(...args);
+      };
+      return statement;
+    };
+    const store = buildStore({ conversations: [], messagesByConv: new Map() });
+    store._db = fake;
+    store.searchConversations(query);
+    return seen[0];
+  }
+
+  test.each([
+    ['a backslash', 'C:\\Users', '%C:\\\\Users%'],
+    ['LIKE wildcards', '50%_off', '%50\\%\\_off%'],
+    ['a trailing backslash', 'folder\\', '%folder\\\\%']
+  ])('escapes %s', (_label, query, expected) => {
+    expect(patternFor(query)).toBe(expected);
+  });
+});

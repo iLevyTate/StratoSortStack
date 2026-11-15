@@ -1016,7 +1016,7 @@ async function analyzeDocumentStages(filePath, smartFolders = [], options = {}, 
           ? extractedText.slice(0, 8192) + '\0' + extractedText.length
           : extractedText;
       const contentHash = crypto
-        .createHash('md5')
+        .createHash('sha256')
         .update(hashInput)
         .update(safeModelName)
         .digest('hex');

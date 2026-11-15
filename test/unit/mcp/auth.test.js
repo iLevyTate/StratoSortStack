@@ -64,6 +64,21 @@ describe('auth middleware', () => {
     expect(next).not.toHaveBeenCalled();
   });
 
+  test('accepts the token after several spaces and refuses a header of only spaces', () => {
+    const spaced = { headers: { authorization: `Bearer    ${TOKEN}` } };
+    const spacedRes = mockRes();
+    const spacedNext = jest.fn();
+    mw(spaced, spacedRes, spacedNext);
+    expect(spacedNext).toHaveBeenCalled();
+
+    const blank = { headers: { authorization: `Bearer${' '.repeat(900)}` } };
+    const blankRes = mockRes();
+    const blankNext = jest.fn();
+    mw(blank, blankRes, blankNext);
+    expect(blankRes.statusCode).toBe(401);
+    expect(blankNext).not.toHaveBeenCalled();
+  });
+
   test('does not accept empty token even if expected is empty (defense in depth)', () => {
     const emptyTokenMw = createAuthMiddleware(() => '');
     const req = { headers: { authorization: 'Bearer ' } };
