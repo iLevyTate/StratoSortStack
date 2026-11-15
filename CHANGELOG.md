@@ -12,6 +12,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Try a few files before a large batch.** When you start analyzing 20 or more files and your Smart
+  Folders changed since the last sample, StratoSort offers to analyze 5 of them first, picked across
+  the file types in the batch. It shows where each would go and why, without moving anything. You
+  can analyze the rest, or stop and edit your folders. Skipping counts as a choice, so the offer
+  comes back only after a folder's name, description or path changes. The user guide has a new
+  section on writing folder descriptions.
+
+### Changed
+
+- **A file no Smart Folder fits goes to review instead of the closest folder.** A file now goes to a
+  Smart Folder only when a learned correction points there, its content matches one folder clearly
+  (score 0.55 or more, and no other folder within 0.03), or the folder is named after its file type
+  (or, when the AI model does the routing, after its label). Otherwise the card says "Needs review",
+  names the closest folders, and the file goes to your default folder unless you pick one. Before,
+  any folder that reached 0.4 won, so an unrelated Markdown report could land in an SEO folder.
+  Auto-organize and the Downloads watcher hold such files instead of moving them.
+- **A folder you sort that is also a Smart Folder now asks you to choose.** Picking or dropping a
+  folder on Discover that is, sits inside, or holds a Smart Folder opens a choice instead of a
+  warning. On Organize, files that would stay in their own folder need a choice (leave them there or
+  skip them) before Move turns on. Each choice is kept for that Smart Folder.
+- **Changing a Smart Folder's location to a folder that does not exist yet asks first.** It moved
+  the old folder there, files included, without asking. You now choose: move the folder and its
+  files, start with a new empty folder, or cancel.
+- **Suggestions made before you changed your Smart Folders are flagged.** Organize lists the files
+  that still go where your old folders sent them, with one button to analyze them again, and Move
+  asks before moving them.
+
 ## [5.3.1] - 2026-11-14
 
 ### Fixed
