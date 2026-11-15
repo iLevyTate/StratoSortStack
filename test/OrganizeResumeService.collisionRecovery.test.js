@@ -175,4 +175,76 @@ describe('OrganizeResumeService: crash after a collision-suffixed move', () => {
       destination: moved
     });
   });
+
+  describe('a file Organize numbered apart from another of the batch', () => {
+    test('is found under the number counted from the name before its `_1`', async () => {
+      // The live batch numbers a taken r_1.txt from r (r_2.txt), not r_1_1.txt.
+      const source = path.join(testDir, 'inbox', 'b.txt');
+      const planned = path.join(testDir, 'sorted', 'r_1.txt');
+      const moved = path.join(testDir, 'sorted', 'r_2.txt');
+      await fs.writeFile(planned, 'a different, longer occupant');
+      await fs.writeFile(moved, 'moved');
+      const movedStat = await fs.stat(moved);
+      processingState.getIncompleteOrganizeBatches.mockReturnValue([
+        {
+          id: 'batch1',
+          operations: [
+            {
+              source,
+              destination: planned,
+              renumbered: true,
+              status: 'in_progress',
+              sourceSize: movedStat.size,
+              sourceMtime: movedStat.mtimeMs
+            }
+          ]
+        }
+      ]);
+
+      await resumeIncompleteBatches({ processingState }, logger, getMainWindow);
+
+      expect(processingState.markOrganizeOpError).not.toHaveBeenCalled();
+      expect(processingState.markOrganizeOpDone).toHaveBeenCalledWith('batch1', 0, {
+        destination: moved
+      });
+    });
+
+    test('is moved under the number the live batch would give it', async () => {
+      await fs.mkdir(path.join(testDir, 'inbox'), { recursive: true });
+      const sorted = (/** @type {string} */ name) => path.join(testDir, 'sorted', name);
+      const inbox = (/** @type {string} */ name) => path.join(testDir, 'inbox', name);
+      await fs.writeFile(sorted('r.txt'), 'OLD');
+      await fs.writeFile(sorted('r_1.txt'), 'OLD1');
+      await fs.writeFile(inbox('a.txt'), 'AAA');
+      await fs.writeFile(inbox('b.txt'), 'BBB');
+      processingState.getIncompleteOrganizeBatches.mockReturnValue([
+        {
+          id: 'batch1',
+          operations: [
+            { source: inbox('a.txt'), destination: sorted('r.txt'), status: 'pending' },
+            {
+              source: inbox('b.txt'),
+              destination: sorted('r_1.txt'),
+              renumbered: true,
+              status: 'pending'
+            }
+          ]
+        }
+      ]);
+
+      await resumeIncompleteBatches({ processingState }, logger, getMainWindow);
+
+      expect(processingState.markOrganizeOpError).not.toHaveBeenCalled();
+      // r_1 is the other file's name, so the first goes past it; the second
+      // counts on from r, not from its own number.
+      expect(processingState.markOrganizeOpDone).toHaveBeenCalledWith('batch1', 0, {
+        destination: sorted('r_2.txt')
+      });
+      expect(processingState.markOrganizeOpDone).toHaveBeenCalledWith('batch1', 1, {
+        destination: sorted('r_3.txt')
+      });
+      expect(await fs.readFile(sorted('r_2.txt'), 'utf8')).toBe('AAA');
+      expect(await fs.readFile(sorted('r_3.txt'), 'utf8')).toBe('BBB');
+    });
+  });
 });

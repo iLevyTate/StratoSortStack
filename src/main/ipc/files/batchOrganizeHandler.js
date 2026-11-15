@@ -26,6 +26,7 @@ const systemAnalytics = require('../../core/systemAnalytics');
 const { acquireBatchLock, renewBatchLock, releaseBatchLock } = require('./batchLockManager');
 const { validateBatchOperation, MAX_BATCH_SIZE } = require('./batchValidator');
 const { executeRollback } = require('./batchRollback');
+const { formatNumberedCollisionCandidate, numberingBaseOf } = require('./collisionNames');
 const {
   sendOperationProgress,
   sendChunkedResults,
@@ -64,6 +65,9 @@ const {
  *   app suggested before the user confirmed; a different landing folder is a correction
  * @property {string} [analysisLabel] - The label the analysis gave the file, which a
  *   correction is recorded under when the history holds no different one
+ * @property {boolean} [renumbered] - Organize numbered this destination apart
+ *   from another file of the batch headed for the same name (`_N` added); a
+ *   taken name is then numbered from the name before that (numberingBaseOf)
  */
 
 /**
@@ -114,24 +118,35 @@ const YIELD_EVERY_N_OPS = 10; // Yield to event loop every N operations
 const PREVIEW_MAX_NUMERIC_ATTEMPTS = 50;
 
 /**
- * Format the Nth collision-suffixed candidate for a destination path.
- *
- * IMPORTANT: This is the single source of truth for the suffix shape so
- * the dry-run preview and the real move path stay byte-identical. They
- * had drifted post-2.0.9: the executor used `${base}_${N}${ext}` while
- * the preview used `${base} (${N})${ext}`, so the Preview button
- * displayed a destination that did not match what the move would produce.
- *
- * @param {string} originalDestination - The originally requested destination.
- * @param {number} counter - 1-based collision counter.
- * @returns {string} Suffixed candidate path.
+ * Comparison key for a batch destination, the same before and after path
+ * validation rewrites an operation's paths to their normalized form.
+ * @param {string} destination
+ * @returns {string}
  */
-function formatNumberedCollisionCandidate(originalDestination, counter) {
-  const ext = path.extname(originalDestination);
-  // When ext is empty, -ext.length is -0 which equals 0, causing slice(0,0)
-  // to return empty string — guard explicitly for the no-extension case.
-  const baseName = ext.length > 0 ? originalDestination.slice(0, -ext.length) : originalDestination;
-  return `${baseName}_${counter}${ext}`;
+function batchDestinationKey(destination) {
+  return _canonicalizeForOverlapCheck(path.resolve(destination));
+}
+
+/**
+ * The next numbered form of `base` after `counter` that no other file of the
+ * batch is headed for. A name another operation will take is skipped, so a
+ * file that finds its name taken on disk does not take the name Organize
+ * numbered another file of the batch to (and Preview shows what the move
+ * does).
+ * @param {string} base
+ * @param {number} counter - last counter tried (0 before the first)
+ * @param {Set<string> | null | undefined} reserved - batchDestinationKey of
+ *   every name the batch is headed for, plus any it has claimed
+ * @returns {{ candidate: string, counter: number }}
+ */
+function nextFreeNumberedCandidate(base, counter, reserved) {
+  let next = counter + 1;
+  let candidate = formatNumberedCollisionCandidate(base, next);
+  while (reserved && next < MAX_NUMERIC_RETRIES && reserved.has(batchDestinationKey(candidate))) {
+    next += 1;
+    candidate = formatNumberedCollisionCandidate(base, next);
+  }
+  return { candidate, counter: next };
 }
 
 /**
@@ -228,6 +243,49 @@ function _detectPathOverlap(ops) {
     }
   }
   return null;
+}
+
+/**
+ * The ops that must wait for an earlier op of the batch: those numbered from
+ * the same name (numberingBaseOf) when that name or one of their numbered
+ * names is already taken on disk. Each op whose name is taken then counts up
+ * the same numbers; run concurrently, which file gets which number depends on
+ * timing, and only batch order gives each the number Preview showed. Only
+ * such a group runs one at a time; every other file keeps the batch's
+ * concurrency, and when none of a group's names is taken no op of it walks.
+ * @param {Array<{source:string,destination:string,renumbered?:boolean,status?:string}>} ops
+ * @returns {Promise<Map<number, number>>} op index -> index of the op it waits for
+ */
+async function _numberingOrder(ops) {
+  /** @type {Map<number, number>} */
+  const waitsFor = new Map();
+  if (!Array.isArray(ops) || ops.length < 2) return waitsFor;
+  /** @type {Map<string, { base: string, indices: number[] }>} */
+  const groups = new Map();
+  ops.forEach((op, index) => {
+    if (!op || op.status === 'done' || typeof op.destination !== 'string') return;
+    const base = numberingBaseOf(op.destination, op.renumbered);
+    const key = _canonicalizeForOverlapCheck(base);
+    if (!key) return;
+    const group = groups.get(key) || { base, indices: [] };
+    group.indices.push(index);
+    groups.set(key, group);
+  });
+  for (const { base, indices } of groups.values()) {
+    if (indices.length < 2) continue;
+    let taken = false;
+    for (const candidate of [base, ...indices.map((index) => ops[index].destination)]) {
+      if (await pathExists(candidate)) {
+        taken = true;
+        break;
+      }
+    }
+    if (!taken) continue;
+    for (let k = 1; k < indices.length; k += 1) {
+      waitsFor.set(indices[k], indices[k - 1]);
+    }
+  }
+  return waitsFor;
 }
 
 /**
@@ -621,6 +679,15 @@ async function handleBatchOrganize(params) {
             }
           );
         }
+        // Files numbered from one name that is taken on disk move one after
+        // another, in batch order, so each gets the name Preview showed.
+        const numberingWaits = pathOverlap ? new Map() : await _numberingOrder(batch.operations);
+        if (numberingWaits.size > 0) {
+          log.info(
+            '[FILE-OPS] Files numbered from one taken name move in batch order, as Preview numbered them',
+            { batchId, waiting: numberingWaits.size }
+          );
+        }
         const batchOperationTotal = batch.operations.length;
         const limit = pLimit(effectiveConcurrency);
         // Files this batch has still to move. The duplicate check must not
@@ -630,6 +697,13 @@ async function handleBatchOrganize(params) {
         const pendingSources = batch.operations
           .filter((op) => op.status !== 'done' && typeof op.source === 'string')
           .map((op) => op.source);
+        // Every name the batch is headed for: a file whose name is taken on
+        // disk is numbered past these, as Preview numbers it.
+        const reservedDestinations = new Set(
+          batch.operations
+            .filter((op) => typeof op.destination === 'string' && op.destination)
+            .map((op) => batchDestinationKey(op.destination))
+        );
 
         // Abort reasons the USER deliberately triggered (renderer buttons).
         // Anything else on the signal — 'ipc-timeout', 'shutdown' (abortAll),
@@ -871,7 +945,8 @@ async function handleBatchOrganize(params) {
                 log,
                 computeFileChecksum,
                 signal,
-                pendingSources
+                pendingSources,
+                reservedDestinations
               );
               try {
                 const outcome = await Promise.race([movePromise, abandoned]);
@@ -1188,7 +1263,20 @@ async function handleBatchOrganize(params) {
           }
         };
 
-        const promises = batch.operations.map((_, i) => limit(() => processOperation(i)));
+        // An op that waits for an earlier one queues for a slot only once
+        // that op has settled, so waiting never holds a slot other files need.
+        /** @type {Promise<unknown>[]} */
+        const promises = [];
+        batch.operations.forEach((_, i) => {
+          const waitFor = numberingWaits.get(i);
+          promises[i] =
+            waitFor === undefined
+              ? limit(() => processOperation(i))
+              : promises[waitFor].then(
+                  () => limit(() => processOperation(i)),
+                  () => limit(() => processOperation(i))
+                );
+        });
         const opResults = await Promise.allSettled(promises);
 
         // `processOperation` owns a try/catch that translates expected failures
@@ -1741,8 +1829,17 @@ function reconcileRolledBackResults(rollbackOutcome, completedOperations, rollba
  * @param {string[]} [pendingSources] - Every source the caller's batch has
  *   still to move (the same array for each call), so the duplicate check does
  *   not count one of them as a copy already at the destination.
+ * @param {Set<string>} [reservedDestinations] - batchDestinationKey of every
+ *   destination of the caller's batch; a taken name is numbered past them.
  */
-async function performFileMove(op, log, checksumFn, abortSignal = null, pendingSources) {
+async function performFileMove(
+  op,
+  log,
+  checksumFn,
+  abortSignal = null,
+  pendingSources,
+  reservedDestinations
+) {
   // This prevents creating numbered copies of files that already exist.
   const duplicateResult = await handleDuplicateMove({
     sourcePath: op.source,
@@ -1802,16 +1899,23 @@ async function performFileMove(op, log, checksumFn, abortSignal = null, pendingS
 
   let counter = 0;
   let uniqueDestination = op.destination;
-  const ext = path.extname(op.destination);
+  // A taken name is numbered from the name before Organize numbered it, if
+  // it did (report_1.pdf taken -> report_2.pdf, not report_1_1.pdf).
+  const numberingBase = numberingBaseOf(op.destination, op.renumbered);
+  const ext = path.extname(numberingBase);
   // When ext is empty, -ext.length is -0 which equals 0, causing slice(0,0) to return empty string
-  const baseName = ext.length > 0 ? op.destination.slice(0, -ext.length) : op.destination;
+  const baseName = ext.length > 0 ? numberingBase.slice(0, -ext.length) : numberingBase;
   let operationComplete = false;
 
   const advanceToNextCandidate = () => {
-    counter++;
     // Single source of truth so preview and execute produce identical
-    // suffixed paths; see formatNumberedCollisionCandidate at top of file.
-    uniqueDestination = formatNumberedCollisionCandidate(op.destination, counter);
+    // suffixed paths (formatNumberedCollisionCandidate, collisionNames.js); both
+    // skip the names other files of the batch are headed for.
+    ({ candidate: uniqueDestination, counter } = nextFreeNumberedCandidate(
+      numberingBase,
+      counter,
+      reservedDestinations
+    ));
     const maxPathLength = getEffectiveMaxPathLength();
     if (uniqueDestination.length > maxPathLength) {
       const err = /** @type {NodeJS.ErrnoException} */ (
@@ -2542,7 +2646,16 @@ async function previewBatchOrganize({ operation, log }) {
 
   // The numeric-suffix collision resolver is normally driven by repeated
   // fs.rename + EEXIST retries. For preview we walk the same algorithm
-  // using fs.access — same shape of result, no side effects.
+  // using fs.access — same shape of result, no side effects. The move skips
+  // every name the batch is headed for, and a numbered name an earlier file
+  // took is on disk by the time a later one walks (ops counting from one
+  // name taken on disk run in batch order, _numberingOrder), so both go in
+  // `reserved`.
+  const reserved = new Set(
+    ops
+      .filter((op) => typeof op?.destination === 'string' && op.destination)
+      .map((op) => batchDestinationKey(op.destination))
+  );
   for (const op of ops) {
     if (!op?.source || !op?.destination) {
       skipped.push({
@@ -2583,13 +2696,20 @@ async function previewBatchOrganize({ operation, log }) {
     if (!alreadyAtDestination && (await pathExistsSilent(op.destination))) {
       collision = true;
       conflicts += 1;
-      const ext = path.extname(op.destination);
-      const baseName = ext.length > 0 ? op.destination.slice(0, -ext.length) : op.destination;
+      const numberingBase = numberingBaseOf(op.destination, op.renumbered);
+      const ext = path.extname(numberingBase);
+      const baseName = ext.length > 0 ? numberingBase.slice(0, -ext.length) : numberingBase;
       let resolved = false;
-      for (let i = 1; i <= PREVIEW_MAX_NUMERIC_ATTEMPTS; i += 1) {
-        const candidate = formatNumberedCollisionCandidate(op.destination, i);
-        if (!(await pathExistsSilent(candidate))) {
-          finalDestination = candidate;
+      let counter = 0;
+      // Bounded by names looked up on disk, not by the number: skipping the
+      // batch's own names does not count against the preview's budget.
+      for (let probes = 0; probes < PREVIEW_MAX_NUMERIC_ATTEMPTS; probes += 1) {
+        const next = nextFreeNumberedCandidate(numberingBase, counter, reserved);
+        counter = next.counter;
+        if (counter >= MAX_NUMERIC_RETRIES) break;
+        if (!(await pathExistsSilent(next.candidate))) {
+          finalDestination = next.candidate;
+          reserved.add(batchDestinationKey(next.candidate));
           resolved = true;
           break;
         }
@@ -2633,6 +2753,7 @@ module.exports = {
   computeFileChecksum,
   performFileMove,
   formatNumberedCollisionCandidate,
+  numberingBaseOf,
   recordUndoAndUpdateDatabase,
   isCriticalFileError,
   MAX_BATCH_SIZE,
