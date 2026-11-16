@@ -16,6 +16,12 @@ function SectionLabel({ children }) {
   );
 }
 
+// How often a bare startup answer is asked again before the card says the
+// stats are unavailable: about 9 s, longer than the history service takes to
+// start on a slow disk.
+const STATS_RETRY_ATTEMPTS = 6;
+const STATS_RETRY_DELAY_MS = 1500;
+
 // Note: AnimatedCount is module-private in DashboardView and not exported.
 // Plain numbers are used here intentionally — the card's data is fetched
 // async and the count-up animation would conflict with the loading transition.
@@ -55,7 +61,7 @@ function isoToYear(iso) {
 /**
  * A single stat tile — icon chip + value + label — matching the visual
  * language of PipelineStage in DashboardView (icon in a rounded chip,
- * large mono value, tiny label below).
+ * large tabular value, tiny label below).
  *
  * @param {{ icon: React.ElementType, value: string, label: string }} props
  */
@@ -69,7 +75,7 @@ function StatTile({ icon: Icon, value, label }) {
         <Icon className="h-5 w-5" aria-hidden="true" />
       </span>
       <div className="dashboard-stat-text mt-2">
-        <div className="font-mono text-2xl font-semibold leading-none tracking-tight tabular-nums text-stratosort-blue">
+        <div className="text-2xl font-semibold leading-none tracking-tight tabular-nums text-stratosort-blue">
           {value}
         </div>
         <Text variant="tiny" className="mt-1">
@@ -82,7 +88,7 @@ function StatTile({ icon: Icon, value, label }) {
 
 /**
  * KnowledgeStatsCard — a "pride-surface" summary of everything the user's
- * local AI has seen. Fetches once on mount via the preload bridge; no Redux
+ * local AI has seen. Fetches on mount via the preload bridge; no Redux
  * dependency (all data comes from analysisHistory, not the file pipeline).
  *
  * @param {{ className?: string }} props - className lets the dashboard make the
@@ -94,10 +100,25 @@ export default function KnowledgeStatsCard({ className = '' }) {
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    let retryTimer = null;
+    // Right after launch the history service is still starting, and the
+    // handler answers with a bare `{ success: true }` (no stats fields) for a
+    // few seconds. One read on mount stranded the card on "unavailable" for
+    // the whole session, so a bare answer is asked again a few times first.
+    const load = async (/** @type {number} */ attempt) => {
       try {
         const data = await window.electronAPI?.analysisHistory?.getStatistics?.();
         if (cancelled) return;
+        const bare =
+          data &&
+          typeof data === 'object' &&
+          data.isEmpty === undefined &&
+          data.totalFiles === undefined;
+        if (bare && attempt < STATS_RETRY_ATTEMPTS) {
+          retryTimer = setTimeout(() => load(attempt + 1), STATS_RETRY_DELAY_MS);
+          return;
+        }
         // A non-object response (bridge missing, handler returned nothing)
         // must not strand the card in the loading state.
         if (data && typeof data === 'object') {
@@ -108,9 +129,11 @@ export default function KnowledgeStatsCard({ className = '' }) {
       } catch {
         if (!cancelled) setError(true);
       }
-    })();
+    };
+    load(1);
     return () => {
       cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
     };
   }, []);
 
@@ -178,9 +201,10 @@ export default function KnowledgeStatsCard({ className = '' }) {
   const tiles = /** @type {Array<{icon: React.ElementType, value: string, label: string}>} */ ([]);
 
   if (hasYears) {
+    // One year reads as that year, not "2026 to 2026".
     tiles.push({
       icon: CalendarRange,
-      value: `${startYear} to ${endYear}`,
+      value: yearDelta === 0 ? String(startYear) : `${startYear} to ${endYear}`,
       label: yearLabel
     });
   }

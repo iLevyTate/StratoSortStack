@@ -23,6 +23,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The Dashboard reads clearly before your first files.** It said "All caught up", "All clear" and
+  "Nothing waiting" on a board that had never had a file; it now says it is ready for files and
+  shows the three steps. Smart folder names are no longer cut short, and the Uncategorized catch-all
+  is no longer listed as one. The knowledge card no longer stays on "unavailable" when the Dashboard
+  opens during startup, and a single year reads as "2026" instead of "2026 to 2026". Cards keep
+  their natural height instead of stretching into empty space.
+- **A stray close button no longer floats at the top right of every screen.** The notification
+  list's collapse button was drawn even with no notifications.
 - **Memory no longer climbs during a long analysis.** Each save of the search index leaked its
   compression buffers, so the app grew by about 35 MB for every file analyzed: from 5 GB to almost
   15 GB over 275 files, which pushed the system into swap.
