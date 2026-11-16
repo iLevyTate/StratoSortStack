@@ -7,11 +7,15 @@
  * Auto-recovery wrote the full merged object, stamping every default.
  */
 
+// The Documents folder in this platform's own form, as Electron reports it.
+// A Windows path on Linux is not an absolute path there, so the settings
+// sanitizer drops it and the recovered location comes back undefined.
+const mockDocumentsDir =
+  process.platform === 'win32' ? 'C:\\Users\\a-user\\Documents' : '/home/a-user/Documents';
+
 jest.mock('electron', () => ({
   app: {
-    getPath: jest.fn((name) =>
-      name === 'documents' ? 'C:\\Users\\a-user\\Documents' : 'C:\\user-data'
-    )
+    getPath: jest.fn((name) => (name === 'documents' ? mockDocumentsDir : 'C:\\user-data'))
   }
 }));
 
