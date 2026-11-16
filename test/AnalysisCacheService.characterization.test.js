@@ -279,6 +279,27 @@ describe('createAnalysisCache Factory', () => {
     cache.shutdown();
   });
 
+  test('a document or image result outlives a two-hour batch', () => {
+    // A 275-file batch takes about two hours. With the old 30-minute expiry,
+    // a copy reached later than that was analyzed again from scratch.
+    const nowSpy = jest.spyOn(Date, 'now');
+    const start = 1_800_000_000_000;
+    nowSpy.mockReturnValue(start);
+    const documents = createAnalysisCache('document');
+    const images = createAnalysisCache('image');
+    try {
+      documents.set('doc-key', { category: 'GSC' });
+      images.set('img-key', { category: 'Photos' });
+      nowSpy.mockReturnValue(start + 2 * 60 * 60 * 1000);
+      expect(documents.get('doc-key')).toEqual({ category: 'GSC' });
+      expect(images.get('img-key')).toEqual({ category: 'Photos' });
+    } finally {
+      documents.shutdown();
+      images.shutdown();
+      nowSpy.mockRestore();
+    }
+  });
+
   test('createAnalysisCache() allows option overrides', () => {
     const cache = createAnalysisCache('document', { maxEntries: 1000 });
     expect(cache.getStats().maxEntries).toBe(1000);

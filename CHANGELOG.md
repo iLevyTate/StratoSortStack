@@ -21,6 +21,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   comes back only after a folder's name, description or path changes. The user guide has a new
   section on writing folder descriptions.
 
+### Fixed
+
+- **Memory no longer climbs during a long analysis.** Each save of the search index leaked its
+  compression buffers, so the app grew by about 35 MB for every file analyzed: from 5 GB to almost
+  15 GB over 275 files, which pushed the system into swap.
+- **A long batch no longer analyzes its early files again.** Analysis results were kept for 30
+  minutes, so in a batch of a few hundred files, an identical copy or a file analyzed again later
+  went through the AI a second time. Results are now kept for 12 hours; they still change when the
+  file, the model or your Smart Folders change.
+
 ### Changed
 
 - **A file no Smart Folder fits goes to review instead of the closest folder.** A file now goes to a
@@ -37,6 +47,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Changing a Smart Folder's location to a folder that does not exist yet asks first.** It moved
   the old folder there, files included, without asking. You now choose: move the folder and its
   files, start with a new empty folder, or cancel.
+- **Spreadsheets and CSVs send the AI the head of each sheet.** The AI saw a sample from the start,
+  middle and end of the text, so most sheets lost their names and columns. It now gets each sheet's
+  name, its columns and its first rows, in less than half the text.
 - **Suggestions made before you changed your Smart Folders are flagged.** Organize lists the files
   that still go where your old folders sent them, with one button to analyze them again, and Move
   asks before moving them.
