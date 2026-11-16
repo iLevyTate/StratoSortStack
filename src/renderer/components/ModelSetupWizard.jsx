@@ -38,13 +38,17 @@ const STEP_TITLES = {
   downloading: 'Download',
   complete: 'Finish'
 };
-const DOWNLOADS_STOPPED_MESSAGE = 'Required model downloads stopped. Please retry downloads.';
+const DOWNLOADS_STOPPED_MESSAGE = 'Required model downloads stopped. Retry the downloads.';
 // Main says "started" before the download is in its status list (it checks
 // disk space and any partial file first), so for this long after a request an
 // empty list does not mean the download stopped.
 const DOWNLOAD_START_GRACE_MS = 3000;
 const PROJECTOR_MISSING_MESSAGE =
   'The model downloaded, but its image projector file did not download. Images cannot be analyzed until it does. Retry to fetch it.';
+// The vision model is optional: when it does not install, setup can still
+// finish on the required models, and this warning says what is missing.
+const VISION_NOT_INSTALLED_MESSAGE =
+  'The image analysis model is not installed, so images cannot be analyzed yet. Documents are analyzed as usual, and you can download it later from Settings.';
 const CHECKING_STATUS_MESSAGES = [
   'Detecting available local models...',
   'Checking active background downloads...',
@@ -471,7 +475,7 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
     if (!hasLlamaApi) {
       if (!isMountedRef.current) return;
       applyFallbackSelection();
-      setInitError('AI engine is still starting. Please try again in a moment.');
+      setInitError('AI engine is still starting. Try again in a moment.');
       setStep('select');
       setIsRefreshing(false);
       return;
@@ -653,7 +657,7 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
     if (step === 'checking' && !pendingEmbeddingSwitch) {
       const timer = setTimeout(() => {
         if (isMountedRef.current) {
-          setInitError('AI system check timed out. Please select models manually.');
+          setInitError('AI system check timed out. Select models manually.');
           setStep('select');
           setIsRefreshing(false);
         }
@@ -917,6 +921,38 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
           return;
         }
 
+        // Only the optional vision model is missing and nothing runs any more:
+        // its download stopped. A row still showing "downloading" would keep
+        // the step waiting forever with "Continue with limited AI" as the only
+        // exit (which skips the chosen profile), so mark it failed. The step
+        // then offers Continue (required models are in) next to Retry.
+        if (
+          requiredMissing.length === 0 &&
+          selectedMissing.length > 0 &&
+          hasReliableDownloadStatus &&
+          activeDownloads.length === 0 &&
+          !downloadWasJustRequested()
+        ) {
+          setDownloadState((prev) => {
+            let changed = false;
+            const next = { ...prev };
+            selectedMissing.forEach((name) => {
+              const status = prev[name]?.status;
+              if (status === 'failed' || status === 'cancelled') return;
+              changed = true;
+              next[name] = {
+                ...(prev[name] || {}),
+                status: 'failed',
+                speedBps: 0,
+                etaSeconds: 0,
+                error: prev[name]?.error || 'The download stopped before it finished.'
+              };
+            });
+            return changed ? next : prev;
+          });
+          return;
+        }
+
         if (
           requiredMissing.length > 0 &&
           hasReliableDownloadStatus &&
@@ -1072,6 +1108,9 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
     const selectedMissing = Object.values(selectedModels)
       .filter(Boolean)
       .filter((name) => !nextAvailable.has(name));
+    const requiredMissing = [selectedModels.embedding, selectedModels.text]
+      .filter(Boolean)
+      .filter((name) => !nextAvailable.has(name));
 
     let configApplied = true;
     if (selectedMissing.length === 0) {
@@ -1084,11 +1123,15 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
       // An empty status list right after main acknowledged a request only
       // means the download is not registered yet; with a failed engine the
       // model list cannot say what is missing either. The poll takes over.
+      // With embedding + text installed, only the optional vision request
+      // failed: stay on the download step, where its row reads Failed and
+      // Continue / Retry are offered, instead of dropping back to Choose.
       const statusSaysNothingRuns =
         hasReliableDownloadStatus &&
         activeDownloads.length === 0 &&
         acknowledged === 0 &&
-        !modelListError;
+        !modelListError &&
+        requiredMissing.length > 0;
       setStep(statusSaysNothingRuns ? 'select' : 'downloading');
     }
   }
@@ -1429,8 +1472,20 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
       const status = downloadState[filename]?.status || 'downloading';
       return !['ready', 'complete', 'failed', 'cancelled'].includes(status);
     });
+    // The vision model is optional. With embedding + text ready and nothing
+    // still downloading, a failed or cancelled vision download is a warning,
+    // and "Continue" still saves the chosen profile and finishes setup.
+    const isReadyStatus = (filename) =>
+      ['ready', 'complete'].includes(downloadState[filename]?.status);
+    const requiredComplete = [selectedModels.embedding, selectedModels.text]
+      .filter(Boolean)
+      .every(isReadyStatus);
+    const canContinue = allComplete || (requiredComplete && !hasActiveDownload);
+    const optionalVisionStopped =
+      Boolean(selectedModels.vision) &&
+      ['failed', 'cancelled'].includes(downloadState[selectedModels.vision]?.status);
     const leaveKeepsDownloading =
-      !allComplete && hasActiveDownload && typeof onDismiss === 'function';
+      !canContinue && hasActiveDownload && typeof onDismiss === 'function';
 
     return (
       <WizardCard as="section" variant="hero" aria-labelledby="wizard-setup-title" className="">
@@ -1451,6 +1506,12 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
               <p className="font-medium">Setup not ready</p>
               <p>{initError}</p>
             </div>
+          </AlertBox>
+        )}
+
+        {requiredComplete && optionalVisionStopped && !hasActiveDownload && (
+          <AlertBox variant="warning" className="mb-4">
+            {VISION_NOT_INSTALLED_MESSAGE}
           </AlertBox>
         )}
 
@@ -1543,7 +1604,7 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
         <div className="mt-4 flex flex-col sm:flex-row gap-compact sm:gap-cozy">
           <Button
             onClick={async () => {
-              if (allComplete) {
+              if (canContinue) {
                 const applied = await applySelectedProfileConfig();
                 if (applied) {
                   setStep('complete');
@@ -1562,10 +1623,10 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
                 onSkip();
               }
             }}
-            variant={allComplete ? 'primary' : 'secondary'}
+            variant={canContinue ? 'primary' : 'secondary'}
             className="w-full sm:flex-1"
           >
-            {allComplete
+            {canContinue
               ? 'Continue'
               : leaveKeepsDownloading
                 ? 'Close and keep downloading'
@@ -1598,6 +1659,11 @@ function ModelSetupWizardBody({ onComplete, onSkip, onDismiss, onStepChange }) {
       <Text variant="small" className="text-system-gray-600 mt-2 mb-8 max-w-sm mx-auto">
         StratoSort is ready to organize your files with on-device AI.
       </Text>
+      {selectedModels.vision && !availableSet.has(selectedModels.vision) && (
+        <AlertBox variant="warning" className="mb-6 text-left">
+          {VISION_NOT_INSTALLED_MESSAGE}
+        </AlertBox>
+      )}
       <Button onClick={onComplete} variant="primary" size="lg" className="min-w-[200px]">
         Get started
       </Button>

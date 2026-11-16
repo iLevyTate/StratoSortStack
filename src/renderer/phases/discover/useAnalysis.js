@@ -302,6 +302,21 @@ function dedupeSuggestedNames(/** @type {any} */ results) {
 }
 
 /**
+ * True when the name was typed by the user in Organize. Re-applying the
+ * naming convention must leave it alone: the effect runs on every mount of
+ * the analysis provider (Dashboard view and back, app launch), not only on
+ * a real settings change.
+ *
+ * @param {any} analysis
+ * @returns {boolean}
+ */
+function hasUserSuggestedName(analysis) {
+  return (
+    typeof analysis?.userSuggestedName === 'string' && analysis.userSuggestedName.trim() !== ''
+  );
+}
+
+/**
  * Merge file states with new analysis results.
  *
  * @param {Record<string, any>} existingStates - Previous file states
@@ -757,13 +772,22 @@ export function useAnalysis(options = {}) {
 
   /**
    * Reset analysis state
+   * @param {any} reason
+   * @param {{ discard?: boolean }} [options] discard: the user is starting
+   *   over, so a cancelled batch that answers later must not bring its
+   *   results back, and a pending auto-advance must not leave Discover.
    */
   const resetAnalysisState = useCallback(
-    (/** @type {any} */ reason) => {
+    (/** @type {any} */ reason, /** @type {{ discard?: boolean }} */ options = {}) => {
       logger.info('Resetting analysis state', { reason });
       invalidateEmbeddingStatsCache();
       const activeRunId = analysisRunIdRef.current;
-      captureCancelledBatchSnapshot(activeRunId);
+      if (options?.discard === true) {
+        cancelledBatchSnapshotRef.current = null;
+        clearAutoAdvanceTimeoutRef(autoAdvanceTimeoutRef);
+      } else {
+        captureCancelledBatchSnapshot(activeRunId);
+      }
       requestMainBatchCancel('reset-analysis-state');
       analysisRunIdRef.current = activeRunId + 1;
       // Ensure any in-flight analysis is stopped and locks are released.
@@ -953,7 +977,7 @@ export function useAnalysis(options = {}) {
       // Check if any result actually needs updating
       let hasChanges = false;
       const updated = prev.map((/** @type {any} */ result) => {
-        if (!result?.analysis) return result;
+        if (!result?.analysis || hasUserSuggestedName(result.analysis)) return result;
 
         const newName = generateSuggestedName(
           result.name || extractFileName(result.path || ''),
@@ -994,7 +1018,7 @@ export function useAnalysis(options = {}) {
       const next = { ...prev };
 
       Object.entries(next).forEach(([filePath, state]) => {
-        if (!state?.analysis) return;
+        if (!state?.analysis || hasUserSuggestedName(state.analysis)) return;
 
         const newName = generateSuggestedName(
           state.name || extractFileName(filePath),
@@ -1949,9 +1973,19 @@ export function useAnalysis(options = {}) {
             collectOrganizedPathKeys(filesState?.organizedFiles)
           )
         );
-        const batchResults = batchResultsRef.current.filter(
-          (/** @type {any} */ r) => !organizedKeys.has(toCanonicalPath(r?.path))
+        // Results this run already shown are in the store, and the user may
+        // have edited them in Organize since (userCategory, a typed name).
+        // Put the waiting ones in first, then add only results the store
+        // still lacks: replacing by path would put the run's unedited copy
+        // back over the edit.
+        applyPendingResults();
+        const storedKeys = new Set(
+          (analysisResultsRef.current || []).map((/** @type {any} */ r) => toCanonicalPath(r?.path))
         );
+        const batchResults = batchResultsRef.current.filter((/** @type {any} */ r) => {
+          const key = toCanonicalPath(r?.path);
+          return !organizedKeys.has(key) && !storedKeys.has(key);
+        });
         // Merge results using extracted helper functions
         const mergedResults = dedupeSuggestedNames(
           mergeAnalysisResults(analysisResultsRef.current, batchResults)
@@ -2107,6 +2141,7 @@ export function useAnalysis(options = {}) {
       captureCancelledBatchSnapshot,
       requestMainBatchCancel,
       flushPendingResults,
+      applyPendingResults,
       applyAnalysisOutcome,
       dispatchProgressUpdate,
       requeueInFlightFileStates,

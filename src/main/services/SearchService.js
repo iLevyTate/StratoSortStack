@@ -650,6 +650,37 @@ class SearchService {
   }
 
   /**
+   * Whether a word occurs in the indexed files, for spell correction. Reads
+   * the per-field token counts Orama keeps for BM25 scoring, after running
+   * the word through the index's own tokenizer (so "Kubernetes" matches the
+   * stored stem). Nothing is copied or cached: each call is a few hash
+   * lookups against whichever index is live, so a rebuild needs no
+   * invalidation here.
+   *
+   * @param {string} word
+   * @returns {boolean|null} null while no index is built (or its layout is
+   *   not the one expected), so callers keep their index-free behavior
+   */
+  isIndexedTerm(word) {
+    const index = /** @type {any} */ (this.bm25Index);
+    const occurrences = index?.data?.index?.tokenOccurrences;
+    const tokenizer = index?.tokenizer;
+    if (!occurrences || typeof tokenizer?.tokenize !== 'function') return null;
+    try {
+      const tokens = tokenizer.tokenize(String(word || ''), tokenizer.language);
+      if (!Array.isArray(tokens) || tokens.length === 0) return false;
+      // The id field holds file paths, not words the user wrote.
+      const fields = Object.keys(occurrences).filter((field) => field !== 'id');
+      return tokens.every((/** @type {string} */ token) =>
+        fields.some((field) => occurrences[field]?.[token] > 0)
+      );
+    } catch (error) {
+      logger.debug('[SearchService] Index term lookup failed:', error.message);
+      return null;
+    }
+  }
+
+  /**
    * Truncate text to a maximum length for indexing
    *
    * @param {string} text - Text to truncate
@@ -686,7 +717,7 @@ class SearchService {
         const errorMsg =
           `Embedding model changed. Your search index uses ${expectedDim}-dimension embeddings, ` +
           `but your current model produces ${vector.length}-dimension embeddings. ` +
-          `Please rebuild your search index to use the new model.`;
+          `Rebuild your search index to use the new model.`;
 
         logger.error('[SearchService] Embedding dimension mismatch - failing vector search', {
           collectionType,
@@ -2217,7 +2248,10 @@ class SearchService {
           const processed = await queryProcessor.processQuery(query, {
             expandSynonyms,
             correctSpelling,
-            maxSynonymsPerWord: 3
+            maxSynonymsPerWord: 3,
+            // Words the user's files contain are left alone; while no index
+            // is built this answers null and correction works as before.
+            isIndexedTerm: (/** @type {string} */ word) => this.isIndexedTerm(word)
           });
           // Use corrected query for vector/chunk semantic retrieval.
           const correctedQuery =
@@ -3355,7 +3389,7 @@ class SearchService {
               'Failed to generate test embedding. The AI engine may be unavailable or the embedding model is missing.'
           });
           diagnostics.recommendations.push(
-            'Ensure the embedding model is downloaded and available in Settings > Models.'
+            'Ensure the embedding model is downloaded and available in Settings → Model management.'
           );
         }
       } catch (e) {
@@ -3524,7 +3558,7 @@ class SearchService {
                 message: `${label}: ${deadLetterCount} embeddings permanently failed (dead letter).`
               });
               diagnostics.recommendations.push(
-                'Review dead letter items in Settings > Advanced to identify recurring failures.'
+                'Check Settings → Diagnostics → Troubleshooting logs to find what keeps failing.'
               );
             }
 

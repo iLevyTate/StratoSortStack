@@ -31,6 +31,22 @@ function stableSerialize(/** @type {any} */ value) {
   }
 }
 
+/**
+ * Main sends either the settings object or `{ settings }`.
+ * @param {any} payload
+ * @returns {Record<string, any> | null}
+ */
+function normalizeSettingsPayload(payload) {
+  const settings =
+    payload &&
+    typeof payload === 'object' &&
+    payload.settings &&
+    typeof payload.settings === 'object'
+      ? payload.settings
+      : payload;
+  return settings && typeof settings === 'object' ? settings : null;
+}
+
 function areValuesEqual(/** @type {any} */ a, /** @type {any} */ b) {
   if (Object.is(a, b)) return true;
   const aIsObject = a && typeof a === 'object';
@@ -77,16 +93,12 @@ export function useSettingsSubscription(onSettingsChanged, options = {}) {
   useEffect(() => {
     if (!enabled) return () => {};
 
+    let disposed = false;
+
     const handleSettingsChanged = (/** @type {any} */ payload) => {
       try {
-        const normalizedSettings =
-          payload &&
-          typeof payload === 'object' &&
-          payload.settings &&
-          typeof payload.settings === 'object'
-            ? payload.settings
-            : payload;
-        if (!normalizedSettings || typeof normalizedSettings !== 'object') {
+        const normalizedSettings = normalizeSettingsPayload(payload);
+        if (!normalizedSettings) {
           return;
         }
         // If watching specific keys, filter to only those changes
@@ -109,7 +121,11 @@ export function useSettingsSubscription(onSettingsChanged, options = {}) {
               key
             );
             nextWatchedValues[key] = nextValue;
-            if (!hasPreviousValue || !areValuesEqual(prevValue, nextValue)) {
+            // Main broadcasts the whole settings object on every save, import
+            // and at startup. A key with no baseline yet is recorded, not
+            // reported: otherwise the first broadcast after mount claims
+            // every watched setting changed.
+            if (hasPreviousValue && !areValuesEqual(prevValue, nextValue)) {
               relevantChanges[key] = nextValue;
               hasRelevantChange = true;
             }
@@ -131,6 +147,41 @@ export function useSettingsSubscription(onSettingsChanged, options = {}) {
       }
     };
 
+    // Seed the watched baseline with the current settings, so a real change
+    // that arrives as the first broadcast after mount is still reported.
+    // Keys an event already recorded are newer than this read and are kept.
+    const seedKeys = watchKeysRef.current;
+    const getSettings = window.electronAPI?.settings?.get;
+    if (Array.isArray(seedKeys) && typeof getSettings === 'function') {
+      Promise.resolve()
+        .then(() => getSettings())
+        .then(
+          /**
+           * @param {any} result
+           * @returns {null}
+           */
+          (result) => {
+            const current = normalizeSettingsPayload(result);
+            if (disposed || !current) return null;
+            /** @type {Record<string, any>} */
+            const seeded = { ...(lastWatchedValuesRef.current || {}) };
+            seedKeys.forEach((/** @type {string} */ key) => {
+              if (key in current && !Object.prototype.hasOwnProperty.call(seeded, key)) {
+                seeded[key] = current[key];
+              }
+            });
+            lastWatchedValuesRef.current = seeded;
+            return null;
+          }
+        )
+        .catch((/** @type {any} */ error) => {
+          // Without a seed the first broadcast becomes the baseline.
+          logger.debug('Could not read settings to seed the watched baseline', {
+            error: error?.message
+          });
+        });
+    }
+
     // Subscribe to settings changes
     let unsubscribe = null;
     if (window.electronAPI?.events?.onSettingsChanged) {
@@ -142,6 +193,7 @@ export function useSettingsSubscription(onSettingsChanged, options = {}) {
 
     // Cleanup
     return () => {
+      disposed = true;
       if (typeof unsubscribe === 'function') {
         try {
           unsubscribe();

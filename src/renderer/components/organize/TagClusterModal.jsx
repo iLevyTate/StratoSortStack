@@ -71,7 +71,7 @@ export default function TagClusterModal({
         error: error?.message,
         stack: error?.stack
       });
-      setApplyError(error?.message || 'Failed to apply tags. Please try again.');
+      setApplyError(error?.message || 'Failed to apply tags. Try again.');
     } finally {
       setIsApplying(false);
     }

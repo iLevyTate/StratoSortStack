@@ -331,6 +331,30 @@ async function downloadMissingModels() {
           stage: 'error',
           model: modelName
         });
+        // Also send the terminal per-model event the download UIs wait on.
+        // Settings and the setup wizard defer to this run when their own
+        // request comes back `alreadyInProgress`, and they only stop waiting
+        // on model-download-complete / model-download-error, so without this
+        // a failed background download left them spinning forever. Skip it
+        // when this run lost a race to a UI-started download: that download
+        // is still running and reports its own outcome.
+        const errorMessage = downloadError?.message || 'Download failed';
+        if (!errorMessage.includes('already in progress')) {
+          try {
+            const win = BrowserWindow.getAllWindows()[0];
+            if (win && !win.isDestroyed()) {
+              safeSend(win.webContents, IPC_EVENTS.OPERATION_PROGRESS, {
+                type: 'model-download-error',
+                model: modelName,
+                error: errorMessage
+              });
+            }
+          } catch (err) {
+            logger.debug('[BACKGROUND] Download error IPC skipped (window closing)', {
+              error: /** @type {any} */ (err)?.message || String(err)
+            });
+          }
+        }
       }
     }
     // Setup "succeeded" only when the core (embedding + text) models are in

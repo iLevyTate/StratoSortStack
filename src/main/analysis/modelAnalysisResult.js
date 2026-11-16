@@ -17,7 +17,16 @@
 const path = require('path');
 const { isPlausibleContentDate, toWrittenCalendarDay } = require('../../shared/contentDateSanity');
 const { sanitizeSuggestedBaseName } = require('../../shared/pathSanitization');
+const { ALL_SUPPORTED_EXTENSIONS } = require('../../shared/constants');
 const FolderMatchingService = require('../services/FolderMatchingService');
+
+// File types a model might append to its suggestion. Anything else after the
+// last dot ("Dr._Smith_referral_letter", "Report_v2.1") is part of the name.
+const KNOWN_FILE_EXTENSIONS = new Set(
+  (Array.isArray(ALL_SUPPORTED_EXTENSIONS) ? ALL_SUPPORTED_EXTENSIONS : []).map((ext) =>
+    String(ext).toLowerCase()
+  )
+);
 
 /**
  * @param {Record<string, any>} parsedJson the parsed model output (mutated: date and confidence are normalized in place)
@@ -187,9 +196,15 @@ function cleanSuggestedName(suggested, originalFileName, logger, source) {
   // The prompt says "no extension", but some models add one anyway —
   // if a wrong extension slips through (e.g. .docx for a .pdf file)
   // the renamed file becomes unopenable.
+  // Only a real file type counts as an added extension: path.extname would
+  // cut "St._Louis_trip_itinerary" down to "St".
   const originalExt = path.extname(originalFileName);
   const llmExt = path.extname(suggested);
-  const rawBase = llmExt ? suggested.slice(0, -llmExt.length) : suggested;
+  const lowerLlmExt = llmExt.toLowerCase();
+  const isAddedExtension =
+    Boolean(llmExt) &&
+    (lowerLlmExt === originalExt.toLowerCase() || KNOWN_FILE_EXTENSIONS.has(lowerLlmExt));
+  const rawBase = isAddedExtension ? suggested.slice(0, -llmExt.length) : suggested;
   // Separators are rejected above; this covers the rest of the
   // Windows-illegal set (`<>:"|?*`, control chars), trailing dots
   // and reserved device names that would break the later rename.

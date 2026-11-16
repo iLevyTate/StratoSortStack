@@ -424,6 +424,20 @@ describe('OrganizationSuggestionService', () => {
         expect(service.feedbackHistory[0].file.name).toBe(file.name);
       });
 
+      // Startup-scan learning counts toward the pattern but writes no
+      // feedback-history row (the capped list undo retracts from).
+      test('recordScanFeedback updates the pattern without a history row, once per key', async () => {
+        const file = createTestFile();
+        const suggestion = { folder: 'Invoices', path: '/docs/Invoices', confidence: 0.8 };
+
+        expect(await service.recordScanFeedback(file, suggestion, 'scan-key-1')).toBe(true);
+        expect(await service.recordScanFeedback(file, suggestion, 'scan-key-1')).toBe(false);
+
+        expect(service.userPatterns.get('pdf:documents:invoices').count).toBe(1);
+        expect(service.feedbackHistory).toHaveLength(0);
+        expect(service.patternMatcher.exportPatterns().scanLearnedKeys).toEqual(['scan-key-1']);
+      });
+
       // Test 8: Batch Suggestions - Project Detection
       test('should detect common project in batch suggestions', async () => {
         const files = [

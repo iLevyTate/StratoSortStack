@@ -44,7 +44,7 @@ const TOUR_STEPS = [
     icon: GitBranch,
     title: 'Topic bridges',
     content:
-      'Dashed lines between clusters mean your topics overlap. When the label shows a number, that many files sit in both groups — useful for shared clients, projects, or duplicates across folders. Hover or click the label for details.',
+      'Dashed lines between clusters mean your topics overlap. When the label shows a number, that many files sit in both groups (useful for shared clients, projects, or duplicates across folders). Hover or click the label for details.',
     position: 'center'
   },
   {
@@ -60,7 +60,7 @@ const TOUR_STEPS = [
     icon: Orbit,
     title: 'The Atlas, a companion view',
     content:
-      'Alongside Relate there is the Atlas — a zoomable map of every file where nearby dots are similar. Reach for the Atlas when you want the whole library at a glance or to lasso-select for bulk moves; come back to Relate to follow the links between specific files.',
+      'Alongside Relate there’s the Atlas, a zoomable map of every file where nearby dots are similar. Use the Atlas when you want the whole library at a glance or to lasso-select for bulk moves. Come back to Relate to follow the links between specific files.',
     position: 'center'
   }
 ];

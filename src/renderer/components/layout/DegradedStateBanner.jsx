@@ -179,7 +179,7 @@ const MIGRATION_FLAG_DEFINITIONS = [
     code: 'state-migration.gap',
     severity: 'error',
     message:
-      "Your saved workspace state needs an upgrade step that this build is missing — it couldn't be loaded safely. Recent selections, file states, and analysis results were reset. Smart folders and settings should still be intact."
+      "Your saved workspace state needs an upgrade step that this build is missing, so it couldn't be loaded safely. Recent selections, file states, and analysis results were reset. Smart folders and settings should still be intact."
   },
   {
     windowKey: '__STRATOSORT_STATE_SHAPE_RECOVERED__',
@@ -445,7 +445,7 @@ function DegradedStateBanner() {
       code: 'renderer.smart-folders-load',
       subsystem: 'smart-folders',
       severity: 'error',
-      message: `Smart folders could not be loaded — organization suggestions may be incomplete. (${smartFoldersError})`,
+      message: `Smart folders could not be loaded, so organization suggestions may be incomplete. (${smartFoldersError})`,
       raisedAt: now,
       lastSeenAt: now,
       count: 1,
@@ -456,7 +456,7 @@ function DegradedStateBanner() {
       code: 'renderer.settings-load',
       subsystem: 'settings',
       severity: 'warning',
-      message: `Settings could not be loaded — defaults are in effect. (${settingsError})`,
+      message: `Settings could not be loaded, so defaults are in effect. (${settingsError})`,
       raisedAt: now,
       lastSeenAt: now,
       count: 1,

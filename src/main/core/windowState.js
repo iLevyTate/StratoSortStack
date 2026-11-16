@@ -138,7 +138,10 @@ function restoreMinimizedWindow(win) {
 
       // After restore, verify visibility and focus
       // Use a small delay to let Chromium settle
-      const settleTimerId = setTimeout(() => {
+      // No 'closed' listener to cancel this: the callback handles a destroyed
+      // window (and still resolves), and a once('closed') per restore piles up
+      // on the long-lived main window.
+      setTimeout(() => {
         if (!win || win.isDestroyed()) {
           resolve();
           return;
@@ -154,7 +157,6 @@ function restoreMinimizedWindow(win) {
         logger.debug('[WINDOW] Minimized window restored and focused');
         resolve();
       }, WINDOW.RESTORE_SETTLE_MS);
-      win.once('closed', () => clearTimeout(settleTimerId));
     };
 
     // Listen for the restore event

@@ -667,11 +667,11 @@ const persistenceMiddleware = (/** @type {any} */ store) => {
           if (saveResult.degraded) {
             const messages = {
               reduced:
-                'Storage space limited - some file history may not be preserved between sessions.',
+                'Storage space limited. Some file history may not be preserved between sessions.',
               minimal:
-                'Storage space very limited - only settings and current phase will be preserved.',
-              emergency: 'Storage space critically low - cleared old data to continue.',
-              failed: 'Unable to save any data - changes will be lost when you close the app.'
+                'Storage space very limited. Only settings and the current phase will be preserved.',
+              emergency: 'Storage space critically low. Old data was cleared to continue.',
+              failed: 'Unable to save any data. Changes will be lost when you close the app.'
             };
             const severity = saveResult.degraded === 'failed' ? 'error' : 'warning';
             store.dispatch(

@@ -37,7 +37,7 @@ const TIER_CONFIG = {
   related: {
     label: 'Related',
     reasonCopy:
-      'Topically similar — may be drafts or versions. Do not bulk-delete without reviewing.',
+      'Topically similar, so they may be drafts or versions. Do not bulk-delete without reviewing.',
     badgeClass: 'bg-system-gray-100 text-system-gray-600 border-system-gray-200'
   }
 };
@@ -505,7 +505,8 @@ export default function DuplicateResolutionModal({
   const [showDismissed, setShowDismissed] = useState(false);
   const { openFile, revealFile } = useFileActions();
   const redactPaths = useSelector(selectRedactPaths);
-  const prevIsOpenRef = useRef(false);
+  // The duplicateGroups array the default keepers were last computed for.
+  const initializedForRef = useRef(null);
 
   // Normalize incoming groups and attach a stable flatIndex used as selection key.
   const normalizedGroups = useMemo(() => {
@@ -609,26 +610,41 @@ export default function DuplicateResolutionModal({
     [normalizedGroups, relatedThreshold, dismissedSignatures]
   );
 
-  // Initialize per-tier default selection on open.
+  // Initialize per-tier default selection once per scan result. Callers open
+  // the dialog and start the scan in the same handler, so the groups usually
+  // arrive after the dialog is already open; keying on the groups (not on the
+  // open transition) still pre-selects a keeper for them.
   useEffect(() => {
-    const wasOpen = prevIsOpenRef.current;
-    prevIsOpenRef.current = isOpen;
-    if (isOpen && !wasOpen && normalizedGroups.length > 0) {
-      const initial = {};
-      for (const group of normalizedGroups) {
-        const keeper = pickDefaultKeeper(group);
-        if (keeper != null) {
-          initial[group.flatIndex] = keeper;
-        }
-      }
-      setSelections(initial);
-      setCollapsedTiers({
-        exact: false,
-        nearIdentical: false,
-        related: tierBuckets.related.length === 0
-      });
+    // Closed: re-initialize on the next open, but keep the choices for now so
+    // the footer does not change while the dialog animates out.
+    if (!isOpen) {
+      initializedForRef.current = null;
+      return;
     }
-  }, [isOpen, normalizedGroups, tierBuckets.related.length]);
+    // A rescan cleared the list: flatIndex keys would point at a different
+    // set of groups next time, so drop leftover choices. Bail out with the
+    // same object when already empty to avoid a render loop.
+    if (normalizedGroups.length === 0) {
+      initializedForRef.current = null;
+      setSelections((prev) => (Object.keys(prev).length === 0 ? prev : {}));
+      return;
+    }
+    if (initializedForRef.current === duplicateGroups) return;
+    initializedForRef.current = duplicateGroups;
+    const initial = {};
+    for (const group of normalizedGroups) {
+      const keeper = pickDefaultKeeper(group);
+      if (keeper != null) {
+        initial[group.flatIndex] = keeper;
+      }
+    }
+    setSelections(initial);
+    setCollapsedTiers({
+      exact: false,
+      nearIdentical: false,
+      related: tierBuckets.related.length === 0
+    });
+  }, [isOpen, duplicateGroups, normalizedGroups, tierBuckets.related.length]);
 
   const handleSelectKeep = useCallback((groupIndex, filePath) => {
     setSelections((prev) => ({ ...prev, [groupIndex]: filePath }));
@@ -694,7 +710,7 @@ export default function DuplicateResolutionModal({
         relatedHiddenByThreshold > 0
           ? ` (${relatedHiddenByThreshold} related group${
               relatedHiddenByThreshold === 1 ? '' : 's'
-            } below ${Math.round(relatedThreshold * 100)}% — lower the related slider to show)`
+            } below ${Math.round(relatedThreshold * 100)}%; lower the related slider to show them)`
           : ''
       }.${
         dismissedCount > 0

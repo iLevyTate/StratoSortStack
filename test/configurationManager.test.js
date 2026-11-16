@@ -89,6 +89,21 @@ describe('ConfigurationManager', () => {
     );
   });
 
+  test.each(['__proto__.polluted', 'CUSTOM.__proto__.polluted', 'constructor.prototype.polluted'])(
+    'override refuses the prototype path %s',
+    (path) => {
+      const mgr = new ConfigurationManager();
+      mgr.load();
+
+      mgr.override(path, true);
+
+      expect(/** @type {any} */ ({}).polluted).toBeUndefined();
+      expect(mgr._validationErrors).toContainEqual(
+        expect.objectContaining({ path, reason: 'unsafe_path' })
+      );
+    }
+  );
+
   test('override writes unknown nested paths and reset restores defaults', () => {
     const mgr = new ConfigurationManager();
     mgr.load();

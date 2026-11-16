@@ -33,11 +33,11 @@ describe('second launch before the main window has been shown', () => {
   });
 
   test('defers the restore until the first show instead of showing a blank window', async () => {
-    const { app, createWindow } = harness;
+    const { app, createWindow, mod } = harness;
 
-    // First launch path: no window yet, so the handler creates one. It stays
-    // hidden until ready-to-show.
-    app.__events.emit('second-instance', {}, []);
+    // Startup creates the window once IPC is registered. It stays hidden
+    // until ready-to-show.
+    mod.createStartupWindow();
     expect(createWindow).toHaveBeenCalledTimes(1);
     const win = createWindow.windows[0];
     expect(win.isVisible()).toBe(false);

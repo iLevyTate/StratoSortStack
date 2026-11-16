@@ -179,7 +179,7 @@ function AtlasTabContent({ isActive, openFile, revealFile, setError, simpleMode 
       const api = /** @type {any} */ (window).electronAPI?.atlas;
       if (!api?.getProjection) {
         setStatus('error');
-        setBothErrors('Atlas is unavailable — the projection service did not load.');
+        setBothErrors('Atlas is unavailable. The projection service did not load.');
         return;
       }
       // Generation token: a newer load (e.g. a forced rebuild racing the
@@ -240,7 +240,7 @@ function AtlasTabContent({ isActive, openFile, revealFile, setError, simpleMode 
           } else if (pageSignature !== fitSignature) {
             restarts += 1;
             if (restarts > 3) {
-              throw new Error('Atlas projection kept changing while loading — try again');
+              throw new Error('Atlas projection kept changing while loading. Try again.');
             }
             offset = 0;
             total = 0;
@@ -1261,7 +1261,7 @@ function AtlasTabContent({ isActive, openFile, revealFile, setError, simpleMode 
             <Loader2 className="animate-spin" size={22} />
             <span className="text-sm">
               {status === 'rebuilding'
-                ? 'Embeddings are rebuilding — the map will refresh shortly.'
+                ? 'Embeddings are rebuilding. The map will refresh shortly.'
                 : 'Projecting your library…'}
             </span>
           </div>

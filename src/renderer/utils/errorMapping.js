@@ -13,23 +13,23 @@ const DEFAULT_NOTIFICATION = {
 const ERROR_TYPE_MAP = {
   TIMEOUT: {
     severity: 'warning',
-    message: 'Operation timed out. Please try again.'
+    message: 'Operation timed out. Try again.'
   },
   IPC_TIMEOUT: {
     severity: 'warning',
-    message: 'The AI is busy processing other requests. Please try again shortly.'
+    message: 'The AI is busy with other requests. Try again shortly.'
   },
   RATE_LIMITED: {
     severity: 'warning',
-    message: 'Too many requests. Please wait a moment and try again.'
+    message: 'Too many requests. Wait a moment and try again.'
   },
   CIRCUIT_OPEN: {
     severity: 'warning',
-    message: 'AI service is temporarily recovering. Please wait a moment and try again.'
+    message: 'AI service is temporarily recovering. Wait a moment and try again.'
   },
   HANDLER_NOT_READY: {
     severity: 'warning',
-    message: 'Service is still starting up. Please wait a moment and try again.'
+    message: 'Service is still starting up. Wait a moment and try again.'
   },
   NETWORK: {
     severity: 'warning',
@@ -146,17 +146,17 @@ const ERROR_CODE_MAP = {
   [AI_ERROR_CODES.LLAMA_MODEL_LOAD_FAILED]: {
     severity: 'error',
     message:
-      'Could not load the AI model. Re-download it from Settings → Models, or switch to a smaller model if this keeps happening.'
+      'Could not load the AI model. Re-download it from Settings → Model management, or switch to a smaller model if this keeps happening.'
   },
   [AI_ERROR_CODES.LLAMA_MODEL_NOT_FOUND]: {
     severity: 'error',
     message:
-      'AI model file is missing. Open Settings → Models to install it, or run the model setup wizard from the welcome screen.'
+      'AI model file is missing. Open Settings → Model management to install it, or run the model setup wizard from the welcome screen.'
   },
   [AI_ERROR_CODES.LLAMA_MODEL_INCOMPATIBLE_CPU]: {
     severity: 'error',
     message:
-      'Your CPU does not support instructions required by this model (SIGILL). Switch to the small Qwen 0.5B profile in Settings → Models, or install a build matching your CPU.'
+      'Your CPU does not support instructions required by this model (SIGILL). Switch to the small Qwen 0.5B profile in Settings → Default AI models, or install a build matching your CPU.'
   },
   [AI_ERROR_CODES.LLAMA_MODEL_PATH_MISMATCH]: {
     severity: 'error',
@@ -166,11 +166,11 @@ const ERROR_CODE_MAP = {
   [AI_ERROR_CODES.LLAMA_MODEL_AUTO_FALLBACK]: {
     severity: 'warning',
     message:
-      'The configured AI model was unavailable, so StratoSort switched to a smaller default model. Quality may be reduced — reinstall the preferred model from Settings → Models to restore it.'
+      'The configured AI model was unavailable, so StratoSort switched to a smaller default model. Quality may be reduced. Reinstall the preferred model from Settings → Model management to restore it.'
   },
   [AI_ERROR_CODES.LLAMA_INFERENCE_FAILED]: {
     severity: 'error',
-    message: 'AI inference failed. Please try again.'
+    message: 'AI inference failed. Try again.'
   },
   [AI_ERROR_CODES.LLAMA_GPU_ERROR]: {
     severity: 'warning',
@@ -182,7 +182,7 @@ const ERROR_CODE_MAP = {
   },
   [AI_ERROR_CODES.VECTOR_DB_INIT_FAILED]: {
     severity: 'error',
-    message: 'Vector database failed to initialize. Please restart the app.'
+    message: 'Vector database failed to initialize. Restart the app.'
   },
   [AI_ERROR_CODES.VECTOR_DB_PERSIST_FAILED]: {
     severity: 'warning',
@@ -190,7 +190,7 @@ const ERROR_CODE_MAP = {
   },
   [AI_ERROR_CODES.VECTOR_DB_QUERY_FAILED]: {
     severity: 'error',
-    message: 'Search failed. Please try again.'
+    message: 'Search failed. Try again.'
   },
   [AI_ERROR_CODES.VECTOR_DB_DIMENSION_MISMATCH]: {
     severity: 'warning',
@@ -198,15 +198,15 @@ const ERROR_CODE_MAP = {
   },
   [AI_ERROR_CODES.EMBEDDING_GENERATION_FAILED]: {
     severity: 'error',
-    message: 'Failed to generate embeddings. Please try again.'
+    message: 'Failed to generate embeddings. Try again.'
   },
   [AI_ERROR_CODES.ANALYSIS_FAILED]: {
     severity: 'error',
-    message: 'Analysis failed. Please try again.'
+    message: 'Analysis failed. Try again.'
   },
   [AI_ERROR_CODES.MIGRATION_FAILED]: {
     severity: 'error',
-    message: 'Migration failed. Please restart the app or check logs.'
+    message: 'Migration failed. Restart the app or check logs.'
   },
   // ── File-system codes surfaced at the IPC boundary ──
   [AI_ERROR_CODES.FILE_NOT_FOUND]: {
@@ -248,7 +248,7 @@ const ERROR_CODE_MAP = {
   // ── Availability / model state ──
   [AI_ERROR_CODES.MODEL_NOT_AVAILABLE]: {
     severity: 'warning',
-    message: 'AI model is not ready. Wait for setup to finish or open Settings → Models.'
+    message: 'AI model is not ready. Wait for setup to finish or open Settings → Model management.'
   },
   [AI_ERROR_CODES.INVALID_FILE_TYPE]: {
     severity: 'warning',
@@ -257,11 +257,11 @@ const ERROR_CODE_MAP = {
   // ── Validation ──
   [AI_ERROR_CODES.VALIDATION_ERROR]: {
     severity: 'warning',
-    message: 'Request was invalid. Please check the form and try again.'
+    message: 'Request was invalid. Check the form and try again.'
   },
   [AI_ERROR_CODES.INVALID_INPUT]: {
     severity: 'warning',
-    message: 'One or more inputs were invalid. Please review and try again.'
+    message: 'One or more inputs were invalid. Review them and try again.'
   },
   [AI_ERROR_CODES.INVALID_PATH]: {
     severity: 'warning',
@@ -277,7 +277,7 @@ const ERROR_CODE_MAP = {
   },
   [AI_ERROR_CODES.INVALID_FOLDER_DATA]: {
     severity: 'warning',
-    message: 'Folder configuration is invalid. Please review the values and retry.'
+    message: 'Folder configuration is invalid. Review the values and retry.'
   },
   [AI_ERROR_CODES.INVALID_FOLDER_NAME]: {
     severity: 'warning',
@@ -321,27 +321,27 @@ const ERROR_CODE_MAP = {
   // ── Smart folder operations ──
   [AI_ERROR_CODES.SAVE_FAILED]: {
     severity: 'error',
-    message: 'Save failed. Please try again.'
+    message: 'Save failed. Try again.'
   },
   [AI_ERROR_CODES.UPDATE_FAILED]: {
     severity: 'error',
-    message: 'Update failed. Please try again.'
+    message: 'Update failed. Try again.'
   },
   [AI_ERROR_CODES.EDIT_FAILED]: {
     severity: 'error',
-    message: 'Edit failed. Please try again.'
+    message: 'Edit failed. Try again.'
   },
   [AI_ERROR_CODES.DELETE_FAILED]: {
     severity: 'error',
-    message: 'Delete failed. Please try again.'
+    message: 'Delete failed. Try again.'
   },
   [AI_ERROR_CODES.ADD_FOLDER_FAILED]: {
     severity: 'error',
-    message: 'Could not add that folder. Please try again.'
+    message: 'Could not add that folder. Try again.'
   },
   [AI_ERROR_CODES.CONFIG_SAVE_FAILED]: {
     severity: 'error',
-    message: 'Could not save configuration. Please try again.'
+    message: 'Could not save configuration. Try again.'
   },
   // ── Batch operations ──
   [AI_ERROR_CODES.BATCH_OPERATION_FAILED]: {
@@ -375,16 +375,16 @@ const ERROR_CODE_MAP = {
   },
   [AI_ERROR_CODES.TIMEOUT]: {
     severity: 'warning',
-    message: 'Operation timed out. Please try again.'
+    message: 'Operation timed out. Try again.'
   },
   [AI_ERROR_CODES.SERVICE_UNAVAILABLE]: {
     severity: 'warning',
-    message: 'A service is temporarily unavailable. Please try again shortly.'
+    message: 'A service is temporarily unavailable. Try again shortly.'
   },
   // ── Generic ──
   [AI_ERROR_CODES.UNKNOWN_ERROR]: {
     severity: 'error',
-    message: 'Something went wrong. Please try again.'
+    message: 'Something went wrong. Try again.'
   },
   [AI_ERROR_CODES.OPERATION_CANCELLED]: {
     severity: 'info',
@@ -392,7 +392,7 @@ const ERROR_CODE_MAP = {
   },
   [AI_ERROR_CODES.QUEUE_FULL]: {
     severity: 'warning',
-    message: 'The processing queue is full. Please wait for current work to finish.'
+    message: 'The processing queue is full. Wait for current work to finish.'
   }
 };
 

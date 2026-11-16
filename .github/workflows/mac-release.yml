@@ -44,9 +44,11 @@ env:
 jobs:
   resolve-release-target:
     runs-on: ubuntu-latest
+    # The only output is the validated tag (v<major>.<minor>.<patch>, confirmed
+    # to exist). Every checkout below pins refs/tags/<tag>, so no job checks
+    # out a branch or any other caller-chosen ref.
     outputs:
       tag: ${{ steps.resolve.outputs.tag }}
-      ref: ${{ steps.resolve.outputs.ref }}
     steps:
       - name: Resolve and validate release target
         id: resolve
@@ -63,7 +65,6 @@ jobs:
                 return;
               }
               core.setOutput("tag", tag);
-              core.setOutput("ref", `refs/tags/${tag}`);
               return;
             }
 
@@ -87,7 +88,6 @@ jobs:
             }
 
             core.setOutput("tag", requestedTag);
-            core.setOutput("ref", `refs/tags/${requestedTag}`);
 
   build-macos:
     needs: resolve-release-target
@@ -111,7 +111,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.resolve-release-target.outputs.ref }}
+          ref: refs/tags/${{ needs.resolve-release-target.outputs.tag }}
           fetch-depth: 0
       - name: Verify package version matches release tag
         env:
@@ -123,7 +123,26 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: '.nvmrc'
-          cache: npm
+          # Restore-only npm cache (next two steps): a release build reads the
+          # cache that ordinary CI writes on main but never saves one, so a
+          # release run cannot seed the default-branch cache scope. setup-node
+          # would save in its post step, so its own caching stays off.
+          package-manager-cache: false
+
+      - name: Locate npm cache directory
+        id: npm-cache-dir
+        run: echo "dir=$(npm config get cache)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore npm cache (read-only)
+        # Same path and key format as setup-node's `cache: npm` (used by CI on
+        # main), so its entries match here. matrix.arch equals the runner's
+        # os.arch() on every leg of this job.
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.npm-cache-dir.outputs.dir }}
+          key: node-cache-${{ runner.os }}-${{ matrix.arch }}-npm-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            node-cache-${{ runner.os }}-${{ matrix.arch }}-npm-
 
       - name: Verify macOS build assets
         run: node scripts/verify-build-assets.js --platform=mac
@@ -383,7 +402,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.resolve-release-target.outputs.ref }}
+          ref: refs/tags/${{ needs.resolve-release-target.outputs.tag }}
           fetch-depth: 0
 
       - name: Free disk space on runner
@@ -423,7 +442,26 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: '.nvmrc'
-          cache: npm
+          # Restore-only npm cache (next two steps): a release build reads the
+          # cache that ordinary CI writes on main but never saves one, so a
+          # release run cannot seed the default-branch cache scope. setup-node
+          # would save in its post step, so its own caching stays off.
+          package-manager-cache: false
+
+      - name: Locate npm cache directory
+        id: npm-cache-dir
+        run: echo "dir=$(npm config get cache)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore npm cache (read-only)
+        # Same path and key format as setup-node's `cache: npm` (used by CI on
+        # main), so its entries match here. matrix.arch equals the runner's
+        # os.arch() on every leg of this job.
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.npm-cache-dir.outputs.dir }}
+          key: node-cache-${{ runner.os }}-${{ matrix.arch }}-npm-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            node-cache-${{ runner.os }}-${{ matrix.arch }}-npm-
 
       - name: Install dependencies (with optional deps)
         run: npm ci --include=optional
@@ -549,7 +587,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.resolve-release-target.outputs.ref }}
+          ref: refs/tags/${{ needs.resolve-release-target.outputs.tag }}
           fetch-depth: 0
 
       - name: Download macOS artifacts

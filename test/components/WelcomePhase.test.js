@@ -297,7 +297,7 @@ describe('WelcomePhase', () => {
     await waitFor(() => {
       expect(screen.getByText(/Organize files now/i)).toBeInTheDocument();
     });
-    expect(screen.queryByText(/Finish local AI setup when you are ready/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Finish local AI setup when you're ready/i)).not.toBeInTheDocument();
   });
 
   describe('modelAutoDownloadSkipped persistence', () => {
@@ -345,7 +345,7 @@ describe('WelcomePhase', () => {
       // The setup card and wizard close for the session too.
       expect(screen.queryByTestId('model-setup-wizard')).not.toBeInTheDocument();
       expect(
-        screen.queryByText(/Finish local AI setup when you are ready/i)
+        screen.queryByText(/Finish local AI setup when you're ready/i)
       ).not.toBeInTheDocument();
     });
 
@@ -368,7 +368,7 @@ describe('WelcomePhase', () => {
 
       expect(screen.queryByTestId('model-setup-wizard')).not.toBeInTheDocument();
       expect(
-        screen.queryByText(/Finish local AI setup when you are ready/i)
+        screen.queryByText(/Finish local AI setup when you're ready/i)
       ).not.toBeInTheDocument();
     });
 

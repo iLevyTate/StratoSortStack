@@ -168,12 +168,12 @@ function OrganizePreviewModal({ isOpen, plan, onClose, onConfirm, redactPaths, i
                         )}
                         {f.staysInFolder && (
                           <StatusBadge variant="info" size="sm">
-                            {renamed ? 'Already in this folder' : 'Already here — no change'}
+                            {renamed ? 'Already in this folder' : 'Already here, no change'}
                           </StatusBadge>
                         )}
                         {f.collision && (
                           <StatusBadge variant="warning" size="sm">
-                            Name taken — number added
+                            Name taken, number added
                           </StatusBadge>
                         )}
                       </span>

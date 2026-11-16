@@ -1216,8 +1216,17 @@ async function extractTextFromAi(filePath, options = {}) {
   const extractTextFromPdf = options ? options.extractTextFromPdf : undefined;
   const pdfCompatible = await isPdfCompatibleFile(filePath);
   if (pdfCompatible && typeof extractTextFromPdf === 'function') {
-    const text = await extractTextFromPdf(filePath);
-    return typeof text === 'string' ? text : '';
+    try {
+      const text = await extractTextFromPdf(filePath);
+      if (typeof text === 'string' && text.trim()) return text;
+    } catch (/** @type {any} */ err) {
+      // Logos with outlined type have no or a thin text layer, and the PDF
+      // reader rejects them as scans. No OCR runs on this route, so keep the
+      // thin text it carries, else try the PostScript view below.
+      if (err?.code !== 'PDF_NO_TEXT_CONTENT') throw err;
+      const textLayer = err.metadata?.textLayer;
+      if (typeof textLayer === 'string' && textLayer.trim()) return textLayer;
+    }
   }
   const { lines } = await describeEpsFile(filePath);
   // An empty or structureless file gets '' like every other reader; the

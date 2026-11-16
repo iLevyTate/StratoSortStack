@@ -81,7 +81,9 @@ function makeFakeDb({ conversations = [], messagesByConv = new Map() } = {}) {
             );
           }
           // Per-conversation messages for the decrypt scan
-          if (trimmed.startsWith('SELECT document_answer, model_answer, meta FROM messages')) {
+          if (
+            trimmed.startsWith('SELECT document_answer, model_answer, follow_ups FROM messages')
+          ) {
             return messagesByConv.get(args[0]) || [];
           }
           throw new Error(`Unhandled SQL in fake db: ${trimmed}`);
@@ -186,7 +188,7 @@ describe('ChatHistoryStore — searchConversations after encryption rollout', ()
     expect(results.items.map((r) => r.id)).toContain('c3');
   });
 
-  test('finds matches in encrypted modelAnswer + meta', () => {
+  test('finds matches in encrypted modelAnswer and follow-ups', () => {
     const conv = {
       id: 'c4',
       title: 'Internal',
@@ -201,7 +203,7 @@ describe('ChatHistoryStore — searchConversations after encryption rollout', ()
         model_answer: encrypt(
           JSON.stringify([{ text: 'I would recommend SAML SSO over OAuth here.' }])
         ),
-        meta: encrypt(JSON.stringify({ topic: 'authentication-strategy' }))
+        follow_ups: encrypt(JSON.stringify(['Compare authentication-strategy options']))
       }
     ];
     const store = buildStore({
@@ -213,6 +215,36 @@ describe('ChatHistoryStore — searchConversations after encryption rollout', ()
     expect(store.searchConversations('authentication-strategy').items.map((r) => r.id)).toContain(
       'c4'
     );
+  });
+
+  test('JSON keys and metadata do not match every conversation', () => {
+    // Stage 2 used to substring-match the serialized JSON, so a key like
+    // "text" or "mode" (or retrieval meta) matched every stored answer.
+    const conv = {
+      id: 'c5',
+      title: 'Internal',
+      document_scope: '[]',
+      created_at: 't5',
+      updated_at: 't5'
+    };
+    const msgs = [
+      {
+        text: 'unrelated',
+        document_answer: encrypt(JSON.stringify([{ text: 'Rent is due monthly.', citations: [] }])),
+        model_answer: encrypt(JSON.stringify([{ text: 'Nothing else to add.' }])),
+        follow_ups: encrypt(JSON.stringify([])),
+        meta: encrypt(JSON.stringify({ mode: 'hybrid', queryMeta: { searchResult: 1 } }))
+      }
+    ];
+    const store = buildStore({
+      conversations: [conv],
+      messagesByConv: new Map([['c5', msgs]])
+    });
+
+    for (const term of ['text', 'citations', 'mode', 'hybrid', 'search', 'result']) {
+      expect(store.searchConversations(term).items).toEqual([]);
+    }
+    expect(store.searchConversations('rent is due').items.map((r) => r.id)).toEqual(['c5']);
   });
 
   test('case-insensitive match across both stages', () => {
@@ -443,5 +475,38 @@ describe('ChatHistoryStore — searchConversations after encryption rollout', ()
         scannedCount: expect.any(Number)
       });
     });
+  });
+});
+
+describe('ChatHistoryStore — LIKE pattern escaping', () => {
+  // The SQL stage runs `LIKE ? ESCAPE '\'`. The escape character itself has
+  // to be escaped too, or "C:\Users" turns "\U" into a literal "U" and a
+  // message with the real path no longer matches.
+  function patternFor(query) {
+    const fake = makeFakeDb();
+    const prepare = fake.prepare.bind(fake);
+    /** @type {string[]} */
+    const seen = [];
+    fake.prepare = (sql) => {
+      const statement = prepare(sql);
+      const all = statement.all;
+      statement.all = (...args) => {
+        if (String(sql).includes('LIKE ?')) seen.push(String(args[0]));
+        return all(...args);
+      };
+      return statement;
+    };
+    const store = buildStore({ conversations: [], messagesByConv: new Map() });
+    store._db = fake;
+    store.searchConversations(query);
+    return seen[0];
+  }
+
+  test.each([
+    ['a backslash', 'C:\\Users', '%C:\\\\Users%'],
+    ['LIKE wildcards', '50%_off', '%50\\%\\_off%'],
+    ['a trailing backslash', 'folder\\', '%folder\\\\%']
+  ])('escapes %s', (_label, query, expected) => {
+    expect(patternFor(query)).toBe(expected);
   });
 });

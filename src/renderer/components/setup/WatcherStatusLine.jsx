@@ -64,7 +64,7 @@ function WatcherStatusLine({ folderCount, intervalMs = DEFAULT_INTERVAL_MS }) {
   if (!status.isRunning) {
     message = status.isStarting
       ? 'Starting folder watching…'
-      : 'These folders are not being watched — files added later are analyzed only on the next scan. Turn on "Watch smart folders" in Settings → Auto-organize.';
+      : 'These folders are not being watched, so files added later are analyzed only on the next scan. Turn on "Watch smart folders" in Settings → Auto-organize.';
     tone = 'text-stratosort-warning';
   } else {
     const watched = Number(status.watchedCount) || 0;

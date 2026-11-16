@@ -106,7 +106,8 @@ class DownloadWatcher {
     notificationService,
     analysisHistoryService,
     vectorDbService,
-    folderMatcher
+    folderMatcher,
+    filePathCoordinator
   }) {
     if (!settingsService) {
       throw new Error('DownloadWatcher requires settingsService');
@@ -124,6 +125,8 @@ class DownloadWatcher {
     this.analysisHistoryService = analysisHistoryService;
     this.vectorDbService = vectorDbService;
     this.folderMatcher = folderMatcher;
+    // Optional; resolved from the container when not injected (see _syncIndexesAfterMove).
+    this.filePathCoordinator = filePathCoordinator || null;
     this.watcher = null;
     /** The folder being watched, set by start(); the root the exclusion rules read against. */
     this.downloadsPath = null;
@@ -890,6 +893,7 @@ class DownloadWatcher {
       if (analysisResult) {
         let finalPath = filePath;
         let renamed = false;
+        let indexesMoved = false;
 
         // 1. Apply naming convention first so any later persistence uses the final path.
         const settings = presetSettings || (await this.settingsService.load());
@@ -938,6 +942,7 @@ class DownloadWatcher {
               finalPath = moveResult.destination;
               renamed = finalPath !== filePath;
               if (renamed) {
+                indexesMoved = await this._syncIndexesAfterMove(filePath, finalPath);
                 await this._recordFallbackRenameUndo(filePath, finalPath);
               }
             }
@@ -969,7 +974,7 @@ class DownloadWatcher {
         }
 
         // 3. Embed for search after persistence so policy overrides see the final path.
-        await this._embedAnalyzedFile(finalPath, analysisResult);
+        await this._embedAnalyzedFile(finalPath, analysisResult, { indexesMoved });
       }
     } catch (error) {
       if (isNotFoundError(error)) {
@@ -977,6 +982,113 @@ class DownloadWatcher {
         return;
       }
       logger.warn('[DOWNLOAD-WATCHER] Fallback processing error:', error.message);
+    }
+  }
+
+  /**
+   * Carry what the analysis pass indexed under the Downloads path over to
+   * where the file now lives. Analysis runs before the move, so under the
+   * default 'during_analysis' timing the file vector (queued or flushed) and
+   * its passages are keyed by the old path; nothing else re-keys them, since
+   * both watchers ignore their own tracked moves. Without this the old id
+   * stays behind and the organized file has no vector until the next
+   * launch's repair.
+   * @param {string} oldPath
+   * @param {string} newPath
+   * @returns {Promise<boolean>} true when the vector rows were re-keyed
+   */
+  async _syncIndexesAfterMove(oldPath, newPath) {
+    if (!oldPath || !newPath || oldPath === newPath) return false;
+    let coordinator = this.filePathCoordinator;
+    if (!coordinator) {
+      try {
+        const { container, ServiceIds } = require('./ServiceContainer');
+        coordinator = container.tryResolve(ServiceIds.FILE_PATH_COORDINATOR);
+      } catch {
+        coordinator = null;
+      }
+    }
+    if (!coordinator || typeof coordinator.atomicPathUpdate !== 'function') {
+      logger.warn('[DOWNLOAD-WATCHER] FilePathCoordinator unavailable; index keeps old path', {
+        oldPath,
+        newPath
+      });
+      return false;
+    }
+
+    /** @type {boolean} */
+    let indexesMoved;
+    try {
+      // Same folder fields batch organize sends, so the vector row and the
+      // history entry place the file in the folder it moved into.
+      const smartFolder = findContainingSmartFolder(newPath, this.getCustomFolders?.() || []);
+      const folderMeta = smartFolder
+        ? { newSmartFolder: smartFolder.name, newSmartFolderPath: smartFolder.path }
+        : undefined;
+      const outcome = await coordinator.atomicPathUpdate(oldPath, newPath, {
+        type: 'move',
+        folderMeta
+      });
+      indexesMoved = outcome?.updated?.vectorDb === true;
+      if (outcome && outcome.success === false) {
+        logger.warn('[DOWNLOAD-WATCHER] Index path update after move was partial', {
+          oldPath,
+          newPath,
+          errors: outcome.errors
+        });
+      }
+    } catch (error) {
+      logger.warn('[DOWNLOAD-WATCHER] Index path update after move failed', {
+        oldPath,
+        newPath,
+        error: error?.message
+      });
+      return false;
+    }
+
+    // Keyword search builds from paths too; SmartFolderWatcher does the same after a move.
+    try {
+      const { getSearchServiceInstance } = require('../ipc/semantic');
+      getSearchServiceInstance?.()?.invalidateIndex?.({
+        reason: 'download-watcher-move',
+        oldPath,
+        newPath
+      });
+    } catch (indexErr) {
+      logger.debug('[DOWNLOAD-WATCHER] Could not invalidate search index after move:', {
+        error: indexErr?.message
+      });
+    }
+    return indexesMoved;
+  }
+
+  /**
+   * History state for a file whose analysis-stage vector followed it through
+   * a move. The queue may have flushed it before the move, when its 'done'
+   * landed on the old path where no history entry existed yet, so a row
+   * already at the new id is 'done'; otherwise the queued item now carries
+   * the new path and writes 'done' there when it flushes.
+   * @param {string} filePath
+   * @param {import('../analysis/embeddingHandoff').EmbeddingHandoff} handoff
+   */
+  async _markMovedEmbeddingState(filePath, handoff) {
+    try {
+      const row = await this.vectorDbService?.getFile?.(getSemanticFileId(filePath));
+      if (row) {
+        await this.analysisHistoryService?.updateEmbeddingStateByPath?.(filePath, {
+          status: 'done'
+        });
+        return;
+      }
+      const current = await this.analysisHistoryService?.getAnalysisByPath?.(filePath);
+      if (current?.embedding?.status !== 'done') {
+        await this.analysisHistoryService?.updateEmbeddingStateByPath?.(filePath, {
+          status: 'pending',
+          model: handoff.model || null
+        });
+      }
+    } catch {
+      // Non-fatal
     }
   }
 
@@ -1247,6 +1359,8 @@ class DownloadWatcher {
           throw moveError;
         }
 
+        const indexesMoved = await this._syncIndexesAfterMove(filePath, result.destination);
+
         // Record undo action AFTER the move succeeds to avoid phantom undo entries
         if (result.undoAction && this.autoOrganizeService?.undoRedo) {
           try {
@@ -1321,7 +1435,7 @@ class DownloadWatcher {
             });
 
             // This ensures DownloadWatcher-organized files are searchable
-            await this._embedAnalyzedFile(result.destination, result);
+            await this._embedAnalyzedFile(result.destination, result, { indexesMoved });
           } catch (historyErr) {
             logger.debug('[DOWNLOAD-WATCHER] Failed to record history entry:', historyErr.message);
           }
@@ -1694,8 +1808,10 @@ class DownloadWatcher {
    * @private
    * @param {string} filePath - Path to the file (destination after move)
    * @param {any} analysisResult - Result from auto-organize analysis
+   * @param {{ indexesMoved?: boolean }} [options] - indexesMoved: the analysis
+   *   pass's vector rows were re-keyed from the pre-move path to filePath
    */
-  async _embedAnalyzedFile(filePath, analysisResult) {
+  async _embedAnalyzedFile(filePath, analysisResult, options = {}) {
     // Skip if dependencies not available
     if (!this.folderMatcher || !this.vectorDbService) {
       logger.debug('[DOWNLOAD-WATCHER] Skipping embedding - services not available');
@@ -1723,6 +1839,19 @@ class DownloadWatcher {
         reason: gate.reason,
         filePath
       });
+      // Refused only for timing: the analysis pass embedded it and the path
+      // update carried that vector here, so 'skipped' would be wrong.
+      const handoff = getEmbeddingHandoff(analysisResult);
+      if (
+        options.indexesMoved &&
+        handoff?.wasEnqueued &&
+        gate.timing === 'during_analysis' &&
+        gate.policy === 'embed' &&
+        !gate.reason
+      ) {
+        await this._markMovedEmbeddingState(filePath, handoff);
+        return;
+      }
       try {
         await this.analysisHistoryService?.updateEmbeddingStateByPath?.(filePath, {
           status: 'skipped'

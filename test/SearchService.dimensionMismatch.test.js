@@ -83,7 +83,7 @@ describe('SearchService — dimension mismatch must surface, not silently degrad
     const service = makeService();
     await expect(service.vectorSearch('quarterly report', 5)).rejects.toMatchObject({
       isDimensionMismatch: true,
-      message: expect.stringContaining('rebuild your search index')
+      message: expect.stringMatching(/rebuild your search index/i)
     });
   });
 
@@ -119,7 +119,7 @@ describe('SearchService — dimension mismatch must surface, not silently degrad
         expect.objectContaining({
           type: 'VECTOR_DIMENSION_MISMATCH',
           severity: 'high',
-          message: expect.stringContaining('rebuild your search index')
+          message: expect.stringMatching(/rebuild your search index/i)
         })
       ])
     );
@@ -135,6 +135,6 @@ describe('SearchService — dimension mismatch must surface, not silently degrad
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain('rebuild your search index');
+    expect(result.error).toMatch(/rebuild your search index/i);
   });
 });

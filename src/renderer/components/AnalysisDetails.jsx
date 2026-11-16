@@ -148,7 +148,7 @@ const AnalysisDetails = memo(function AnalysisDetails({
       if (result?.success) {
         setExportStatus(
           result?.truncated
-            ? `Saved ${format.toUpperCase()} — long recording: transcript was truncated at 1,000 segments`
+            ? `Saved ${format.toUpperCase()}. Long recording, so the transcript was cut off at 1,000 segments.`
             : `Saved ${format.toUpperCase()}`
         );
       } else if (!result?.canceled) {

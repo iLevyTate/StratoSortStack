@@ -9,6 +9,7 @@
  */
 
 const { maintainCacheSize } = require('./cacheManager');
+const { getIndexBucket } = require('./indexManager');
 const {
   isPlausibleContentDate,
   isIsoDateOnly,
@@ -168,7 +169,7 @@ function getAnalysisByCategory(
     cache.categoryResults.delete(cacheKey);
   }
 
-  const entryIds = analysisIndex.categoryIndex[category] || [];
+  const entryIds = getIndexBucket(analysisIndex.categoryIndex, category) || [];
   let entries = entryIds
     .map((/** @type {any} */ id) => analysisHistory.entries[id])
     .filter(Boolean);
@@ -221,7 +222,7 @@ function getAnalysisByTag(analysisHistory, analysisIndex, cache, cacheTTL, tag, 
     cache.tagResults.delete(cacheKey);
   }
 
-  const entryIds = analysisIndex.tagIndex[tag] || [];
+  const entryIds = getIndexBucket(analysisIndex.tagIndex, tag) || [];
   let entries = entryIds
     .map((/** @type {any} */ id) => analysisHistory.entries[id])
     .filter(Boolean);

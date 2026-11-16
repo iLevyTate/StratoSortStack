@@ -2,8 +2,8 @@
  * Tests for remaining resource cleanup fixes (round 2)
  *
  * Covers:
- * - platformBehavior.js: always-on-top timer cleared on window close
- * - windowState.js: settle timer cleared on window close
+ * - platformBehavior.js: always-on-top timer skips a closed window, no 'closed' listener
+ * - windowState.js: settle timer skips a closed window, no 'closed' listener
  * - createWindow.js: nested DevTools timer IDs tracked and cleared
  * - VisionService.downloadFile: response stream destroyed on fileStream error
  * - asyncSpawnUtils.js: child process listeners cleaned up after exit
@@ -53,9 +53,29 @@ describe('platformBehavior - always-on-top timer cleanup', () => {
     jest.useRealTimers();
   });
 
-  test('registers closed handler to clear always-on-top timer', () => {
+  test('does not register a closed handler for the always-on-top timer', () => {
+    // A once('closed') per call piled up on the long-lived main window; the
+    // timer callback checks isDestroyed() instead.
     const mockWindow = {
       isDestroyed: jest.fn().mockReturnValue(false),
+      setAlwaysOnTop: jest.fn(),
+      moveTop: jest.fn(),
+      show: jest.fn(),
+      focus: jest.fn(),
+      once: jest.fn(),
+      on: jest.fn()
+    };
+
+    platformBehavior.bringWindowToForeground(mockWindow);
+
+    expect(mockWindow.once).not.toHaveBeenCalledWith('closed', expect.any(Function));
+    expect(mockWindow.on).not.toHaveBeenCalledWith('closed', expect.any(Function));
+  });
+
+  test('timer leaves a window destroyed before the timeout alone', () => {
+    let destroyed = false;
+    const mockWindow = {
+      isDestroyed: jest.fn(() => destroyed),
       setAlwaysOnTop: jest.fn(),
       moveTop: jest.fn(),
       show: jest.fn(),
@@ -65,36 +85,14 @@ describe('platformBehavior - always-on-top timer cleanup', () => {
 
     platformBehavior.bringWindowToForeground(mockWindow);
 
-    // Verify win.once('closed', ...) was registered
-    expect(mockWindow.once).toHaveBeenCalledWith('closed', expect.any(Function));
-  });
-
-  test('timer is cleared when closed handler fires before timeout', () => {
-    const closedHandlers = [];
-    const mockWindow = {
-      isDestroyed: jest.fn().mockReturnValue(false),
-      setAlwaysOnTop: jest.fn(),
-      moveTop: jest.fn(),
-      show: jest.fn(),
-      focus: jest.fn(),
-      once: jest.fn((event, cb) => {
-        if (event === 'closed') closedHandlers.push(cb);
-      })
-    };
-
-    platformBehavior.bringWindowToForeground(mockWindow);
-
     // setAlwaysOnTop(true) was called
     expect(mockWindow.setAlwaysOnTop).toHaveBeenCalledWith(true);
 
-    // Simulate window closed BEFORE the timer fires
-    closedHandlers.forEach((cb) => cb());
-
-    // Advance past the always-on-top duration
+    // Window is destroyed BEFORE the timer fires
+    destroyed = true;
     jest.advanceTimersByTime(100);
 
-    // setAlwaysOnTop should only have been called once (the initial true)
-    // The timer callback should NOT have fired because it was cleared
+    // Only the initial setAlwaysOnTop(true); the timer skipped the dead window
     expect(mockWindow.setAlwaysOnTop).toHaveBeenCalledTimes(1);
   });
 });
@@ -130,7 +128,7 @@ describe('windowState - settle timer cleanup', () => {
     jest.useRealTimers();
   });
 
-  test('restoreMinimizedWindow registers closed handler for settle timer', async () => {
+  test('restoreMinimizedWindow settles without registering a closed handler', async () => {
     const restoreHandlers = [];
     const closedHandlers = [];
     const mockWindow = {
@@ -156,11 +154,12 @@ describe('windowState - settle timer cleanup', () => {
     // Start restoreMinimizedWindow (creates promise + registers restore handler + timeout)
     const promise = windowState.restoreMinimizedWindow(mockWindow);
 
-    // Simulate the restore event firing (triggers onRestore -> settle timer + closed handler)
+    // Simulate the restore event firing (triggers onRestore -> settle timer)
     restoreHandlers.forEach((cb) => cb());
 
-    // After restore fires, a settle timer is started and a 'closed' handler is registered
-    expect(closedHandlers.length).toBeGreaterThanOrEqual(1);
+    // The settle timer checks isDestroyed() itself, so no per-restore 'closed'
+    // listener is left on the long-lived main window
+    expect(closedHandlers).toHaveLength(0);
 
     // Advance past settle time so the settle timer fires and the promise resolves
     jest.advanceTimersByTime(200);

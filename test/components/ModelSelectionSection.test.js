@@ -245,4 +245,44 @@ describe('ModelSelectionSection', () => {
     });
     expect(screen.getAllByRole('combobox')[2]).toHaveValue('new.gguf');
   });
+
+  // Escape closes Settings by unmounting it, with no blur, so a draft that is
+  // only committed on blur/Enter was silently dropped. Valid typed values are
+  // committed as they are typed; partial input still waits for blur.
+  test('commits a valid typed engine value without blur, but not partial input', async () => {
+    window.electronAPI = {
+      embeddings: { getStats: jest.fn().mockResolvedValue({ totalDocuments: 0 }) }
+    };
+    let current = {
+      textModel: 't.gguf',
+      visionModel: 'v.gguf',
+      embeddingModel: 'old.gguf',
+      llamaGpuLayers: -1,
+      llamaContextSize: 8192
+    };
+    const setSettings = jest.fn((update) => {
+      current = typeof update === 'function' ? update(current) : update;
+    });
+    const { unmount } = render(
+      <ModelSelectionSection
+        settings={current}
+        setSettings={setSettings}
+        textModelOptions={['t.gguf']}
+        visionModelOptions={['v.gguf']}
+        embeddingModelOptions={['old.gguf']}
+      />
+    );
+
+    const contextInput = screen.getByLabelText('Context size in tokens');
+    fireEvent.change(contextInput, { target: { value: '40' } });
+    expect(current.llamaContextSize).toBe(8192);
+    fireEvent.change(contextInput, { target: { value: '4096' } });
+    expect(current.llamaContextSize).toBe(4096);
+
+    fireEvent.change(screen.getByLabelText('GPU layers'), { target: { value: '12' } });
+    expect(current.llamaGpuLayers).toBe(12);
+
+    unmount();
+    await waitFor(() => expect(current.llamaContextSize).toBe(4096));
+  });
 });

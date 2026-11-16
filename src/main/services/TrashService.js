@@ -18,6 +18,32 @@ const { mapWithConcurrency } = require('../../shared/promiseUtils');
 
 const logger = createLogger('TrashService');
 
+const NETWORK_NO_RECYCLE_BIN_MESSAGE =
+  'This file is on a network drive, where Windows has no Recycle Bin, so it was left in place instead of being deleted permanently.';
+
+/**
+ * True on Windows when the file lives on a network share (\\server\share) or
+ * a drive letter mapped to one. Windows keeps no Recycle Bin there, so a
+ * trash request must not reach shell.trashItem. realpath is the native
+ * resolver, which returns a mapped drive's \\server\share path.
+ * @param {string} safePath
+ * @returns {Promise<boolean>}
+ */
+async function isWindowsNetworkPath(safePath) {
+  if (process.platform !== 'win32') return false;
+  let real = safePath;
+  try {
+    real = await fs.realpath(safePath);
+  } catch {
+    // Judge the path as given.
+  }
+  const text = String(real);
+  if (/^\\\\\?\\UNC\\/i.test(text)) return true;
+  // Two leading separators then a server name; \\?\ and \\.\ are local
+  // device namespaces, not shares.
+  return /^[\\/]{2}[^\\/?.]/.test(text);
+}
+
 class TrashService {
   /** @param {{ maxBatchSize?: number, concurrency?: number }} [options] */
   constructor(options = {}) {
@@ -61,6 +87,14 @@ class TrashService {
         path: safePath,
         error: `File not found: ${err.code || err.message}`,
         code: 'NOT_FOUND'
+      };
+    }
+    if (await isWindowsNetworkPath(safePath)) {
+      return {
+        success: false,
+        path: safePath,
+        error: NETWORK_NO_RECYCLE_BIN_MESSAGE,
+        code: 'NETWORK_NO_RECYCLE_BIN'
       };
     }
     try {
@@ -157,4 +191,4 @@ class TrashService {
   }
 }
 
-module.exports = { TrashService };
+module.exports = { TrashService, isWindowsNetworkPath, NETWORK_NO_RECYCLE_BIN_MESSAGE };

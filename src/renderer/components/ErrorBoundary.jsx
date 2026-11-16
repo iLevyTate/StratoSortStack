@@ -27,6 +27,9 @@ class ErrorBoundaryCore extends React.Component {
       chunkReloadExhausted: false
     };
     this.resetTimeoutId = null;
+    // Runs after an automatic reset; if the children stay up this long, the
+    // earlier failures are forgotten and errorCount starts over.
+    this.stableTimeoutId = null;
     this.handleReset = this.handleReset.bind(this);
     this.handleNavigateHome = this.handleNavigateHome.bind(this);
     this.handleReload = this.handleReload.bind(this);
@@ -47,6 +50,8 @@ class ErrorBoundaryCore extends React.Component {
       componentStack: errorInfo?.componentStack,
       timestamp: new Date().toISOString()
     });
+
+    this.clearStableTimer();
 
     this.setState(
       (prevState) => ({
@@ -75,6 +80,14 @@ class ErrorBoundaryCore extends React.Component {
     if (this.resetTimeoutId) {
       clearTimeout(this.resetTimeoutId);
       this.resetTimeoutId = null;
+    }
+    this.clearStableTimer();
+  }
+
+  clearStableTimer() {
+    if (this.stableTimeoutId) {
+      clearTimeout(this.stableTimeoutId);
+      this.stableTimeoutId = null;
     }
   }
 
@@ -158,8 +171,34 @@ class ErrorBoundaryCore extends React.Component {
       clearTimeout(this.resetTimeoutId);
     }
     this.resetTimeoutId = setTimeout(() => {
-      this.handleReset();
+      this.handleAutoReset(delay);
     }, delay);
+  }
+
+  // Unlike a manual reset, keeps errorCount: an error that recurs right after
+  // the remount must count toward the retry cap and the "Multiple errors"
+  // hint, or a child that always throws is remounted forever.
+  handleAutoReset(delay) {
+    this.resetTimeoutId = null;
+    this.clearStableTimer();
+    this.stableTimeoutId = setTimeout(() => {
+      this.stableTimeoutId = null;
+      if (!this.state.hasError) {
+        this.setState({ errorCount: 0 });
+      }
+    }, delay);
+
+    this.setState((prevState) => ({
+      hasError: false,
+      error: null,
+      errorInfo: null,
+      resetKey: prevState.resetKey + 1,
+      chunkReloadExhausted: false
+    }));
+
+    if (this.props.onReset) {
+      this.props.onReset();
+    }
   }
 
   handleReset() {
@@ -167,6 +206,7 @@ class ErrorBoundaryCore extends React.Component {
       clearTimeout(this.resetTimeoutId);
       this.resetTimeoutId = null;
     }
+    this.clearStableTimer();
 
     this.setState((prevState) => ({
       hasError: false,
@@ -183,6 +223,11 @@ class ErrorBoundaryCore extends React.Component {
   }
 
   handleNavigateHome() {
+    if (this.resetTimeoutId) {
+      clearTimeout(this.resetTimeoutId);
+      this.resetTimeoutId = null;
+    }
+    this.clearStableTimer();
     this.setState((prevState) => ({
       hasError: false,
       error: null,
@@ -261,7 +306,7 @@ class ErrorBoundaryCore extends React.Component {
             </Heading>
             <Text variant="body" className="text-system-gray-600">
               {needsRestart
-                ? 'StratoSort was updated while it was running. Please quit and reopen the app to finish updating — reloading won’t resolve this.'
+                ? 'StratoSort was updated while it was running. Quit and reopen the app to finish updating. Reloading won’t fix this.'
                 : isChunk
                   ? 'App assets failed to load. This usually happens after an update.'
                   : 'The application encountered an unexpected error.'}
@@ -271,7 +316,7 @@ class ErrorBoundaryCore extends React.Component {
           {errorCount > 2 && !needsRestart && (
             <div className="mb-4 p-3 bg-stratosort-warning/10 border border-stratosort-warning/20 rounded">
               <Text variant="small" className="text-stratosort-warning">
-                Multiple errors detected. Consider reloading the application.
+                Multiple errors detected. Try reloading the app.
               </Text>
             </div>
           )}
@@ -310,7 +355,7 @@ class ErrorBoundaryCore extends React.Component {
           </div>
 
           <Text variant="tiny" className="text-center text-system-gray-500 mt-4">
-            If this problem persists, please check your settings or contact support.
+            If this keeps happening, check your settings or contact support.
           </Text>
         </Card>
       </div>
@@ -344,7 +389,7 @@ class ErrorBoundaryCore extends React.Component {
                 {isChunk && (
                   <Text variant="small" className="text-system-gray-600 mt-2">
                     {needsRestart
-                      ? 'StratoSort was updated while running. Please quit and reopen the app to finish updating — reloading won’t help.'
+                      ? 'StratoSort was updated while running. Quit and reopen the app to finish updating. Reloading won’t help.'
                       : 'This looks like an app asset mismatch. Reloading usually fixes it after an update.'}
                   </Text>
                 )}

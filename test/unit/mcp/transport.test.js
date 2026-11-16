@@ -44,4 +44,60 @@ describe('transport', () => {
     await t.close();
     blocker.close();
   });
+
+  describe('bind errors on the preferred port', () => {
+    const realCreateServer = http.createServer;
+
+    // Each server's listen() fails with the next code in `codes`, then binds
+    // for real once the list runs out.
+    function failListen(codes) {
+      jest.spyOn(http, 'createServer').mockImplementation((...args) => {
+        const server = realCreateServer(...args);
+        const realListen = server.listen.bind(server);
+        const pending = [...codes];
+        server.listen = (...listenArgs) => {
+          const code = pending.shift();
+          if (!code) return realListen(...listenArgs);
+          process.nextTick(() =>
+            server.emit('error', Object.assign(new Error(`listen ${code}`), { code }))
+          );
+          return server;
+        };
+        return server;
+      });
+    }
+
+    afterEach(() => jest.restoreAllMocks());
+
+    test('EACCES (a Windows excluded port range) falls back to an ephemeral port', async () => {
+      failListen(['EACCES']);
+      const logger = { warn: jest.fn() };
+      const t = await createTransport({
+        requestHandler: (_, res) => res.end(),
+        port: 53827,
+        logger
+      });
+      expect(t.port).toBeGreaterThan(0);
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('ephemeral'),
+        expect.objectContaining({ requestedPort: 53827 })
+      );
+      await t.close();
+    });
+
+    test('a failed fallback bind rejects instead of raising an unhandled error', async () => {
+      failListen(['EADDRINUSE', 'EACCES']);
+      await expect(
+        createTransport({ requestHandler: (_, res) => res.end(), port: 53827 })
+      ).rejects.toMatchObject({ code: 'EACCES' });
+    });
+
+    test('other bind errors still reject without a fallback', async () => {
+      failListen(['EADDRNOTAVAIL']);
+      await expect(
+        createTransport({ requestHandler: (_, res) => res.end(), port: 53827 })
+      ).rejects.toMatchObject({ code: 'EADDRNOTAVAIL' });
+      expect(http.createServer).toHaveBeenCalledTimes(1);
+    });
+  });
 });

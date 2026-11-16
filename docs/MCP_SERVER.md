@@ -129,7 +129,7 @@ Search the indexed corpus by meaning, keyword, or both.
 
 ```json
 {
-  "query": "string (1..1000)",
+  "query": "string (2..1000)",
   "top_k": 10,
   "mode": "hybrid",
   "smart_folder_id": "optional-uuid"

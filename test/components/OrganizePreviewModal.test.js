@@ -112,7 +112,7 @@ describe('OrganizePreviewModal', () => {
     test('is marked as unchanged when its name stays too', () => {
       renderModal({ plan: stayPlan('C:\\Docs\\Finance\\budget.xlsx') });
 
-      expect(screen.getByText('Already here — no change')).toBeInTheDocument();
+      expect(screen.getByText('Already here, no change')).toBeInTheDocument();
       expect(screen.queryByText('Already in this folder')).not.toBeInTheDocument();
     });
 

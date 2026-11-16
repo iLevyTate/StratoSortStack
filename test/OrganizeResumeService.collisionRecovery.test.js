@@ -232,7 +232,11 @@ describe('OrganizeResumeService: crash after a collision-suffixed move', () => {
         }
       ]);
 
-      await resumeIncompleteBatches({ processingState }, logger, getMainWindow);
+      // sorted/ is a Smart Folder, so the destination policy allows the moves.
+      const smartFolderWatcher = {
+        getSmartFolders: () => [{ path: path.join(testDir, 'sorted') }]
+      };
+      await resumeIncompleteBatches({ processingState, smartFolderWatcher }, logger, getMainWindow);
 
       expect(processingState.markOrganizeOpError).not.toHaveBeenCalled();
       // r_1 is the other file's name, so the first goes past it; the second

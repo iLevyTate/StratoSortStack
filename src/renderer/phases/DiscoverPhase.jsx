@@ -57,7 +57,6 @@ function DiscoverPhase() {
     setSeparator,
     setFileStates,
     updateFileState,
-    resetAnalysisState,
     actions,
     organizedFiles,
     organizedPathIndex,
@@ -285,6 +284,7 @@ function DiscoverPhase() {
     retryFailedFiles,
     reanalyzeFiles,
     pruneBatchResultsForPath,
+    resetRun,
     totalAnalysisFailure,
     setTotalAnalysisFailure
   } = useAnalysisRun();
@@ -448,12 +448,12 @@ function DiscoverPhase() {
         collapsedSummary={
           <Text variant="small" className="text-system-gray-700">
             {isAnalyzing
-              ? 'Analysis running now - expand for review tips'
+              ? 'Analysis running now. Expand for review tips.'
               : visibleReadyCount > 0
-                ? `${visibleReadyCount} file${visibleReadyCount !== 1 ? 's' : ''} ready to review - expand for review tips`
+                ? `${visibleReadyCount} file${visibleReadyCount !== 1 ? 's' : ''} ready to review. Expand for review tips.`
                 : pendingAnalysisCount > 0
-                  ? `${pendingAnalysisCount} file${pendingAnalysisCount !== 1 ? 's' : ''} waiting for analysis - expand for review tips`
-                  : 'Add files to begin - expand for review tips'}
+                  ? `${pendingAnalysisCount} file${pendingAnalysisCount !== 1 ? 's' : ''} waiting for analysis. Expand for review tips.`
+                  : 'Add files to begin. Expand for review tips.'}
           </Text>
         }
       >
@@ -483,8 +483,8 @@ function DiscoverPhase() {
             Build a clean review queue
           </Heading>
           <Text variant="small" className="text-system-gray-600">
-            This step is designed to stay simple: add files, let local AI prepare suggestions, and
-            move forward only when the review list feels ready.
+            Add files, let local AI prepare suggestions, and move on when the review list looks
+            ready.
           </Text>
         </div>
 
@@ -615,7 +615,9 @@ function DiscoverPhase() {
                         Date.now() - analysisProgress.lastActivity >
                           TIMEOUTS.STUCK_ANALYSIS_CHECK && (
                           <Button
-                            onClick={() => resetAnalysisState('User forced reset')}
+                            // The run's reset: it releases the lock and keeps
+                            // finished results, unlike the Redux-only one.
+                            onClick={() => resetRun('User forced reset')}
                             variant="warning"
                             size="sm"
                           >
@@ -871,7 +873,7 @@ function DiscoverPhase() {
                   addNotification(
                     visibleFailedCount > 0
                       ? 'All files failed analysis. Retry them, or clear the queue and try again.'
-                      : 'Please analyze files first',
+                      : 'Analyze files first',
                     'warning',
                     4000
                   );

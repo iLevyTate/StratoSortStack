@@ -555,7 +555,7 @@ const SimilarityEdge = memo(
                 </Text>
                 <Text as="div" variant="tiny" className="text-system-gray-500 leading-snug">
                   {data?.bridgeCount > 0
-                    ? 'These documents sit in both topic groups — handy for shared clients, projects, or cross-folder duplicates.'
+                    ? 'These documents sit in both topic groups (handy for shared clients, projects, or cross-folder duplicates).'
                     : 'These topic groups overlap by meaning, even when no single file spans both.'}
                 </Text>
                 <div className="flex items-center gap-compact">

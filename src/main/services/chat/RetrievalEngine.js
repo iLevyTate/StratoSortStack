@@ -459,9 +459,16 @@ class RetrievalEngine {
   ) {
     try {
       if (!this.embeddingService || !this.vectorDbService) return [];
-      const cleanIds = fileIds
-        .filter((/** @type {any} */ id) => typeof id === 'string' && id.length > 0)
-        .slice(0, this.DEFAULTS.contextFileLimit);
+      const validIds = fileIds.filter(
+        (/** @type {any} */ id) => typeof id === 'string' && id.length > 0
+      );
+      const cleanIds = validIds.slice(0, this.DEFAULTS.contextFileLimit);
+      if (cleanIds.length < validIds.length) {
+        logger.warn('[RetrievalEngine] Context files over the limit were not scored', {
+          requested: validIds.length,
+          limit: this.DEFAULTS.contextFileLimit
+        });
+      }
 
       if (cleanIds.length === 0) return [];
 

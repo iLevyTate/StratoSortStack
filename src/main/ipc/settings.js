@@ -887,7 +887,7 @@ function registerSettingsIpc(servicesOrParams) {
             const { bytesRead } = await fileHandle.read(buffer, 0, stats.size, 0);
             const statsAfter = await fileHandle.stat();
             if (statsAfter.size > MAX_IMPORT_SIZE || bytesRead > MAX_IMPORT_SIZE) {
-              throw new Error('Import file size changed during read. Please try again.');
+              throw new Error('Import file size changed during read. Try again.');
             }
 
             // Read and parse import file

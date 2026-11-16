@@ -145,10 +145,15 @@ function createFailedItemHandler(config) {
     const normalized = message.toLowerCase();
     const isDimensionMismatch =
       normalized.includes('dimension_mismatch') || normalized.includes('dimension mismatch');
+    // invalid_vector, invalid_vector_format, invalid_vector_values: a retry
+    // re-queues the same vector, skipping the enqueue checks, so it can only
+    // fail again or (before the store checked values) be stored as NaN.
+    const invalidVectorCode = normalized.match(/invalid_vector\w*/)?.[0] || null;
     return {
       message,
       requiresRebuild: isDimensionMismatch,
-      errorCode: isDimensionMismatch ? 'dimension_mismatch' : null
+      nonRetryable: isDimensionMismatch || invalidVectorCode !== null,
+      errorCode: isDimensionMismatch ? 'dimension_mismatch' : invalidVectorCode
     };
   }
 
@@ -164,9 +169,9 @@ function createFailedItemHandler(config) {
     // A dead-lettered item leaves the failed-items map too. Both writes must
     // be marked: writing only the dead-letter queue left the item in the
     // on-disk failed-items map, so after a crash it was retried again.
-    if (normalizedError.requiresRebuild) {
+    if (normalizedError.nonRetryable) {
       addToDeadLetterQueue(item, normalizedError.message, retryCount, {
-        requiresRebuild: true,
+        requiresRebuild: normalizedError.requiresRebuild,
         errorCode: normalizedError.errorCode
       });
       if (failedItems.delete(item.id)) markFailedItemsChanged();
@@ -429,6 +434,31 @@ function createFailedItemHandler(config) {
   }
 
   /**
+   * Remove every failed-items and dead-letter entry whose item matches, so it
+   * is neither retried nor offered for a manual retry. Both writes join the
+   * owner's debounced persist.
+   * @param {(item: any) => boolean} predicate
+   * @returns {{ failed: number, deadLetter: number }} Entries removed
+   */
+  function dropItems(predicate) {
+    let failed = 0;
+    for (const [id, data] of failedItems) {
+      if (predicate(data?.item)) {
+        failedItems.delete(id);
+        failed += 1;
+      }
+    }
+    const keptDeadLetter = deadLetterQueue.filter((entry) => !predicate(entry?.item));
+    const deadLetter = deadLetterQueue.length - keptDeadLetter.length;
+    if (failed > 0) markFailedItemsChanged();
+    if (deadLetter > 0) {
+      deadLetterQueue = keptDeadLetter;
+      markDeadLetterChanged();
+    }
+    return { failed, deadLetter };
+  }
+
+  /**
    * Set the dead letter queue (for initialization)
    * @param {any[]} items - Items to set
    */
@@ -471,6 +501,7 @@ function createFailedItemHandler(config) {
     clearDeadLetterQueue,
     retryDeadLetterItem,
     retryAllDeadLetterItems,
+    dropItems,
     setDeadLetterQueue,
     persistAll,
     persistPending,

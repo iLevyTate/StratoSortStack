@@ -199,7 +199,7 @@ function EmbeddingRebuildSection({ addNotification }) {
 
   const statsLabel = useMemo(() => {
     if (isLoadingStats && !stats) return 'Loading embeddings status\u2026';
-    if (!stats) return 'Embeddings status unavailable - check AI engine status';
+    if (!stats) return 'Embeddings status unavailable. Check AI engine status.';
     if (stats.embeddingModelMismatch) {
       const indexed = stats.embeddingIndex?.model ? `${stats.embeddingIndex.model}` : 'unknown';
       const active = stats.activeEmbeddingModel ? `${stats.activeEmbeddingModel}` : 'unknown';
@@ -216,15 +216,15 @@ function EmbeddingRebuildSection({ addNotification }) {
         typeof stats.smartFolderCount === 'number'
           ? `${stats.smartFolderCount} smart folders`
           : `${stats.folders} folder embeddings`;
-      return `${folderLabel} • ${stats.files} file embeddings (${eligible} eligible files - click Rebuild to index)`;
+      return `${folderLabel} • ${stats.files} file embeddings (${eligible} eligible files; click Rebuild to index)`;
     }
     if (stats.embeddingCoverageLow && stats.uncoveredFiles > 0) {
       const eligible =
         stats.analysisHistory?.embedding?.eligibleFiles ?? stats.analysisHistory?.totalFiles ?? 0;
-      return `${stats.files} of ${eligible} analyzed files are searchable (${stats.uncoveredFiles} missing) - missing files are indexed at startup, or click Rebuild`;
+      return `${stats.files} of ${eligible} analyzed files are searchable (${stats.uncoveredFiles} missing). Missing files are indexed at startup, or click Rebuild.`;
     }
     if (stats.files === 0 && stats.folders === 0) {
-      return 'No embeddings yet - analyze files and add smart folders first';
+      return 'No embeddings yet. Analyze files and add smart folders first.';
     }
     const folderLabel =
       typeof stats.smartFolderCount === 'number'
@@ -268,10 +268,7 @@ function EmbeddingRebuildSection({ addNotification }) {
             'error'
           );
         } else if (code === 'VECTOR_DB_UNAVAILABLE' || code === 'VECTOR_DB_PENDING') {
-          addNotification(
-            'Vector DB is initializing. Please wait a moment and try again.',
-            'error'
-          );
+          addNotification('Vector DB is initializing. Wait a moment and try again.', 'error');
         } else if (errorMsg.includes('Vector DB')) {
           addNotification('Vector DB unavailable. Check Settings or restart the app.', 'error');
         } else if (code === 'MODEL_NOT_AVAILABLE') {
@@ -339,10 +336,7 @@ function EmbeddingRebuildSection({ addNotification }) {
             'error'
           );
         } else if (code === 'VECTOR_DB_UNAVAILABLE' || code === 'VECTOR_DB_PENDING') {
-          addNotification(
-            'Vector DB is initializing. Please wait a moment and try again.',
-            'error'
-          );
+          addNotification('Vector DB is initializing. Wait a moment and try again.', 'error');
         } else if (errorMsg.includes('WATCHER_NOT_AVAILABLE')) {
           addNotification('Configure smart folders first before reanalyzing.', 'error');
         } else if (code === 'MODEL_NOT_AVAILABLE') {
@@ -419,8 +413,8 @@ function EmbeddingRebuildSection({ addNotification }) {
             role="status"
             aria-live="polite"
           >
-            Running for {formatElapsed(rebuildElapsedMs)}. Cannot be cancelled once started —
-            leaving this panel is safe; the rebuild continues in the background.
+            Running for {formatElapsed(rebuildElapsedMs)}. Cannot be cancelled once started. Leaving
+            this panel is safe; the rebuild continues in the background.
           </Text>
         ) : (
           <Text id="full-rebuild-caveats" variant="tiny" className="text-system-gray-500 mt-1">

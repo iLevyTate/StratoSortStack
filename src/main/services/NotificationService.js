@@ -146,13 +146,12 @@ class NotificationService {
       return;
     }
 
-    const searchTimerId = setTimeout(() => {
+    // No 'closed' hook to clear this timer: _emitNotificationAction already
+    // skips destroyed windows, and a once('closed') per click piled up
+    // listeners on the long-lived main window.
+    setTimeout(() => {
       this._emitNotificationAction(activation);
     }, 100);
-
-    for (const win of windows) {
-      win.once('closed', () => clearTimeout(searchTimerId));
-    }
   }
 
   /**

@@ -134,7 +134,10 @@ async function processItemsInParallel({
           `Batch ${type} upsert`
         );
         if (isWritesBlockedResult(result)) throw writesBlockedError(type);
-        if (result && result.success === false) {
+        // Per-item failures come first: a batch where only some vectors had the
+        // wrong dimension also reports success:false, and the whole-batch
+        // branch below would fail (or re-upsert) the items that were written.
+        if (result && result.success === false && !(result.failed?.length > 0)) {
           const isDimensionMismatch =
             result.error === 'dimension_mismatch' || result.requiresRebuild === true;
           if (isDimensionMismatch) {

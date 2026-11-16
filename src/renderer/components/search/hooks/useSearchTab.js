@@ -29,6 +29,9 @@ import {
 
 const logger = createLogger('useSearchTab');
 
+// Cap rows per category in grouped view (full counts still shown in header)
+export const GROUPED_VIEW_MAX_PER_CATEGORY = 50;
+
 const ENABLE_SEARCH_TRACE_LOGS = process.env.NODE_ENV === 'development';
 
 /** Per-renderer sequence for the abortKey tagging each search-tab invoke. */
@@ -84,6 +87,17 @@ export function useSearchTab({ isOpen, activeTab, defaultTopK, error, setError }
   const [searchRefreshTrigger, setSearchRefreshTrigger] = useState(0);
   const [focusedResultIndex, setFocusedResultIndex] = useState(-1);
   const [viewMode, setViewMode] = useState('all'); // 'all' or 'grouped'
+  // Query the user chose to search exactly as typed (spelling correction
+  // off), with the corrected text it replaced so the notice can offer it back.
+  const [exactSearchState, setExactSearchState] = useState(
+    /** @type {{ query: string, corrected: string } | null} */ (null)
+  );
+
+  // Only the query it was chosen for is searched exactly; any other query
+  // gets spelling correction again.
+  const exactSearch =
+    exactSearchState && exactSearchState.query === debouncedQuery ? exactSearchState : null;
+  const exactQuery = exactSearch?.query ?? null;
 
   const lastSearchRef = useRef(0);
   const searchRequestCounterRef = useRef(0);
@@ -170,7 +184,7 @@ export function useSearchTab({ isOpen, activeTab, defaultTopK, error, setError }
         const searchPromise = window.electronAPI?.embeddings?.search?.(q, {
           topK: defaultTopK,
           mode: 'hybrid',
-          correctSpelling: true,
+          correctSpelling: q !== exactQuery,
           expandSynonyms: true,
           abortKey
         });
@@ -199,9 +213,7 @@ export function useSearchTab({ isOpen, activeTab, defaultTopK, error, setError }
                 if (invokeInFlight && !cancelled && lastSearchRef.current === requestId) {
                   abortInFlightSearch(abortKey, 'search-timeout');
                 }
-                reject(
-                  new Error('Search timed out. The index may still be loading — please try again.')
-                );
+                reject(new Error('Search timed out. The index may still be loading. Try again.'));
               }, TIMEOUTS.SEMANTIC_QUERY);
             })
           ]);
@@ -276,7 +288,22 @@ export function useSearchTab({ isOpen, activeTab, defaultTopK, error, setError }
     };
     // searchRefreshTrigger triggers re-search when files are moved/deleted
     // eslint-disable-next-line react-hooks/exhaustive-deps -- setError is a stable setState-backed callback
-  }, [debouncedQuery, isOpen, defaultTopK, activeTab, searchRefreshTrigger]);
+  }, [debouncedQuery, isOpen, defaultTopK, activeTab, searchRefreshTrigger, exactQuery]);
+
+  // "Search for <typed> instead": re-run the current query without spelling
+  // correction.
+  const searchExactly = useCallback(() => {
+    if (!debouncedQuery || !queryMeta?.corrections?.length) return;
+    setExactSearchState({
+      query: debouncedQuery,
+      corrected: typeof queryMeta.corrected === 'string' ? queryMeta.corrected : ''
+    });
+  }, [debouncedQuery, queryMeta]);
+
+  // Undo searchExactly: search the current query with correction again.
+  const searchWithCorrection = useCallback(() => {
+    setExactSearchState(null);
+  }, []);
 
   const searchStatusLabel = useMemo(() => {
     if (isSearching) return 'Searching...';
@@ -310,12 +337,24 @@ export function useSearchTab({ isOpen, activeTab, defaultTopK, error, setError }
     return sortedGroups;
   }, [searchResults]);
 
-  // Pre-compute ID-to-index map for O(1) lookup in grouped view
+  // Results in the order the list renders them. Grouped view shows them by
+  // category, each capped, so keyboard focus (focusedResultIndex) indexes this
+  // list: the highlight follows the rows on screen and never lands on a
+  // result the cap hides.
+  const navigableResults = useMemo(() => {
+    if (viewMode !== 'grouped') return searchResults;
+    return Object.values(groupedResults).flatMap((results) =>
+      results.slice(0, GROUPED_VIEW_MAX_PER_CATEGORY)
+    );
+  }, [viewMode, searchResults, groupedResults]);
+
+  // Pre-compute ID-to-position map (into navigableResults) for O(1) lookup in
+  // grouped view
   const resultIdToIndex = useMemo(() => {
     const map = new Map();
-    searchResults.forEach((r, i) => map.set(r.id, i));
+    navigableResults.forEach((r, i) => map.set(r.id, i));
     return map;
-  }, [searchResults]);
+  }, [navigableResults]);
 
   // Reset to a clean slate for a fresh open (called from the modal's
   // open-reset effect so the reset ordering stays exactly as before).
@@ -328,6 +367,7 @@ export function useSearchTab({ isOpen, activeTab, defaultTopK, error, setError }
     setQueryMeta(null);
     setSearchMeta(null);
     setBulkSelectedIds(new Set());
+    setExactSearchState(null);
   }, []);
 
   return {
@@ -342,6 +382,9 @@ export function useSearchTab({ isOpen, activeTab, defaultTopK, error, setError }
     isSearching,
     queryMeta,
     searchMeta,
+    exactSearch,
+    searchExactly,
+    searchWithCorrection,
     bulkSelectedIds,
     setBulkSelectedIds,
     focusedResultIndex,
@@ -354,6 +397,7 @@ export function useSearchTab({ isOpen, activeTab, defaultTopK, error, setError }
     selectedSearchResultName,
     searchStatusLabel,
     groupedResults,
+    navigableResults,
     resultIdToIndex,
     triggerSearchRefresh,
     resetSearchState

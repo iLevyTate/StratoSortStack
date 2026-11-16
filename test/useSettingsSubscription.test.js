@@ -52,6 +52,12 @@ describe('useSettingsSubscription', () => {
     renderHook(() => useSettingsSubscription(callback, { watchKeys: ['a', 'c'] }));
 
     act(() => {
+      // First broadcast is the baseline.
+      handlerRef.handler({ a: 0, b: 1 });
+    });
+    expect(callback).not.toHaveBeenCalled();
+
+    act(() => {
       handlerRef.handler({ a: 1, b: 2 });
     });
 
@@ -76,6 +82,9 @@ describe('useSettingsSubscription', () => {
     renderHook(() => useSettingsSubscription(callback, { watchKeys: ['a'] }));
 
     act(() => {
+      handlerRef.handler({ a: 0, b: 1 });
+    });
+    act(() => {
       handlerRef.handler({ a: 1, b: 2 });
     });
     expect(callback).toHaveBeenCalledTimes(1);
@@ -94,6 +103,9 @@ describe('useSettingsSubscription', () => {
 
     renderHook(() => useSettingsSubscription(callback, { watchKeys: ['a'] }));
 
+    act(() => {
+      handlerRef.handler({ a: 0, b: 1 });
+    });
     act(() => {
       handlerRef.handler({ a: 1, b: 2 });
     });

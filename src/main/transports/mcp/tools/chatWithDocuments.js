@@ -89,10 +89,16 @@ function registerChatWithDocuments(/** @type {any} */ mcp, /** @type {any} */ se
     async (/** @type {any} */ args) => {
       const query = (args?.query || '').trim();
       if (!query) return _err('INVALID_QUERY', 'query is required.');
+      // The chat service is null until LlamaService is registered (startup);
+      // calling into it would surface as a TypeError and RETRIEVAL_FAILED.
+      const chat = services.chat;
+      if (!chat || typeof chat.runOnce !== 'function') {
+        return _err('MODEL_NOT_READY', 'model not ready');
+      }
       const sessionId = args?.session_id || `mcp-${crypto.randomUUID()}`;
       try {
         const result = await _withSessionMutex(sessionId, async () =>
-          services.chat.runOnce({
+          chat.runOnce({
             query,
             sessionId,
             maxContextFiles: args?.max_context_files ?? 5,

@@ -380,7 +380,7 @@ function WelcomePhase() {
     {
       icon: CheckCircle2,
       title: 'Complete',
-      copy: 'See what changed and start the next batch with confidence.'
+      copy: 'See what changed, then start the next batch.'
     }
   ];
 
@@ -433,7 +433,7 @@ function WelcomePhase() {
               </div>
               <Stack gap="cozy" className="flex-1 min-w-0 text-center sm:text-left">
                 <Heading as="h2" variant="h6" className="text-balance">
-                  Finish local AI setup when you are ready
+                  Finish local AI setup when you&apos;re ready
                 </Heading>
                 <Text variant="small" className="text-system-gray-600 text-balance">
                   You can use the app now; open model setup when you want full AI features.
@@ -655,8 +655,7 @@ function WelcomePhase() {
       >
         <Stack gap="default">
           <Text variant="body">
-            StratoSort follows a simple, review-first workflow so you stay in control before any
-            files move.
+            StratoSort is review-first, so you stay in control before any files move.
           </Text>
           <Stack gap="cozy">
             {flowSteps.map((item, idx) => (

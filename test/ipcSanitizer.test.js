@@ -105,6 +105,24 @@ describe('ipcSanitizer', () => {
     });
 
     test.each([
+      ['a closing tag with a space', 'Hi <script>alert(1)</script >there', 'Hi there'],
+      ['a closing tag with junk', 'Hi <SCRIPT>alert(1)</script foo>there', 'Hi there'],
+      [
+        'a tag rebuilt by stripping another',
+        'Hi <scr<script></script>ipt>alert(1)</script>!',
+        'Hi !'
+      ],
+      ['an iframe with a spaced closing tag', 'a<iframe src=x></iframe >b', 'ab'],
+      ['an unclosed style', 'a<style>body{}', 'a'],
+      ['a comparison, which is not a tag', 'size < 10MB and > 2MB', 'size < 10MB and > 2MB']
+    ])('strips %s from free text', (_label, query, expected) => {
+      const log = { warn: jest.fn() };
+      const { sanitizeArguments } = createIpcSanitizer({ log });
+      const [sanitized] = sanitizeArguments([{ query }]);
+      expect(sanitized.query).toBe(expected);
+    });
+
+    test.each([
       ['a path key with an invalid character', { filePath: 'C:\\a?b.txt' }, 'filePath'],
       ['a path key with traversal', { folderPath: 'C:\\safe\\..\\evil' }, 'folderPath'],
       ['a source with an invalid character', { source: 'C:\\a?b.txt' }, 'source'],

@@ -941,6 +941,32 @@ describe('Path Sanitization', () => {
     });
   });
 
+  // NTFS and ext4 store names byte for byte, so a decomposed name (a + U+0308,
+  // e.g. unzipped from a Mac) is a different file from its composed spelling.
+  // Per-platform spelling rules: pathSanitization.unicodeSpelling.test.js.
+  describe('Unicode spelling of validated paths', () => {
+    const decomposedName = 'März.pdf';
+
+    // APFS/HFS+ find either spelling, so darwin composing is not checked here.
+    (process.platform === 'darwin' ? test.skip : test)(
+      'a file stored with a decomposed name still exists at the validated path',
+      async () => {
+        const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'nfd-path-'));
+        try {
+          const filePath = path.join(dir, decomposedName);
+          fs.writeFileSync(filePath, 'x');
+
+          const result = await validateFileOperationPath(filePath, { requireExists: true });
+
+          expect(result.valid).toBe(true);
+          expect(fs.existsSync(result.normalizedPath)).toBe(true);
+        } finally {
+          fs.rmSync(dir, { recursive: true, force: true });
+        }
+      }
+    );
+  });
+
   describe('sanitizeSuggestedBaseName', () => {
     test.each([
       ['CON', '_CON'],

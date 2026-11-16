@@ -191,7 +191,7 @@ function SetupPhase() {
 
       if (!Array.isArray(folders)) {
         logger.warn('Received non-array response', { folders });
-        notifyRef.current.showError?.('Failed to load smart folders. Please try again.');
+        notifyRef.current.showError?.('Failed to load smart folders. Try again.');
         return;
       }
 
@@ -587,10 +587,10 @@ function SetupPhase() {
         collapsedSummary={
           <Text variant="small" className="text-system-gray-700">
             {hasConfiguredFolders
-              ? `${destinationCount} destination${destinationCount !== 1 ? 's' : ''} ready — expand for setup tips`
+              ? `${destinationCount} destination${destinationCount !== 1 ? 's' : ''} ready. Expand for setup tips.`
               : onlyFallbackFolder
-                ? 'No destination yet, so files can only go to Uncategorized — expand for setup tips'
-                : 'Add a destination to continue — expand for setup tips'}
+                ? 'No destination yet, so files can only go to Uncategorized. Expand for setup tips.'
+                : 'Add a destination to continue. Expand for setup tips.'}
           </Text>
         }
       >
@@ -854,7 +854,7 @@ function SetupPhase() {
             }
 
             if (currentFolders.length === 0) {
-              showWarning('Please add at least one smart folder before continuing.');
+              showWarning('Add at least one smart folder before continuing.');
             } else {
               actions.setPhaseData('smartFolders', currentFolders);
               setSmartFolders(currentFolders);

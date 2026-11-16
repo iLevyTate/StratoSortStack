@@ -484,7 +484,10 @@ const loadState = () => {
         graphTourDismissed: resolveDurableGraphTourDismissed(parsed.ui?.graphTourDismissed),
         graphInsightsSection: (() => {
           const v = parsed.ui?.graphInsightsSection;
-          if (v == null) return 'insights';
+          // null is a saved choice (every section collapsed); only a missing
+          // key (older blobs) falls back to the default.
+          if (v === null) return null;
+          if (v === undefined) return 'insights';
           return GRAPH_INSIGHTS_SECTION_KEYS.includes(v) ? v : 'insights';
         })(),
         graphLegendHintDismissed: parsed.ui?.graphLegendHintDismissed === true,

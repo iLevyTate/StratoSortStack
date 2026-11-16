@@ -76,7 +76,7 @@ describe('ReadyFileItem suggestedNewFolder surfacing', () => {
     // Built-in catch-all is shown as an automatic fallback label, not as a
     // peer category named "Uncategorized".
     expect(screen.getByRole('combobox', { name: /Category/i })).toHaveTextContent(
-      /Fallback — no folder match \(Uncategorized\)/i
+      /Fallback: no folder match \(Uncategorized\)/i
     );
   });
 

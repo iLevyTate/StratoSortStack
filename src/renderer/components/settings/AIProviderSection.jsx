@@ -70,7 +70,7 @@ function AIProviderSection({ addNotification }) {
 
   const formatError = (err) => {
     if (err?.code === 'CONSENT_REQUIRED' || err?.message === 'CONSENT_REQUIRED') {
-      return 'Cloud AI consent is required. Please accept the privacy notice to continue.';
+      return 'Cloud AI consent is required. Accept the privacy notice to continue.';
     }
     return err?.message || 'Something went wrong.';
   };

@@ -377,6 +377,14 @@ describe('Document Extractors Extended', () => {
       expect(result).not.toContain('<p>');
       expect(result).toContain('Hello');
     });
+
+    test('extractPlainTextFromHtml removes script bodies whose end tags carry spaces or attributes', async () => {
+      const html =
+        '<p>Hello</p><script>alert(1)</script ><SCRIPT>steal()</SCRIPT foo="bar">' +
+        '<style>.a{}</style\n><p>World</p>';
+      const result = await documentExtractors.extractPlainTextFromHtml(html);
+      expect(result).toBe('Hello World');
+    });
   });
 
   describe('checkFileSize', () => {

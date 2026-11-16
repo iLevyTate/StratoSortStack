@@ -10,6 +10,7 @@ import { removeSelectedFile, setFileStates } from '../slices/filesSlice';
 import { removeAnalysisResult } from '../slices/analysisSlice';
 import { atomicRemoveFilesWithCleanup } from '../slices/atomicActions';
 import { updateEmbeddingState } from '../slices/analysisSlice';
+import { addNotification } from '../slices/systemSlice';
 import { embeddingsIpc } from '../../services/ipc';
 import { logger } from '../../../shared/logger';
 import { toCanonicalPath } from '../../utils/canonicalPath';
@@ -85,6 +86,23 @@ export const setEmbeddingPolicyForFile =
             path: filePath,
             embeddingPolicy: policy,
             embeddingStatus: nextStatus
+          })
+        );
+      } else if (result?.success === false) {
+        // Main stored nothing (e.g. notFound: no history entry for this path).
+        // Say so, or the menu click looks accepted while organize ignores it.
+        logger.warn('[fileThunks] Embedding policy not saved', {
+          policy,
+          notFound: Boolean(result?.notFound),
+          error: result?.error
+        });
+        dispatch(
+          addNotification({
+            message: result?.notFound
+              ? 'The embedding setting was not changed: this file has no saved analysis yet. Analyze it first, then try again.'
+              : 'The embedding setting could not be changed. Try again.',
+            severity: 'warning',
+            duration: 6000
           })
         );
       }

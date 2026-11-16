@@ -114,11 +114,6 @@ async function startMcpServer({
       if (entry.lastActivityAt < cutoff) void closeSession(entry);
     }
   };
-  const sweepTimer = setInterval(
-    sweepIdleSessions,
-    Math.min(SESSION_SWEEP_INTERVAL_MS, sessionIdleMs)
-  );
-  sweepTimer.unref?.();
 
   const auth = createAuthMiddleware(getToken);
   const origin = createOriginGuard();
@@ -186,6 +181,13 @@ async function startMcpServer({
   };
 
   const transport = await createTransport({ requestHandler, port, logger });
+  // Started only once the port is bound: a failed bind throws above, and a
+  // sweep started earlier would keep running with nothing to clear it.
+  const sweepTimer = setInterval(
+    sweepIdleSessions,
+    Math.min(SESSION_SWEEP_INTERVAL_MS, sessionIdleMs)
+  );
+  sweepTimer.unref?.();
   return {
     port: transport.port,
     toolNames,

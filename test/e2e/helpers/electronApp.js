@@ -18,7 +18,7 @@ const { _electron: electron } = require('@playwright/test');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 
 // Configuration
 const APP_ROOT = path.resolve(__dirname, '../../..');
@@ -206,20 +206,30 @@ function killOrphanStratoSortElectronProcesses() {
       // Match both the bundled (dist\main.js) and legacy (simple-main) entry
       // args, scoped to electron.exe spawned from THIS repo's node_modules so
       // unrelated Electron apps are never touched.
+      // Arguments go straight to the program, with no shell in between; the
+      // script uses single quotes only, so Node's argument quoting can't
+      // split it.
       const repoMarker = APP_ROOT.replace(/'/g, "''");
-      execSync(
-        'powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"Name = \'electron.exe\'\\" | ' +
-          `Where-Object { $_.CommandLine -like '*${repoMarker}*' -and ($_.CommandLine -like '*dist*main.js*' -or $_.CommandLine -like '*simple-main*') } | ` +
-          'ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"',
+      execFileSync(
+        'powershell',
+        [
+          '-NoProfile',
+          '-Command',
+          "Get-CimInstance Win32_Process -Filter 'Name = ''electron.exe''' | " +
+            `Where-Object { $_.CommandLine -like '*${repoMarker}*' -and ($_.CommandLine -like '*dist*main.js*' -or $_.CommandLine -like '*simple-main*') } | ` +
+            'ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }'
+        ],
         { stdio: 'ignore', timeout: 8000 }
       );
     } else {
-      execSync(
-        `pkill -f "electron.*(simple-main|${APP_ROOT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}.*dist/main\\.js)" || true`,
-        {
-          stdio: 'ignore',
-          timeout: 5000
-        }
+      // pkill exits 1 when nothing matched, which lands in the catch below.
+      execFileSync(
+        'pkill',
+        [
+          '-f',
+          `electron.*(simple-main|${APP_ROOT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}.*dist/main\\.js)`
+        ],
+        { stdio: 'ignore', timeout: 5000 }
       );
     }
   } catch {

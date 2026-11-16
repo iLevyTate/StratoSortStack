@@ -1016,7 +1016,7 @@ async function analyzeDocumentStages(filePath, smartFolders = [], options = {}, 
           ? extractedText.slice(0, 8192) + '\0' + extractedText.length
           : extractedText;
       const contentHash = crypto
-        .createHash('md5')
+        .createHash('sha256')
         .update(hashInput)
         .update(safeModelName)
         .digest('hex');
@@ -1292,7 +1292,9 @@ async function extractCadOrDesignText(filePath, fileExtension) {
       return cad.extractTextFromEps(filePath);
     case '.ai':
       return cad.extractTextFromAi(filePath, {
-        extractTextFromPdf: (/** @type {string} */ p) => extractTextFromPdf(p, path.basename(p))
+        // No OCR follows on this route, so nothing would release a pinned buffer.
+        extractTextFromPdf: (/** @type {string} */ p) =>
+          extractTextFromPdf(p, path.basename(p), { pinForOcr: false })
       });
     default:
       return '';

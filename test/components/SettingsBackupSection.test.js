@@ -74,6 +74,29 @@ describe('SettingsBackupSection', () => {
     );
   });
 
+  test('a refused import shows the reason main gave, not a generic message', async () => {
+    window.electronAPI = {
+      settings: {
+        listBackups: jest.fn(async () => ({ success: true, backups: [] })),
+        // The preload's throwIfFailed turns {success:false, error} into a throw.
+        import: jest.fn(async () => {
+          throw new Error('This file is from a newer version of the app');
+        })
+      }
+    };
+    const addNotification = jest.fn();
+    const { getByRole } = render(<SettingsBackupSection addNotification={addNotification} />);
+
+    await act(async () => {
+      getByRole('button', { name: /import/i }).click();
+    });
+
+    expect(addNotification).toHaveBeenCalledWith(
+      'This file is from a newer version of the app',
+      'error'
+    );
+  });
+
   test('does not set state after unmount during async backup load', async () => {
     let resolveBackups;
     const listBackupsPromise = new Promise((resolve) => {

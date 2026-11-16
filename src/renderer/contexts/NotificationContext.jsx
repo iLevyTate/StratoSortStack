@@ -128,7 +128,7 @@ export function NotificationProvider({ children }) {
         if (!message) return;
 
         const notificationId = explicitNotificationId || payloadId;
-        // Grouped toasts keep the first message, so a type-only default key
+        // A grouped toast shows only one of its messages, so a type-only default key
         // would swallow distinct errors arriving in the same burst. Without an
         // explicit groupKey, only collapse identical repeats of the same message.
         const resolvedGroupKey = groupKey || `ipc:${type || 'notification'}:${message}`;

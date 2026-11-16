@@ -71,7 +71,7 @@ function validateSmartFolderName(rawName) {
   if (ILLEGAL_CHARS.test(sanitizedName)) {
     return {
       valid: false,
-      error: 'Folder name contains invalid characters. Please avoid: < > : " | ? *',
+      error: 'Folder name contains invalid characters: < > : " | ? *',
       errorCode: ERROR_CODES.INVALID_FOLDER_NAME_CHARS,
       sanitizedName,
       warning: null

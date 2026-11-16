@@ -81,8 +81,8 @@ export default function ComparisonTable({ documentAnswer, sources, onOpenSource 
         <div className="rounded-lg border border-system-gray-200 bg-system-gray-50 p-3">
           <Text variant="small" className="text-system-gray-600">
             {onlyDoc
-              ? `Only one document matched (${onlyDoc.name}). Comparison needs at least two — broaden the scope or try a less specific query.`
-              : 'No documents matched. Comparison needs at least two — broaden the scope or try a less specific query.'}
+              ? `Only one document matched (${onlyDoc.name}). Comparison needs at least two. Broaden the scope or try a less specific query.`
+              : 'No documents matched. Comparison needs at least two. Broaden the scope or try a less specific query.'}
           </Text>
         </div>
       </div>

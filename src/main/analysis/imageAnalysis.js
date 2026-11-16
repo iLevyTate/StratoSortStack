@@ -546,7 +546,10 @@ Rules:
         }
         return globalDeduplicator.deduplicate(deduplicationKey, () => analysisFn(abortController), {
           type: 'image',
-          fileName: originalFileName
+          fileName: originalFileName,
+          // Lets a caller that joined this call re-run it when the starter's
+          // abort (not its own) ends the shared vision request.
+          signal: abortController.signal
         });
       },
       timeoutMs,

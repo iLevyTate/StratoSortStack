@@ -1033,7 +1033,7 @@ describe('ModelSetupWizard download status it cannot trust yet', () => {
 
     expect(screen.getByText(/Choose AI Models/i)).toBeInTheDocument();
     expect(
-      screen.getByText('Required model downloads stopped. Please retry downloads.')
+      screen.getByText('Required model downloads stopped. Retry the downloads.')
     ).toBeInTheDocument();
 
     // The retry starts real downloads: the old message must not sit above them.
@@ -1186,7 +1186,9 @@ describe('ModelSetupWizard vision model without its projector file', () => {
       });
     });
 
-    expect(screen.queryByRole('button', { name: /^Continue$/i })).not.toBeInTheDocument();
+    // Vision is optional: the failure does not block finishing setup on the
+    // required models, but nothing finishes on its own and Retry stays offered.
+    expect(screen.getByRole('button', { name: /^Continue$/i })).toBeInTheDocument();
     expect(screen.getByText(/projector file did not download/i)).toBeInTheDocument();
     expect(screen.getByText('Failed')).toBeInTheDocument();
 
@@ -1359,6 +1361,132 @@ describe('ModelSetupWizard hardware-aware profile (ML-07)', () => {
     await waitFor(() => expect(screen.getByText(/Choose AI Models/i)).toBeInTheDocument());
     expect(screen.queryByText('Recommended for this computer')).not.toBeInTheDocument();
     expect(screen.queryByTestId('wizard-hardware-advice')).not.toBeInTheDocument();
+  });
+});
+
+// The vision model is optional. A vision download that fails or is cancelled
+// once embedding + text are installed used to leave the poll waiting forever,
+// and the only button left was "Continue with limited AI": it skipped saving
+// the chosen profile and paused every future model download.
+describe('ModelSetupWizard optional vision download that does not finish', () => {
+  const baseProfile = INSTALL_MODEL_PROFILES?.BASE_SMALL?.models || {};
+  const embeddingModel = baseProfile.EMBEDDING;
+  const textModel = baseProfile.TEXT_ANALYSIS;
+  const visionModel = baseProfile.IMAGE_ANALYSIS;
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+    delete window.electronAPI;
+  });
+
+  async function advance(ms = 0) {
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(ms);
+    });
+  }
+
+  function mockApi({ getModels, getDownloadStatus }) {
+    let progressListener;
+    const updateConfig = jest.fn(async () => ({ success: true }));
+    window.electronAPI = {
+      llama: {
+        getConfig: jest.fn(async () => ({ embeddingModel, textModel, visionModel })),
+        getModels,
+        getDownloadStatus,
+        downloadModel: jest.fn(async () => ({ success: true, started: true })),
+        cancelDownload: jest.fn(async () => ({ success: true })),
+        updateConfig
+      },
+      embeddings: { getStats: jest.fn(async () => ({ success: true, files: 0 })) },
+      events: {
+        onOperationProgress: jest.fn((cb) => {
+          progressListener = cb;
+          return jest.fn();
+        })
+      }
+    };
+    return { updateConfig, emit: (evt) => progressListener(evt) };
+  }
+
+  test('a vision download that stops silently is marked failed, and Continue applies the profile', async () => {
+    let installed = [];
+    let running = [embeddingModel, textModel, visionModel];
+    const { updateConfig } = mockApi({
+      getModels: jest.fn(async () => ({ models: installed })),
+      getDownloadStatus: jest.fn(async () => ({
+        status: { downloads: running.map((filename) => ({ filename, progress: 10 })) }
+      }))
+    });
+    const onSkip = jest.fn();
+    render(<ModelSetupWizard onComplete={jest.fn()} onSkip={onSkip} />);
+    await advance();
+    expect(screen.getByText(/Choose AI Models/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Download Models/i }));
+    await advance();
+    expect(screen.getByText(/Downloading Models/i)).toBeInTheDocument();
+
+    // Embedding + text land; the vision download stops with no event at all.
+    installed = [embeddingModel, textModel];
+    running = [];
+    await advance(4100);
+
+    expect(screen.getByText('Failed')).toBeInTheDocument();
+    expect(screen.getByText(/image analysis model is not installed/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Retry Failed Downloads/i })).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Continue with limited AI/i })
+    ).not.toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /^Continue$/i }));
+    });
+    await advance();
+    expect(screen.getByText(/Setup complete/i)).toBeInTheDocument();
+    expect(screen.getByText(/image analysis model is not installed/i)).toBeInTheDocument();
+    expect(updateConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ embeddingModel, textModel })
+    );
+    expect(onSkip).not.toHaveBeenCalled();
+  });
+
+  test('"Continue" saves the profile when only the vision download was cancelled', async () => {
+    // No trustworthy status list, so only the download events drive the rows.
+    const { updateConfig, emit } = mockApi({
+      getModels: jest.fn(async () => ({ models: [] })),
+      getDownloadStatus: jest.fn(async () => null)
+    });
+    const onSkip = jest.fn();
+    render(<ModelSetupWizard onComplete={jest.fn()} onSkip={onSkip} />);
+    await advance();
+    expect(screen.getByText(/Choose AI Models/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Download Models/i }));
+    await advance();
+    expect(screen.getByText(/Downloading Models/i)).toBeInTheDocument();
+
+    await act(async () => {
+      emit({ type: 'model-download-complete', model: embeddingModel });
+      emit({ type: 'model-download-complete', model: textModel });
+    });
+    await act(async () => {
+      // Only the vision row is still downloading, so it has the one Cancel.
+      fireEvent.click(screen.getByRole('button', { name: /Cancel download of/i }));
+    });
+    await advance();
+    expect(screen.getByText(/image analysis model is not installed/i)).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /^Continue$/i }));
+    });
+    await advance();
+    expect(screen.getByText(/Setup complete/i)).toBeInTheDocument();
+    expect(updateConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ embeddingModel, textModel })
+    );
+    expect(onSkip).not.toHaveBeenCalled();
   });
 });
 

@@ -327,7 +327,7 @@ describe('llamaUtils', () => {
 
       const result = await llamaUtils.ensureTextModelReadyForAnalysis();
       expect(result.ok).toBe(false);
-      expect(result.error).toMatch(/Settings > Models/i);
+      expect(result.error).toMatch(/Settings → Local AI engine/i);
     });
 
     test('canonicalizes casing when configured basename matches disk but case differs', async () => {

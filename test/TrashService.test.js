@@ -197,3 +197,71 @@ describe('TrashService', () => {
     expect(mockTrashItem).toHaveBeenCalledWith(file);
   });
 });
+
+// Windows keeps no Recycle Bin on a network share, so a file there must not
+// reach shell.trashItem: it is reported as left in place instead.
+describe('TrashService on a Windows network drive', () => {
+  const originalPlatform = process.platform;
+  let testDir;
+
+  beforeEach(async () => {
+    testDir = path.join(os.tmpdir(), `trash-net-test-${Date.now()}`);
+    await fs.mkdir(testDir, { recursive: true });
+    jest.resetModules();
+    mockTrashItem.mockReset();
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+  });
+
+  afterEach(async () => {
+    Object.defineProperty(process, 'platform', { value: originalPlatform });
+    jest.restoreAllMocks();
+    await fs.rm(testDir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  test('a file on a drive mapped to a share is left in place with a clear reason', async () => {
+    const file = path.join(testDir, 'shared-report.pdf');
+    await fs.writeFile(file, 'x');
+    // A mapped drive resolves to its \\server\share path.
+    jest
+      .spyOn(require('fs').promises, 'realpath')
+      .mockResolvedValue('\\\\fileserver\\team\\shared-report.pdf');
+    const { TrashService } = require('../src/main/services/TrashService');
+
+    const one = await new TrashService().trashOne(file);
+    const batch = await new TrashService().trashBatch([file]);
+
+    expect(one).toMatchObject({ success: false, code: 'NETWORK_NO_RECYCLE_BIN' });
+    expect(one.error).toMatch(/network drive/i);
+    expect(batch.trashed).toEqual([]);
+    expect(batch.failed[0].code).toBe('NETWORK_NO_RECYCLE_BIN');
+    expect(mockTrashItem).not.toHaveBeenCalled();
+  });
+
+  test('isWindowsNetworkPath tells shares from local and device paths', async () => {
+    const realpath = jest.spyOn(require('fs').promises, 'realpath');
+    const { isWindowsNetworkPath } = require('../src/main/services/TrashService');
+    const judge = async (p) => {
+      realpath.mockResolvedValueOnce(p);
+      return isWindowsNetworkPath(p);
+    };
+
+    expect(await judge('\\\\server\\share\\a.txt')).toBe(true);
+    expect(await judge('//server/share/a.txt')).toBe(true);
+    expect(await judge('\\\\?\\UNC\\server\\share\\a.txt')).toBe(true);
+    expect(await judge('C:\\Users\\alex\\a.txt')).toBe(false);
+    expect(await judge('\\\\?\\C:\\Users\\alex\\a.txt')).toBe(false);
+    expect(await judge('\\\\.\\PhysicalDrive0')).toBe(false);
+  });
+
+  test('a local file still goes to the Recycle Bin', async () => {
+    const file = path.join(testDir, 'local.txt');
+    await fs.writeFile(file, 'x');
+    mockTrashItem.mockResolvedValue(undefined);
+    const { TrashService } = require('../src/main/services/TrashService');
+
+    const result = await new TrashService().trashOne(file);
+
+    expect(result.success).toBe(true);
+    expect(mockTrashItem).toHaveBeenCalledTimes(1);
+  });
+});

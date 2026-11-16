@@ -1,5 +1,5 @@
 // @ts-check
-import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
+import { createSlice, createAsyncThunk, isPending } from '@reduxjs/toolkit';
 
 const _api = () => window.electronAPI?.aiProvider;
 
@@ -281,7 +281,22 @@ const slice = createSlice({
       })
       .addCase(acknowledgeCloud.rejected, (s, a) => {
         s.lastError = /** @type {any} */ (a.payload)?.message || a.error.message;
-      });
+      })
+      // A new user action supersedes the last failure. Without this an old
+      // error (e.g. CONSENT_DECLINED) stayed on screen after later actions
+      // succeeded, because only fetchAiConfig.pending used to clear it.
+      .addMatcher(
+        isPending(
+          setProviderConfig,
+          setProviderKey,
+          removeProviderKey,
+          setRouting,
+          acknowledgeCloud
+        ),
+        (s) => {
+          s.lastError = null;
+        }
+      );
   }
 });
 

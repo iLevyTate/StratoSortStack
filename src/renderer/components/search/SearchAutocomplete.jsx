@@ -9,6 +9,18 @@ import { getScrollBehavior } from '../../utils/motionPreferences';
 const RECENT_SEARCHES_KEY = 'stratosort-recent-searches';
 const MAX_RECENT_SEARCHES = 10;
 const MAX_SUGGESTIONS = 5;
+// Fired on window after the stored list changes, so a mounted autocomplete
+// picks up searches recorded elsewhere (useSearchTab) instead of keeping its
+// mount-time copy and later overwriting them.
+const RECENT_SEARCHES_CHANGED_EVENT = 'stratosort-recent-searches-changed';
+
+function notifyRecentSearchesChanged() {
+  try {
+    window.dispatchEvent(new Event(RECENT_SEARCHES_CHANGED_EVENT));
+  } catch {
+    // Ignore: no window outside the renderer
+  }
+}
 
 const isMac =
   navigator.userAgentData?.platform === 'macOS' || /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
@@ -31,6 +43,7 @@ function saveRecentSearches(searches) {
   } catch {
     // Ignore storage errors
   }
+  notifyRecentSearchesChanged();
 }
 
 export function addToRecentSearches(query) {
@@ -51,6 +64,7 @@ export function clearRecentSearches() {
   } catch {
     // Ignore
   }
+  notifyRecentSearchesChanged();
 }
 
 const SearchAutocomplete = memo(
@@ -83,7 +97,10 @@ const SearchAutocomplete = memo(
     );
 
     useEffect(() => {
-      setRecentSearches(loadRecentSearches());
+      const reload = () => setRecentSearches(loadRecentSearches());
+      reload();
+      window.addEventListener(RECENT_SEARCHES_CHANGED_EVENT, reload);
+      return () => window.removeEventListener(RECENT_SEARCHES_CHANGED_EVENT, reload);
     }, []);
 
     useEffect(() => {
@@ -326,7 +343,9 @@ const SearchAutocomplete = memo(
 
     const handleClearRecent = (e, searchToRemove) => {
       e.stopPropagation();
-      const updated = recentSearches.filter((s) => s !== searchToRemove);
+      // Filter what is stored now, not this component's copy, so searches
+      // recorded since the last reload are not erased.
+      const updated = loadRecentSearches().filter((s) => s !== searchToRemove);
       setRecentSearches(updated);
       saveRecentSearches(updated);
     };

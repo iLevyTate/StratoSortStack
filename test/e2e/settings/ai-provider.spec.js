@@ -208,7 +208,7 @@ test.describe('AI Provider — Settings UI', () => {
     await window.waitForTimeout(200);
 
     const hasBadge = await window.evaluate(() => {
-      return Boolean(document.querySelector('[role="status"][aria-label^="Cloud AI —"]'));
+      return Boolean(document.querySelector('[role="status"][aria-label^="Cloud AI"]'));
     });
     expect(hasBadge).toBe(false);
   });

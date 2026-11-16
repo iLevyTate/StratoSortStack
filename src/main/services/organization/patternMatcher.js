@@ -51,6 +51,13 @@ class PatternMatcher {
     this.maxMemoryMB = config.maxMemoryMB || 50;
     this.patternSimilarityThreshold = config.patternSimilarityThreshold || 0.5;
     this.maxFeedbackHistory = config.maxFeedbackHistory || 1000;
+    // Files the startup scan already learned, as file name + folder keys
+    // (learningFeedback scanLearnKey; insertion order = age). Kept apart from feedbackHistory so scan
+    // learning neither fills the capped history undo retracts from nor stops
+    // once it is full.
+    /** @type {Set<string>} */
+    this.scanLearnedKeys = new Set();
+    this.maxScanLearnedKeys = config.maxScanLearnedKeys || 5000;
     this.memoryCheckInterval = 100;
     this.patternCount = 0;
   }
@@ -83,6 +90,14 @@ class PatternMatcher {
       this.feedbackHistory = stored.feedbackHistory;
     }
 
+    if (Array.isArray(stored.scanLearnedKeys)) {
+      this.scanLearnedKeys = new Set(
+        stored.scanLearnedKeys
+          .filter((/** @type {any} */ key) => typeof key === 'string')
+          .slice(-this.maxScanLearnedKeys)
+      );
+    }
+
     if (stored.folderUsageStats && Array.isArray(stored.folderUsageStats)) {
       try {
         this.folderUsageStats = new Map(stored.folderUsageStats);
@@ -104,6 +119,7 @@ class PatternMatcher {
     return {
       patterns: Array.from(this.userPatterns.entries()),
       feedbackHistory: this.feedbackHistory.slice(-this.maxFeedbackHistory),
+      scanLearnedKeys: Array.from(this.scanLearnedKeys).slice(-this.maxScanLearnedKeys),
       folderUsageStats: Array.from(this.folderUsageStats.entries())
     };
   }
@@ -185,6 +201,29 @@ class PatternMatcher {
       this.feedbackHistory = this.feedbackHistory.slice(-this.maxFeedbackHistory);
       logger.debug(`[PatternMatcher] Trimmed ${excess} feedback entries`);
     }
+  }
+
+  /**
+   * Learn a file the startup scan found already sitting in a smart folder.
+   * The pattern counts as an accepted placement, but no feedback-history row
+   * is written: the history is capped and is what undo retracts organize
+   * feedback from. `learnKey` is remembered instead (newest
+   * maxScanLearnedKeys kept) so a later scan skips the file.
+   * @param {Record<string, any>} file - Flat file metadata
+   * @param {Record<string, any>} suggestion - Folder the file is in
+   * @param {string} learnKey - Key naming the file + folder
+   * @returns {boolean} false when the key was already learned
+   */
+  recordScanLearning(file, suggestion, learnKey) {
+    if (!suggestion || !learnKey || this.scanLearnedKeys.has(learnKey)) return false;
+    this._updatePattern(this.extractPattern(file, suggestion), suggestion, Date.now());
+    this.scanLearnedKeys.add(learnKey);
+    while (this.scanLearnedKeys.size > this.maxScanLearnedKeys) {
+      const oldest = this.scanLearnedKeys.values().next().value;
+      if (oldest === undefined) break;
+      this.scanLearnedKeys.delete(oldest);
+    }
+    return true;
   }
 
   /**

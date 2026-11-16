@@ -95,6 +95,38 @@ describe('search_documents tool', () => {
     expect(out.isError).toBe(true);
     expect(out.content[0].text).toContain('INVALID_QUERY');
   });
+
+  test('rejects a one-character query (SearchService needs 2) with INVALID_QUERY', async () => {
+    const hybridSearch = jest.fn(async () => ({ success: false, results: [], error: 'x' }));
+    registerSearchDocuments(fakeMcp, { ...services, search: { hybridSearch } });
+    const out = await captured({ query: ' a ' });
+    expect(out.isError).toBe(true);
+    expect(JSON.parse(out.content[0].text).error.code).toBe('INVALID_QUERY');
+    expect(hybridSearch).not.toHaveBeenCalled();
+  });
+
+  test('the input schema requires at least 2 characters', () => {
+    let schema;
+    registerSearchDocuments({ registerTool: (_n, s) => (schema = s) }, services);
+    expect(schema.inputSchema.query.safeParse('a').success).toBe(false);
+    expect(schema.inputSchema.query.safeParse('ab').success).toBe(true);
+  });
+
+  test('a failed search is an error, not an empty result list', async () => {
+    const logger = { warn: jest.fn() };
+    registerSearchDocuments(fakeMcp, {
+      ...services,
+      logger,
+      search: {
+        hybridSearch: async () => ({ success: false, results: [], error: 'index unavailable' })
+      }
+    });
+    const out = await captured({ query: 'quarterly report' });
+    expect(out.isError).toBe(true);
+    expect(JSON.parse(out.content[0].text).error.code).toBe('SERVICE_UNAVAILABLE');
+    expect(out.content[0].text).not.toContain('index unavailable');
+    expect(logger.warn).toHaveBeenCalled();
+  });
 });
 
 describe('search_documents folder-scope containment (symlink safety)', () => {
@@ -158,7 +190,7 @@ describe('search_documents folder-scope containment (symlink safety)', () => {
 
   test('keeps in-folder hits and drops symlink-escaping / unresolvable ones', async () => {
     register(buildServices());
-    const out = await captured({ query: 'q', smart_folder_id: 'sf1' });
+    const out = await captured({ query: 'report', smart_folder_id: 'sf1' });
     const body = JSON.parse(out.content[0].text);
     expect(body.results.map((r) => r.file_path)).toEqual([insidePath]);
     expect(body.total_matches).toBe(1);
@@ -174,7 +206,7 @@ describe('search_documents folder-scope containment (symlink safety)', () => {
       return p;
     });
     register(buildServices());
-    const out = await captured({ query: 'q', smart_folder_id: 'sf1' });
+    const out = await captured({ query: 'report', smart_folder_id: 'sf1' });
     const body = JSON.parse(out.content[0].text);
     expect(body.results).toEqual([]);
     expect(body.total_matches).toBe(0);

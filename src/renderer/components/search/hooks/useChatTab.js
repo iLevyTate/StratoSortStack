@@ -160,7 +160,7 @@ export function useChatTab({ isOpen, searchResults, defaultTopK, openFile }) {
       const trimmed = typeof text === 'string' ? text.trim() : '';
       if (!trimmed) return false;
       if (chatInFlightRef.current) {
-        setChatWarning('Please wait for the current response to finish.');
+        setChatWarning('Wait for the current response to finish.');
         return false;
       }
 
@@ -279,7 +279,7 @@ export function useChatTab({ isOpen, searchResults, defaultTopK, openFile }) {
           streamingFlushIntervalRef.current = null;
           pendingStreamChunkRef.current = '';
           logger.warn('[KnowledgeOS] Chat stream timed out — no activity from main process');
-          setChatError('The response timed out. Please try again.');
+          setChatError('The response timed out. Try again.');
           setChatStatus('');
           setChatWarning('');
           setChatMessages((prev) => {
@@ -514,7 +514,7 @@ export function useChatTab({ isOpen, searchResults, defaultTopK, openFile }) {
         logger.debug('[UnifiedSearchModal] Failed to save chat response mode', {
           error: err?.message || String(err)
         });
-        setChatWarning('Failed to save chat response mode. Please try again.');
+        setChatWarning('Failed to save chat response mode. Try again.');
       });
   }, []);
 
@@ -528,7 +528,7 @@ export function useChatTab({ isOpen, searchResults, defaultTopK, openFile }) {
           logger.debug('[UnifiedSearchModal] Failed to save chat persona', {
             error: err?.message || String(err)
           });
-          setChatWarning('Failed to save chat persona. Please try again.');
+          setChatWarning('Failed to save chat persona. Try again.');
         });
     },
     [savedCustomPersonas]
@@ -663,7 +663,7 @@ export function useChatTab({ isOpen, searchResults, defaultTopK, openFile }) {
       }
     } catch (e) {
       logger.error('Failed to resolve scope files', e);
-      setChatWarning('Could not check those files against the index. Please try again.');
+      setChatWarning('Could not check those files against the index. Try again.');
     }
   }, []);
 

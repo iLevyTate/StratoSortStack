@@ -212,7 +212,7 @@ class DegradationManager {
 
       return {
         action: 'redownload_model',
-        message: 'Model file may be corrupted. Please re-download.',
+        message: 'Model file may be corrupted. Download it again.',
         shouldNotifyUser: true,
         modelType: context.modelType
       };
@@ -245,7 +245,7 @@ class DegradationManager {
     if (message.includes('enospc') || message.includes('no space left')) {
       return {
         action: 'cleanup_disk',
-        message: 'Disk full. Please free up space.',
+        message: 'Disk full. Free up some space.',
         shouldNotifyUser: true
       };
     }
@@ -281,7 +281,7 @@ class DegradationManager {
       return {
         canRecover: false,
         action: 'download_models',
-        message: 'Please download required models to continue.'
+        message: 'Download the required models to continue.'
       };
     }
 

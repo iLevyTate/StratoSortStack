@@ -20,6 +20,11 @@ jest.mock('../src/shared/logger', () => ({
   })
 }));
 
+const mockLoadSettings = jest.fn(async () => ({}));
+jest.mock('../src/main/services/SettingsService', () => ({
+  getInstance: () => ({ load: mockLoadSettings })
+}));
+
 const fs = require('fs').promises;
 const { app } = require('electron');
 const path = require('path');
@@ -54,6 +59,35 @@ describe('DataMigrationService', () => {
 
       const result = await svc.needsMigration();
       expect(result).toBe(false);
+    });
+  });
+
+  describe('legacy name used as the live vector folder', () => {
+    afterEach(() => {
+      mockLoadSettings.mockResolvedValue({});
+      fs.access.mockReset();
+      fs.rm.mockReset();
+    });
+
+    test('migrate keeps it and still removes the other legacy paths', async () => {
+      mockLoadSettings.mockResolvedValue({ vectorDbPersistPath: 'vector_storage' });
+      fs.access.mockResolvedValue(undefined);
+      fs.rm.mockResolvedValue(undefined);
+
+      await svc.migrate();
+
+      const removed = fs.rm.mock.calls.map(([p]) => path.basename(p));
+      expect(removed).not.toContain('vector_storage');
+      expect(removed).toContain('chroma_db');
+    });
+
+    test('needsMigration ignores it', async () => {
+      mockLoadSettings.mockResolvedValue({ vectorDbPersistPath: 'chroma_db' });
+      fs.access.mockImplementation(async (p) => {
+        if (path.basename(p) !== 'chroma_db') throw Object.assign(new Error(), { code: 'ENOENT' });
+      });
+
+      await expect(svc.needsMigration()).resolves.toBe(false);
     });
   });
 

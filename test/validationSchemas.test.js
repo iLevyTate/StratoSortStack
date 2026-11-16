@@ -672,14 +672,72 @@ describe('validationSchemas (Zod path)', () => {
       });
     });
 
-    test('trash and triage schemas keep refusing UNC on Windows', () => {
+    test('triage start keeps refusing UNC on Windows', () => {
       setPlatform('win32');
-      expect(schemas.trashDuplicates.safeParse({ paths: ['\\\\NAS\\Docs\\a.pdf'] }).success).toBe(
-        false
-      );
       expect(schemas.downloadsTriageStart.safeParse({ folderPath: '\\\\NAS\\Docs' }).success).toBe(
         false
       );
+    });
+
+    // A duplicate set can span a Smart Folder on a share. The schema lets the
+    // request through so the local copies are trashed; TrashService leaves the
+    // share copy in place, because Windows has no Recycle Bin there.
+    test('trash duplicates accepts a share path but not an admin share or device path', () => {
+      setPlatform('win32');
+      const parse = (p) => schemas.trashDuplicates.safeParse({ paths: [p] }).success;
+      expect(parse('\\\\NAS\\Docs\\a.pdf')).toBe(true);
+      expect(parse('\\\\NAS\\C$\\Windows\\a.dll')).toBe(false);
+      expect(parse('\\\\?\\C:\\Windows\\a.dll')).toBe(false);
+      expect(parse('\\\\NAS\\Docs\\..\\..\\a.pdf')).toBe(false);
+    });
+
+    // The renderer sends suggestedFolderPath with every triage action, so a
+    // Smart Folder on a share used to fail a whole Trash or Ignore request.
+    describe('triage act suggestedFolderPath', () => {
+      const act = (suggestedFolderPath, action = 'trash') =>
+        schemas.downloadsTriageAct.safeParse({
+          triageId: 'triage-1',
+          action,
+          files: [
+            { path: 'C:\\Users\\kim\\Downloads\\a.pdf', size: 10 },
+            {
+              path: 'C:\\Users\\kim\\Downloads\\b.pdf',
+              size: 10,
+              suggestedFolderPath
+            }
+          ]
+        });
+
+      test('accepts a Smart Folder on a share on Windows', () => {
+        setPlatform('win32');
+        expect(act('\\\\NAS\\Docs\\Invoices').success).toBe(true);
+        expect(act('\\\\NAS\\Docs\\Invoices', 'ignore').success).toBe(true);
+        expect(act('\\\\NAS\\Docs\\Invoices', 'organize').success).toBe(true);
+      });
+
+      test.each([
+        ['a device namespace path', '\\\\?\\C:\\Users\\kim'],
+        ['an administrative share', '\\\\localhost\\C$\\Windows'],
+        ['traversal out of the share', '\\\\NAS\\Docs\\..\\..\\Other']
+      ])('still rejects %s on Windows', (_label, folder) => {
+        setPlatform('win32');
+        expect(act(folder).success).toBe(false);
+      });
+
+      test('rejects a share path off Windows', () => {
+        setPlatform('linux');
+        expect(act('\\\\NAS\\Docs\\Invoices').success).toBe(false);
+      });
+
+      test('the triaged file itself still may not be on a share', () => {
+        setPlatform('win32');
+        const result = schemas.downloadsTriageAct.safeParse({
+          triageId: 'triage-1',
+          action: 'trash',
+          files: [{ path: '\\\\NAS\\Docs\\a.pdf', size: 10 }]
+        });
+        expect(result.success).toBe(false);
+      });
     });
   });
 

@@ -51,6 +51,17 @@ const ANALYZE_BATCH_INVOKE_TIMEOUT_MS =
 const FILE_OPERATION_INVOKE_TIMEOUT_MS = 2 ** 31 - 1;
 
 /**
+ * WHISPER.INSTALL_MODEL answers only once the whole model (~148 MB for
+ * base.en) has downloaded and been checked. On a slow link the 330 s default
+ * fired first: the banner showed "Action failed" while the download, which
+ * ignores the abort, went on and succeeded. The download has no total-time
+ * limit, only a 60 s stall timeout (scripts/setup-whisper-model.js), so any
+ * fixed budget just moves the cutoff; the stall timeout is what guarantees
+ * the request settles.
+ */
+const WHISPER_MODEL_INSTALL_INVOKE_TIMEOUT_MS = FILE_OPERATION_INVOKE_TIMEOUT_MS;
+
+/**
  * @param {string} channel
  * @returns {number} Timeout in milliseconds
  */
@@ -81,6 +92,9 @@ function getIpcInvokeTimeout(channel) {
   }
   if (channel === IPC_CHANNELS.FILES.PERFORM_OPERATION) {
     timeout = FILE_OPERATION_INVOKE_TIMEOUT_MS;
+  }
+  if (channel === IPC_CHANNELS.WHISPER.INSTALL_MODEL) {
+    timeout = WHISPER_MODEL_INSTALL_INVOKE_TIMEOUT_MS;
   }
   // Embedding search/scoring operations involve embedding generation through the semaphore
   if (
@@ -147,5 +161,6 @@ module.exports = {
   ANALYZE_BATCH_INVOKE_TIMEOUT_MS,
   FILE_OPERATION_INVOKE_TIMEOUT_MS,
   VC_RUNTIME_INSTALL_INVOKE_TIMEOUT_MS,
+  WHISPER_MODEL_INSTALL_INVOKE_TIMEOUT_MS,
   getIpcInvokeTimeout
 };

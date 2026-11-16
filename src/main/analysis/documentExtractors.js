@@ -244,9 +244,10 @@ const REGEX_PATTERNS = {
   rtfBraces: /[{}]/g,
   rtfControlWords: /\\[a-zA-Z]+-?\d* ?/g,
 
-  // HTML patterns
-  scriptTags: /<script[\s\S]*?<\/script>/gi,
-  styleTags: /<style[\s\S]*?<\/style>/gi,
+  // HTML patterns. End tags may carry whitespace or junk before '>'
+  // ("</script >", "</SCRIPT foo>"); browsers still close the element there.
+  scriptTags: /<script[\s\S]*?<\/script\b[^>]*>/gi,
+  styleTags: /<style[\s\S]*?<\/style\b[^>]*>/gi,
   htmlTags: /<[^>]+>/g,
 
   // Whitespace patterns
@@ -1100,12 +1101,16 @@ function csvRowCells(row) {
  *   head of a CSV over the text size limit, like the other text formats.
  */
 async function extractTextFromCsv(filePath, options = {}) {
-  // Treat CSV as structured text; enforce file size to avoid memory blowups
-  const fileSize = await checkFileSize(filePath, filePath);
   const maxBytes =
     options && Number.isFinite(options.maxBytes) && Number(options.maxBytes) > 0
       ? Math.floor(Number(options.maxBytes))
       : null;
+  // Treat CSV as structured text; enforce file size to avoid memory blowups.
+  // A capped read only loads maxBytes, so the document size limit does not
+  // apply (a finite override, since checkFileSize reads Infinity as "unset").
+  const fileSize = maxBytes
+    ? await checkFileSize(filePath, filePath, Number.MAX_SAFE_INTEGER)
+    : await checkFileSize(filePath, filePath);
   let raw = await readTextFileWithEncoding(filePath, { maxBytes });
   if (maxBytes && fileSize > maxBytes) {
     // The cap lands mid-row; a half row would parse as a short or broken
@@ -1231,10 +1236,12 @@ function isEncryptedPdfError(/** @type {any} */ err) {
 /**
  * @param {any} filePath
  * @param {any} fileName
- * @param {{ signal?: AbortSignal }} [options]
+ * @param {{ signal?: AbortSignal, pinForOcr?: boolean }} [options] pinForOcr:
+ *   false for callers that never run ocrPdfIfNeeded (the .ai reader), so a
+ *   text-less file is not left pinned in the buffer cache until the TTL sweep.
  */
 async function extractTextFromPdf(filePath, fileName, options = {}) {
-  const { signal } = options;
+  const { signal, pinForOcr = true } = options;
   await checkFileSize(filePath, fileName);
   throwIfAborted(signal);
 
@@ -1302,7 +1309,7 @@ async function extractTextFromPdf(filePath, fileName, options = {}) {
       // ocrPdfIfNeeded, which releases them in its finally. pdf.js may have
       // transferred the ArrayBuffer to its worker, leaving a detached
       // zero-length husk — never cache that.
-      if (rawBuffer.length > 0) _pdfBufferCache.set(filePath, rawBuffer);
+      if (pinForOcr && rawBuffer.length > 0) _pdfBufferCache.set(filePath, rawBuffer);
       if (thinTextLayer) {
         logger.info('[PDF] Text layer too thin to analyze; treating as a scan', {
           fileName,
@@ -3493,7 +3500,7 @@ function chunkTextForAnalysis(
  * cannot outlive its consumer and pin its buffer in `_pdfBufferCache`.
  * @param {string} filePath - Path to PDF file
  * @param {string} fileName - Name of file for error messages
- * @param {{ signal?: AbortSignal }} [options]
+ * @param {{ signal?: AbortSignal, pinForOcr?: boolean }} [options]
  * @returns {Promise<string>} Extracted text
  */
 async function extractTextFromPdfWithTimeout(filePath, fileName, options = {}) {

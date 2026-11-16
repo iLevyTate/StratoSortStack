@@ -1265,6 +1265,39 @@ Now generate a description for "${folderName}":`;
 }
 
 /**
+ * After a Smart Folder's directory was renamed on disk, point every other
+ * Smart Folder that lived inside it at its new location. Containment is by
+ * whole path segments, case-insensitive on Windows and macOS (the same rules
+ * the knowledge remap uses). Mutates `folders` in place.
+ *
+ * @param {{ folders: Record<string, any>[], skipIndex: number, oldPath: string,
+ *   newPath: string, logger: LoggerLike }} args
+ * @returns {number} how many folders were re-pointed
+ */
+function rebaseNestedSmartFolders({ folders, skipIndex, oldPath, newPath, logger }) {
+  let rebased = 0;
+  folders.forEach((folder, index) => {
+    if (index === skipIndex || typeof folder?.path !== 'string') return;
+    const [change] = buildFolderRenamePathChanges(
+      [{ originalPath: folder.path }],
+      oldPath,
+      newPath
+    );
+    if (!change) return;
+    folders[index] = { ...folder, path: change.newPath, updatedAt: new Date().toISOString() };
+    rebased++;
+  });
+  if (rebased > 0) {
+    logger.info('[SMART-FOLDERS] Re-pointed nested Smart Folders after rename', {
+      oldPath,
+      newPath,
+      count: rebased
+    });
+  }
+  return rebased;
+}
+
+/**
  * Tell the running watcher about a changed folder list right away and scan
  * any newly watched paths for files that already exist in them. Until this,
  * a folder added (or re-pointed) while the app was open was neither watched
@@ -1552,7 +1585,7 @@ async function handleSmartFoldersEdit(
       if (illegalChars.test(updatedFolder.name)) {
         return {
           success: false,
-          error: 'Folder name contains invalid characters. Please avoid: < > : " | ? *',
+          error: 'Folder name contains invalid characters: < > : " | ? *',
           errorCode: ERROR_CODES.INVALID_FOLDER_NAME_CHARS
         };
       }
@@ -1619,6 +1652,7 @@ async function handleSmartFoldersEdit(
     }
     const originalFolder = { ...customFolders[folderIndex] };
     const originalFolders = customFolders.map((folder) => ({ ...folder }));
+    let renamedOnDisk = false;
     if (updatedFolder.path && !areEquivalentPaths(updatedFolder.path, originalFolder.path)) {
       try {
         const oldPath = originalFolder.path;
@@ -1693,13 +1727,14 @@ async function handleSmartFoldersEdit(
             if (renameFailure?.code === 'EEXIST') {
               return {
                 success: false,
-                error: 'Destination directory now occupied — refusing overwrite',
+                error: 'Destination already exists. Nothing was overwritten.',
                 errorCode: ERROR_CODES.RENAME_FAILED,
                 details: renameFailure.message
               };
             }
             throw renameFailure;
           }
+          renamedOnDisk = true;
           logger.info(`[SMART-FOLDERS] Renamed directory "${oldPath}" -> "${newPath}"`);
           await remapKnowledgeUnderRenamedFolder({
             oldPath,
@@ -1746,6 +1781,18 @@ async function handleSmartFoldersEdit(
         ...updatedFolder,
         updatedAt: new Date().toISOString()
       };
+      // The rename moved every Smart Folder nested under the old directory
+      // too. Left on the old path, an organize into one of them would
+      // recreate the old tree (mkdir recursive) beside the renamed one.
+      if (renamedOnDisk) {
+        rebaseNestedSmartFolders({
+          folders: customFolders,
+          skipIndex: folderIndex,
+          oldPath: originalFolder.path,
+          newPath: customFolders[folderIndex].path,
+          logger
+        });
+      }
       setCustomFolders(customFolders);
       await saveCustomFolders(customFolders);
       await syncSmartFolderEmbeddings({
@@ -1781,6 +1828,13 @@ async function handleSmartFoldersEdit(
       };
     } catch (saveError) {
       customFolders[folderIndex] = originalFolder;
+      if (renamedOnDisk) {
+        originalFolders.forEach((folder, index) => {
+          if (index !== folderIndex && customFolders[index]?.id === folder.id) {
+            customFolders[index] = folder;
+          }
+        });
+      }
       throw saveError;
     }
   } catch (error) {

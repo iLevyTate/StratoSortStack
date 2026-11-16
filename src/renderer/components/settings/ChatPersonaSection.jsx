@@ -21,7 +21,7 @@ const CUSTOM_GUIDANCE_MAX_LENGTH = 2048;
 
 /** Inline help under custom-persona editor fields — mirrors chatPersonas.js rules. */
 const PERSONA_FIELD_HINTS = {
-  id: `Required. Use lowercase letters, digits, hyphens (-), and underscores (_). Must start with a letter or digit — not _ or -. No spaces or uppercase. Max ${CUSTOM_PERSONA_LIMITS.MAX_ID_LENGTH} characters. Examples: legal-reviewer, persona_v2.`,
+  id: `Required. Use lowercase letters, digits, hyphens (-), and underscores (_). Must start with a letter or digit, not _ or -. No spaces or uppercase. Max ${CUSTOM_PERSONA_LIMITS.MAX_ID_LENGTH} characters. Examples: legal-reviewer, persona_v2.`,
   label: `Required. Name shown in the persona dropdown. Max ${CUSTOM_PERSONA_LIMITS.MAX_LABEL_LENGTH} characters. Any readable text (including spaces and capitals).`,
   description: `Optional. Short note shown under the dropdown when this persona is selected. Max ${CUSTOM_PERSONA_LIMITS.MAX_DESCRIPTION_LENGTH} characters.`,
   guidance: `Required. Tone and rules sent to the model for this persona. Max ${CUSTOM_PERSONA_LIMITS.MAX_GUIDANCE_LENGTH} characters. Plain text in any language; do not use this field for the id rules above.`
@@ -152,7 +152,7 @@ function ChatPersonaSection({ settings, setSettings }) {
       guidance: draft.guidance
     });
     if (!cleaned) {
-      setError('Could not save persona — please check the fields.');
+      setError('Could not save persona. Check the fields.');
       return;
     }
     // Uniqueness must be checked BEFORE committing, and must block the save
@@ -267,7 +267,7 @@ function ChatPersonaSection({ settings, setSettings }) {
       <SettingRow
         layout="col"
         label="Custom personas"
-        description={`Create reusable presets with their own tone. Each needs a unique id (slug rules below), label, and guidance. Up to ${CUSTOM_PERSONA_LIMITS.MAX_COUNT} personas — ${customPersonas.length}/${CUSTOM_PERSONA_LIMITS.MAX_COUNT} used.`}
+        description={`Create reusable presets with their own tone. Each needs a unique id (slug rules below), label, and guidance. Up to ${CUSTOM_PERSONA_LIMITS.MAX_COUNT} personas (${customPersonas.length}/${CUSTOM_PERSONA_LIMITS.MAX_COUNT} used).`}
       >
         {customPersonas.length === 0 && !showEditor && (
           <Text variant="tiny" className="text-system-gray-500">
@@ -347,7 +347,7 @@ function ChatPersonaSection({ settings, setSettings }) {
             />
             <FieldHint id="persona-description-hint">{PERSONA_FIELD_HINTS.description}</FieldHint>
             <Textarea
-              placeholder="guidance — sent to the LLM as the system prompt for this persona"
+              placeholder="guidance (sent to the LLM as the system prompt for this persona)"
               value={draft.guidance}
               maxLength={CUSTOM_PERSONA_LIMITS.MAX_GUIDANCE_LENGTH}
               rows={4}
@@ -377,7 +377,7 @@ function ChatPersonaSection({ settings, setSettings }) {
       <SettingRow
         layout="col"
         label="Custom instructions"
-        description="Extra guidance appended to whichever persona preset is selected above. Not the same as creating a custom persona — use this for project-specific rules that apply on top of the preset."
+        description="Extra guidance appended to whichever persona preset is selected above. Not the same as creating a custom persona. Use this for project-specific rules that apply on top of the preset."
       >
         <Textarea
           value={customGuidance}
@@ -401,7 +401,7 @@ function ChatPersonaSection({ settings, setSettings }) {
         >
           {customGuidance.trim()
             ? `Appended to ${selectedPersona?.label || 'persona'} guidance. ${remaining} characters remaining. Any plain text is allowed (no slug/id rules here).`
-            : `Optional. Up to ${CUSTOM_GUIDANCE_MAX_LENGTH} characters. Any language, punctuation, and line breaks are fine — unlike persona ids, which are restricted to lowercase slugs.`}
+            : `Optional. Up to ${CUSTOM_GUIDANCE_MAX_LENGTH} characters. Any language, punctuation, and line breaks are fine, unlike persona ids, which are restricted to lowercase slugs.`}
         </Text>
       </SettingRow>
     </SettingsCard>

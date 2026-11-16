@@ -40,6 +40,8 @@ let activeCleanup = null;
 let initPromise = null;
 let initialized = false;
 let hasDownloadedUpdate = false;
+// Set when "Install now" is deferred to lifecycle's exit site (Windows NSIS).
+let installOnExit = false;
 
 const UPDATER_DEGRADED_CODE = 'auto-updater.unavailable';
 
@@ -714,7 +716,26 @@ function quitAndInstall() {
   }
 
   try {
-    getAutoUpdater().quitAndInstall();
+    const updater = getAutoUpdater();
+    // electron-updater's quitAndInstall() spawns the NSIS installer before
+    // app.quit(), and in update mode the installer force-kills the running app
+    // about 2 s later, cutting off handleBeforeQuit (Orama final persist,
+    // hash-cache flush, lock release). Quit first instead; lifecycle starts
+    // the installer through runPendingInstallOnExit() once cleanup is done.
+    if (process.platform === 'win32' && typeof updater.install === 'function') {
+      if (!updater.installerPath) {
+        return {
+          success: false,
+          error: 'No downloaded update available yet. Check for updates and finish download first.'
+        };
+      }
+      installOnExit = true;
+      logger.info('[UPDATER] Install requested; the installer starts after shutdown cleanup');
+      // Deferred so the IPC reply reaches the renderer before shutdown starts.
+      setImmediate(() => app.quit());
+      return { success: true };
+    }
+    updater.quitAndInstall();
     return { success: true };
   } catch (error) {
     const message = error?.message || 'Failed to apply update';
@@ -729,12 +750,33 @@ function quitAndInstall() {
   }
 }
 
+/**
+ * Start the installer that quitAndInstall() deferred. Called by lifecycle at
+ * its single exit site, after cleanup and right before app.exit(). install()
+ * is synchronous, spawns the installer detached and sets electron-updater's
+ * quitAndInstallCalled, so its own quit handler does not start a second,
+ * silent install. Logging is already closed when this runs.
+ * @returns {boolean} Whether an installer was started
+ */
+function runPendingInstallOnExit() {
+  if (!installOnExit) return false;
+  installOnExit = false;
+  try {
+    // Visible assisted install that relaunches the app, matching what
+    // electron-updater's quitAndInstall() would have run.
+    return getAutoUpdater().install(false, true) === true;
+  } catch {
+    return false;
+  }
+}
+
 module.exports = {
   initializeAutoUpdater,
   cleanupAutoUpdater,
   checkForUpdates,
   downloadUpdate,
   quitAndInstall,
+  runPendingInstallOnExit,
   hasPendingDownloadedUpdate: () => hasDownloadedUpdate,
   getUpdateTargetCapability,
   setAutoUpdateCheckEnabled,

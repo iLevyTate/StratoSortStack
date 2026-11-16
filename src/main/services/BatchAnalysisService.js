@@ -116,7 +116,6 @@ class BatchAnalysisService {
     this.backpressureLock = new Semaphore(1);
 
     this._embeddingProgressUnsubscribe = null;
-    this._backpressureWaitPromise = null;
     this._adaptiveRecommendation = null;
     this._adaptiveRecommendationAt = 0;
     this._adaptiveRecommendationTtlMs = 30000;
@@ -606,6 +605,12 @@ class BatchAnalysisService {
 
     // Time file starts spent waiting for the embedding queue to drain.
     let backpressureWaitMs = 0;
+    // One drain wait shared by this run's concurrent file starts. It used to
+    // live on the service singleton, so a second run awaited a loop that
+    // checked the first run's cancel flag: cancelling one run made the other
+    // run's waiting files return null as if they too were cancelled.
+    /** @type {Promise<boolean> | null} */
+    let backpressureWaitPromise = null;
     const checkBackpressure = async () => {
       if (typeof isCancelled === 'function' && isCancelled()) {
         return false;
@@ -629,8 +634,8 @@ class BatchAnalysisService {
         return true;
       }
 
-      if (!this._backpressureWaitPromise) {
-        this._backpressureWaitPromise = (async () => {
+      if (!backpressureWaitPromise) {
+        backpressureWaitPromise = (async () => {
           const backpressureStart = Date.now();
           let backpressureDelay = BACKPRESSURE_INITIAL_DELAY_MS;
           let iterations = 0;
@@ -711,12 +716,12 @@ class BatchAnalysisService {
             return true; // proceed anyway on error
           })
           .finally(() => {
-            this._backpressureWaitPromise = null;
+            backpressureWaitPromise = null;
           });
       }
 
       const waitStartedAt = Date.now();
-      const canProceed = await this._backpressureWaitPromise;
+      const canProceed = await backpressureWaitPromise;
       backpressureWaitMs += Date.now() - waitStartedAt;
       return canProceed !== false;
     };

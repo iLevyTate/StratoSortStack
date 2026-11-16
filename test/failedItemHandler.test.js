@@ -111,6 +111,23 @@ describe('failedItemHandler', () => {
       );
     });
 
+    test('routes invalid vector values directly to dead letter (a retry re-queues the same NaN vector)', () => {
+      const item = { id: 'file:nan.txt', vector: [1, Number.NaN, 2] };
+
+      handler.trackFailedItem(item, 'invalid_vector_values');
+
+      expect(handler.failedItems.size).toBe(0);
+      expect(handler.getItemsToRetry(Date.now() + 60_000)).toEqual([]);
+      expect(handler.deadLetterQueue).toHaveLength(1);
+      expect(handler.deadLetterQueue[0]).toEqual(
+        expect.objectContaining({
+          itemId: item.id,
+          requiresRebuild: false,
+          errorCode: 'invalid_vector_values'
+        })
+      );
+    });
+
     test('persists failed items to disk', () => {
       const item = { id: 'file:test.txt', vector: [0.1, 0.2] };
 

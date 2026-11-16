@@ -110,6 +110,18 @@ module.exports = {
     return total;
   },
 
+  /**
+   * After an embedding-model switch, drop every pending vector (queued,
+   * retrying or dead-lettered) that is not from `newModel` in each staged queue.
+   * @param {string} newModel
+   * @returns {number} Items dropped
+   */
+  dropOtherModelEmbeddings(newModel) {
+    let total = 0;
+    for (const q of queues) total += safeCallOptional(q, 'dropOtherModelEmbeddings', newModel) || 0;
+    return total;
+  },
+
   getStats() {
     return {
       analysis: analysisQueue?.getStats ? analysisQueue.getStats() : null,

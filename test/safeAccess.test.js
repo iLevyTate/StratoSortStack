@@ -19,8 +19,8 @@ describe('Safe Access Utilities', () => {
       expect(safeFilePath('/path/to/file.txt')).toBe('/path/to/file.txt');
     });
 
-    test('trims whitespace', () => {
-      expect(safeFilePath('  /path/to/file.txt  ')).toBe('/path/to/file.txt');
+    test('keeps surrounding whitespace (legal in POSIX file names)', () => {
+      expect(safeFilePath('  /path/to/file.txt  ')).toBe('  /path/to/file.txt  ');
     });
 
     test('returns null for null input', () => {
@@ -45,12 +45,12 @@ describe('Safe Access Utilities', () => {
       expect(safeFilePath([])).toBeNull();
     });
 
-    test('removes null bytes', () => {
-      expect(safeFilePath('/path\0to/file.txt')).toBe('/pathto/file.txt');
+    test('rejects null bytes instead of stripping them', () => {
+      expect(safeFilePath('/path\0to/file.txt')).toBeNull();
     });
 
-    test('removes multiple null bytes', () => {
-      expect(safeFilePath('/path\0\0to\0file.txt')).toBe('/pathtofile.txt');
+    test('rejects multiple null bytes', () => {
+      expect(safeFilePath('/path\0\0to\0file.txt')).toBeNull();
     });
 
     test('returns null if only null bytes', () => {

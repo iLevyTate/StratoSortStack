@@ -32,7 +32,7 @@ function DefaultLocationsSection({ settings, setSettings }) {
       VALIDATION_RULES.defaultSmartFolderLocation
     );
     return errors.length > 0
-      ? 'This value cannot be saved — use an absolute path or a simple folder name (no slashes, "..", or special characters). Until it is fixed, the previous saved value stays in effect.'
+      ? 'This value cannot be saved. Use an absolute path or a simple folder name (no slashes, "..", or special characters). Until it is fixed, the previous saved value stays in effect.'
       : null;
   }, [location]);
 

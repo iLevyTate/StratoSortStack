@@ -67,6 +67,8 @@ const feedbackEntrySchema = z.object({
 const patternsSchema = z.object({
   patterns: z.array(z.tuple([z.string(), patternEntrySchema])).optional(),
   feedbackHistory: z.array(feedbackEntrySchema).optional(),
+  // Files the startup scan learned; absent in files saved before it existed.
+  scanLearnedKeys: z.array(z.string()).optional(),
   folderUsageStats: z
     .array(
       z.tuple([
@@ -156,6 +158,7 @@ class PatternPersistence {
       return {
         patterns: validated.data.patterns || [],
         feedbackHistory: validated.data.feedbackHistory || [],
+        scanLearnedKeys: validated.data.scanLearnedKeys || [],
         folderUsageStats: validated.data.folderUsageStats || [],
         lastUpdated: validated.data.lastUpdated
       };

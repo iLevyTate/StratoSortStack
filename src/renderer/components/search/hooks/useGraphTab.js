@@ -1073,7 +1073,7 @@ export function useGraphTab(
   const handleClearFocus = useCallback(() => {
     setFocusNodeId(null);
     setSearchWithinScope(null);
-    setGraphStatus('Focus cleared - showing all nodes');
+    setGraphStatus('Focus cleared. Showing all nodes.');
   }, []);
 
   const handleExpandAllClusters = useCallback(async () => {
@@ -2049,7 +2049,8 @@ export function useGraphTab(
         const end = cluster?.timeRange?.end;
         const startLabel = formatDateLabel(start);
         const endLabel = formatDateLabel(end);
-        if (startLabel && endLabel && startLabel !== endLabel) return `${startLabel} – ${endLabel}`;
+        if (startLabel && endLabel && startLabel !== endLabel)
+          return `${startLabel} to ${endLabel}`;
         if (endLabel) return endLabel;
         return fallback;
       }
@@ -4495,10 +4496,21 @@ export function useGraphTab(
           logger.warn('Some duplicates could not be trashed', {
             failed: result.failed
           });
-          setError(
-            `Trashed ${trashedPaths.length} of ${filesToDelete.length}. ` +
-              `${result.failed.length} failed — see logs for details.`
-          );
+          const onShare = result.failed.filter(
+            (/** @type {any} */ f) => f?.code === 'NETWORK_NO_RECYCLE_BIN'
+          ).length;
+          const otherFailed = result.failed.length - onShare;
+          const parts = [`Trashed ${trashedPaths.length} of ${filesToDelete.length}.`];
+          if (onShare > 0) {
+            parts.push(
+              `Left ${onShare} on a network drive, where Windows has no Recycle Bin. ` +
+                'Delete those yourself if you are sure.'
+            );
+          }
+          if (otherFailed > 0) {
+            parts.push(`${otherFailed} failed. See the logs for details.`);
+          }
+          setError(parts.join(' '));
         }
 
         // Remove successfully-trashed file nodes from the live graph.

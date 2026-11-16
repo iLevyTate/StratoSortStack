@@ -18,6 +18,10 @@
 const { CONFIG_SCHEMA, SENSITIVE_KEYS, DEPRECATED_MAPPINGS } = require('./configSchema');
 const { parseEnvValue, getEnvVar, validateValue } = require('./configValidation');
 
+// Path segments override() must never walk into or assign: they reach the
+// object prototype instead of a config value.
+const UNSAFE_PATH_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 /**
  * Configuration Manager Class
  * Manages loading, validation, and access to configuration values.
@@ -263,6 +267,10 @@ class ConfigurationManager {
     }
 
     const parts = path.split('.');
+    if (parts.some((part) => UNSAFE_PATH_KEYS.has(part))) {
+      this._validationErrors.push({ path, value, reason: 'unsafe_path' });
+      return;
+    }
 
     // Validate against schema if definition exists (coerce types but allow unrecognized paths)
     if (parts.length === 2) {

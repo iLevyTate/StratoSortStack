@@ -49,7 +49,8 @@ const SKIPPED_DESTINATIONS = new Set([
   'aftnsepc',
   'bkmkstart',
   'bkmkend',
-  'field',
+  // Not 'field': its \fldrslt group is the text a reader sees (link text,
+  // page numbers); the \fldinst instructions are skipped on their own.
   'fldinst',
   'operator',
   'panose',
@@ -241,7 +242,7 @@ function rtfToText(rtf) {
       if (!/[a-zA-Z]/.test(next)) {
         i += 2;
         if (skipDepth === -1) {
-          const sym = SYMBOL_WORDS[next];
+          const sym = Object.hasOwn(SYMBOL_WORDS, next) ? SYMBOL_WORDS[next] : undefined;
           if (sym !== undefined) {
             flushBytes();
             out.push(sym);
@@ -287,7 +288,8 @@ function rtfToText(rtf) {
         skipChars = uc;
         continue;
       }
-      const sym = SYMBOL_WORDS[word];
+      // Own keys only: an unknown \constructor must not emit Object's source.
+      const sym = Object.hasOwn(SYMBOL_WORDS, word) ? SYMBOL_WORDS[word] : undefined;
       if (sym !== undefined) {
         flushBytes();
         out.push(sym);

@@ -4,6 +4,28 @@ import { Trash2, Info, Pencil } from 'lucide-react';
 import { Card, Button, IconButton, StateMessage, Textarea } from '../ui';
 import { Heading, Text } from '../ui/Typography';
 
+// Matches feedbackMemoryAdd / feedbackMemoryUpdate in src/main/ipc/validationSchemas.js.
+const MIN_MEMORY_LENGTH = 2;
+const MAX_MEMORY_LENGTH = 500;
+
+/**
+ * Turn a failed IPC result (or a rejected invoke) into a short message. The
+ * handlers resolve `{ success: false, error }` rather than throwing, and
+ * `error` may be a string or an `{ code, message }` object. A schema failure
+ * arrives as `error.details.validationErrors` (Zod's flatten() output), whose
+ * bare message is just "Invalid input", so a bad `text` gets the length hint.
+ */
+function describeFailure(result, fallback) {
+  if (result?.error?.details?.validationErrors?.fieldErrors?.text) {
+    return `Notes must be ${MIN_MEMORY_LENGTH}-${MAX_MEMORY_LENGTH} characters.`;
+  }
+  const error = result?.error;
+  if (typeof error === 'string' && error) return error;
+  if (error && typeof error.message === 'string' && error.message) return error.message;
+  if (result instanceof Error && result.message) return result.message;
+  return fallback;
+}
+
 function FeedbackMemoryPanel({ className = '', refreshToken }) {
   const [memories, setMemories] = useState([]);
   const [newText, setNewText] = useState('');
@@ -11,6 +33,7 @@ function FeedbackMemoryPanel({ className = '', refreshToken }) {
   const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editingText, setEditingText] = useState('');
+  const [errorMessage, setErrorMessage] = useState(null);
   const isMountedRef = React.useRef(true);
 
   useEffect(() => {
@@ -42,6 +65,7 @@ function FeedbackMemoryPanel({ className = '', refreshToken }) {
     const trimmed = newText.trim();
     if (!trimmed) return;
     setSaving(true);
+    setErrorMessage(null);
     try {
       const result = await window.electronAPI?.suggestions?.addFeedbackMemory?.(trimmed);
       if (isMountedRef.current) {
@@ -49,8 +73,14 @@ function FeedbackMemoryPanel({ className = '', refreshToken }) {
           setMemories((prev) => [result.item, ...prev]);
           setNewText('');
         } else {
+          // newText is kept so the user can fix it and try again.
+          setErrorMessage(describeFailure(result, 'Could not save this memory.'));
           await loadMemories();
         }
+      }
+    } catch (error) {
+      if (isMountedRef.current) {
+        setErrorMessage(describeFailure(error, 'Could not save this memory.'));
       }
     } finally {
       if (isMountedRef.current) setSaving(false);
@@ -59,9 +89,21 @@ function FeedbackMemoryPanel({ className = '', refreshToken }) {
 
   const handleDelete = async (id) => {
     if (!id) return;
-    await window.electronAPI?.suggestions?.deleteFeedbackMemory?.(id);
-    if (isMountedRef.current) {
-      setMemories((prev) => prev.filter((entry) => entry.id !== id));
+    setErrorMessage(null);
+    try {
+      const result = await window.electronAPI?.suggestions?.deleteFeedbackMemory?.(id);
+      if (!isMountedRef.current) return;
+      // `removed: false` means the store no longer had it, so dropping the
+      // row is still right. Any other failure leaves the row in place.
+      if (result?.success) {
+        setMemories((prev) => prev.filter((entry) => entry.id !== id));
+      } else {
+        setErrorMessage(describeFailure(result, 'Could not delete this memory.'));
+      }
+    } catch (error) {
+      if (isMountedRef.current) {
+        setErrorMessage(describeFailure(error, 'Could not delete this memory.'));
+      }
     }
   };
 
@@ -73,22 +115,37 @@ function FeedbackMemoryPanel({ className = '', refreshToken }) {
   const cancelEditing = () => {
     setEditingId(null);
     setEditingText('');
+    setErrorMessage(null);
   };
 
   const handleUpdate = async () => {
     const trimmed = editingText.trim();
     if (!editingId || !trimmed) return;
-    const result = await window.electronAPI?.suggestions?.updateFeedbackMemory?.(
-      editingId,
-      trimmed
-    );
-    if (isMountedRef.current) {
-      if (result?.success && result.item) {
-        setMemories((prev) => prev.map((entry) => (entry.id === editingId ? result.item : entry)));
+    setErrorMessage(null);
+    try {
+      const result = await window.electronAPI?.suggestions?.updateFeedbackMemory?.(
+        editingId,
+        trimmed
+      );
+      if (!isMountedRef.current) return;
+      if (result?.success) {
+        if (result.item) {
+          setMemories((prev) =>
+            prev.map((entry) => (entry.id === editingId ? result.item : entry))
+          );
+        } else {
+          // Saved against an entry that no longer exists: show the real list.
+          await loadMemories();
+        }
+        cancelEditing();
       } else {
-        await loadMemories();
+        // Keep the editor open with the user's text so the edit is not lost.
+        setErrorMessage(describeFailure(result, 'Could not save this change.'));
       }
-      cancelEditing();
+    } catch (error) {
+      if (isMountedRef.current) {
+        setErrorMessage(describeFailure(error, 'Could not save this change.'));
+      }
     }
   };
 
@@ -117,17 +174,24 @@ function FeedbackMemoryPanel({ className = '', refreshToken }) {
           placeholder='e.g., "All .stl files go to 3D Prints"'
           className="w-full text-sm"
           rows={2}
+          maxLength={MAX_MEMORY_LENGTH}
         />
         <Button
           size="sm"
           variant="primary"
           onClick={handleAdd}
-          disabled={saving || !newText.trim()}
+          disabled={saving || newText.trim().length < MIN_MEMORY_LENGTH}
           className="bg-stratosort-blue hover:bg-stratosort-blue/90"
         >
           Save memory
         </Button>
       </div>
+
+      {errorMessage && (
+        <Text variant="tiny" role="alert" className="text-stratosort-danger mb-3">
+          {errorMessage}
+        </Text>
+      )}
 
       {loading ? (
         <Text variant="tiny" className="text-system-gray-500 animate-loading-fade">
@@ -157,9 +221,15 @@ function FeedbackMemoryPanel({ className = '', refreshToken }) {
                     onChange={(event) => setEditingText(event.target.value)}
                     className="w-full text-sm"
                     rows={2}
+                    maxLength={MAX_MEMORY_LENGTH}
                   />
                   <div className="flex gap-compact">
-                    <Button size="sm" variant="primary" onClick={handleUpdate}>
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      onClick={handleUpdate}
+                      disabled={editingText.trim().length < MIN_MEMORY_LENGTH}
+                    >
                       Save
                     </Button>
                     <Button size="sm" variant="ghost" onClick={cancelEditing}>

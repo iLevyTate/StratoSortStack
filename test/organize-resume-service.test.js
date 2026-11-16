@@ -34,6 +34,8 @@ describe('OrganizeResumeService.resumeIncompleteBatches', () => {
     await fs.writeFile(srcB, 'B');
 
     const serviceIntegration = {
+      // The destination folder must be one the live handler would allow.
+      smartFolderWatcher: { getSmartFolders: () => [{ path: path.join(tmpDir, 'out') }] },
       processingState: {
         getIncompleteOrganizeBatches: () => [
           {

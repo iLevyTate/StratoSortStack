@@ -118,6 +118,63 @@ describe('LLM Optimization Utilities', () => {
         expect(result).toEqual({ result: 'done' });
       });
 
+      test("a joined caller re-runs the call when the starter's abort ends it", async () => {
+        const dedup = new LLMRequestDeduplicator();
+        const starter = new AbortController();
+        const joiner = new AbortController();
+        const abortError = Object.assign(new Error('This operation was aborted'), {
+          name: 'AbortError'
+        });
+        let rejectStarter;
+        const starterFn = jest.fn(
+          () =>
+            new Promise((_, reject) => {
+              rejectStarter = reject;
+            })
+        );
+        const joinerFn = jest.fn().mockResolvedValue({ result: 'joiner' });
+
+        const p1 = dedup.deduplicate('key1', starterFn, { signal: starter.signal });
+        const p2 = dedup.deduplicate('key1', joinerFn, { signal: joiner.signal });
+        expect(joinerFn).not.toHaveBeenCalled();
+
+        // The watcher stops (or its own timeout fires): only the starter aborts.
+        starter.abort();
+        rejectStarter(abortError);
+
+        await expect(p1).rejects.toBe(abortError);
+        await expect(p2).resolves.toEqual({ result: 'joiner' });
+        expect(joinerFn).toHaveBeenCalledTimes(1);
+      });
+
+      test('a joined caller still gets a real failure, and its own abort', async () => {
+        const dedup = new LLMRequestDeduplicator();
+        const starter = new AbortController();
+        const joiner = new AbortController();
+        const failure = new Error('model crashed');
+        let rejectStarter;
+        const starterFn = () =>
+          new Promise((_, reject) => {
+            rejectStarter = reject;
+          });
+        const joinerFn = jest.fn().mockResolvedValue({ result: 'joiner' });
+
+        const p1 = dedup.deduplicate('key1', starterFn, { signal: starter.signal });
+        const p2 = dedup.deduplicate('key1', joinerFn, { signal: joiner.signal });
+        rejectStarter(failure);
+        await expect(p1).rejects.toBe(failure);
+        await expect(p2).rejects.toBe(failure);
+
+        const p3 = dedup.deduplicate('key2', starterFn, { signal: starter.signal });
+        const p4 = dedup.deduplicate('key2', joinerFn, { signal: joiner.signal });
+        starter.abort();
+        joiner.abort();
+        rejectStarter(failure);
+        await expect(p3).rejects.toBe(failure);
+        await expect(p4).rejects.toBe(failure);
+        expect(joinerFn).not.toHaveBeenCalled();
+      });
+
       test('cleans up after completion', async () => {
         const dedup = new LLMRequestDeduplicator();
         const fn = jest.fn().mockResolvedValue({ result: 'success' });

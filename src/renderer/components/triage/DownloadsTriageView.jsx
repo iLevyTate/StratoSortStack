@@ -50,7 +50,7 @@ const TAB_DEFS = [
   {
     key: 'keep',
     label: 'Keep',
-    copy: 'High-confidence matches to your Smart Folders — ready to organize.'
+    copy: 'High-confidence matches to your Smart Folders, ready to organize.'
   },
   {
     key: 'excluded',
@@ -70,7 +70,7 @@ const TAB_DEFS = [
   {
     key: 'unmatched',
     label: 'Unmatched',
-    copy: "Deep scan couldn't find a folder match. These are likely orphans — decide manually."
+    copy: "Deep scan couldn't find a folder match. These are likely orphans. Decide manually."
   }
 ];
 
@@ -208,7 +208,7 @@ export default function DownloadsTriageView({ isOpen, onClose }) {
       setActiveTab('trash');
       setIsDeepScanning(false);
       hasAutoSelectedTrashRef.current = null;
-      setError('Triage session expired — rescan the folder.');
+      setError('Triage session expired. Rescan the folder.');
     });
   }, []);
 
@@ -393,7 +393,7 @@ export default function DownloadsTriageView({ isOpen, onClose }) {
           triageId,
           action,
           files,
-          summary: { label: `Downloads triage — ${action}` }
+          summary: { label: `Downloads triage: ${action}` }
         });
         if (result?.errorCode === 'NO_SESSION' || result?.errorCode === 'NOT_IN_SESSION') {
           setTriageId(null);
@@ -412,8 +412,8 @@ export default function DownloadsTriageView({ isOpen, onClose }) {
           hasAutoSelectedTrashRef.current = null;
           setError(
             result?.errorCode === 'NOT_IN_SESSION'
-              ? 'Those files are not in this triage session — rescan.'
-              : 'Session expired — rescan the folder.'
+              ? 'Those files are not in this triage session. Rescan.'
+              : 'Session expired. Rescan the folder.'
           );
           return;
         }
@@ -421,7 +421,7 @@ export default function DownloadsTriageView({ isOpen, onClose }) {
           const failed = Array.isArray(result?.failed) ? result.failed.length : 0;
           const done = action === 'trash' ? result?.trashed?.length : result?.moved?.length;
           setError(
-            `${action === 'trash' ? 'Trashed' : 'Organized'} ${done || 0} of ${files.length}. ${failed} failed — see logs.`
+            `${action === 'trash' ? 'Trashed' : 'Organized'} ${done || 0} of ${files.length}. ${failed} failed. See logs.`
           );
         } else if (!result?.success) {
           setError(toErrorMessage(result?.error, 'Action failed'));
@@ -434,8 +434,8 @@ export default function DownloadsTriageView({ isOpen, onClose }) {
         if (result?.undoUnavailable) {
           actWarnings.push(
             action === 'trash'
-              ? 'Undo could not record this trash — restore from the OS Trash manually if needed.'
-              : 'Undo could not record this move — undo will not cover these files.'
+              ? 'Undo could not record this trash. Restore from the OS Trash manually if needed.'
+              : 'Undo could not record this move, so undo will not cover these files.'
           );
         }
         const rejectedCount = Array.isArray(result?.rejected) ? result.rejected.length : 0;
@@ -578,7 +578,7 @@ export default function DownloadsTriageView({ isOpen, onClose }) {
               />
               <div className="min-w-0 flex-1 space-y-1.5">
                 <Text variant="small" className="font-semibold text-stratosort-warning">
-                  {scanWarning.partial ? 'Partial scan — results may be incomplete' : 'Scan note'}
+                  {scanWarning.partial ? 'Partial scan: results may be incomplete' : 'Scan note'}
                 </Text>
                 {(typeof scanWarning.filesIncluded === 'number' &&
                   typeof scanWarning.maxFiles === 'number') ||

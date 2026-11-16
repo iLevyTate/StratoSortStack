@@ -911,8 +911,8 @@ export default function DashboardView() {
           )}
           {stats.failed > 0 && (
             <AlertBox variant="danger">
-              {stats.failed} {stats.failed === 1 ? 'file' : 'files'} couldn&apos;t be analyzed —
-              retry {stats.failed === 1 ? 'it' : 'them'} in Discover.
+              {stats.failed} {stats.failed === 1 ? 'file' : 'files'} couldn&apos;t be analyzed.
+              Retry {stats.failed === 1 ? 'it' : 'them'} in Discover.
             </AlertBox>
           )}
 

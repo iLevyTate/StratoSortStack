@@ -1064,8 +1064,7 @@ function ChatPanel({
       >
         {messages.length === 0 ? (
           <Text variant="small" className="text-system-gray-500">
-            Ask me anything about your documents — search by meaning, summarize, or explore
-            connections.
+            Ask about your documents. You can search by meaning, summarize, or explore connections.
           </Text>
         ) : null}
 

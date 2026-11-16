@@ -20,8 +20,9 @@ export async function fetchAnalysisHistoryPages(options = {}) {
   const getHistory = window?.electronAPI?.analysisHistory?.get;
   if (typeof getHistory !== 'function') return [];
 
-  const pageSize = Math.min(MAX_PAGE_SIZE, toPositiveInt(options.pageSize, DEFAULT_PAGE_SIZE));
-  const maxEntries = Math.max(pageSize, toPositiveInt(options.maxEntries, DEFAULT_MAX_ENTRIES));
+  const basePageSize = Math.min(MAX_PAGE_SIZE, toPositiveInt(options.pageSize, DEFAULT_PAGE_SIZE));
+  const maxEntries = Math.max(basePageSize, toPositiveInt(options.maxEntries, DEFAULT_MAX_ENTRIES));
+  let pageSize = basePageSize;
 
   /** @type {any[]} */
   const allEntries = [];
@@ -38,6 +39,25 @@ export async function fetchAnalysisHistoryPages(options = {}) {
         error: error?.message
       });
       break;
+    }
+
+    // The preload rejects a response over its size cap (entries carry full
+    // transcript segments). Retry the same offset with a smaller page; at
+    // one entry, skip that entry rather than end the whole history there.
+    // The reason string is set by validateResult in src/preload/ipcValidator.js.
+    if (page && page.reason === 'payload-too-large') {
+      if (pageSize > 1) {
+        pageSize = Math.max(1, Math.floor(pageSize / 2));
+        logger.warn('History page too large; retrying with a smaller page', { offset, pageSize });
+        continue;
+      }
+      logger.warn('Skipping a history entry that exceeds the IPC size cap', { offset });
+      offset += 1;
+      // Keep the small page: the next entries are often large too, and
+      // jumping back to the full size would re-read and reject a full page
+      // per skipped entry. The doubling below grows it back once pages
+      // succeed, so a lone large entry costs a few small calls.
+      continue;
     }
 
     if (!Array.isArray(page)) {
@@ -58,6 +78,12 @@ export async function fetchAnalysisHistoryPages(options = {}) {
 
     if (page.length < pageSize) {
       break;
+    }
+
+    // Grow back after a shrunken page succeeds, so only the window of large
+    // entries is read in small pages.
+    if (pageSize < basePageSize) {
+      pageSize = Math.min(basePageSize, pageSize * 2);
     }
   }
 

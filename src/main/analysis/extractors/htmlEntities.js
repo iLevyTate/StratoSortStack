@@ -195,11 +195,13 @@ function decodeHtmlEntities(text) {
       }
     }
     // Case matters for the letters (Aacute vs aacute); the XML five and
-    // nbsp are also accepted in any case, as browsers do for HTML.
-    const exact = NAMED_ENTITIES[body];
-    if (exact !== undefined) return exact;
-    const folded = NAMED_ENTITIES[body.toLowerCase()];
-    return folded !== undefined && /^(amp|lt|gt|quot|apos|nbsp)$/i.test(body) ? folded : match;
+    // nbsp are also accepted in any case, as browsers do for HTML. Own keys
+    // only, so &constructor; is not answered by Object.prototype.
+    if (Object.hasOwn(NAMED_ENTITIES, body)) return NAMED_ENTITIES[body];
+    const lower = body.toLowerCase();
+    return Object.hasOwn(NAMED_ENTITIES, lower) && /^(amp|lt|gt|quot|apos|nbsp)$/i.test(body)
+      ? NAMED_ENTITIES[lower]
+      : match;
   });
 }
 

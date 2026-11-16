@@ -218,6 +218,21 @@ describe('createMcpServer', () => {
     }
   });
 
+  test('a failed bind leaves no session sweep running', async () => {
+    jest.useFakeTimers();
+    try {
+      createTransport.mockRejectedValueOnce(
+        Object.assign(new Error('listen EACCES'), { code: 'EACCES' })
+      );
+      await expect(
+        createMcpServer({ services: fakeServices, getToken: () => 'a'.repeat(64) })
+      ).rejects.toMatchObject({ code: 'EACCES' });
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   test('close() cancels the sweep and closes every live session', async () => {
     jest.useFakeTimers();
     try {

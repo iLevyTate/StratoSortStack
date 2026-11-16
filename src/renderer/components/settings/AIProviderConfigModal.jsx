@@ -24,9 +24,9 @@ const PROVIDER_LABELS = {
 };
 
 const ANTHROPIC_MODELS = [
-  { value: 'claude-opus-5-5', label: 'Claude Opus 5.5 — best quality (~$4/M input)' },
-  { value: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5 — balanced (~$2/M input)' },
-  { value: 'claude-haiku-5-5', label: 'Claude Haiku 5.5 — fastest (~$0.10/M input)' }
+  { value: 'claude-opus-5-5', label: 'Claude Opus 5.5 (best quality, ~$4/M input)' },
+  { value: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5 (balanced, ~$2/M input)' },
+  { value: 'claude-haiku-5-5', label: 'Claude Haiku 5.5 (fastest, ~$0.10/M input)' }
 ];
 
 /**
@@ -38,7 +38,7 @@ const ANTHROPIC_MODELS = [
 function anthropicModelOptions(current) {
   const saved = String(current ?? '').trim();
   if (!saved || ANTHROPIC_MODELS.some((m) => m.value === saved)) return ANTHROPIC_MODELS;
-  return [{ value: saved, label: `${saved} — older model, currently in use` }, ...ANTHROPIC_MODELS];
+  return [{ value: saved, label: `${saved} (older model, currently in use)` }, ...ANTHROPIC_MODELS];
 }
 
 // Mirrors the Zod ceiling on spendCapMonthlyUsd (ipc/validationSchemas.js).
@@ -218,7 +218,7 @@ function AIProviderConfigModal({ provider, onClose, addNotification }) {
     await dispatch(setProviderKey({ provider, key, allowPlaintext })).unwrap();
     setKeyInput('');
     addNotification?.(
-      allowPlaintext ? 'API key saved (unencrypted — see warning).' : 'API key saved.',
+      allowPlaintext ? 'API key saved (unencrypted, see warning).' : 'API key saved.',
       allowPlaintext ? 'warning' : 'success'
     );
   };
@@ -386,7 +386,7 @@ function AIProviderConfigModal({ provider, onClose, addNotification }) {
           // Save again is now a plain config save on an off provider, which
           // offers the consent prompt and stores the whole form.
           addNotification?.(
-            'Provider turned off. Your other changes need cloud AI to be acknowledged first — press Save again to store them.',
+            'Provider turned off. Your other changes need cloud AI to be acknowledged first. Press Save again to store them.',
             'warning'
           );
         } else {

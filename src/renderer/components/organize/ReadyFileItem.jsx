@@ -248,7 +248,7 @@ function ReadyFileItem({
             className="min-w-0 w-full text-sm"
           >
             {categoryIsFallback && (
-              <option value={category}>Fallback — no folder match (Uncategorized)</option>
+              <option value={category}>Fallback: no folder match (Uncategorized)</option>
             )}
             {!hasCategoryOption && category && (
               <option value={category}>{`Unmapped: ${category}`}</option>
@@ -330,7 +330,7 @@ function ReadyFileItem({
       ) : (
         <div className="p-4">
           <Text variant="small" className="text-system-red-600">
-            Analysis failed - will be skipped
+            Analysis failed. It will be skipped.
           </Text>
         </div>
       )}

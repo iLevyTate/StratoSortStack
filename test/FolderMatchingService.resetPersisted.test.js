@@ -43,7 +43,12 @@ jest.mock('../src/main/services/EmbeddingCache', () =>
   }))
 );
 
+jest.mock('../src/main/analysis/embeddingQueue/queueManager', () => ({
+  dropOtherModelEmbeddings: jest.fn(() => 0)
+}));
+
 const FolderMatchingService = require('../src/main/services/FolderMatchingService');
+const queueManager = require('../src/main/analysis/embeddingQueue/queueManager');
 
 const RESET_DONE = '[FolderMatchingService] Vector DB collections reset after model change';
 const messages = (fn) => fn.mock.calls.map(([msg]) => msg);
@@ -82,6 +87,13 @@ describe('embedding model change reset', () => {
     });
     expect(messages(mockLogger.info)).not.toContain(RESET_DONE);
     expect(messages(mockLogger.warn).some((m) => /in memory only/.test(m))).toBe(true);
+  });
+
+  test('pending embeddings from the previous model are dropped from the queues', async () => {
+    await fireEmbeddingModelChange({
+      handleEmbeddingModelChange: jest.fn().mockResolvedValue({ resetPersisted: true })
+    });
+    expect(queueManager.dropOtherModelEmbeddings).toHaveBeenCalledWith('new');
   });
 });
 

@@ -65,15 +65,16 @@ class AnalysisError extends Error {
       PDF_PROCESSING_FAILURE:
         "This PDF file couldn't be processed. It may be corrupted or password-protected.",
       IMAGE_ANALYSIS_FAILURE:
-        "This image couldn't be analyzed. Please check the file format and try again.",
-      MODEL_NOT_INSTALLED: `Missing AI model: ${this.metadata.requiredModel}. Please install it to continue.`,
-      AI_ENGINE_CONNECTION_FAILURE: 'AI engine unavailable. Check Settings > Models and try again.',
-      DOCUMENT_ANALYSIS_FAILURE: 'Failed to analyze this document. Please check the file format.',
+        "This image couldn't be analyzed. Check the file format and try again.",
+      MODEL_NOT_INSTALLED: `Missing AI model: ${this.metadata.requiredModel}. Install it to continue.`,
+      AI_ENGINE_CONNECTION_FAILURE:
+        'AI engine unavailable. Check Settings → Local AI engine and try again.',
+      DOCUMENT_ANALYSIS_FAILURE: 'Failed to analyze this document. Check the file format.',
       PDF_NO_TEXT_CONTENT: 'This PDF appears to be image-based. Try using image analysis instead.',
-      MODEL_VERIFICATION_FAILED: 'AI model verification failed. Please check your model downloads.',
-      DEPENDENCY_MISSING: `System component missing: ${this.metadata.dependency}. Please reinstall the application.`,
+      MODEL_VERIFICATION_FAILED: 'AI model verification failed. Check your model downloads.',
+      DEPENDENCY_MISSING: `System component missing: ${this.metadata.dependency}. Reinstall the application.`,
       FILE_TYPE_UNSUPPORTED: `File type "${this.metadata.fileType}" is not supported for AI analysis.`,
-      FILE_TOO_LARGE: 'File is too large for processing. Please use a smaller file.',
+      FILE_TOO_LARGE: 'File is too large to process. Use a smaller file.',
       FILE_EMPTY: 'This file is empty, so there was nothing to analyze.',
       FILE_READ_ERROR:
         "This file couldn't be read. It may be locked, moved, or you may not have permission to access it.",
@@ -97,8 +98,8 @@ class AnalysisError extends Error {
   getActionableSteps() {
     /** @type {Record<string, string[]>} */
     const actions = {
-      MODEL_NOT_INSTALLED: ['Open Settings > Models and download the missing model'],
-      AI_ENGINE_CONNECTION_FAILURE: ['Check Settings > Models', 'Restart the app'],
+      MODEL_NOT_INSTALLED: ['Open Settings → Model management and download the missing model'],
+      AI_ENGINE_CONNECTION_FAILURE: ['Check Settings → Local AI engine', 'Restart the app'],
       DEPENDENCY_MISSING: [
         `Check that ${this.metadata.dependency} is installed correctly`,
         'Restart the application',
@@ -133,7 +134,7 @@ class ModelMissingError extends AnalysisError {
   constructor(modelName) {
     super('MODEL_NOT_INSTALLED', {
       requiredModel: modelName,
-      installCommand: `Download model in Settings > Models: ${modelName}`,
+      installCommand: `Download the model in Settings → Model management: ${modelName}`,
       category: 'model'
     });
   }

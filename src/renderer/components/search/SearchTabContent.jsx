@@ -30,9 +30,7 @@ import SearchAutocomplete from './SearchAutocomplete';
 import SearchDiagnosticsBanner from './SearchDiagnosticsBanner';
 import SearchModeBanner from './SearchModeBanner';
 import VirtualizedSearchResults from './VirtualizedSearchResults';
-
-// Cap rows per category in grouped view (full counts still shown in header)
-const GROUPED_VIEW_MAX_PER_CATEGORY = 50;
+import { GROUPED_VIEW_MAX_PER_CATEGORY } from './hooks/useSearchTab';
 
 export default function SearchTabContent({
   search,
@@ -70,6 +68,9 @@ export default function SearchTabContent({
     isSearching,
     queryMeta,
     searchMeta,
+    exactSearch,
+    searchExactly,
+    searchWithCorrection,
     bulkSelectedIds,
     focusedResultIndex,
     viewMode,
@@ -81,6 +82,25 @@ export default function SearchTabContent({
     groupedResults,
     resultIdToIndex
   } = search;
+
+  // What the spelling notice shows: the corrected query with the typed one
+  // on offer, or (after "search for the typed query instead") the reverse.
+  let correctionNotice = null;
+  if (exactSearch?.corrected) {
+    correctionNotice = {
+      shown: exactSearch.query,
+      asTyped: true,
+      alternative: exactSearch.corrected,
+      onSwitch: searchWithCorrection
+    };
+  } else if (queryMeta?.corrections?.length > 0) {
+    correctionNotice = {
+      shown: queryMeta.corrected || queryMeta.corrections.map((c) => c.corrected).join(', '),
+      asTyped: false,
+      alternative: debouncedQuery,
+      onSwitch: searchExactly
+    };
+  }
 
   return (
     <div className="flex flex-col gap-default flex-1">
@@ -223,19 +243,24 @@ export default function SearchTabContent({
         </div>
       )}
 
-      {/* Query correction feedback - "Did you mean?" */}
-      {queryMeta?.corrections?.length > 0 && searchResults.length > 0 && (
+      {/* Spelling correction notice, with a way to search for exactly what
+          was typed (and back). Both states render the same elements so the
+          button keeps focus when it is pressed. */}
+      {correctionNotice && searchResults.length > 0 && (
         <div className="flex items-center gap-compact px-3 py-2 bg-stratosort-accent/10 border border-stratosort-accent/30 rounded-lg text-sm">
-          <SpellCheck className="w-4 h-4 text-stratosort-accent shrink-0" />
+          <SpellCheck className="w-4 h-4 text-stratosort-accent shrink-0" aria-hidden="true" />
           <span className="text-stratosort-accent">
-            Showing results for{' '}
-            <span className="font-medium">
-              {queryMeta.corrections.map((c) => c.corrected).join(', ')}
-            </span>{' '}
-            instead of{' '}
-            <span className="text-stratosort-accent line-through">
-              {queryMeta.corrections.map((c) => c.original).join(', ')}
-            </span>
+            Showing results for <span className="font-medium">{correctionNotice.shown}</span>
+            {correctionNotice.asTyped ? ' as typed' : ''}. Search for{' '}
+            <button
+              type="button"
+              onClick={correctionNotice.onSwitch}
+              aria-label={`Search for ${correctionNotice.alternative} instead`}
+              className="font-medium underline underline-offset-2 decoration-stratosort-accent/40 hover:decoration-stratosort-accent rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-stratosort-accent/40"
+            >
+              {correctionNotice.alternative}
+            </button>{' '}
+            instead
           </span>
         </div>
       )}

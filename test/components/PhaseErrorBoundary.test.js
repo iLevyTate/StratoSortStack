@@ -40,6 +40,11 @@ jest.mock('../../src/renderer/components/ErrorBoundary', () => ({
   ErrorBoundaryCore: (props) => mockErrorBoundaryCore(props)
 }));
 
+let mockAnalysisRun = null;
+jest.mock('../../src/renderer/phases/discover/AnalysisRunProvider', () => ({
+  useOptionalAnalysisRun: () => mockAnalysisRun
+}));
+
 import { resetUi } from '../../src/renderer/store/slices/uiSlice';
 import { resetFilesState } from '../../src/renderer/store/slices/filesSlice';
 import {
@@ -88,6 +93,25 @@ describe('PhaseErrorBoundary', () => {
     expect(mockDispatch).toHaveBeenCalledWith({ type: 'ui/resetUi' });
     expect(mockDispatch).toHaveBeenCalledWith({ type: 'files/resetFilesState' });
     expect(mockDispatch).toHaveBeenCalledWith({ type: 'analysis/resetAnalysisState' });
+  });
+
+  test('navigate home also stops and discards a running analysis', () => {
+    const resetRun = jest.fn();
+    mockAnalysisRun = { resetRun };
+    try {
+      render(
+        <PhaseErrorBoundary phaseName="Discover">
+          <div>Child content</div>
+        </PhaseErrorBoundary>
+      );
+
+      mockErrorBoundaryCore.mock.calls[0][0].onNavigateHome();
+
+      expect(resetRun).toHaveBeenCalledWith('Go to Home', { discard: true });
+      expect(mockDispatch).toHaveBeenCalledWith({ type: 'analysis/resetAnalysisState' });
+    } finally {
+      mockAnalysisRun = null;
+    }
   });
 
   test('dispatches resetToSafeState when retry reset is triggered', () => {

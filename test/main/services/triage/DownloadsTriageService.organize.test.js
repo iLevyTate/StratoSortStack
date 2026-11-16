@@ -357,4 +357,54 @@ describe('DownloadsTriageService act(organize)', () => {
 
     expect(maxInflight).toBe(1);
   });
+
+  test('a move that outlasts the old 30 s copy timeout is still reported moved, with undo and path update', async () => {
+    const started = await service.start({ folderPath: testDir, minAgeHours: 0 });
+    const row = started.buckets.keep[0];
+    const destPath = path.join(targetDir, 'doc-move.txt');
+
+    // A slow cross-drive copy: the move only finishes when the test says so.
+    /** @type {() => void} */
+    let markCalled = () => {};
+    const called = new Promise((resolve) => {
+      markCalled = resolve;
+    });
+    /** @type {() => void} */
+    let finishMove = () => {};
+    mockPerformFileMove.mockImplementation(async (op) => {
+      markCalled();
+      await new Promise((resolve) => {
+        finishMove = resolve;
+      });
+      await fs.rename(op.source, op.destination);
+      return { destination: op.destination };
+    });
+
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate', 'queueMicrotask'] });
+    try {
+      const pending = service.act({
+        triageId: started.triageId,
+        action: 'organize',
+        files: [
+          { path: row.filePath, size: row.size, suggestedFolderPath: row.suggestedFolder.path }
+        ]
+      });
+      await called;
+      // Well past the 30 s FILE_COPY timeout the move used to be raced against.
+      await jest.advanceTimersByTimeAsync(120000);
+      finishMove();
+      const result = await pending;
+
+      expect(result.success).toBe(true);
+      expect(result.failed).toEqual([]);
+      expect(result.moved).toHaveLength(1);
+      expect(mockServices.undoRedo.recordBatch).toHaveBeenCalledTimes(1);
+      expect(mockServices.coordinator.batchPathUpdate).toHaveBeenCalledWith(
+        [{ oldPath: path.normalize(row.filePath), newPath: path.normalize(destPath) }],
+        { type: 'move' }
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });

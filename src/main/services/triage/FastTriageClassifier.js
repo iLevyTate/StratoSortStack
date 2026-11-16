@@ -195,7 +195,7 @@ class FastTriageClassifier {
         bucket: BUCKET.EXCLUDED,
         signal: SIGNAL.TOO_RECENT,
         confidence: 1,
-        why: `Too recent (${hoursOld}h old — wait before triaging)`
+        why: `Too recent (${hoursOld}h old). Wait before triaging.`
       };
     }
 
@@ -256,7 +256,7 @@ class FastTriageClassifier {
               signal: SIGNAL.CACHED_EMBEDDING,
               confidence: score,
               suggestedFolder: { id: top.id, name: top.name, path: top.path },
-              why: `Cached embedding suggests "${top.name || top.id}" (${confidencePercent(score)}%) — below confidence threshold`
+              why: `Cached embedding suggests "${top.name || top.id}" (${confidencePercent(score)}%), below the confidence threshold`
             };
           }
         }
@@ -291,7 +291,7 @@ class FastTriageClassifier {
             signal: SIGNAL.LEXICAL_MATCH,
             confidence: top.score,
             suggestedFolder: { id: top.id, name: top.name, path: top.path },
-            why: `Weak keyword match to "${top.name}" — needs deeper scan to confirm`
+            why: `Weak keyword match to "${top.name}". Needs a deeper scan to confirm.`
           };
         }
       } catch (err) {

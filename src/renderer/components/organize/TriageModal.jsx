@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import PropTypes from 'prop-types';
+import { useSelector } from 'react-redux';
 import { FolderInput, FileText } from 'lucide-react';
 import { List } from 'react-window';
 import Modal from '../ui/Modal';
@@ -8,6 +9,8 @@ import { Text } from '../ui/Typography';
 import FileIcon from '../ui/FileIcon';
 import { useFileActions } from '../../hooks/useFileActions';
 import { safeBasename } from '../../utils/pathUtils';
+import { formatDisplayFileName, formatDisplayPath } from '../../utils/pathDisplay';
+import { selectRedactPaths } from '../../store/selectors';
 import { createLogger } from '../../../shared/logger';
 
 const logger = createLogger('TriageModal');
@@ -15,12 +18,15 @@ const logger = createLogger('TriageModal');
 const ITEM_HEIGHT = 64;
 
 const VirtualizedFileRow = React.memo(function VirtualizedFileRow({ index, style, data }) {
-  const { files, selectedFiles, handleToggleFile, openFile, revealFile } = data;
+  const { files, selectedFiles, handleToggleFile, openFile, revealFile, redactPaths } = data;
   const file = files[index];
   if (!file) return null;
 
   const path = file.path || file.id;
   const isSelected = selectedFiles.has(path);
+  const rawName = file.name || safeBasename(path);
+  const displayName = formatDisplayFileName(rawName, { redact: redactPaths });
+  const displayPath = formatDisplayPath(String(path || ''), { redact: redactPaths, segments: 2 });
 
   return (
     <div style={style} className="pr-2 pb-1">
@@ -40,7 +46,7 @@ const VirtualizedFileRow = React.memo(function VirtualizedFileRow({ index, style
             type="checkbox"
             checked={isSelected}
             onChange={() => handleToggleFile(path)}
-            aria-label={`Select ${file.name || safeBasename(path)}`}
+            aria-label={`Select ${displayName}`}
             className="rounded border-system-gray-300 text-stratosort-blue focus:ring-stratosort-blue/20"
           />
         </div>
@@ -50,13 +56,19 @@ const VirtualizedFileRow = React.memo(function VirtualizedFileRow({ index, style
           aria-pressed={isSelected}
           className="flex min-w-0 flex-1 items-center gap-cozy text-left"
         >
-          <FileIcon filename={file.name || safeBasename(path)} className="w-8 h-8 shrink-0" />
+          {/* Raw name so the icon still matches the extension; it is never shown as text. */}
+          <FileIcon filename={rawName} className="w-8 h-8 shrink-0" />
           <div className="flex-1 min-w-0">
             <Text as="div" variant="small" className="font-medium text-system-gray-900 truncate">
-              {file.name || safeBasename(path)}
+              {displayName}
             </Text>
-            <Text as="div" variant="tiny" className="text-system-gray-500 truncate">
-              {path}
+            <Text
+              as="div"
+              variant="tiny"
+              className="text-system-gray-500 truncate"
+              title={redactPaths ? undefined : path}
+            >
+              {displayPath}
             </Text>
           </div>
         </button>
@@ -95,7 +107,8 @@ VirtualizedFileRow.propTypes = {
     selectedFiles: PropTypes.instanceOf(Set).isRequired,
     handleToggleFile: PropTypes.func.isRequired,
     openFile: PropTypes.func.isRequired,
-    revealFile: PropTypes.func.isRequired
+    revealFile: PropTypes.func.isRequired,
+    redactPaths: PropTypes.bool.isRequired
   }).isRequired
 };
 
@@ -119,19 +132,25 @@ export default function TriageModal({
   const [moveError, setMoveError] = useState('');
   const { openFile, revealFile } = useFileActions(setMoveError);
   const prevIsOpenRef = useRef(false);
-  const containerRef = useRef(null);
+  const redactPaths = useSelector(selectRedactPaths);
+  // The container node lives in state (callback ref) rather than a ref read on
+  // [isOpen]: Modal mounts its children a render after isOpen flips and keeps
+  // them through the exit animation, so an isOpen-keyed effect saw a null node
+  // on open and observed the dying node on close, which then reported 0 height.
+  const [containerEl, setContainerEl] = useState(null);
   const [listHeight, setListHeight] = useState(400);
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!containerEl || typeof ResizeObserver === 'undefined') return undefined;
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        setListHeight(entry.contentRect.height);
+        // A detached node reports 0x0; keep the last real height instead.
+        if (entry.contentRect.height > 0) setListHeight(entry.contentRect.height);
       }
     });
-    observer.observe(containerRef.current);
+    observer.observe(containerEl);
     return () => observer.disconnect();
-  }, [isOpen]);
+  }, [containerEl]);
 
   useEffect(() => {
     const wasOpen = prevIsOpenRef.current;
@@ -193,7 +212,7 @@ export default function TriageModal({
         error: error?.message,
         stack: error?.stack
       });
-      setMoveError(error?.message || 'Failed to move files. Please try again.');
+      setMoveError(error?.message || 'Failed to move files. Try again.');
     } finally {
       setIsMoving(false);
     }
@@ -208,10 +227,11 @@ export default function TriageModal({
         selectedFiles,
         handleToggleFile,
         openFile,
-        revealFile
+        revealFile,
+        redactPaths
       }
     }),
-    [files, selectedFiles, handleToggleFile, openFile, revealFile]
+    [files, selectedFiles, handleToggleFile, openFile, revealFile, redactPaths]
   );
 
   return (
@@ -284,7 +304,7 @@ export default function TriageModal({
         </div>
 
         {/* File List */}
-        <div className="flex-1 min-h-0" ref={containerRef}>
+        <div className="flex-1 min-h-0" ref={setContainerEl}>
           {files.length > 0 ? (
             <List
               rowCount={files.length}

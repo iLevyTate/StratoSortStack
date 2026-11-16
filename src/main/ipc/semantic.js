@@ -15,10 +15,17 @@ const getLlamaService = () => container.tryResolve(ServiceIds.LLAMA_SERVICE);
 const getUndoRedoService = () => container.tryResolve(ServiceIds.UNDO_REDO);
 const { getInstance: getAtlasService } = require('../services/AtlasProjectionService');
 
+/** @type {Record<string, string>} */
+const SERVICE_LABELS = {
+  OramaVectorService: 'The search index',
+  ClusteringService: 'Clustering',
+  AtlasProjectionService: 'The Atlas view'
+};
+
 /** @param {string} name */
 const SERVICE_UNAVAILABLE = (name) => ({
   success: false,
-  error: `${name} not available — service may still be initializing`,
+  error: `${SERVICE_LABELS[name] || 'This feature'} isn't ready yet. It may still be starting.`,
   errorCode: 'SERVICE_UNAVAILABLE'
 });
 
@@ -185,7 +192,7 @@ async function verifyEmbeddingModelAvailable(logger, preferredModel = null) {
     return {
       available: false,
       model: preferredModel || AI_DEFAULTS.EMBEDDING.MODEL,
-      error: 'LlamaService not available — AI engine may still be initializing'
+      error: "The AI engine isn't ready yet. It may still be starting."
     };
   }
   const cfg = await llama.getConfig();
@@ -259,7 +266,7 @@ async function verifyEmbeddingModelAvailable(logger, preferredModel = null) {
       return {
         available: false,
         model,
-        error: `Embedding model "${model}" not downloaded. Download it in Settings > Models.`,
+        error: `Embedding model "${model}" not downloaded. Download it in Settings → Model management.`,
         availableModels: modelNames.slice(0, 10)
       };
     }
@@ -293,7 +300,7 @@ async function verifyReanalyzeModelsAvailable(logger) {
       textModel: AI_DEFAULTS.TEXT.MODEL,
       visionModel: AI_DEFAULTS.IMAGE.MODEL,
       embeddingModel: AI_DEFAULTS.EMBEDDING.MODEL,
-      error: 'LlamaService not available — AI engine may still be initializing'
+      error: "The AI engine isn't ready yet. It may still be starting."
     };
   }
   const cfg = await llama.getConfig();
@@ -363,7 +370,7 @@ async function verifyReanalyzeModelsAvailable(logger) {
             available: false,
             model: textModel,
             modelType: 'text',
-            error: `Text model "${textModel}" not downloaded. Download it in Settings > Models.`
+            error: `Text model "${textModel}" not downloaded. Download it in Settings → Model management.`
           };
         }
       }
@@ -395,7 +402,7 @@ async function verifyReanalyzeModelsAvailable(logger) {
             available: false,
             model: visionModel,
             modelType: 'vision',
-            error: `Vision model "${visionModel}" not downloaded. Download it in Settings > Models.`
+            error: `Vision model "${visionModel}" not downloaded. Download it in Settings → Model management.`
           };
         }
       }
@@ -429,7 +436,7 @@ async function verifyReanalyzeModelsAvailable(logger) {
             available: false,
             model: embeddingModel,
             modelType: 'embedding',
-            error: `Embedding model "${embeddingModel}" not downloaded. Download it in Settings > Models.`
+            error: `Embedding model "${embeddingModel}" not downloaded. Download it in Settings → Model management.`
           };
         }
       }
@@ -785,6 +792,20 @@ async function handleTrashDuplicates({ logger }, event, { paths, summary, verify
         } catch {
           // Best effort; the staleness timer catches up otherwise.
         }
+      }
+
+      // Same contract as every other delete path: without this event the
+      // renderer kept the trashed files in Discover/Organize state.
+      try {
+        const trashedPaths = result.trashed.map((item) => item?.path).filter(Boolean);
+        if (trashedPaths.length > 0) {
+          safeSend(event?.sender, IPC_EVENTS.FILE_OPERATION_COMPLETE, {
+            operation: 'delete',
+            files: trashedPaths
+          });
+        }
+      } catch {
+        // Best-effort notification; the files are already in the trash.
       }
     }
 
@@ -2410,15 +2431,52 @@ async function handleReanalyzeAll(
 }
 
 /**
+ * Whether the app has started shutting down (the IPC gate is closed). Read
+ * lazily: ipcRegistry is a core module and this file must stay loadable in
+ * tests that never touch it.
+ * @returns {boolean}
+ */
+function isAppShuttingDown() {
+  try {
+    return require('../core/ipcRegistry').isShuttingDown() === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Thrown inside handleFullRebuild when the invoke was aborted or the app began
+ * quitting mid-run; the catch below turns it into an interrupted result that
+ * leaves the rebuild-in-progress marker set.
+ */
+class FullRebuildInterruptedError extends Error {
+  constructor() {
+    super('Full rebuild was interrupted before it finished');
+    this.name = 'FullRebuildInterruptedError';
+  }
+}
+
+/**
  * @param {SemanticHandlerDeps} deps
- * @param {IpcMainInvokeEvent} _event
+ * @param {IpcMainInvokeEvent} event
  * @param {Record<string, any>} [options]
  */
 async function handleFullRebuild(
   { safeEnsureInit, logger, getCustomFolders, getServiceIntegration, shouldBuildChunkEmbeddings },
-  _event,
+  event,
   options = {}
 ) {
+  // Quitting mid-rebuild aborts this invoke (ipcAbortRegistry.abortAll) and
+  // stops the embedding and vector services underneath it. Without these
+  // checks every remaining embed failed fast, the upserts hit a null Orama
+  // service, and the marker below was still cleared: the next launch trusted
+  // an empty index.
+  const abortSignal = event?.abortSignal;
+  const throwIfInterrupted = () => {
+    if (abortSignal?.aborted || isAppShuttingDown()) {
+      throw new FullRebuildInterruptedError();
+    }
+  };
   const initErr = await safeEnsureInit();
   if (initErr) return initErr;
   const lockResult = acquireRebuildLock('FULL_REBUILD');
@@ -2444,6 +2502,10 @@ async function handleFullRebuild(
   let previousEmbeddingModel = null;
   let overrideApplied = false;
   let rebuildSucceeded = false;
+  // False once any rebuilt row failed to reach the store (an upsert threw,
+  // was skipped for shutdown, or the vector service was gone): the store is
+  // then partial and the rebuild-in-progress marker must stay set.
+  let upsertsComplete = true;
 
   try {
     const embeddingService = getParallelEmbeddingService();
@@ -2506,7 +2568,7 @@ async function handleFullRebuild(
     if (!llamaSvc) {
       return {
         success: false,
-        error: 'AI engine is not available. Please wait for startup to complete and try again.',
+        error: 'AI engine is not available yet. Wait for startup to finish and try again.',
         errorCode: 'SERVICE_NOT_READY'
       };
     }
@@ -2564,6 +2626,8 @@ async function handleFullRebuild(
     }
 
     // Step 2: Clear all vector DB collections
+    // Last point where quitting leaves the old index intact on disk.
+    throwIfInterrupted();
     logger.info('[EMBEDDINGS] Clearing all vector DB collections...');
     // resetAll() does not reject on a failed save: the clear then lives in
     // memory only and the old index is still on disk (G2).
@@ -2613,7 +2677,9 @@ async function handleFullRebuild(
 
       const validFolderPayloads = folderPayloads.filter((p) => p !== null);
       if (validFolderPayloads.length > 0) {
-        await getOramaService().batchUpsertFolders(validFolderPayloads);
+        throwIfInterrupted();
+        const folderResult = await getOramaService().batchUpsertFolders(validFolderPayloads);
+        if (folderResult?.reason === 'shutdown') upsertsComplete = false;
       }
     }
 
@@ -2633,6 +2699,9 @@ async function handleFullRebuild(
         const processedFileIds = new Set();
 
         for (const entry of allEntries) {
+          // Outside the per-file try: an interruption must end the run, not
+          // count as one more failed file.
+          throwIfInterrupted();
           // Keep the rebuild lock's inactivity heartbeat alive — each entry
           // can take seconds of CPU embedding, and a silent lock steal would
           // let a second rebuild interleave with this one.
@@ -2756,6 +2825,7 @@ async function handleFullRebuild(
               });
 
               for (const chunk of chunks) {
+                throwIfInterrupted();
                 touchRebuildLock(lockResult.token);
                 try {
                   const { vector: chunkVector, model: chunkModel } =
@@ -2791,6 +2861,7 @@ async function handleFullRebuild(
               }
             }
           } catch (e) {
+            if (e instanceof FullRebuildInterruptedError) throw e;
             results.files.failed++;
             // Generic rebuild-loop exception — includes embedding-generation
             // failures, vector-DB upsert errors, etc. Always warn-level since
@@ -2811,23 +2882,43 @@ async function handleFullRebuild(
 
         // Batch upsert files
         const BATCH_SIZE = BATCH.SEMANTIC_BATCH_SIZE;
+        // A batch that throws, is skipped for shutdown, or finds no vector
+        // service leaves the store partial: mark it so the marker stays set.
         for (let i = 0; i < filePayloads.length; i += BATCH_SIZE) {
+          throwIfInterrupted();
           touchRebuildLock(lockResult.token);
           const batch = filePayloads.slice(i, i + BATCH_SIZE);
           try {
-            await getOramaService().batchUpsertFiles(batch);
+            const orama = getOramaService();
+            if (!orama) throw new Error('Vector DB service is not available');
+            const upsertResult = await orama.batchUpsertFiles(batch);
+            if (upsertResult?.skipped === true) {
+              upsertsComplete = false;
+              logger.warn('[EMBEDDINGS] File batch upsert skipped:', upsertResult.reason);
+            }
           } catch (e) {
+            upsertsComplete = false;
             logger.warn('[EMBEDDINGS] Failed to batch upsert files:', e.message);
           }
         }
 
         // Batch upsert chunks
         for (let i = 0; i < chunkPayloads.length; i += BATCH_SIZE) {
+          throwIfInterrupted();
           touchRebuildLock(lockResult.token);
           const batch = chunkPayloads.slice(i, i + BATCH_SIZE);
           try {
-            await getOramaService().batchUpsertFileChunks(batch);
+            const orama = getOramaService();
+            if (!orama) throw new Error('Vector DB service is not available');
+            // Returns the inserted count; 0 for a non-empty batch is the
+            // shutdown/blocked-writes skip.
+            const inserted = await orama.batchUpsertFileChunks(batch);
+            if (inserted === 0) {
+              upsertsComplete = false;
+              logger.warn('[EMBEDDINGS] Chunk batch upsert wrote nothing');
+            }
           } catch (e) {
+            upsertsComplete = false;
             logger.warn('[EMBEDDINGS] Failed to batch upsert chunks:', e.message);
           }
         }
@@ -2835,6 +2926,7 @@ async function handleFullRebuild(
     }
 
     // Step 5: Rebuild BM25 index
+    throwIfInterrupted();
     logger.info('[EMBEDDINGS] Rebuilding BM25 search index...');
     try {
       const searchService = await getSearchService();
@@ -2884,6 +2976,17 @@ async function handleFullRebuild(
           : '[EMBEDDINGS] Rebuilt index is in memory only; saving it to disk failed'
       );
     }
+    // A partial store is not a finished rebuild either: the final save would
+    // write it to disk as if complete, so keep the marker and raise the flag.
+    if (!upsertsComplete) {
+      persisted = false;
+      results.errors.push({
+        type: 'persist',
+        error: 'Some rebuilt embeddings were not written to the index'
+      });
+    }
+    // Quitting during the final save: the store may be saved partial.
+    throwIfInterrupted();
 
     logger.info('[EMBEDDINGS] Full rebuild complete', {
       folders: results.folders,
@@ -2962,6 +3065,22 @@ async function handleFullRebuild(
       message: `Full rebuild complete: ${results.folders.success} folders, ${results.files.success} files, ${results.chunks.success} chunks${persisted ? '' : ' (not saved to disk)'}`
     };
   } catch (e) {
+    if (e instanceof FullRebuildInterruptedError) {
+      // The rebuild-in-progress marker stays set, so the next launch reports
+      // the torn index (embeddingRebuildInterrupted) instead of trusting it.
+      logger.warn('[EMBEDDINGS] Full rebuild interrupted; index left marked as rebuilding', {
+        reason: abortSignal?.aborted ? String(abortSignal.reason ?? 'aborted') : 'shutdown',
+        folders: results.folders,
+        files: results.files,
+        chunks: results.chunks
+      });
+      return {
+        success: false,
+        error: e.message,
+        errorCode: 'FULL_REBUILD_INTERRUPTED',
+        partialResults: results
+      };
+    }
     logger.error('[EMBEDDINGS] Full rebuild failed:', e);
     return {
       success: false,
@@ -4124,7 +4243,7 @@ function registerEmbeddingsIpc(servicesOrParams) {
     } catch (e) {
       return {
         success: false,
-        error: 'Vector DB is not available yet. Please try again in a moment.',
+        error: 'Vector DB is not available yet. Try again in a moment.',
         code: e?.code || 'VECTOR_DB_UNAVAILABLE',
         unavailable: true
       };

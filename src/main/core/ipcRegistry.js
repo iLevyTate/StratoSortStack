@@ -12,6 +12,7 @@ const { createLogger } = require('../../shared/logger');
 const { withCorrelationId, generateCorrelationId } = require('../../shared/correlationId');
 const { assertAllowedIpcSender } = require('../ipc/ipcSenderValidator');
 const ipcAbortRegistry = require('./ipcAbortRegistry');
+const { IPC_CHANNELS } = require('../../shared/constants');
 
 const TRACE_ID_PATTERN = /^[\w.:-]+$/;
 const MAX_TRACE_ID_LENGTH = 128;
@@ -110,6 +111,14 @@ let _isShuttingDown = false;
 const _inFlightOperations = new Set();
 
 /**
+ * Channels the shutdown gate lets through. lifecycle keeps `system:log`
+ * registered past its IPC cleanup so late renderer log lines still land; the
+ * gate rejecting them as APP_SHUTTING_DOWN made that exclusion pointless.
+ * Only side-effect-free channels that touch no service belong here.
+ */
+const SHUTDOWN_EXEMPT_CHANNELS = new Set([IPC_CHANNELS.SYSTEM.LOG]);
+
+/**
  * Set shutdown state - called by lifecycle during app shutdown
  * @param {boolean} shutting - True if app is shutting down
  */
@@ -157,7 +166,7 @@ function registerHandler(ipcMain, channel, handler) {
   const wrappedHandler = async (/** @type {any} */ event, /** @type {any[]} */ ...rawArgs) => {
     const operationId = `${channel}-${++_opCounter}`;
     _inFlightOperations.add(operationId);
-    if (_isShuttingDown) {
+    if (_isShuttingDown && !SHUTDOWN_EXEMPT_CHANNELS.has(channel)) {
       _inFlightOperations.delete(operationId);
       logger.debug(`[REGISTRY] Rejecting IPC call during shutdown: ${channel}`);
       return {

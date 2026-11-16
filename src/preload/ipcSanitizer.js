@@ -125,14 +125,17 @@ function createIpcSanitizer({ log }) {
 
     let cleaned = str;
 
-    // Remove dangerous executable tags (script, style, iframe)
-    cleaned = cleaned.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
-    cleaned = cleaned.replace(/<script\b[^>]*>[\s\S]*$/gi, '');
-
-    cleaned = cleaned.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '');
-    cleaned = cleaned.replace(/<style\b[^>]*>[\s\S]*$/gi, '');
-
-    cleaned = cleaned.replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '');
+    // Remove dangerous executable tags (script, style, iframe). Closing tags
+    // may carry spaces or junk before ">" (`</script >`), as browsers accept.
+    // Repeat until nothing changes: removing one element can join the text
+    // around it into another (`<scr<script></script>ipt>`).
+    let previous;
+    do {
+      previous = cleaned;
+      cleaned = cleaned.replace(/<(script|style|iframe)\b[\s\S]*?<\/\1\b[^>]*>/gi, '');
+    } while (cleaned !== previous);
+    // Then an unclosed script or style, to the end of the text.
+    cleaned = cleaned.replace(/<(script|style)\b[^>]*>[\s\S]*$/gi, '');
 
     // IPC data is rendered through React JSX which auto-escapes, so entity encoding
     // is unnecessary. The previous code corrupted user text like "size < 10MB",
@@ -160,8 +163,29 @@ function createIpcSanitizer({ log }) {
   // Prose that mentions a Windows path ("What is in D:\Docs?") matches the
   // path heuristic and used to be blanked before it left the renderer. Exact
   // names only; every other key keeps the heuristic, and a key containing
-  // "path" or "file" always wins.
-  const FREE_TEXT_KEYS = new Set(['query', 'description', 'text', 'message', 'note']);
+  // "path" or "file" always wins. Matched on key.toLowerCase(), so entries
+  // are lowercase.
+  //
+  // The settings prose fields (organization and persona guidance, persona
+  // label) were blanked when they named a path and also held `?`, `*` or
+  // `..`; an empty persona guidance then dropped the whole persona in main.
+  // Exclusion glob lists (settings `downloadsTriageExclusions`, triage
+  // `exclusionGlobs`) hold `\` and `*` by design; a blanked entry failed the
+  // settings schema (min length 1), so every later save failed. Main
+  // re-validates all of these (sanitizeCustomPersonas, sanitizeExclusionGlobs).
+  const FREE_TEXT_KEYS = new Set([
+    'query',
+    'description',
+    'text',
+    'message',
+    'note',
+    'organizationcustomguidance',
+    'chatpersonacustomguidance',
+    'guidance',
+    'label',
+    'downloadstriageexclusions',
+    'exclusionglobs'
+  ]);
 
   /**
    * @param {any} obj

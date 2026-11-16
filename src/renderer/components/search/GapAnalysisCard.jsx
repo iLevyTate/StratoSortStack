@@ -170,8 +170,8 @@ export default function GapAnalysisCard({ sources, onSend }) {
             <div className="flex items-start gap-1.5">
               <HelpCircle className="w-3.5 h-3.5 text-system-gray-400 mt-0.5 shrink-0" />
               <Text as="p" variant="tiny" className="text-system-gray-500">
-                Topics with only 1 source may benefit from additional documents. Click any topic to
-                explore it further.
+                Topics with only 1 source could use more documents. Click any topic to explore it
+                further.
               </Text>
             </div>
           </div>

@@ -306,7 +306,7 @@ if (!z) {
       if (data === undefined || data === null) return { data };
       const n = typeof data === 'number' ? data : Number(data);
       if (!Number.isFinite(n) || n < 1 || n > 500) {
-        return { error: 'history limit must be a number 1–500' };
+        return { error: 'History limit must be a number from 1 to 500' };
       }
       return { data: n };
     }),
@@ -314,7 +314,7 @@ if (!z) {
       if (data === undefined || data === null) return { data: 50 };
       const n = typeof data === 'number' ? data : Number(data);
       if (!Number.isFinite(n) || n < 1 || n > 200) {
-        return { error: 'undo history limit must be a number 1–200' };
+        return { error: 'Undo history limit must be a number from 1 to 200' };
       }
       return { data: Math.floor(n) };
     }),
@@ -1188,11 +1188,15 @@ if (!z) {
             .min(1)
             .max(2048)
             .refine(isSafeAbsoluteFsPath, SAFE_ABSOLUTE_PATH_MESSAGE),
+          // A Smart Folder may live on a network share, and the renderer
+          // sends this for every action, so one share-hosted suggestion must
+          // not fail a whole Trash or Ignore request. Main checks it again
+          // (validateFileOperationPath and the session's own suggestion).
           suggestedFolderPath: z
             .string()
             .min(1)
             .max(2048)
-            .refine(isSafeAbsoluteFsPath, SAFE_ABSOLUTE_PATH_MESSAGE)
+            .refine(isSafeFileOpPath, SAFE_FILE_OP_PATH_MESSAGE)
             .optional(),
           size: z.number().min(0).optional()
         })
@@ -1272,11 +1276,14 @@ if (!z) {
 
   /**
    * Trash duplicates: user-initiated bulk delete via shell.trashItem, recorded
-   * as a single TRASH_BATCH undo entry.
+   * as a single TRASH_BATCH undo entry. A network-share path is accepted so a
+   * set that spans a share still trashes its local copies; TrashService leaves
+   * the share copy in place and reports it, since Windows has no Recycle Bin
+   * there.
    */
   const trashDuplicatesSchema = z.object({
     paths: z
-      .array(z.string().min(1).max(2048).refine(isSafeAbsoluteFsPath, SAFE_ABSOLUTE_PATH_MESSAGE))
+      .array(z.string().min(1).max(2048).refine(isSafeFileOpPath, SAFE_FILE_OP_PATH_MESSAGE))
       .min(1)
       .max(1000),
     summary: z
@@ -1290,15 +1297,9 @@ if (!z) {
     verifyIdentical: z
       .array(
         z.object({
-          keep: z
-            .string()
-            .min(1)
-            .max(2048)
-            .refine(isSafeAbsoluteFsPath, SAFE_ABSOLUTE_PATH_MESSAGE),
+          keep: z.string().min(1).max(2048).refine(isSafeFileOpPath, SAFE_FILE_OP_PATH_MESSAGE),
           paths: z
-            .array(
-              z.string().min(1).max(2048).refine(isSafeAbsoluteFsPath, SAFE_ABSOLUTE_PATH_MESSAGE)
-            )
+            .array(z.string().min(1).max(2048).refine(isSafeFileOpPath, SAFE_FILE_OP_PATH_MESSAGE))
             .max(1000)
         })
       )

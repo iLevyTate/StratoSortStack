@@ -96,7 +96,7 @@ function LlamaConfigSection({
         : [];
       let label;
       if (isCpuBackend) {
-        label = 'Ready (CPU only — GPU backend unavailable)';
+        label = 'Ready (CPU only, GPU backend unavailable)';
       } else if (cpuFallbackTypes.length > 0) {
         label = `Ready (${llamaHealth.gpuBackend} active, ${cpuFallbackTypes.join(', ')} model${
           cpuFallbackTypes.length > 1 ? 's' : ''
@@ -222,7 +222,7 @@ function LlamaConfigSection({
                       suffix = ` (actual: ${attempt.actualBackend})`;
                     }
                   } else if (attempt.error) {
-                    suffix = ` — ${attempt.error}`;
+                    suffix = ` (${attempt.error})`;
                   }
                   return (
                     <Text
@@ -404,7 +404,7 @@ function LlamaConfigSection({
         title="Delete this model?"
         message={
           (pendingDeleteIsActive
-            ? 'This model is currently selected as one of your default AI models — analysis, vision, or search will stop working until you choose a replacement in Default AI models. '
+            ? 'This model is currently selected as one of your default AI models. Analysis, vision, or search will stop working until you choose a replacement in Default AI models. '
             : '') +
           (pendingDelete?.sizeMB
             ? `Removing this model frees ~${pendingDelete.sizeMB} MB of disk. You can re-download it later, but it must be downloaded again from scratch.`

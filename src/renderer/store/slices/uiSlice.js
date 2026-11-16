@@ -437,6 +437,14 @@ const uiSlice = createSlice({
         selectedTheme: state?.selectedTheme ?? initialState.selectedTheme,
         graphInsightsDockCollapsed:
           state?.graphInsightsDockCollapsed ?? initialState.graphInsightsDockCollapsed,
+        // The settings cache mirrors what main has saved; it is not session
+        // state. Nothing refetches it after a reset, so dropping it made
+        // selectNamingDefaults fall back to the hard-coded defaults, which
+        // Discover then sent to main as a naming override on every analyze.
+        settings: state?.settings ?? initialState.settings,
+        settingsLoaded: state?.settingsLoaded ?? initialState.settingsLoaded,
+        settingsLoading: state?.settingsLoading ?? initialState.settingsLoading,
+        settingsError: state?.settingsError ?? initialState.settingsError,
         settingsScrollTargetId: null,
         organizeFocusRequest: null,
         // Preserve `previousPhase` across reset. The persistence layer

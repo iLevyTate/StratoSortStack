@@ -79,12 +79,9 @@ const messageToText = (message) => {
   }
   return message == null ? '' : String(message);
 };
-const getHighestSeverity = (a, b) => {
-  const order = { error: 3, warning: 2, success: 1, info: 0 };
-  const aScore = order[a] ?? 0;
-  const bScore = order[b] ?? 0;
-  return aScore >= bScore ? a : b;
-};
+const SEVERITY_RANK = { error: 3, warning: 2, success: 1, info: 0 };
+const severityRank = (severity) => SEVERITY_RANK[severity] ?? 0;
+const getHighestSeverity = (a, b) => (severityRank(a) >= severityRank(b) ? a : b);
 
 function Toast({
   message,
@@ -518,11 +515,23 @@ export const useToast = () => {
             existing.severity || 'info',
             severity || 'info'
           );
+          // Show the text that carries the merged severity: a newer message at
+          // the same or a higher level replaces the old one (and its details
+          // and click action), so an escalated toast never shows the milder text.
+          const useIncoming = severityRank(severity || 'info') >= severityRank(existing.severity);
+          const incoming = useIncoming
+            ? {
+                message,
+                actionable: Boolean(meta?.actionable),
+                activationType: meta?.type || null,
+                activationData: meta?.data ?? null,
+                details: typeof meta?.details === 'string' && meta.details ? meta.details : null
+              }
+            : {};
           const updated = {
             ...existing,
+            ...incoming,
             id: existing.id, // keep id stable for animation
-            message: existing.originalMessage || existing.message,
-            originalMessage: existing.originalMessage || existing.message,
             mergeCount,
             severity: mergedSeverity,
             duration: durationForSeverity(mergedSeverity, duration ?? existing.duration),

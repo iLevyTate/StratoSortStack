@@ -239,69 +239,12 @@ class ModelDownloadManager {
       existing &&
       (existing.status === 'downloading' ||
         existing.status === 'redirecting' ||
-        existing.status === 'retrying') &&
+        existing.status === 'retrying' ||
+        existing.status === 'installing') &&
       !isRedirectContinuation &&
       !isRetryContinuation
     ) {
       throw new Error(`Download already in progress: ${filename}`);
-    }
-    const retryAttempt = Number.isInteger(options._attempt) ? options._attempt : 0;
-    const maxRetries = Number.isInteger(options._maxRetries)
-      ? Math.max(0, options._maxRetries)
-      : DEFAULT_DOWNLOAD_MAX_RETRIES;
-    const filePath = path.join(modelPath, filename);
-    const partialPath = filePath + '.partial';
-
-    // Check for existing partial download. Done before the space check so a
-    // resume only has to find room for the bytes still to come.
-    let startByte = 0;
-    try {
-      const partialStats = await fs.stat(partialPath);
-      if (partialStats.size >= modelInfo.size) {
-        // Stale/invalid partial (equal or larger than target size) can cause
-        // bad range requests and unrecoverable retry loops. Restart cleanly.
-        await this._cleanupPartialFile(partialPath);
-        logger.warn(
-          `[Download] Discarded stale partial for ${filename} (${partialStats.size} bytes), restarting`
-        );
-      } else {
-        startByte = partialStats.size;
-        logger.info(`[Download] Resuming from byte ${startByte}`);
-      }
-    } catch {
-      // No partial file, start fresh
-    }
-
-    // Check disk space — aggregated across every other in-flight download.
-    // Without the aggregate, N concurrent downloads each pass an individual
-    // check while jointly exceeding free space and failing mid-stream.
-    let pendingBytes = 0;
-    for (const [name, state] of this._downloads) {
-      if (name === filename) continue;
-      if (
-        state.status === 'downloading' ||
-        state.status === 'redirecting' ||
-        state.status === 'retrying'
-      ) {
-        pendingBytes += Math.max(0, (state.totalBytes || 0) - (state.downloadedBytes || 0));
-      }
-    }
-    // The bytes already in the partial are on disk; only the rest needs room.
-    const neededBytes = Math.max(0, modelInfo.size - startByte) + pendingBytes;
-    const spaceCheck = await this.checkDiskSpace(neededBytes);
-    if (!spaceCheck.sufficient) {
-      if (spaceCheck.checkFailed) {
-        throw new Error(
-          `Cannot verify free disk space (${spaceCheck.error || 'unknown error'}); ` +
-            `refusing to start a ${Math.round(modelInfo.size / 1024 / 1024 / 1024)}GB download`
-        );
-      }
-      const neededGb = Math.round(neededBytes / 1024 / 1024 / 1024);
-      throw new Error(
-        `Insufficient disk space. Need ${neededGb}GB` +
-          (pendingBytes > 0 ? ' (including in-progress downloads)' : '') +
-          `, have ${Math.round(spaceCheck.available / 1024 / 1024 / 1024)}GB`
-      );
     }
 
     // Use redirect URL if provided (for following HTTP redirects), with a max redirect limit
@@ -313,18 +256,90 @@ class ModelDownloadManager {
     // Create an internal AbortController so cancelDownload() can work
     const internalAbortController = new AbortController();
 
-    // Track download state
+    // Track download state. Claimed here, before the first await: the
+    // partial-file and disk-space checks below used to run between the guard
+    // and the set, so two near-simultaneous requests both passed the guard
+    // and wrote the same `.partial`. Every exit before the request opens
+    // releases the slot (identity-checked, like finalizeFailure).
     const downloadState = {
       filename,
       url: validatedDownloadUrl,
       totalBytes: modelInfo.size,
-      downloadedBytes: startByte,
+      downloadedBytes: 0,
       /** @type {Array<{ time: number, bytes: number }>} */
       speedSamples: [],
       status: 'downloading',
       abortController: internalAbortController
     };
     this._downloads.set(filename, downloadState);
+    const releaseSlot = () => {
+      if (this._downloads.get(filename) === downloadState) this._downloads.delete(filename);
+    };
+
+    const retryAttempt = Number.isInteger(options._attempt) ? options._attempt : 0;
+    const maxRetries = Number.isInteger(options._maxRetries)
+      ? Math.max(0, options._maxRetries)
+      : DEFAULT_DOWNLOAD_MAX_RETRIES;
+    const filePath = path.join(modelPath, filename);
+    const partialPath = filePath + '.partial';
+
+    // Check for existing partial download. Done before the space check so a
+    // resume only has to find room for the bytes still to come.
+    let startByte = 0;
+    try {
+      try {
+        const partialStats = await fs.stat(partialPath);
+        if (partialStats.size >= modelInfo.size) {
+          // Stale/invalid partial (equal or larger than target size) can cause
+          // bad range requests and unrecoverable retry loops. Restart cleanly.
+          await this._cleanupPartialFile(partialPath);
+          logger.warn(
+            `[Download] Discarded stale partial for ${filename} (${partialStats.size} bytes), restarting`
+          );
+        } else {
+          startByte = partialStats.size;
+          logger.info(`[Download] Resuming from byte ${startByte}`);
+        }
+      } catch {
+        // No partial file, start fresh
+      }
+      downloadState.downloadedBytes = startByte;
+
+      // Check disk space — aggregated across every other in-flight download.
+      // Without the aggregate, N concurrent downloads each pass an individual
+      // check while jointly exceeding free space and failing mid-stream.
+      let pendingBytes = 0;
+      for (const [name, state] of this._downloads) {
+        if (name === filename) continue;
+        if (
+          state.status === 'downloading' ||
+          state.status === 'redirecting' ||
+          state.status === 'retrying'
+        ) {
+          pendingBytes += Math.max(0, (state.totalBytes || 0) - (state.downloadedBytes || 0));
+        }
+      }
+      // The bytes already in the partial are on disk; only the rest needs room.
+      const neededBytes = Math.max(0, modelInfo.size - startByte) + pendingBytes;
+      const spaceCheck = await this.checkDiskSpace(neededBytes);
+      if (!spaceCheck.sufficient) {
+        if (spaceCheck.checkFailed) {
+          throw new Error(
+            `Cannot verify free disk space (${spaceCheck.error || 'unknown error'}); ` +
+              `refusing to start a ${Math.round(modelInfo.size / 1024 / 1024 / 1024)}GB download`
+          );
+        }
+        const neededGb = Math.round(neededBytes / 1024 / 1024 / 1024);
+        throw new Error(
+          `Insufficient disk space. Need ${neededGb}GB` +
+            (pendingBytes > 0 ? ' (including in-progress downloads)' : '') +
+            `, have ${Math.round(spaceCheck.available / 1024 / 1024 / 1024)}GB`
+        );
+      }
+    } catch (error) {
+      releaseSlot();
+      throw error;
+    }
 
     return new Promise((resolve, reject) => {
       const url = new URL(validatedDownloadUrl);
@@ -390,7 +405,9 @@ class ModelDownloadManager {
           // Keep the map slot occupied during the retry delay so a second
           // caller (or a second failure event) cannot start a parallel stream.
           downloadState.status = 'retrying';
-        } else if (this._downloads.has(filename)) {
+        } else if (this._downloads.get(filename) === downloadState) {
+          // Identity check: after a cancel in the checksum phase a new
+          // download of the same file may already hold the slot.
           this._downloads.delete(filename);
         }
 
@@ -596,9 +613,25 @@ class ModelDownloadManager {
           if (typeof writeStream.close === 'function') {
             writeStream.close();
           }
+          // The abort listeners go once the body is written, but checking a
+          // multi-GB file and fetching a vision projector take a while. A
+          // cancel in that time must still stop the install, not just report
+          // "cancelled" while the model lands anyway.
+          const finishSignal = AbortSignal.any(
+            [internalAbortController.signal, signal].filter(Boolean)
+          );
+          const stopIfCancelled = (/** @type {boolean} */ dropPartial) => {
+            if (!finishSignal.aborted && downloadState.status !== 'cancelled') return false;
+            // Leave the partial alone if a new download of this file already
+            // took the slot: it is that download's file now.
+            const ownsSlot = this._downloads.get(filename) === downloadState;
+            finalizeFailure(new Error('Download cancelled'), 'cancelled', dropPartial && ownsSlot);
+            return true;
+          };
           try {
             // Verify file size against server-reported Content-Length (or catalog fallback).
             const stats = await fs.stat(partialPath);
+            if (stopIfCancelled(true)) return;
             if (stats.size !== expectedBytes) {
               finalizeFailure(
                 new Error(
@@ -611,7 +644,14 @@ class ModelDownloadManager {
             }
 
             // Verify checksum (required for all remote model artifacts).
-            const isValid = await this._verifyChecksum(partialPath, expectedChecksum);
+            let isValid;
+            try {
+              isValid = await this._verifyChecksum(partialPath, expectedChecksum, finishSignal);
+            } catch (verifyError) {
+              if (stopIfCancelled(true)) return;
+              throw verifyError;
+            }
+            if (stopIfCancelled(true)) return;
             if (!isValid) {
               finalizeFailure(
                 new Error('Download corrupted - checksum mismatch'),
@@ -621,10 +661,23 @@ class ModelDownloadManager {
               return;
             }
 
-            // Rename to final filename
+            // Rename to final filename. A rename cannot be called back, so
+            // cancelDownload refuses while it runs ('installing').
+            downloadState.status = 'installing';
             await fs.rename(partialPath, filePath);
-            downloadState.status = 'complete';
-            if (this._downloads.has(filename)) this._downloads.delete(filename);
+            const needsCompanion = Boolean(
+              modelInfo.clipModel && modelInfo.clipModel.name && modelInfo.clipModel.url
+            );
+            if (needsCompanion) {
+              // Keep the slot while the projector downloads so a cancel aimed
+              // at this model reaches it. No bytes left to count for space.
+              downloadState.status = 'downloading';
+              downloadState.downloadedBytes = expectedBytes;
+              downloadState.totalBytes = expectedBytes;
+            } else {
+              downloadState.status = 'complete';
+              if (this._downloads.get(filename) === downloadState) this._downloads.delete(filename);
+            }
 
             const finalProgress = {
               filename,
@@ -641,7 +694,7 @@ class ModelDownloadManager {
 
             let companionDownload = null;
             // Auto-download clipModel companion (mmproj) for vision models
-            if (modelInfo.clipModel && modelInfo.clipModel.name && modelInfo.clipModel.url) {
+            if (needsCompanion) {
               const companionPath = path.join(modelPath, modelInfo.clipModel.name);
               const companionTotalBytes = Number(modelInfo.clipModel.size) || 0;
               try {
@@ -659,7 +712,7 @@ class ModelDownloadManager {
                 try {
                   const companionResult = await this.downloadModel(modelInfo.clipModel.name, {
                     onProgress,
-                    signal
+                    signal: finishSignal
                   });
                   companionDownload = {
                     name: modelInfo.clipModel.name,
@@ -683,6 +736,14 @@ class ModelDownloadManager {
                   };
                 }
               }
+            }
+
+            if (needsCompanion) {
+              // The model file is installed; a cancel during the projector
+              // still ends as cancelled, matching what the cancel call said.
+              if (stopIfCancelled(false)) return;
+              downloadState.status = 'complete';
+              if (this._downloads.get(filename) === downloadState) this._downloads.delete(filename);
             }
 
             const companionDownloadedBytes = Number(companionDownload?.downloadedBytes) || 0;
@@ -827,7 +888,8 @@ class ModelDownloadManager {
       !!state &&
       (state.status === 'downloading' ||
         state.status === 'redirecting' ||
-        state.status === 'retrying')
+        state.status === 'retrying' ||
+        state.status === 'installing')
     );
   }
 
@@ -836,7 +898,8 @@ class ModelDownloadManager {
    */
   cancelDownload(/** @type {any} */ filename) {
     const download = this._downloads.get(filename);
-    if (download && download.abortController) {
+    // 'installing': the file is being renamed into place and cannot be undone.
+    if (download && download.abortController && download.status !== 'installing') {
       download.status = 'cancelled';
       download.abortController.abort();
       return true;
@@ -865,7 +928,7 @@ class ModelDownloadManager {
         return {
           success: false,
           error: inUse
-            ? 'Model file is in use — it may be loaded by the AI engine. Switch the active model or restart the app, then try again.'
+            ? 'Model file is in use. The AI engine may have it loaded. Switch the active model or restart the app, then try again.'
             : `Could not delete model file: ${error.message}`,
           errorCode: error?.code || 'DELETE_FAILED'
         };
@@ -916,7 +979,7 @@ class ModelDownloadManager {
     const code = error?.code;
     /** @type {Record<string, string>} */
     const messageMap = {
-      ENOSPC: `Disk full — not enough free space to download ${filename}`,
+      ENOSPC: `Disk full: not enough free space to download ${filename}`,
       EACCES: `Permission denied writing ${filename} (check models directory permissions)`,
       EPERM: `Permission denied writing ${filename} (check models directory permissions)`,
       ENOENT: `Models directory missing while writing ${filename}`,
@@ -1016,10 +1079,29 @@ class ModelDownloadManager {
     return parsedUrl;
   }
 
-  async _verifyChecksum(/** @type {any} */ filePath, /** @type {any} */ expectedHash) {
+  async _verifyChecksum(
+    /** @type {any} */ filePath,
+    /** @type {any} */ expectedHash,
+    /** @type {AbortSignal|undefined} */ abortSignal = undefined
+  ) {
     return new Promise((resolve, reject) => {
       const hash = crypto.createHash('sha256');
       const stream = require('fs').createReadStream(filePath);
+      // Hashing a multi-GB file takes tens of seconds; stop reading on cancel.
+      if (abortSignal) {
+        const onAbort = () => {
+          if (typeof stream.destroy === 'function') stream.destroy();
+          reject(new Error('Download cancelled'));
+        };
+        if (abortSignal.aborted) {
+          onAbort();
+          return;
+        }
+        abortSignal.addEventListener('abort', onAbort, { once: true });
+        const detach = () => abortSignal.removeEventListener('abort', onAbort);
+        stream.on('end', detach);
+        stream.on('error', detach);
+      }
 
       stream.on('data', (chunk) => hash.update(chunk));
       stream.on('end', () => {

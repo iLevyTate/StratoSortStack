@@ -140,10 +140,10 @@ describe('BatchAnalysisService (edge)', () => {
       for (let i = 0; i < items.length; i++) {
         const r = await processor(items[i], i);
         results.push(r);
-        if (r.success) successful++;
+        if (r?.success) successful++;
         if (options?.onProgress)
           options.onProgress({ completed: i + 1, total: items.length, percent: 100 });
-        if (options?.stopOnError && !r.success) break;
+        if (options?.stopOnError && !r?.success) break;
       }
       return { results, errors, successful };
     });
@@ -198,6 +198,43 @@ describe('BatchAnalysisService (edge)', () => {
       );
 
       await expect(p).resolves.toEqual(expect.objectContaining({ total: 1, successful: 1 }));
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  // The drain wait used to live on the service singleton and check the run
+  // that created it: cancelling that run made another run's waiting file
+  // return null as if it had been cancelled too.
+  test('cancelling one run during backpressure does not skip another run waiting on it', async () => {
+    jest.useFakeTimers();
+    const startedAt = Date.now();
+    mockAnalysisQueue.getStats.mockImplementation(() =>
+      Date.now() - startedAt < 1200
+        ? { queueLength: 100, capacityPercent: 80, failedItemsCount: 0, deadLetterCount: 0 }
+        : { queueLength: 10, capacityPercent: 40, failedItemsCount: 0, deadLetterCount: 0 }
+    );
+
+    try {
+      const BatchAnalysisService = require('../src/main/services/BatchAnalysisService');
+      const service = new BatchAnalysisService({ concurrency: 1 });
+
+      let cancelA = false;
+      const runA = service.analyzeFiles(['C:\\a.pdf'], [], {
+        concurrency: 1,
+        isCancelled: () => cancelA
+      });
+      const runB = service.analyzeFiles(['C:\\b.pdf'], [], {
+        concurrency: 1,
+        isCancelled: () => false
+      });
+
+      await advance(200);
+      cancelA = true;
+      await advance(3000);
+
+      await expect(runA).resolves.toEqual(expect.objectContaining({ successful: 0 }));
+      await expect(runB).resolves.toEqual(expect.objectContaining({ total: 1, successful: 1 }));
     } finally {
       jest.useRealTimers();
     }

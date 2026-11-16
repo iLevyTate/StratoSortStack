@@ -424,6 +424,33 @@ describe('DiscoverPhase premium guidance', () => {
       useAnalysisRun.mockImplementation(originalAnalysisRun);
     }
   });
+
+  // Force reset goes through the run: the Redux-only reset cleared every
+  // finished result and left the run's lock held, so a retry was refused.
+  test('Force reset on a stuck run uses the run reset, not the Redux-only one', () => {
+    const { useDiscoverState, useAnalysisRun } = require('../../src/renderer/phases/discover');
+    const defaults = useDiscoverState();
+    const originalDiscoverState = useDiscoverState.getMockImplementation();
+    const originalAnalysisRun = useAnalysisRun.getMockImplementation();
+    const resetRun = jest.fn();
+    useDiscoverState.mockImplementation(() => ({
+      ...defaults,
+      isAnalyzing: true,
+      analysisProgress: { current: 1, total: 4, lastActivity: Date.now() - 10 * 60 * 1000 }
+    }));
+    useAnalysisRun.mockImplementation(() => ({ ...originalAnalysisRun(), resetRun }));
+
+    try {
+      render(<DiscoverPhase />);
+      fireEvent.click(screen.getByRole('button', { name: 'Force reset' }));
+
+      expect(resetRun).toHaveBeenCalledWith('User forced reset');
+      expect(mockResetAnalysisState).not.toHaveBeenCalled();
+    } finally {
+      useDiscoverState.mockImplementation(originalDiscoverState);
+      useAnalysisRun.mockImplementation(originalAnalysisRun);
+    }
+  });
   // A returning user with organized history may continue to Organize even
   // with nothing ready in the queue, the same rule the Organize tab follows.
   test('organized history lets Continue open Organize even when nothing is ready', () => {

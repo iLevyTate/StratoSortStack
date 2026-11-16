@@ -8,9 +8,9 @@
  * same file. Canonical form: Unicode composed (NFC), forward slashes,
  * lowercased when the path is Windows-style.
  *
- * Main composes every path it validates and returns that spelling in its
- * result rows, while a Mac app can save "März.pdf" decomposed. Without NFC
- * here a moved file's result row would not find its queue entry.
+ * On macOS main composes every path it validates and returns that spelling
+ * in its result rows, while a Mac app can save "März.pdf" decomposed. Without
+ * NFC here a moved file's result row would not find its queue entry.
  *
  * Single source of truth — keep every renderer-side path-keyed map/set
  * (writes AND reads) on this helper so lookups can't miss on key style.

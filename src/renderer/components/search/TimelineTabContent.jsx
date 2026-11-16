@@ -170,7 +170,7 @@ export default function TimelineTabContent({
       {isEmpty && (
         <div className="flex-1 flex items-center justify-center">
           <span className="text-micro text-system-gray-400 text-center px-4">
-            No analyzed files yet &mdash; analyze files to build your timeline.
+            No analyzed files yet. Analyze files to build your timeline.
           </span>
         </div>
       )}

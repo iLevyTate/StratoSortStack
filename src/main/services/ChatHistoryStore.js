@@ -672,8 +672,8 @@ class ChatHistoryStore {
    *
    *   2. Decrypt-and-scan stage — for the most-recently-updated
    *      conversations NOT already matched by stage 1, fetch their
-   *      messages, decrypt the JSON payload columns in memory,
-   *      stringify, and substring-match against the query. Bounded
+   *      messages, decrypt the answer and follow-up columns in memory,
+   *      and substring-match their text against the query. Bounded
    *      at SEARCH_DECRYPT_SCAN_CAP candidate conversations so cost
    *      stays sublinear in total history size for typical users.
    *
@@ -709,8 +709,9 @@ class ChatHistoryStore {
       return { items: [], capped: false, capLimit: SEARCH_DECRYPT_SCAN_CAP, scannedCount: 0 };
     }
 
-    // Escape LIKE special characters to prevent unintended wildcard matching
-    const escapedQuery = query.replace(/[%_]/g, '\\$&');
+    // Escape LIKE special characters, and the ESCAPE character itself, so a
+    // query like "C:\Users" matches the backslash instead of escaping "U".
+    const escapedQuery = query.replace(/[\\%_]/g, '\\$&');
     const pattern = `%${escapedQuery}%`;
 
     // Stage 1: fast SQL search on plain columns only.
@@ -765,7 +766,7 @@ class ChatHistoryStore {
 
     const needle = query.toLowerCase();
     const messageStmt = this._db.prepare(
-      `SELECT document_answer, model_answer, meta FROM messages WHERE conversation_id = ?`
+      `SELECT document_answer, model_answer, follow_ups FROM messages WHERE conversation_id = ?`
     );
 
     let added = 0;
@@ -796,24 +797,26 @@ class ChatHistoryStore {
   }
 
   /**
-   * Decrypt one message row's JSON columns and check whether the
-   * lowercase needle appears in any of them. Stops as soon as it
-   * finds a hit; the JSON.stringify pass over each payload only runs
-   * if the previous payloads didn't match. Encrypted-but-empty
-   * decrypts (cross-machine handoff, corrupt ciphertext) return ''
-   * which contains no needles, so the search just skips them.
+   * Decrypt one message row's answer columns and check whether the
+   * lowercase needle appears in the text a user can read: each answer
+   * item's `text` and each follow-up. The serialized JSON is never
+   * matched, so a key such as "text" or "mode" does not hit every
+   * conversation. Stops at the first hit. Encrypted-but-empty decrypts
+   * (cross-machine handoff, corrupt ciphertext) parse to [] and are
+   * skipped.
    * @private
    */
   _messageMatchesNeedle(/** @type {any} */ row, /** @type {any} */ needle) {
     if (!row || !needle) return false;
-    const sources = [row.document_answer, row.model_answer, row.meta];
-    for (const raw of sources) {
-      if (raw == null || raw === '') continue;
-      const plain = decryptFromStorage(raw);
-      if (!plain) continue;
-      if (plain.toLowerCase().includes(needle)) return true;
+    /** @param {any} value */
+    const matches = (value) => typeof value === 'string' && value.toLowerCase().includes(needle);
+    for (const raw of [row.document_answer, row.model_answer]) {
+      const items = _decryptJsonPayload(raw, []);
+      if (!Array.isArray(items)) continue;
+      if (items.some((item) => matches(item?.text))) return true;
     }
-    return false;
+    const followUps = _decryptJsonPayload(row.follow_ups, []);
+    return Array.isArray(followUps) && followUps.some(matches);
   }
 
   /**

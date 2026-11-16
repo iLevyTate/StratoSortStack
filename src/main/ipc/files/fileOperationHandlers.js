@@ -1101,18 +1101,37 @@ function createPerformOperationHandler({ logger: log, getServiceIntegration, get
               });
               continue;
             }
-            const single = await moveOneFile(op, {
-              log,
-              getServiceIntegration,
-              getMainWindow,
-              recordUndo: false,
-              destinationDecision: decisionForDestination(
-                batchMoveDecisions,
-                op?.destination,
-                process.platform,
-                op?.source
-              )
-            });
+            // moveOneFile rethrows most filesystem errors (EBUSY/EPERM on a
+            // locked file, a failed cross-device copy, EPATHCHANGED). Those
+            // all happen before or during the rename, so the file has not
+            // moved: record a failed row and keep going, so the files after
+            // it are still tried and the earlier moves get their undo entry.
+            let single;
+            try {
+              single = await moveOneFile(op, {
+                log,
+                getServiceIntegration,
+                getMainWindow,
+                recordUndo: false,
+                destinationDecision: decisionForDestination(
+                  batchMoveDecisions,
+                  op?.destination,
+                  process.platform,
+                  op?.source
+                )
+              });
+            } catch (moveErr) {
+              log.warn('[FILE-OPS] Batch move of one file failed', {
+                source: op?.source ? path.basename(op.source) : 'N/A',
+                error: moveErr?.message,
+                code: moveErr?.code
+              });
+              single = {
+                success: false,
+                error: moveErr?.message || 'Move failed',
+                errorCode: moveErr?.code || 'MOVE_FAILED'
+              };
+            }
             moveResults.push({ ...single, source: op?.source, destination: op?.destination });
             if (single.success && !single.skipped && single.movedTo) {
               movedOps.push({

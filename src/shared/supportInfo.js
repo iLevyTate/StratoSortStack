@@ -118,7 +118,7 @@ function buildVersionString(info) {
  */
 function buildSupportMailtoUrl(info = {}) {
   const versionLabel = info?.appVersion ? `v${info.appVersion}` : 'unknown version';
-  const subject = encodeURIComponent(`StratoSort Stack support — ${versionLabel}`);
+  const subject = encodeURIComponent(`StratoSort Stack support (${versionLabel})`);
   const body = encodeURIComponent(buildSupportReportBody(info));
   return `mailto:${SUPPORT_EMAIL}?subject=${subject}&body=${body}`;
 }

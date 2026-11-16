@@ -16,6 +16,7 @@ function createIpcValidator({ log: _log } = {}) {
   const MAX_ARRAY_LENGTH = 50000;
   const MAX_OBJECT_KEYS = 5000;
   const MAX_STRING_LENGTH = 500000; // ~500KB per string payload
+  const PAYLOAD_TOO_LARGE = 'payload-too-large';
 
   /**
    * Validate event source to prevent spoofing.
@@ -136,7 +137,15 @@ function createIpcValidator({ log: _log } = {}) {
         case 'smart-folders:get-custom':
           return [];
         case 'analysis-history:get':
-          return [];
+          // Not []: pagination reads an empty page as the end of the
+          // history, so a page of long transcripts made the whole list look
+          // empty. The reason lets fetchAnalysisHistoryPages retry the same
+          // offset with a smaller page.
+          return {
+            success: false,
+            error: 'IPC response rejected: payload exceeded safety limits',
+            reason: PAYLOAD_TOO_LARGE
+          };
         case 'undo-redo:get-history':
           return [];
         case 'undo-redo:get-state':

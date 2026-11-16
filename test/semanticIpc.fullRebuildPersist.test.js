@@ -249,6 +249,50 @@ describe('FULL_REBUILD reports whether the rebuilt index reached disk', () => {
     );
     expect(metadata.clearRebuildInProgress).toHaveBeenCalled();
   });
+  test('an aborted invoke (quit mid-rebuild) stops and keeps the rebuildInProgress marker', async () => {
+    const controller = new AbortController();
+    const embeddingService = require('../src/main/services/ParallelEmbeddingService').getInstance();
+    // The probe succeeds; the quit lands while the first file is embedding.
+    embeddingService.embedText
+      .mockResolvedValueOnce({ vector: [0.1, 0.2, 0.3], model: 'm' })
+      .mockImplementationOnce(async () => {
+        controller.abort('shutdown');
+        throw new Error('ParallelEmbeddingService is shut down');
+      });
+
+    const result = await fullRebuildHandler()({ abortSignal: controller.signal }, {});
+
+    expect(result).toEqual(
+      expect.objectContaining({ success: false, errorCode: 'FULL_REBUILD_INTERRUPTED' })
+    );
+    expect(vectorDb.batchUpsertFiles).not.toHaveBeenCalled();
+    expect(metadata.clearRebuildInProgress).not.toHaveBeenCalled();
+  });
+
+  test('a file batch skipped for shutdown keeps the marker and is not reported persisted', async () => {
+    vectorDb.batchUpsertFiles.mockResolvedValue({ count: 0, skipped: true, reason: 'shutdown' });
+
+    const result = await fullRebuildHandler()({}, {});
+
+    expect(result.persisted).toBe(false);
+    expect(metadata.clearRebuildInProgress).not.toHaveBeenCalled();
+  });
+
+  test('a file batch whose vector service is gone keeps the marker', async () => {
+    const { container, ServiceIds } = require('../src/main/services/ServiceContainer');
+    const resolve = container.tryResolve;
+    vectorDb.batchUpsertFiles.mockImplementation(async () => {
+      // Shutdown unregistered the service between the reset and the upsert.
+      container.tryResolve = jest.fn((id) => (id === ServiceIds.ORAMA_VECTOR ? null : resolve(id)));
+      throw new TypeError("Cannot read properties of null (reading 'batchUpsertFiles')");
+    });
+
+    const result = await fullRebuildHandler()({}, {});
+
+    expect(result.persisted).toBe(false);
+    expect(metadata.clearRebuildInProgress).not.toHaveBeenCalled();
+  });
+
   test('a final save that skipped a rebuilt collection as too large is not reported persisted', async () => {
     vectorDb.resetAll.mockResolvedValue({ persisted: false, error: new Error('EBUSY') });
     vectorDb.persistAll.mockResolvedValue({ success: true, tooLargeToSave: ['fileChunks'] });

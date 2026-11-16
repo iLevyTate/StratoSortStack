@@ -315,6 +315,11 @@ class SmartFolderWatcher {
     this.isRunning = false;
     this.isStarting = false;
     this.watchedPaths = new Set();
+    // Normalized folders unwatch() was called on in the current chokidar
+    // instance. It keeps ignoring their whole subtree, and add() lifts that
+    // only for the exact path added.
+    /** @type {Set<string>} */
+    this._unwatchedRoots = new Set();
 
     this._startPromise = null;
 
@@ -651,8 +656,7 @@ class SmartFolderWatcher {
       const folders = this.getSmartFolders();
 
       if (!folders || folders.length === 0) {
-        const errorMsg =
-          'No smart folders configured. Please add smart folders in the Setup phase first.';
+        const errorMsg = 'No smart folders set up yet. Add them in the Setup phase first.';
         logger.warn('[SMART-FOLDER-WATCHER] Start failed:', errorMsg);
         this._lastStartError = errorMsg;
         return false;
@@ -661,7 +665,7 @@ class SmartFolderWatcher {
       const validPaths = await this._getValidFolderPaths(folders);
 
       if (validPaths.length === 0) {
-        const errorMsg = `All ${folders.length} smart folder path(s) are inaccessible. Please check that the folders exist and you have read permissions.`;
+        const errorMsg = `All ${folders.length} smart folder path(s) are inaccessible. Check that the folders exist and you have read permissions.`;
         logger.warn('[SMART-FOLDER-WATCHER] Start failed:', errorMsg);
         this._lastStartError = errorMsg;
         return false;
@@ -702,9 +706,8 @@ class SmartFolderWatcher {
       }
 
       // Log the chosen depth so users debugging "my deeply-nested file
-      // wasn't picked up" can correlate without reading source. Default
-      // dropped from 10 → 5 in this release window; users with deeper
-      // trees can override via the STRATOSORT_WATCHER_DEPTH env var.
+      // wasn't picked up" can correlate without reading source. Users with
+      // deeper trees can override via the STRATOSORT_WATCHER_DEPTH env var.
       logger.info('[SMART-FOLDER-WATCHER] Watcher configuration', {
         depth: this.watcherDepth,
         polling: usePolling
@@ -721,11 +724,9 @@ class SmartFolderWatcher {
       // does not increase for files we keep, and drops to zero for files we
       // reject up front.
       //
-      // `depth: 5` covers every real-world personal-document tree we've seen
-      // in user data (Downloads, Documents, Desktop trees top out at 3-4
-      // nested folders). The old `depth: 10` was speculative and multiplied
-      // watch-handle cost on large folders without benefit. Users with
-      // deeper trees can adjust via the `watcherDepth` setting below.
+      // `depth` is `this.watcherDepth` (10 by default, STRATOSORT_WATCHER_DEPTH
+      // overrides it); _scanDirectory reads the same directories.
+      this._unwatchedRoots.clear();
       this.watcher = chokidar.watch(validPaths, {
         ignoreInitial: true, // Don't process existing files on startup
         // The dotfile pattern already covers `.git/` directories; an
@@ -1130,11 +1131,26 @@ class SmartFolderWatcher {
       }
     }
 
+    // Smart Folders can nest. chokidar's unwatch() closes and ignores the
+    // whole subtree, and add() lifts that ignore only for the exact path
+    // added, so a folder above or below one unwatched earlier, or a removed
+    // folder that contains a remaining one, needs a fresh chokidar instance.
+    let needsRestart = false;
+    const overlapsStrictly = (/** @type {string} */ a, /** @type {string} */ b) =>
+      a !== b && (this._isUnderRoots(a, [b]) || this._isUnderRoots(b, [a]));
+
     // Add paths present in desired but not already watched.
     let unparked = 0;
     for (const [key, addPath] of desiredByCanonical) {
       if (currentByCanonical.has(key)) continue;
       logger.info('[SMART-FOLDER-WATCHER] Adding watch path:', addPath);
+      const [addRoot] = this._normalizedRoots([addPath]);
+      if (addRoot) {
+        this._unwatchedRoots.delete(addRoot);
+        if ([...this._unwatchedRoots].some((root) => overlapsStrictly(root, addRoot))) {
+          needsRestart = true;
+        }
+      }
       this.watcher.add(addPath);
       this.watchedPaths.add(addPath);
       unparked += this._unparkItemsUnder(addPath);
@@ -1157,18 +1173,45 @@ class SmartFolderWatcher {
     // smart folder, or the folder is simply unavailable right now. Only the
     // former should discard parked work — purging on a transient unmount is the
     // exact data loss parking exists to prevent.
+    //
+    // A folder a remaining root still covers is not unwatched at all.
     const configuredRoots = this._normalizedRoots(
       (Array.isArray(folders) ? folders : []).map((/** @type {any} */ f) => f?.path)
     );
+    const desiredRoots = this._normalizedRoots(desiredByCanonical.values());
     for (const [key, removePath] of currentByCanonical) {
       if (desiredByCanonical.has(key)) continue;
+      if (this._isUnderRoots(removePath, desiredRoots)) {
+        // Still inside a watched folder: its files keep their events and
+        // their queued work.
+        logger.info('[SMART-FOLDER-WATCHER] Removing watch path:', removePath, {
+          reason: 'covered-by-parent'
+        });
+        this.watchedPaths.delete(removePath);
+        continue;
+      }
       const stillConfigured = this._isUnderRoots(removePath, configuredRoots);
       logger.info('[SMART-FOLDER-WATCHER] Removing watch path:', removePath, {
         reason: stillConfigured ? 'unavailable' : 'removed-from-config'
       });
-      this.watcher.unwatch(removePath);
+      const [removeRoot] = this._normalizedRoots([removePath]);
+      if (removeRoot && desiredRoots.some((root) => overlapsStrictly(root, removeRoot))) {
+        needsRestart = true;
+      } else {
+        this.watcher.unwatch(removePath);
+        if (removeRoot) this._unwatchedRoots.add(removeRoot);
+      }
       this.watchedPaths.delete(removePath);
-      this._purgeQueuedWorkForRemovedFolder(removePath, { purgeParked: !stillConfigured });
+      this._purgeQueuedWorkForRemovedFolder(removePath, {
+        purgeParked: !stillConfigured,
+        keepRoots: desiredRoots
+      });
+    }
+    if (needsRestart) {
+      // stop() persists the queue it keeps (the purge above left the nested
+      // folders' work in it) and start() restores it.
+      logger.info('[SMART-FOLDER-WATCHER] Nested folder change needs a fresh watcher; restarting');
+      await this.restart();
     }
   }
 
@@ -1206,18 +1249,22 @@ class SmartFolderWatcher {
    * for a folder that is no longer watched. Compares canonical forms so
    * `C:\Docs\` and `c:/docs` purge the same entries.
    * @param {string} removedFolderPath
-   * @param {{ purgeParked?: boolean }} [options] purgeParked drops the folder's
-   *   parked backlog too. Only pass it when the folder left the smart-folder
-   *   CONFIG — a folder that is merely unavailable keeps its parked work.
+   * @param {{ purgeParked?: boolean, keepRoots?: string[] }} [options]
+   *   purgeParked drops the folder's parked backlog too. Only pass it when the
+   *   folder left the smart-folder CONFIG — a folder that is merely
+   *   unavailable keeps its parked work. keepRoots (normalized) spares work
+   *   for files under a Smart Folder nested inside the removed one.
    * @private
    */
   _purgeQueuedWorkForRemovedFolder(removedFolderPath, options = {}) {
     const normalizedFolder = normalizePathForIndex(removedFolderPath).replace(/\/+$/, '');
     if (!normalizedFolder) return;
     const prefix = `${normalizedFolder}/`;
+    const keepRoots = Array.isArray(options.keepRoots) ? options.keepRoots : [];
     const matches = (/** @type {any} */ filePath) => {
       const p = normalizePathForIndex(filePath);
-      return p === normalizedFolder || p.startsWith(prefix);
+      if (p !== normalizedFolder && !p.startsWith(prefix)) return false;
+      return !this._isUnderRoots(filePath, keepRoots);
     };
 
     for (const [key, pending] of this.pendingAnalysis.entries()) {
@@ -2276,6 +2323,34 @@ class SmartFolderWatcher {
     } catch (error) {
       return isNotFoundError(error);
     }
+  }
+
+  /**
+   * Whether the Smart Folder holding `filePath` can be reached, so a sweep
+   * may trust a "not found" for the file. A share or drive that dropped
+   * reports every file under it as not found, which must not wipe the
+   * analysis of files that still exist. A file under no Smart Folder has
+   * nothing to check.
+   * @private
+   * @param {string} filePath
+   * @param {Map<string, boolean>} rootReachable per-sweep cache, keyed by
+   *   folder path, so a sweep stats each Smart Folder once
+   * @returns {Promise<boolean>}
+   */
+  async _smartFolderReachableForSweep(filePath, rootReachable) {
+    const root = this._exclusionRootFor(filePath);
+    if (!root) return true;
+    let reachable = rootReachable.get(root);
+    if (reachable === undefined) {
+      try {
+        await fs.stat(root);
+        reachable = true;
+      } catch {
+        reachable = false;
+      }
+      rootReachable.set(root, reachable);
+    }
+    return reachable;
   }
 
   /**
@@ -4063,6 +4138,8 @@ class SmartFolderWatcher {
     const allEntries = Object.values(entries);
     let checked = 0;
     let removed = 0;
+    /** @type {Map<string, boolean>} */
+    const rootReachable = new Map();
 
     for (const entry of allEntries) {
       if (this._isStopping) break;
@@ -4076,9 +4153,12 @@ class SmartFolderWatcher {
 
       checked++;
 
-      try {
-        await fs.access(filePath);
-      } catch {
+      // Only a definite "not found" under a reachable folder is a deletion;
+      // EIO, EACCES or a dropped share leave the entry alone.
+      if (
+        (await this._goneFromDisk(filePath)) &&
+        (await this._smartFolderReachableForSweep(filePath, rootReachable))
+      ) {
         // File no longer exists — clean up embeddings, chunks, and history
         try {
           await this._finalizeDeletion(filePath);
@@ -4144,6 +4224,8 @@ class SmartFolderWatcher {
       return summary;
     }
 
+    /** @type {Map<string, boolean>} */
+    const rootReachable = new Map();
     for (const doc of Array.isArray(docs) ? docs : []) {
       if (this._isStopping) break;
       const filePath = doc?.path;
@@ -4151,14 +4233,14 @@ class SmartFolderWatcher {
         summary.skipped++;
         continue;
       }
-      let stillMissing = false;
-      try {
-        await fs.stat(filePath);
-      } catch {
-        stillMissing = true;
-      }
-      if (!stillMissing) {
+      if (!(await this._goneFromDisk(filePath))) {
         summary.kept++;
+        continue;
+      }
+      // Not found, but its Smart Folder is unreachable too: leave it for a
+      // sweep that can tell.
+      if (!(await this._smartFolderReachableForSweep(filePath, rootReachable))) {
+        summary.skipped++;
         continue;
       }
       try {
@@ -4694,7 +4776,9 @@ class SmartFolderWatcher {
    * @returns {Promise<any[]>}
    */
   async _scanDirectory(/** @type {any} */ dirPath, maxDepth = this.watcherDepth, currentDepth = 0) {
-    if (currentDepth >= maxDepth) return [];
+    // chokidar reads a directory whose depth is <= `depth` (the root is 0),
+    // so depth 0 still sees the root's own files.
+    if (currentDepth > maxDepth) return [];
 
     /** @type {any[]} */
     const files = [];

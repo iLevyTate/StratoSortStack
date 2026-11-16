@@ -33,6 +33,37 @@ const { createProgressTracker } = require('./progress');
 const logger = createLogger('EmbeddingQueue');
 // Shortest wait before the failed-item retry timer fires.
 const FAILED_RETRY_MIN_DELAY_MS = 1000;
+
+/**
+ * A model file name without its `.gguf` extension or quantization tag, so
+ * 'nomic-embed-text-v1.5-Q8_0.gguf' and 'nomic-embed-text-v1.5-Q4_K_M.gguf'
+ * compare equal. Quantizations of one model embed into the same vector space,
+ * which LlamaService's same-dimension fallback chain already relies on.
+ * @param {string} modelName
+ * @returns {string}
+ */
+function embeddingModelKey(modelName) {
+  return String(modelName)
+    .trim()
+    .toLowerCase()
+    .replace(/\.gguf$/, '')
+    .replace(/[-._](?:i?q\d\w*|bf16|f16|f32)$/, '');
+}
+
+/**
+ * Whether a queued item's vector came from a model other than `indexModel`.
+ * Producers stamp `item.model` with the model that computed the vector; an
+ * item without a stamp gives no answer (null).
+ * @param {any} item
+ * @param {string} indexModel
+ * @returns {boolean | null}
+ */
+function isFromOtherModel(item, indexModel) {
+  const model = item?.model;
+  if (typeof model !== 'string' || !model.trim()) return null;
+  return embeddingModelKey(model) !== embeddingModelKey(indexModel);
+}
+
 class EmbeddingQueue {
   /**
    * @param {{ persistenceFileName?: string, batchSize?: number, flushDelayMs?: number, parallelFlushConcurrency?: number, failedItemsPath?: string, deadLetterPath?: string }} [options]
@@ -887,6 +918,14 @@ class EmbeddingQueue {
         this.retryCount = 0;
         this._offlineRetryCount = 0;
 
+        // Covers items restored from disk after a restart and items whose
+        // vector was computed just before a model change but enqueued after it.
+        const { removed: staleItems } = this._dropOtherModelItems(
+          typeof vectorDbService.getEmbeddingModel === 'function'
+            ? vectorDbService.getEmbeddingModel()
+            : null
+        );
+
         const fileItems = [];
         const folderItems = [];
 
@@ -894,6 +933,7 @@ class EmbeddingQueue {
         // Also skip items that were marked for removal during flush
         for (const item of batch) {
           if (this._pendingRemovals?.has(item.id)) continue;
+          if (staleItems.has(item)) continue;
           if (item.id.startsWith('folder:')) {
             folderItems.push(item);
           } else {
@@ -962,7 +1002,7 @@ class EmbeddingQueue {
         // Clear failed-item records for items that succeeded in this batch
         let clearedFailed = 0;
         for (const item of batch) {
-          if (!failedItemIds.has(item.id)) {
+          if (!failedItemIds.has(item.id) && !staleItems.has(item)) {
             if (this._failedItemHandler.failedItems.delete(item.id)) {
               clearedFailed += 1;
             }
@@ -970,7 +1010,8 @@ class EmbeddingQueue {
         }
 
         const flushDuration = Date.now() - flushStartTime;
-        const successCount = batch.length - failedItemIds.size;
+        const staleInBatch = batch.filter((item) => staleItems.has(item)).length;
+        const successCount = batch.length - failedItemIds.size - staleInBatch;
 
         logger.info('[EmbeddingQueue] Successfully flushed batch', {
           success: successCount,
@@ -1462,6 +1503,67 @@ class EmbeddingQueue {
     }
 
     return totalQueueUpdated;
+  }
+
+  /**
+   * Remove pending vectors that another embedding model produced from the
+   * queue, the failed-items map and the dead-letter queue, so none is written
+   * into an index built for `indexModel`. With a different dimension such a
+   * vector fails the write and churns into the dead-letter queue; with the
+   * same dimension it is written silently and mixes two vector spaces.
+   * The files are not lost: a model change resets the index and offers a
+   * rebuild, and the startup knowledge repair re-embeds every analyzed file
+   * that has no vector.
+   * @param {string | null} indexModel - Model the index holds; null skips the check
+   * @param {{ dropUnstamped?: boolean }} [options] - dropUnstamped: also drop
+   *   items with no model stamp (safe only on a model change, see dropOtherModelEmbeddings)
+   * @returns {{ removed: Set<any>, total: number }} Queue items removed, and the
+   *   count across all three stores
+   * @private
+   */
+  _dropOtherModelItems(indexModel, { dropUnstamped = false } = {}) {
+    /** @type {Set<any>} */
+    const removed = new Set();
+    if (typeof indexModel !== 'string' || !indexModel.trim()) return { removed, total: 0 };
+
+    /** @param {any} item */
+    const isStale = (item) => {
+      const other = isFromOtherModel(item, indexModel);
+      return other === null ? dropUnstamped : other;
+    };
+
+    // In place: a running flush filters its batch out of this same array.
+    for (let i = this.queue.length - 1; i >= 0; i--) {
+      if (isStale(this.queue[i])) removed.add(this.queue.splice(i, 1)[0]);
+    }
+    const { failed, deadLetter } = this._failedItemHandler.dropItems(isStale);
+    const total = removed.size + failed + deadLetter;
+    if (total > 0) {
+      logger.info(`[EmbeddingQueue] Dropped ${total} pending embeddings from another model`, {
+        queue: this._persistenceKeys.queue,
+        indexModel,
+        queued: removed.size,
+        failed,
+        deadLetter
+      });
+      if (removed.size > 0) this._schedulePersist({ queue: true });
+    }
+    return { removed, total };
+  }
+
+  /**
+   * Drop every pending vector not stamped with `newModel` after the user
+   * switches embedding models. Unstamped items go too: all of them were
+   * computed before the switch, and the switch resets the index and offers a
+   * rebuild that re-embeds every analyzed file from its stored analysis.
+   * A queue not yet restored from disk is skipped; flush applies the same
+   * check to stamped items once they load.
+   * @param {string} newModel
+   * @returns {number} Items dropped
+   */
+  dropOtherModelEmbeddings(newModel) {
+    if (!this.initialized) return 0;
+    return this._dropOtherModelItems(newModel, { dropUnstamped: true }).total;
   }
 
   /**

@@ -373,6 +373,30 @@ async function serializeCollectionForDisk(db) {
   return { buffer, chars };
 }
 
+/**
+ * Every document of a collection, read straight from Orama's docs store (the
+ * same `data.docs.docs` that serializeCollectionForDisk saves). Shallow copies,
+ * so a caller cannot change a stored document in place.
+ *
+ * This used to call persist(db), whose default 'binary' format returns an
+ * encoded string, not an object: the shape check never matched, and every call
+ * encoded the whole collection (vector index included) on the main thread for
+ * nothing before falling back to paged search.
+ *
+ * @param {any} db
+ * @returns {any[] | null} null when the store has another shape; the caller
+ *   then pages through search instead.
+ */
+function readStoredDocuments(db) {
+  const docsById = db?.data?.docs?.docs;
+  if (!docsById || typeof docsById !== 'object') return null;
+  const docs = [];
+  for (const doc of Object.values(docsById)) {
+    if (doc && typeof doc === 'object') docs.push({ ...doc });
+  }
+  return docs;
+}
+
 const writeFileAtomic = async (/** @type {any} */ filePath, /** @type {any} */ data) => {
   const tempPath = `${filePath}.tmp.${require('crypto').randomUUID()}`;
   try {
@@ -894,21 +918,9 @@ class OramaVectorService extends EventEmitter {
   async _getAllFileDocuments() {
     if (!this._databases?.files) return [];
 
-    // Prefer a persistence snapshot so repair/fallback logic is not capped by search limits.
-    try {
-      const snapshot = /** @type {any} */ (await persist(this._databases.files));
-      const docsById = snapshot?.docs?.docs;
-      if (docsById && typeof docsById === 'object') {
-        return Object.values(docsById).filter((doc) => doc && typeof doc === 'object');
-      }
-    } catch (error) {
-      logger.warn(
-        '[OramaVectorService] Failed to snapshot files DB; falling back to paged search',
-        {
-          error: error?.message
-        }
-      );
-    }
+    // Read the docs store directly so repair/fallback logic is not capped by search limits.
+    const stored = readStoredDocuments(this._databases.files);
+    if (stored) return stored;
 
     const pageSize = 1000;
     const docs = [];
@@ -950,20 +962,8 @@ class OramaVectorService extends EventEmitter {
   async _getAllFolderDocuments() {
     if (!this._databases?.folders) return [];
 
-    try {
-      const snapshot = /** @type {any} */ (await persist(this._databases.folders));
-      const docsById = snapshot?.docs?.docs;
-      if (docsById && typeof docsById === 'object') {
-        return Object.values(docsById).filter((doc) => doc && typeof doc === 'object');
-      }
-    } catch (error) {
-      logger.warn(
-        '[OramaVectorService] Failed to snapshot folders DB; falling back to paged search',
-        {
-          error: error?.message
-        }
-      );
-    }
+    const stored = readStoredDocuments(this._databases.folders);
+    if (stored) return stored;
 
     const pageSize = 1000;
     const docs = [];
@@ -1862,6 +1862,18 @@ class OramaVectorService extends EventEmitter {
       dimensionChanged,
       modelChanged
     };
+  }
+
+  /**
+   * The embedding model this index holds vectors for, or null before the
+   * store has resolved it. The embedding queue drops pending vectors from any
+   * other model instead of writing them here.
+   * @returns {string | null}
+   */
+  getEmbeddingModel() {
+    return typeof this._embeddingModel === 'string' && this._embeddingModel
+      ? this._embeddingModel
+      : null;
   }
 
   /**
@@ -4010,6 +4022,22 @@ class OramaVectorService extends EventEmitter {
 
     await this.initialize();
 
+    // A NaN or Infinity anywhere makes the stored vector unsearchable while
+    // the document still looks embedded, so refuse it like folders do.
+    const valueValidation = this._validateEmbeddingValues(file.vector, 'files');
+    if (!valueValidation.valid) {
+      this.emit('embedding-blocked', {
+        type: valueValidation.error,
+        fileId: file.id,
+        message: 'Embedding vector contains invalid values.'
+      });
+      return {
+        success: false,
+        fileId: file.id,
+        error: valueValidation.error
+      };
+    }
+
     // Validate dimensions
     const dimValidation = await this.validateEmbeddingDimension(file.vector, 'files');
     if (!dimValidation.valid) {
@@ -4101,37 +4129,52 @@ class OramaVectorService extends EventEmitter {
 
     await this.initialize();
 
-    // Validate batch dimensions before upserting any items to avoid partial writes
+    // Fail only the vectors of the wrong length. Rejecting the whole batch let
+    // one stale item (queued before an embedding-model switch) send every
+    // valid item beside it to the dead-letter queue as dimension_mismatch.
     const dimValidation = this._validateBatchDimensions(files, 'files');
+    /** @type {any[]} */
+    let toUpsert = files;
+    /** @type {Array<{ id: any, error: string, requiresRebuild?: boolean }>} */
+    const failed = [];
     if (!dimValidation.valid && dimValidation.error === 'dimension_mismatch') {
+      toUpsert = [];
+      for (const f of files) {
+        const wrongLength =
+          Array.isArray(f?.vector) &&
+          f.vector.length > 0 &&
+          f.vector.length !== dimValidation.expectedDim;
+        if (wrongLength) {
+          failed.push({ id: f.id || f.path, error: 'dimension_mismatch', requiresRebuild: true });
+        } else {
+          toUpsert.push(f);
+        }
+      }
       this.emit('embedding-blocked', {
         type: 'dimension_mismatch',
-        fileCount: files.length,
+        fileCount: failed.length,
         expectedDim: dimValidation.expectedDim,
         actualDim: dimValidation.actualDim,
         message: 'Embedding model changed. Run "Rebuild Embeddings" to fix.'
       });
-      return {
-        success: false,
-        count: 0,
-        failed: files.map((/** @type {any} */ f) => ({
-          id: f.id || f.path,
+      if (toUpsert.length === 0) {
+        return {
+          success: false,
+          count: 0,
+          failed,
           error: 'dimension_mismatch',
           requiresRebuild: true
-        })),
-        error: 'dimension_mismatch',
-        requiresRebuild: true
-      };
+        };
+      }
     }
 
     let successCount = 0;
-    const failed = [];
-    const upsertResults = await this._runBoundedBatch(files, (/** @type {any} */ file) =>
+    const upsertResults = await this._runBoundedBatch(toUpsert, (/** @type {any} */ file) =>
       this.upsertFile(file)
     );
     for (let i = 0; i < upsertResults.length; i++) {
       const settled = upsertResults[i];
-      const file = files[i];
+      const file = toUpsert[i];
       if (settled?.status === 'fulfilled') {
         const result = settled.value;
         if (result?.success !== false) {

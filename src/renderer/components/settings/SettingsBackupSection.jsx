@@ -113,8 +113,9 @@ function SettingsBackupSection({ addNotification }) {
       } else {
         addNotification(toErrorMessage(res?.error, 'Failed to create backup'), 'error');
       }
-    } catch {
-      addNotification('Failed to create backup', 'error');
+    } catch (err) {
+      // The preload throws main's error message for a {success:false} reply.
+      addNotification(toErrorMessage(err, 'Failed to create backup'), 'error');
     } finally {
       if (isMountedRef.current) {
         setIsCreating(false);
@@ -213,8 +214,9 @@ function SettingsBackupSection({ addNotification }) {
       } else {
         addNotification(toErrorMessage(res?.error, 'Failed to export settings'), 'error');
       }
-    } catch {
-      addNotification('Failed to export settings', 'error');
+    } catch (err) {
+      // The preload throws main's error message for a {success:false} reply.
+      addNotification(toErrorMessage(err, 'Failed to export settings'), 'error');
     } finally {
       if (isMountedRef.current) {
         setIsExporting(false);
@@ -244,8 +246,9 @@ function SettingsBackupSection({ addNotification }) {
       } else {
         addNotification(toErrorMessage(res?.error, 'Failed to import settings'), 'error');
       }
-    } catch {
-      addNotification('Failed to import settings', 'error');
+    } catch (err) {
+      // The preload throws main's error message for a {success:false} reply.
+      addNotification(toErrorMessage(err, 'Failed to import settings'), 'error');
     } finally {
       if (isMountedRef.current) {
         setIsImporting(false);

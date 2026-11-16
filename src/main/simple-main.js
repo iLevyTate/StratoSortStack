@@ -408,6 +408,14 @@ const createMainWindow = require('./core/createWindow');
 
 /** @type {Promise<void> | null} */
 let _windowCreationPromise = null;
+/**
+ * Startup has registered IPC and reached its own window creation. Until then
+ * a second launch must not create the window: the renderer would start
+ * invoking before any handler exists.
+ */
+let _startupWindowCreationReached = false;
+/** A second launch arrived before startup created the window. */
+let _windowRequestedDuringStartup = false;
 /** @type {any} Window whose restore waits for its first 'show'. */
 let _restoreQueuedForWindow = null;
 
@@ -442,6 +450,21 @@ function restoreMainWindow(win, source) {
   restore();
 }
 
+/**
+ * Startup's own window creation (normal and degraded paths). Runs after IPC
+ * registration and serves any launch that arrived before it.
+ */
+function createStartupWindow() {
+  _startupWindowCreationReached = true;
+  const creation = createWindow();
+  if (_windowRequestedDuringStartup && mainWindow && !mainWindow.isDestroyed()) {
+    _windowRequestedDuringStartup = false;
+    // Queued for the window's first show, so the relaunch still brings it forward.
+    restoreMainWindow(mainWindow, 'SECOND-INSTANCE');
+  }
+  return creation;
+}
+
 function createWindow() {
   if (_shutdownState.shouldClose) {
     logger.warn('[WINDOW] Ignoring createWindow() during shutdown');
@@ -469,61 +492,61 @@ function createWindow() {
     return Promise.resolve();
   }
 
-  // runs synchronously and may set _windowCreationPromise = null before the return statement
+  // Take the mutex before any creation work runs, so a synchronous failure's
+  // release() cannot be followed by an assignment that leaves the mutex on a
+  // settled promise (every later createWindow() would then return it and
+  // never open a window).
+  /** @type {() => void} */
+  let resolveCreation = () => {};
+  /** @type {Promise<void>} */
   const promise = new Promise((resolve) => {
-    try {
-      // Double-check after acquiring mutex (another call might have created window)
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        logger.debug('[WINDOW] Window created by concurrent call, using existing');
-        _windowCreationPromise = null;
-        resolve();
-        return;
-      }
-
-      _createWindowInternal();
-
-      // Wait for window to be ready before releasing mutex
-      if (mainWindow) {
-        /** @type {any} */
-        let creationTimeout;
-
-        const onReadyToShow = () => {
-          logger.debug('[WINDOW] Window ready, releasing creation mutex');
-          if (creationTimeout) clearTrackedTimer(creationTimeout);
-          _windowCreationPromise = null;
-          resolve();
-        };
-
-        mainWindow.once('ready-to-show', onReadyToShow);
-
-        creationTimeout = trackTimeout(() => {
-          if (_windowCreationPromise) {
-            logger.warn('[WINDOW] Window creation timeout, releasing mutex');
-            // Remove the listener to avoid memory leak or late execution
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.removeListener('ready-to-show', onReadyToShow);
-              // Last line of defence after createWindow.js's own show fallback:
-              // a window that is still hidden after a minute must not stay so.
-              if (!mainWindow.isVisible()) {
-                logger.warn('[WINDOW] Force-showing window after creation timeout');
-                mainWindow.show();
-              }
-            }
-            _windowCreationPromise = null;
-            resolve();
-          }
-        }, TIMEOUTS.WINDOW_CREATION_READY);
-      } else {
-        _windowCreationPromise = null;
-        resolve();
-      }
-    } catch (error) {
-      logger.error('[WINDOW] Error creating window:', error);
-      _windowCreationPromise = null;
-      resolve();
-    }
+    resolveCreation = resolve;
   });
   _windowCreationPromise = promise;
+  const release = () => {
+    if (_windowCreationPromise === promise) _windowCreationPromise = null;
+    resolveCreation();
+  };
+
+  try {
+    _createWindowInternal();
+
+    // Wait for window to be ready before releasing mutex
+    if (mainWindow) {
+      /** @type {any} */
+      let creationTimeout;
+
+      const onReadyToShow = () => {
+        logger.debug('[WINDOW] Window ready, releasing creation mutex');
+        if (creationTimeout) clearTrackedTimer(creationTimeout);
+        release();
+      };
+
+      mainWindow.once('ready-to-show', onReadyToShow);
+
+      creationTimeout = trackTimeout(() => {
+        if (_windowCreationPromise === promise) {
+          logger.warn('[WINDOW] Window creation timeout, releasing mutex');
+          // Remove the listener to avoid memory leak or late execution
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.removeListener('ready-to-show', onReadyToShow);
+            // Last line of defence after createWindow.js's own show fallback:
+            // a window that is still hidden after a minute must not stay so.
+            if (!mainWindow.isVisible()) {
+              logger.warn('[WINDOW] Force-showing window after creation timeout');
+              mainWindow.show();
+            }
+          }
+          release();
+        }
+      }, TIMEOUTS.WINDOW_CREATION_READY);
+    } else {
+      release();
+    }
+  } catch (error) {
+    logger.error('[WINDOW] Error creating window:', error);
+    release();
+  }
 
   return promise;
 }
@@ -982,7 +1005,7 @@ function raiseCoordinatedStartupFailure(/** @type {any} */ error) {
       subsystem: 'startup',
       severity: 'error',
       message:
-        'AI services did not fully start — analysis and semantic search may be unavailable. Restart StratoSort to retry.',
+        'AI services did not fully start. Analysis and semantic search may be unavailable. Restart StratoSort to retry.',
       detail: { error: error || null }
     });
   } catch (trackerErr) {
@@ -1013,7 +1036,7 @@ function raiseCoordinatedStartupNotice(startupResult) {
         subsystem: 'startup',
         severity: 'warning',
         message:
-          'AI services are still starting — analysis and semantic search will be ready shortly. ' +
+          'AI services are still starting. Analysis and semantic search will be ready shortly. ' +
           'A large library can take a few minutes; StratoSort keeps loading in the background.',
         detail: { error: startupResult.error || null }
       });
@@ -1352,6 +1375,10 @@ if (gotTheLock || process.env.STRATOSORT_FORCE_LAUNCH === '1') {
     if (mainWindow && !mainWindow.isDestroyed()) {
       logger.debug('[SECOND-INSTANCE] Restoring window for second instance attempt');
       restoreMainWindow(mainWindow, 'SECOND-INSTANCE');
+    } else if (!_startupWindowCreationReached) {
+      // Startup creates the window once IPC is registered; it serves this launch.
+      logger.debug('[SECOND-INSTANCE] Startup still running; window will open when it is ready');
+      _windowRequestedDuringStartup = true;
     } else {
       // No window exists, create one
       createWindow();
@@ -1815,7 +1842,7 @@ app
           uptimeS: Math.round(process.uptime())
         });
         perfMarks.mark('startup:main:before-window');
-        createWindow();
+        createStartupWindow();
         perfMarks.mark('startup:main:after-window');
         perfMarks.measureAndLog(
           'startup:main:time-to-first-window',
@@ -2201,7 +2228,7 @@ app
         }
 
         logger.warn('[STARTUP] Creating window in degraded mode due to startup errors');
-        createWindow();
+        createStartupWindow();
         clearTrackedTimer(startupKeepalive);
         // A launch that keeps failing is exactly when logs and crash dumps pile
         // up, so the sweeps run here too. They wait one first-paint-gate length
@@ -2246,6 +2273,7 @@ const { resumeIncompleteBatches } = require('./services/OrganizeResumeService');
 
 // Exported for unit tests (test/main/simpleMain); the app never requires this module.
 module.exports = {
+  createStartupWindow,
   runCoordinatedStartupInBackground,
   abortCoordinatedStartup,
   completeDeferredStartup,

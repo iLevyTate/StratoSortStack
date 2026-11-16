@@ -57,7 +57,7 @@ function EmptyEmbeddingsBanner({
       ? `${mismatchDetails} Rebuild the search index to restore reliable semantic search.`
       : `${mismatchDetails} Rebuild embeddings to restore reliable semantic search.`
     : needsFileEmbeddingRebuild
-      ? 'You already have analyzed files, but the embedding index is empty or incomplete. Run a file embedding rebuild from analysis history to restore full Knowledge OS coverage.'
+      ? 'You already have analyzed files, but the embedding index is empty or incomplete. Rebuild file embeddings from analysis history to restore full Knowledge OS coverage.'
       : isManual
         ? simpleMode
           ? 'Knowledge OS search needs a local search index, but your settings are set to Manual only. Turn automatic indexing back on (Settings -> Embedding behavior), then rebuild to populate the index.'

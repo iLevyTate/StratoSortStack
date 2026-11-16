@@ -13,7 +13,7 @@ export function getElectronAPI() {
 export function requireElectronAPI() {
   const api = getElectronAPI();
   if (!api) {
-    throw new Error('Electron API not available. Please restart the application.');
+    throw new Error('Electron API not available. Restart the app.');
   }
   return api;
 }

@@ -29,8 +29,6 @@ const ROOT = path.resolve(__dirname, '..');
 const OUT_DIR = path.join(ROOT, 'docs', 'walkthrough-assets');
 const RAW_DIR = path.join(OUT_DIR, 'tour-raw');
 const SHORT_DIR = path.join(OUT_DIR, 'shorts');
-const VIDEO = path.join(RAW_DIR, 'app.webm');
-const ACTIONS = path.join(RAW_DIR, 'actions.json');
 const LOGO = path.join(ROOT, 'assets', 'stratosort-logo.png');
 
 const FPS = 25;
@@ -470,9 +468,13 @@ function probeVideo(file) {
   };
 }
 
-/** Paths inside a filter graph: forward slashes, and the drive colon escaped. */
+/**
+ * Paths inside a filter graph: forward slashes, and the drive colon escaped.
+ * One pass handles both characters, so every backslash in the input becomes
+ * '/' and the only backslashes in the result are the ones escaping ':'.
+ */
 function ffPath(file) {
-  return file.replace(/\\/g, '/').replace(/:/g, '\\:');
+  return file.replace(/[\\:]/g, (ch) => (ch === ':' ? '\\:' : '/'));
 }
 
 const even = (n) => Math.max(2, Math.floor(n / 2) * 2);

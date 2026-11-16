@@ -70,6 +70,52 @@ function isCatchAllFolder(folder) {
 }
 
 /**
+ * Turn an analysis-history entry into the flat analysis buildFileMetadata
+ * reads. The entry nests category and tags under `entry.analysis`; passing
+ * the entry itself learned every file as `<ext>:unknown:<folder>`.
+ * Fallback and provisional results return null so their guesses are not
+ * learned (the same guard SmartFolderWatcher applies before learning).
+ * @param {Record<string, any>|null|undefined} entry
+ * @returns {Record<string, any>|null}
+ */
+function toLearnableAnalysis(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  const nested = entry.analysis && typeof entry.analysis === 'object' ? entry.analysis : null;
+  const analysis = nested || entry;
+  const extractionMethod = String(analysis.extractionMethod || '').toLowerCase();
+  if (
+    analysis._isFallback ||
+    analysis.isFallback ||
+    analysis.provisional === true ||
+    analysis.fallbackReason ||
+    extractionMethod === 'pdf_no_text' ||
+    extractionMethod === 'failed' ||
+    extractionMethod === 'filename' ||
+    extractionMethod.includes('fallback')
+  ) {
+    return null;
+  }
+  if (!nested) return entry;
+  return {
+    ...nested,
+    keywords: nested.keywords || nested.tags || [],
+    smartFolder: nested.smartFolder || entry.organization?.smartFolder || null
+  };
+}
+
+/**
+ * Key naming a file in a folder, the same name + case-insensitive folder
+ * pairing retractFeedback uses. The startup scan stores these
+ * (patternMatcher.scanLearnedKeys) and derives them from feedback-history rows.
+ * @param {string} fileName
+ * @param {string} folder
+ * @returns {string}
+ */
+function scanLearnKey(fileName, folder) {
+  return `${fileName}\u0000${String(folder || '').toLowerCase()}`;
+}
+
+/**
  * Build a file metadata object for pattern learning
  * @param {string} filePath - Full path to the file
  * @param {Record<string, any>|null} [analysis] - Analysis result if available
@@ -260,8 +306,22 @@ class LearningFeedbackService {
         return false;
       }
 
-      // Record as positive feedback - user chose this folder for this file type
-      await this.suggestionService.recordFeedback(fileMetadata, suggestion, true);
+      if (
+        source === FEEDBACK_SOURCES.STARTUP_SCAN &&
+        typeof this.suggestionService.recordScanFeedback === 'function'
+      ) {
+        // A file found in place is learned without a feedback-history row:
+        // that list is capped, and undo retracts real organize feedback from it.
+        const learnedNow = await this.suggestionService.recordScanFeedback(
+          fileMetadata,
+          suggestion,
+          scanLearnKey(fileMetadata.name, suggestion.folder)
+        );
+        if (!learnedNow) return false;
+      } else {
+        // Record as positive feedback - user chose this folder for this file type
+        await this.suggestionService.recordFeedback(fileMetadata, suggestion, true);
+      }
 
       // Update folder usage stats via pattern matcher
       if (this.suggestionService.patternMatcher) {
@@ -496,6 +556,18 @@ class LearningFeedbackService {
     let scanned = 0;
     let learned = 0;
 
+    // The scan runs on every launch and the in-memory dedupe starts empty, so
+    // the persisted state says a file was already learned: the keys earlier
+    // scans stored, and accepted organize rows in the feedback history.
+    const matcher = await this._loadPatternMatcherForScan();
+    /** @type {Set<string>} */
+    const alreadyLearned = new Set(matcher?.scanLearnedKeys || []);
+    for (const row of Array.isArray(matcher?.feedbackHistory) ? matcher.feedbackHistory : []) {
+      if (row?.accepted === true && row?.file?.name && row?.suggestion?.folder) {
+        alreadyLearned.add(scanLearnKey(row.file.name, row.suggestion.folder));
+      }
+    }
+
     logger.info('[LearningFeedback] Starting learning scan', {
       folderCount: smartFolders.length,
       maxFilesPerFolder
@@ -506,15 +578,21 @@ class LearningFeedbackService {
 
       try {
         const files = await this._scanFolderFiles(folder.path, maxFilesPerFolder);
+        const folderLabel = buildFolderSuggestion(folder)?.folder || '';
 
         for (const filePath of files) {
           scanned++;
+
+          const learnKey = scanLearnKey(path.basename(filePath), folderLabel);
+          if (alreadyLearned.has(learnKey)) continue;
 
           // Get existing analysis if available
           let analysis = null;
           if (analysisHistoryService) {
             try {
-              analysis = await analysisHistoryService.getAnalysisByPath(filePath);
+              analysis = toLearnableAnalysis(
+                await analysisHistoryService.getAnalysisByPath(filePath)
+              );
             } catch {
               // Continue without analysis
             }
@@ -535,6 +613,7 @@ class LearningFeedbackService {
 
           if (success) {
             learned++;
+            alreadyLearned.add(learnKey);
           }
         }
       } catch (error) {
@@ -547,6 +626,22 @@ class LearningFeedbackService {
 
     logger.info('[LearningFeedback] Learning scan complete', { scanned, learned });
     return { scanned, learned };
+  }
+
+  /**
+   * The pattern matcher with its persisted patterns loaded, or null.
+   * @returns {Promise<any>}
+   * @private
+   */
+  async _loadPatternMatcherForScan() {
+    try {
+      await this.suggestionService?._ensurePatternsLoaded?.();
+    } catch (error) {
+      logger.debug('[LearningFeedback] Patterns not loaded before scan', {
+        error: error.message
+      });
+    }
+    return this.suggestionService?.patternMatcher || null;
   }
 
   /**

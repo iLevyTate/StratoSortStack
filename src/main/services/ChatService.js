@@ -62,7 +62,10 @@ const DEFAULTS = {
   mode: 'hybrid',
   chunkTopK: 6,
   chunkWeight: 0.2,
-  contextFileLimit: 200,
+  // Matches the 1000-entry cap the chat IPC schema and the renderer allow, so
+  // Strict scope searches every selected file. Scoring one is an in-memory
+  // getByID plus one cosine, so 1000 stays cheap.
+  contextFileLimit: 1000,
   memoryWindow: 6
 };
 const HOLISTIC_MIN_TOPK = 12;
@@ -77,6 +80,19 @@ const MCP_SESSION_PREFIX = 'mcp:';
 // Generation errors that mean the local model is absent or not loaded; the
 // MCP tool reports them as MODEL_NOT_READY instead of RETRIEVAL_FAILED.
 const MODEL_NOT_READY_CODES = new Set(['NO_MODEL', 'LLAMA_002', 'LLAMA_MODEL_NOT_FOUND']);
+
+/**
+ * Whether a streaming failure is really a cancel. The local inference queue
+ * rejects an aborted request with a plain Error (code INFERENCE_SLOT_ABORTED)
+ * and cloud providers can wrap one as NETWORK_ERROR, so the stream's own
+ * signal decides, not only the error name.
+ *
+ * @param {any} error
+ * @param {AbortSignal} signal
+ */
+function isStreamCancel(error, signal) {
+  return error?.name === 'AbortError' || error?.code === 'INFERENCE_SLOT_ABORTED' || signal.aborted;
+}
 
 // Appended to the answer when a cloud provider stopped at its output token
 // cap. The streamed text is complete as far as it goes, so this is a notice,
@@ -684,7 +700,7 @@ Now respond as JSON:`;
         } catch (err) {
           logger.warn('[ChatService] Conversational streaming failed:', err);
           try {
-            const isAbort = err?.name === 'AbortError';
+            const isAbort = isStreamCancel(err, streamController.signal);
             if (onEvent)
               onEvent({
                 type: 'error',
@@ -720,6 +736,15 @@ Now respond as JSON:`;
         regeneratedInput: skipSaveUserTurn ? cleanQuery : null
       });
       memory._documentScope = documentScopeItems || [];
+
+      // Retrieval does not watch the signal, so a Stop or a conversation
+      // delete during it lands here. Bail before anything is persisted; an
+      // abstention or error turn would otherwise recreate a deleted chat.
+      if (streamController.signal.aborted) {
+        const abortErr = new Error('Generation canceled');
+        abortErr.name = 'AbortError';
+        throw abortErr;
+      }
 
       if (onEvent) {
         const sourceCount = Array.isArray(retrieval?.sources) ? retrieval.sources.length : 0;
@@ -869,7 +894,7 @@ Now respond as JSON:`;
       }
     } catch (error) {
       logger.error('[ChatService] Streaming query failed:', error);
-      const isAbort = error?.name === 'AbortError';
+      const isAbort = isStreamCancel(error, streamController.signal);
       if (!isAbort) {
         try {
           const memory = await this._getSessionMemory(sessionId);
@@ -894,9 +919,7 @@ Now respond as JSON:`;
             this.chatHistoryStore.addMessage(memory.sessionId, {
               role: 'assistant',
               text: '',
-              modelAnswer: [
-                { text: `Error: ${error.message || 'Response failed'}. Please try again.` }
-              ]
+              modelAnswer: [{ text: `Error: ${error.message || 'Response failed'}. Try again.` }]
             });
           }
         } catch (saveErr) {
@@ -946,7 +969,7 @@ Now respond as JSON:`;
   }) {
     if (!this.llamaService) {
       const err = new Error(
-        'LLM model not loaded — open StratoSort and wait for the model to finish loading.'
+        "The AI model isn't loaded. Open StratoSort and wait for the model to finish loading."
       );
       /** @type {any} */ (err).code = 'NO_MODEL';
       throw err;
