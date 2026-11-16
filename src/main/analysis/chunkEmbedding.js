@@ -10,6 +10,7 @@
 
 const path = require('path');
 const { chunkText } = require('../utils/textChunking');
+const { isTableText } = require('./contentSelector');
 const { CHUNKING } = require('../../shared/performanceConstants');
 const { AI_DEFAULTS } = require('../../shared/constants');
 const { isAutoChunkEnabled } = require('../../shared/experienceMode');
@@ -43,6 +44,23 @@ async function isChunkingEnabled(loadSettings) {
 }
 
 /**
+ * How `text` is cut into passages. A CSV or spreadsheet keeps only its first
+ * MAX_TABLE_CHUNKS: past the head of each sheet its rows add near-duplicate
+ * vectors that cost memory and save time for little recall.
+ * @param {string} text
+ * @returns {{ chunkSize: number, overlap: number, maxChunks: number }}
+ */
+function chunkOptionsFor(text) {
+  return {
+    chunkSize: CHUNKING.CHUNK_SIZE,
+    overlap: CHUNKING.OVERLAP,
+    maxChunks: isTableText(String(text || '').trimStart())
+      ? CHUNKING.MAX_TABLE_CHUNKS
+      : CHUNKING.MAX_CHUNKS
+  };
+}
+
+/**
  * Embed the chunks of `text` into `batchUpsertFileChunks` payloads. Pure with
  * respect to the store: nothing is written. A chunk whose embedding fails is
  * dropped and logged; an abort stops the loop and returns what was built so
@@ -58,11 +76,7 @@ async function isChunkingEnabled(loadSettings) {
  */
 async function buildFileChunkPayloads({ fileId, filePath, text, embedText, signal }) {
   const fileName = path.basename(filePath);
-  const chunks = chunkText(text, {
-    chunkSize: CHUNKING.CHUNK_SIZE,
-    overlap: CHUNKING.OVERLAP,
-    maxChunks: CHUNKING.MAX_CHUNKS
-  });
+  const chunks = chunkText(text, chunkOptionsFor(text));
   /** @type {Array<Record<string, any>>} */
   const payloads = [];
   for (const c of chunks) {
@@ -179,5 +193,6 @@ async function embedFileChunks({
 
 module.exports = {
   embedFileChunks,
-  buildFileChunkPayloads
+  buildFileChunkPayloads,
+  chunkOptionsFor
 };

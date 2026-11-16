@@ -355,6 +355,11 @@ const CHUNKING = {
   OVERLAP: 200,
   // Maximum number of chunks per document (prevents runaway chunking)
   MAX_CHUNKS: 80,
+  // Maximum for a CSV or spreadsheet. Their rows are near-identical, so most
+  // exports hit MAX_CHUNKS: 192 files of a 275-file batch of exports stored
+  // 10,532 passages, each kept twice on disk (about 30 KB) and in memory
+  // (about 9.5 KB), and every save rewrote all of them.
+  MAX_TABLE_CHUNKS: 12,
   // Minimum text length to trigger chunking
   MIN_TEXT_LENGTH: 200,
   // Maximum chunks to return per file in search results

@@ -441,6 +441,7 @@ function selectRepresentativeContent(text, budget) {
 }
 
 module.exports = {
+  isTableText,
   selectRepresentativeContent,
   extractDocumentOutline,
   sampleMiddleContent
