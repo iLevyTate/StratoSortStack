@@ -75,15 +75,15 @@ const ANALYSIS_SCHEMA_PROMPT = {
   category:
     'The high-level category (must match one of the provided Smart Folder names if applicable).',
   project: 'The specific project, case, or subject matter (2-5 words).',
-  purpose: 'The primary purpose or intent of the document (1 sentence).',
-  summary: "A concise 1-2 sentence summary of the document's content.",
+  purpose: 'The primary purpose or intent of the document (a short phrase, at most 10 words).',
+  summary: "A concise 1 sentence summary of the document's content (at most 25 words).",
   keywords: ['keyword1', 'keyword2', 'keyword3', 'keyword4', 'keyword5'],
   keyEntities: ['person_or_org_1', 'person_or_org_2', 'location_or_product', 'project_or_event'],
   confidence: 'Number 0-100 indicating confidence in the extraction.',
   suggestedName:
     "A short, concise topic-based filename (max 3 words) using underscores (e.g., 'budget_report', 'sunset_beach', 'meeting_notes'). Do NOT include the extension.",
   reasoning:
-    'Brief explanation (1 sentence) of why this category was chosen based on the content and folder description.'
+    'Brief explanation (at most 15 words) of why this category was chosen based on the content and folder description.'
 };
 
 /**

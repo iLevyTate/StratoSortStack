@@ -50,6 +50,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Spreadsheets and CSVs send the AI the head of each sheet.** The AI saw a sample from the start,
   middle and end of the text, so most sheets lost their names and columns. It now gets each sheet's
   name, its columns and its first rows, in less than half the text.
+- **Analysis is about a fifth faster.** Most of each file's time is the AI writing its answer, so
+  the purpose, summary and reasoning it writes are now shorter (at most 10, 25 and 15 words). On 30
+  exports the median model time went from 13.9 s to 11.1 s per file, and every file went to the same
+  folder as before.
+- **Spreadsheets and CSVs keep 12 search passages instead of up to 80.** Their rows are nearly
+  alike, so most exports reached the limit: a batch of 275 exports stored 14,473 passages, and every
+  save of the search index rewrote all of them. On 30 exports the passages went from 1,452 to 354
+  and each save took about half as long. Search by meaning now covers about the first 10,000
+  characters of a spreadsheet; other documents are unchanged.
 - **Suggestions made before you changed your Smart Folders are flagged.** Organize lists the files
   that still go where your old folders sent them, with one button to analyze them again, and Move
   asks before moving them.
