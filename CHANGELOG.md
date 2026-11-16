@@ -12,6 +12,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [5.4.0] - 2026-11-16
+
 ### Added
 
 - **Try a few files before a large batch.** When you start analyzing 20 or more files and your Smart
@@ -1752,7 +1754,8 @@ notes.
 Note: versions before 5.0.0 were released from predecessor repositories whose tags are not part of
 this repository's history, so they are listed without links.
 
-[Unreleased]: https://github.com/iLevyTate/StratoSortStack/compare/v5.3.1...HEAD
+[Unreleased]: https://github.com/iLevyTate/StratoSortStack/compare/v5.4.0...HEAD
+[5.4.0]: https://github.com/iLevyTate/StratoSortStack/compare/v5.3.1...v5.4.0
 [5.3.1]: https://github.com/iLevyTate/StratoSortStack/compare/v5.3.0...v5.3.1
 [5.3.0]: https://github.com/iLevyTate/StratoSortStack/compare/v5.2.0...v5.3.0
 [5.2.0]: https://github.com/iLevyTate/StratoSortStack/compare/v5.1.2...v5.2.0
