@@ -400,45 +400,48 @@ export function ToastContainer({ toasts = [], onRemoveToast, onActivateToast }) 
       className="z-toast pointer-events-none"
       style={containerStyle()}
     >
-      {/* Compact toggle button */}
-      <div className="pointer-events-auto mb-2 flex items-center justify-end">
-        <div className="relative">
-          <IconButton
-            onClick={toggleCollapsed}
-            icon={
-              collapsed ? (
-                <Bell className="w-4 h-4" aria-hidden="true" />
-              ) : (
-                <X className="w-4 h-4" aria-hidden="true" />
-              )
-            }
-            size="sm"
-            variant="ghost"
-            className="h-8 w-8 rounded-full bg-system-gray-100/95 border border-system-gray-200/80 text-system-gray-600 hover:bg-system-gray-100 hover:text-system-gray-800 shadow-sm backdrop-blur-sm"
-            aria-label={
-              collapsed
-                ? 'Expand notification list (alerts are not muted; this only hides the list)'
-                : 'Collapse notification list'
-            }
-            title={
-              collapsed
-                ? 'Show the notification stack (does not mute alerts)'
-                : 'Hide the notification stack (does not mute alerts)'
-            }
-            aria-expanded={!collapsed}
-            aria-controls="toast-panel"
-          />
-          {toasts.length > 0 && collapsed && (
-            <Text
-              as="span"
-              variant="tiny"
-              className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-stratosort-blue text-white text-[9px] font-medium leading-4 text-center"
-            >
-              {toasts.length}
-            </Text>
-          )}
+      {/* Compact toggle button. Only while there is something to collapse: with
+          no notifications it floated alone over the top-right of every screen. */}
+      {toasts.length > 0 && (
+        <div className="pointer-events-auto mb-2 flex items-center justify-end">
+          <div className="relative">
+            <IconButton
+              onClick={toggleCollapsed}
+              icon={
+                collapsed ? (
+                  <Bell className="w-4 h-4" aria-hidden="true" />
+                ) : (
+                  <X className="w-4 h-4" aria-hidden="true" />
+                )
+              }
+              size="sm"
+              variant="ghost"
+              className="h-8 w-8 rounded-full bg-system-gray-100/95 border border-system-gray-200/80 text-system-gray-600 hover:bg-system-gray-100 hover:text-system-gray-800 shadow-sm backdrop-blur-sm"
+              aria-label={
+                collapsed
+                  ? 'Expand notification list (alerts are not muted; this only hides the list)'
+                  : 'Collapse notification list'
+              }
+              title={
+                collapsed
+                  ? 'Show the notification stack (does not mute alerts)'
+                  : 'Hide the notification stack (does not mute alerts)'
+              }
+              aria-expanded={!collapsed}
+              aria-controls="toast-panel"
+            />
+            {toasts.length > 0 && collapsed && (
+              <Text
+                as="span"
+                variant="tiny"
+                className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-stratosort-blue text-white text-[9px] font-medium leading-4 text-center"
+              >
+                {toasts.length}
+              </Text>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Toast stack */}
       <div id="toast-panel" aria-hidden={collapsed} className="flex flex-col gap-compact">

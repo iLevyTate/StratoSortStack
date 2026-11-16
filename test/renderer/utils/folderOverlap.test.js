@@ -7,7 +7,9 @@ import {
   isSameOrInside,
   findNestedDestinations,
   describeSourceOverlap,
-  sourceOverlapMessage
+  sourceOverlapMessage,
+  foldersToConfirm,
+  sourceOverlapQuestion
 } from '../../../src/renderer/utils/folderOverlap';
 
 const CI = { caseInsensitive: true };
@@ -156,5 +158,78 @@ describe('describeSourceOverlap and sourceOverlapMessage', () => {
   test('an unrelated folder gives no advice', () => {
     expect(describeSourceOverlap('/Users/h/Downloads', defaults, CI)).toBeNull();
     expect(sourceOverlapMessage(null)).toBeNull();
+  });
+});
+
+describe('the question before sorting a folder that overlaps a Smart Folder', () => {
+  const reports = { id: 'r', name: 'Reports', path: 'C:\\Users\\Alex\\Sorted\\Reports' };
+
+  test('the same folder in another case, slashes and a trailing slash still asks', () => {
+    const result = describeSourceOverlap('c:/users/alex/sorted/reports/', [reports], CI);
+    expect(result).toEqual({ kind: 'is', folder: reports });
+    expect(foldersToConfirm(result)).toEqual([reports]);
+  });
+
+  test('a decomposed macOS spelling of the Smart Folder still asks', () => {
+    const cafe = { id: 'c', name: 'Café', path: '/Users/alex/Caf\u00e9' };
+    const result = describeSourceOverlap('/Users/alex/Cafe\u0301', [cafe], CS);
+    expect(result?.kind).toBe('is');
+    expect(foldersToConfirm(result)).toEqual([cafe]);
+  });
+
+  test('a Smart Folder the user already said may overlap is not asked about again', () => {
+    const ok = { ...reports, sourceOverlapOk: true };
+    expect(foldersToConfirm(describeSourceOverlap(reports.path, [ok], CI))).toEqual([]);
+    // Chosen this session, before the saved list shows it.
+    expect(
+      foldersToConfirm(describeSourceOverlap(reports.path, [reports], CI), new Set(['r']))
+    ).toEqual([]);
+  });
+
+  test('a folder holding several asks only about the ones not yet chosen', () => {
+    const a = { id: 'a', name: 'A', path: '/P/Out/A', sourceOverlapOk: true };
+    const b = { id: 'b', name: 'B', path: '/P/Out/B' };
+    expect(foldersToConfirm(describeSourceOverlap('/P/Out', [a, b], CS))).toEqual([b]);
+  });
+
+  test('names the folder picked and the Smart Folder with its path', () => {
+    expect(
+      sourceOverlapQuestion(
+        '/P/Out/GSC/raw',
+        describeSourceOverlap('/P/Out/GSC/raw', [{ name: 'GSC', path: '/P/Out/GSC' }], CS)
+      )
+    ).toBe(
+      'You picked /P/Out/GSC/raw to sort. It is inside your Smart Folder "GSC" at /P/Out/GSC. Files that belong in "GSC" will move out of the folder you picked to the top of "GSC". If you sort it, StratoSort will not ask again for this Smart Folder.'
+    );
+    expect(
+      sourceOverlapQuestion(
+        '/P/Out',
+        describeSourceOverlap('/P/Out', [{ name: 'GSC', path: '/P/Out/GSC' }], CS)
+      )
+    ).toBe(
+      'You picked /P/Out to sort. It holds your Smart Folder "GSC" at /P/Out/GSC. Files already sorted there will be analyzed and sorted again. If you sort it, StratoSort will not ask again for this Smart Folder.'
+    );
+    const two = describeSourceOverlap(
+      '/P',
+      [
+        { name: 'A', path: '/P/A' },
+        { name: 'B', path: '/P/B' }
+      ],
+      CS
+    );
+    expect(sourceOverlapQuestion('/P', two)).toContain(
+      'It holds 2 of your Smart Folders: "A" at /P/A, "B" at /P/B.'
+    );
+    expect(sourceOverlapQuestion('/P', two)).toContain('not ask again for these Smart Folders.');
+    expect(sourceOverlapQuestion('/P', null)).toBeNull();
+  });
+
+  test('the catch-all is described as where unmatched files go', () => {
+    const catchAll = { name: 'Uncategorized', category: 'uncategorized', path: '/P/In' };
+    expect(
+      sourceOverlapQuestion('/P/In', describeSourceOverlap('/P/In', [catchAll], CS))
+    ).toContain(
+      'where files that fit nowhere else go. Files that fit nowhere else will stay in it.'
+    );
   });
 });

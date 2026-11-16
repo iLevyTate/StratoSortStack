@@ -12,6 +12,65 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Try a few files before a large batch.** When you start analyzing 20 or more files and your Smart
+  Folders changed since the last sample, StratoSort offers to analyze 5 of them first, picked across
+  the file types in the batch. It shows where each would go and why, without moving anything. You
+  can analyze the rest, or stop and edit your folders. Skipping counts as a choice, so the offer
+  comes back only after a folder's name, description or path changes. The user guide has a new
+  section on writing folder descriptions.
+
+### Fixed
+
+- **The Dashboard reads clearly before your first files.** It said "All caught up", "All clear" and
+  "Nothing waiting" on a board that had never had a file; it now says it is ready for files and
+  shows the three steps. Smart folder names are no longer cut short, and the Uncategorized catch-all
+  is no longer listed as one. The knowledge card no longer stays on "unavailable" when the Dashboard
+  opens during startup, and a single year reads as "2026" instead of "2026 to 2026". Cards keep
+  their natural height instead of stretching into empty space.
+- **A stray close button no longer floats at the top right of every screen.** The notification
+  list's collapse button was drawn even with no notifications.
+- **Memory no longer climbs during a long analysis.** Each save of the search index leaked its
+  compression buffers, so the app grew by about 35 MB for every file analyzed: from 5 GB to almost
+  15 GB over 275 files, which pushed the system into swap.
+- **A long batch no longer analyzes its early files again.** Analysis results were kept for 30
+  minutes, so in a batch of a few hundred files, an identical copy or a file analyzed again later
+  went through the AI a second time. Results are now kept for 12 hours; they still change when the
+  file, the model or your Smart Folders change.
+
+### Changed
+
+- **A file no Smart Folder fits goes to review instead of the closest folder.** A file now goes to a
+  Smart Folder only when a learned correction points there, its content matches one folder clearly
+  (score 0.55 or more, and no other folder within 0.03), or the folder is named after its file type
+  (or, when the AI model does the routing, after its label). Otherwise the card says "Needs review",
+  names the closest folders, and the file goes to your default folder unless you pick one. Before,
+  any folder that reached 0.4 won, so an unrelated Markdown report could land in an SEO folder.
+  Auto-organize and the Downloads watcher hold such files instead of moving them.
+- **A folder you sort that is also a Smart Folder now asks you to choose.** Picking or dropping a
+  folder on Discover that is, sits inside, or holds a Smart Folder opens a choice instead of a
+  warning. On Organize, files that would stay in their own folder need a choice (leave them there or
+  skip them) before Move turns on. Each choice is kept for that Smart Folder.
+- **Changing a Smart Folder's location to a folder that does not exist yet asks first.** It moved
+  the old folder there, files included, without asking. You now choose: move the folder and its
+  files, start with a new empty folder, or cancel.
+- **Spreadsheets and CSVs send the AI the head of each sheet.** The AI saw a sample from the start,
+  middle and end of the text, so most sheets lost their names and columns. It now gets each sheet's
+  name, its columns and its first rows, in less than half the text.
+- **Analysis is about a fifth faster.** Most of each file's time is the AI writing its answer, so
+  the purpose, summary and reasoning it writes are now shorter (at most 10, 25 and 15 words). On 30
+  exports the median model time went from 13.9 s to 11.1 s per file, and every file went to the same
+  folder as before.
+- **Spreadsheets and CSVs keep 12 search passages instead of up to 80.** Their rows are nearly
+  alike, so most exports reached the limit: a batch of 275 exports stored 14,473 passages, and every
+  save of the search index rewrote all of them. On 30 exports the passages went from 1,452 to 354
+  and each save took about half as long. Search by meaning now covers about the first 10,000
+  characters of a spreadsheet; other documents are unchanged.
+- **Suggestions made before you changed your Smart Folders are flagged.** Organize lists the files
+  that still go where your old folders sent them, with one button to analyze them again, and Move
+  asks before moving them.
+
 ## [5.3.1] - 2026-11-14
 
 ### Fixed

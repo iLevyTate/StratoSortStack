@@ -355,6 +355,11 @@ const CHUNKING = {
   OVERLAP: 200,
   // Maximum number of chunks per document (prevents runaway chunking)
   MAX_CHUNKS: 80,
+  // Maximum for a CSV or spreadsheet. Their rows are near-identical, so most
+  // exports hit MAX_CHUNKS: 192 files of a 275-file batch of exports stored
+  // 10,532 passages, each kept twice on disk (about 30 KB) and in memory
+  // (about 9.5 KB), and every save rewrote all of them.
+  MAX_TABLE_CHUNKS: 12,
   // Minimum text length to trigger chunking
   MIN_TEXT_LENGTH: 200,
   // Maximum chunks to return per file in search results
@@ -386,7 +391,13 @@ const CONTENT_SELECTION = {
   // Map phase: temperature (0 = deterministic, fastest generation)
   MAP_TEMPERATURE: 0,
   // Map phase: chunk size in characters
-  MAP_CHUNK_SIZE: 8000
+  MAP_CHUNK_SIZE: 8000,
+  // CSV and spreadsheet prompts: the head of each sheet (heading, columns,
+  // first rows) within this many characters. On 275 analytics exports the
+  // model call was about 18 s of each file's 19 s, with an 8,100-character
+  // prompt; sheets and columns tell exports apart, rows of numbers do not.
+  TABLE_MAX_CHARS: 2000,
+  TABLE_ROWS_PER_SHEET: 8
 };
 
 const LIMITS = {

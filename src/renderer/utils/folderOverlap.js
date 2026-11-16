@@ -1,8 +1,10 @@
 // @ts-check
 /**
- * Advice for when a folder to sort and a Smart Folder (where sorted files go)
- * overlap, or one Smart Folder sits inside another. Nothing here blocks a
- * choice: overlap can be deliberate, so the user is told what will happen.
+ * When a folder to sort and a Smart Folder (where sorted files go) overlap,
+ * or one Smart Folder sits inside another. Overlap can be deliberate: a folder
+ * to sort that overlaps a Smart Folder is sorted once the user says so (see
+ * foldersToConfirm and sourceOverlapQuestion), and that choice is kept on the
+ * Smart Folder (`sourceOverlapOk`). Nested Smart Folders are only described.
  *
  * Paths compare by folder boundary ("/Out2" is not inside "/Out") and, on
  * Windows and macOS, without regard to case, the way their default volumes
@@ -14,7 +16,8 @@ import { isUncategorizedFolder } from '../../shared/uncategorizedFolder';
 
 /**
  * @typedef {{ caseInsensitive?: boolean }} OverlapOptions
- * @typedef {{ name?: string, path?: string, category?: string }} FolderLike
+ * @typedef {{ id?: string, name?: string, path?: string, category?: string,
+ *   sourceOverlapOk?: boolean }} FolderLike
  * @typedef {{ kind: 'is' | 'inside', folder: FolderLike }} OneFolderOverlap
  * @typedef {{ kind: 'contains', folders: FolderLike[] }} HeldFoldersOverlap
  * @typedef {OneFolderOverlap | HeldFoldersOverlap} SourceOverlap
@@ -162,4 +165,71 @@ export function sourceOverlapMessage(result) {
     return `${name} is where files that fit nowhere else go. Files that fit nowhere else will stay in this folder.`;
   }
   return `${name} is one of your Smart Folders, where sorted files go. Files that belong there stay in this folder.`;
+}
+
+/**
+ * The Smart Folders of a describeSourceOverlap result the user has not yet
+ * said may overlap a folder they sort. Empty when there is nothing to ask.
+ * @param {SourceOverlap | null | undefined} result
+ * @param {Set<string>} [alreadyChosen] - ids chosen this session, before the
+ *   saved list catches up
+ * @returns {FolderLike[]}
+ */
+export function foldersToConfirm(result, alreadyChosen) {
+  if (!result) return [];
+  const folders = result.kind === 'contains' ? result.folders : [result.folder];
+  return folders.filter(
+    (folder) =>
+      folder?.sourceOverlapOk !== true &&
+      !(typeof folder?.id === 'string' && alreadyChosen?.has(folder.id))
+  );
+}
+
+/**
+ * @param {FolderLike} folder
+ */
+const quotedAt = (folder) =>
+  folder?.path ? `${quoted(folder)} at ${folder.path}` : quoted(folder);
+
+/**
+ * The question asked before a folder that overlaps Smart Folders is sorted:
+ * it names the folder picked and each Smart Folder with its path, and says
+ * what sorting will do. Null when they do not overlap.
+ * @param {string} sourceDir
+ * @param {SourceOverlap | null | undefined} result
+ * @returns {string | null}
+ */
+export function sourceOverlapQuestion(sourceDir, result) {
+  if (!result) return null;
+  const picked = `You picked ${sourceDir} to sort.`;
+  let relation;
+  let outcome;
+  let plural = false;
+  if (result.kind === 'contains') {
+    const count = result.folders.length;
+    plural = count > 1;
+    const listed = result.folders.slice(0, NAMES_LISTED).map(quotedAt);
+    const names =
+      count > NAMES_LISTED
+        ? `${listed.join(', ')} and ${count - NAMES_LISTED} more`
+        : listed.join(', ');
+    relation = plural
+      ? `It holds ${count} of your Smart Folders: ${names}.`
+      : `It holds your Smart Folder ${names}.`;
+    outcome = 'Files already sorted there will be analyzed and sorted again.';
+  } else {
+    const name = quoted(result.folder);
+    if (result.kind === 'inside') {
+      relation = `It is inside your Smart Folder ${quotedAt(result.folder)}.`;
+      outcome = `Files that belong in ${name} will move out of the folder you picked to the top of ${name}.`;
+    } else if (isUncategorizedFolder(result.folder)) {
+      relation = `It is also ${name}, where files that fit nowhere else go.`;
+      outcome = 'Files that fit nowhere else will stay in it.';
+    } else {
+      relation = `It is also your Smart Folder ${name}, where sorted files go.`;
+      outcome = `Files that belong in ${name} will stay in it.`;
+    }
+  }
+  const kept = `If you sort it, StratoSort will not ask again for ${plural ? 'these Smart Folders' : 'this Smart Folder'}.`;
+  return `${picked} ${relation} ${outcome} ${kept}`;
 }

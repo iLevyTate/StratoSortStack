@@ -75,7 +75,10 @@ const CACHE_CONFIG = {
   MAX_FILE_CACHE: 500, // Maximum number of files to cache in memory
   FALLBACK_CONFIDENCE: 65, // Confidence score for fallback analysis
   DEFAULT_CONFIDENCE: 85, // Default confidence for successful analysis
-  CACHE_TTL_MS: 30 * 60 * 1000 // 30 minute TTL to prevent memory leaks
+  // MAX_FILE_CACHE bounds memory, and the key holds the file's size and
+  // modified time, so the TTL is a backstop: 30 minutes made a long batch
+  // (275 files take about two hours) analyze its early files again.
+  CACHE_TTL_MS: 12 * 60 * 60 * 1000
 };
 // v3: spreadsheet and CSV text now carries sheet names and a column line.
 const ANALYSIS_SIGNATURE_VERSION = 'v3';

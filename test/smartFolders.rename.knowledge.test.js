@@ -207,7 +207,7 @@ describe('smartFolders rename moves the knowledge with the directory [K-08]', ()
   test('routes every contained history entry through the path coordinator', async () => {
     const handler = getHandler(IPC_CHANNELS.SMART_FOLDERS.EDIT);
 
-    const result = await handler({}, '1', { path: NEW_PATH });
+    const result = await handler({}, '1', { path: NEW_PATH }, { pathChange: 'move' });
 
     expect(result.success).toBe(true);
     expect(fs.rename).toHaveBeenCalledWith(OLD_PATH, NEW_PATH);
@@ -230,7 +230,7 @@ describe('smartFolders rename moves the knowledge with the directory [K-08]', ()
     ]);
     const handler = getHandler(IPC_CHANNELS.SMART_FOLDERS.EDIT);
 
-    const result = await handler({}, '1', { path: NEW_PATH });
+    const result = await handler({}, '1', { path: NEW_PATH }, { pathChange: 'move' });
 
     expect(result.success).toBe(true);
     expect(mockCoordinator.batchPathUpdate).not.toHaveBeenCalled();
@@ -240,7 +240,7 @@ describe('smartFolders rename moves the knowledge with the directory [K-08]', ()
     mockCoordinator.batchPathUpdate.mockRejectedValue(new Error('vector store offline'));
     const handler = getHandler(IPC_CHANNELS.SMART_FOLDERS.EDIT);
 
-    const result = await handler({}, '1', { path: NEW_PATH });
+    const result = await handler({}, '1', { path: NEW_PATH }, { pathChange: 'move' });
 
     expect(result.success).toBe(true);
     expect(mockFoldersService.saveCustomFolders).toHaveBeenCalled();
@@ -254,7 +254,7 @@ describe('smartFolders rename moves the knowledge with the directory [K-08]', ()
     mockContainer.has.mockReturnValue(false);
     const handler = getHandler(IPC_CHANNELS.SMART_FOLDERS.EDIT);
 
-    const result = await handler({}, '1', { path: NEW_PATH });
+    const result = await handler({}, '1', { path: NEW_PATH }, { pathChange: 'move' });
 
     expect(result.success).toBe(true);
     expect(mockCoordinator.batchPathUpdate).not.toHaveBeenCalled();
@@ -266,7 +266,7 @@ describe('smartFolders rename moves the knowledge with the directory [K-08]', ()
     fs.stat.mockResolvedValue({ isDirectory: () => true });
     const handler = getHandler(IPC_CHANNELS.SMART_FOLDERS.EDIT);
 
-    const result = await handler({}, '1', { path: NEW_PATH });
+    const result = await handler({}, '1', { path: NEW_PATH }, { pathChange: 'move' });
 
     expect(result.success).toBe(true);
     expect(fs.rename).not.toHaveBeenCalled();

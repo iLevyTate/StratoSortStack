@@ -64,8 +64,10 @@ const {
   rankSuggestions,
   calculateConfidence,
   capSuggestionConfidence,
-  generateExplanation
+  generateExplanation,
+  explainReview
 } = require('./suggestionRanker');
+const { decideRouting, CONFIDENT_CONTENT_SCORE, AMBIGUOUS_MARGIN } = require('./routingDecision');
 
 const {
   calculateFolderFitScore,
@@ -851,11 +853,14 @@ class OrganizationSuggestionServiceCore {
       // A template that names its folder after the analysis label (or its
       // purpose sentence) is the label again, at a flat 0.6. The label enters
       // below through _buildLlmCategorySuggestion, gated on routing mode.
+      // A template whose folder is its own placeholder default ("Uncategorized"
+      // from the date template, "Misc") says nothing about the file: date and
+      // workflow templates shape names and subfolders, not the destination.
       const strategyMatches = getStrategyBasedSuggestions(
         normalizedFile,
         smartFolders,
         this.config.strategyMatchThreshold
-      ).filter((match) => match.namedBy !== 'category' && match.namedBy !== 'purpose');
+      ).filter((match) => match.namedBy === 'fileType');
       const patternMatches = this.patternMatcher.getPatternBasedSuggestions(normalizedFile);
 
       const semanticTopScore =
@@ -972,24 +977,70 @@ class OrganizationSuggestionServiceCore {
         patternMatches
       );
 
-      // A folder that "could be enhanced" for this file is an idea, not a
-      // destination: its +0.2 score could reach the auto-move threshold.
-      let primary =
-        rankedSuggestions.find(
-          (suggestion) => suggestion.isSmartFolder && suggestion.source !== 'improvement'
-        ) || null;
-      if (!primary) {
+      // Route only to a confident match (routingDecision.js). A folder that
+      // "could be enhanced" for this file is an idea, never a destination, and
+      // a file no folder fits confidently needs review: it goes to the default
+      // folder, or stays unassigned when there is none.
+      const decision = decideRouting({
+        file: normalizedFile,
+        ranked: rankedSuggestions,
+        sourceSuggestions: normalizedSuggestions,
+        patternMatches,
+        smartFolders,
+        // The label names a folder only in the modes that rank by it.
+        useLabels: shouldIncludeLlmCategory
+      });
+      /** @type {any} */
+      let primary = null;
+      if (!decision.needsReview) {
+        primary = decision.candidate;
+        // The label path in LLM routing keeps its own explanation.
+        if (decision.nameMatch && primary.method !== 'llm_category') {
+          primary = { ...primary, nameMatch: decision.nameMatch };
+        }
+        const routed = primary;
+        rankedSuggestions = [
+          routed,
+          ...rankedSuggestions.filter(
+            (suggestion) => suggestion !== decision.candidate && suggestion !== routed
+          )
+        ];
+      } else {
+        const review = {
+          reason: decision.reason,
+          best: decision.best,
+          runnerUp: decision.runnerUp
+        };
         const defaultSuggestion = await this._getDefaultFolderSuggestion(
           normalizedFile,
           smartFolders
         );
         if (defaultSuggestion) {
-          primary = defaultSuggestion;
-          rankedSuggestions = [defaultSuggestion, ...rankedSuggestions];
-        } else if (rankedSuggestions.length > 0) {
-          primary = rankedSuggestions[0];
+          primary = { ...defaultSuggestion, needsReview: true, review };
+          const defaultName = String(defaultSuggestion.folder || '').toLowerCase();
+          rankedSuggestions = [
+            primary,
+            ...rankedSuggestions.filter(
+              (suggestion) => String(suggestion?.folder || '').toLowerCase() !== defaultName
+            )
+          ];
         }
+        logger.info('[OrganizationSuggestionService] File needs review', {
+          file: normalizedFile.name,
+          reason: decision.reason,
+          best: decision.best,
+          runnerUp: decision.runnerUp,
+          defaultFolder: defaultSuggestion?.folder || null
+        });
       }
+      logger.debug('[OrganizationSuggestionService] Routing decision', {
+        file: normalizedFile.name,
+        basis: decision.basis,
+        reason: decision.reason,
+        folder: primary?.folder || null,
+        best: decision.best,
+        runnerUp: decision.runnerUp
+      });
 
       // Get folder improvements
       let folderImprovements = [];
@@ -1003,8 +1054,10 @@ class OrganizationSuggestionServiceCore {
 
       const primaryFolderName = String(primary?.folder || '').toLowerCase();
       systemAnalytics.recordOrganizationRouting({
-        resolvedToUncategorized: primaryFolderName === 'uncategorized',
-        reason: primary?.method || primary?.source || routing?.reason || 'primary'
+        resolvedToUncategorized: decision.needsReview || primaryFolderName === 'uncategorized',
+        reason: decision.needsReview
+          ? `needs_review:${decision.reason}`
+          : primary?.method || primary?.source || routing?.reason || 'primary'
       });
 
       return {
@@ -1015,7 +1068,26 @@ class OrganizationSuggestionServiceCore {
           : [],
         strategies: getApplicableStrategies(normalizedFile),
         confidence: calculateConfidence(primary),
-        explanation: generateExplanation(primary, normalizedFile),
+        explanation: decision.needsReview
+          ? explainReview({
+              reason: decision.reason,
+              best: decision.best,
+              runnerUp: decision.runnerUp
+            })
+          : generateExplanation(primary, normalizedFile),
+        // True when no Smart Folder is a confident match. Nothing moves such a
+        // file on its own; Organize shows it as "Needs review".
+        needsReview: decision.needsReview,
+        routingDecision: {
+          basis: decision.basis,
+          reason: decision.reason,
+          folder: primary?.folder || null,
+          best: decision.best,
+          runnerUp: decision.runnerUp,
+          nameMatch: decision.nameMatch,
+          confidentScore: CONFIDENT_CONTENT_SCORE,
+          ambiguousMargin: AMBIGUOUS_MARGIN
+        },
         folderImprovements,
         routing: {
           mode: routing.mode,
@@ -1201,6 +1273,8 @@ class OrganizationSuggestionServiceCore {
         }
       );
 
+      /** @type {any[]} */
+      const unassigned = [];
       for (const result of /** @type {any} */ (batchResult).results) {
         if (result.error) {
           logger.warn('[OrganizationSuggestionService] File failed', {
@@ -1211,6 +1285,20 @@ class OrganizationSuggestionServiceCore {
         }
 
         const { file, suggestion } = result;
+        // Needs review and no default folder: the file stays unassigned. It is
+        // listed so Organize can show it and nothing places it by default.
+        if (suggestion?.success && !suggestion.primary && suggestion.needsReview) {
+          unassigned.push({
+            ...file,
+            suggestion: null,
+            alternatives: suggestion.alternatives,
+            confidence: 0,
+            explanation: suggestion.explanation,
+            needsReview: true,
+            routingDecision: suggestion.routingDecision
+          });
+          continue;
+        }
         if (!suggestion?.success || !suggestion.primary) {
           logger.warn('[OrganizationSuggestionService] Skipping file with no primary suggestion', {
             file: file?.name
@@ -1262,7 +1350,9 @@ class OrganizationSuggestionServiceCore {
           alternatives: suggestion.alternatives,
           confidence: suggestion.confidence,
           explanation: suggestion.explanation,
-          suggestedNewFolder
+          suggestedNewFolder,
+          needsReview: suggestion.needsReview === true,
+          routingDecision: suggestion.routingDecision
         });
 
         // Update average confidence (guard against division by zero)
@@ -1279,6 +1369,8 @@ class OrganizationSuggestionServiceCore {
       return {
         success: true,
         groups: Array.from(groups.values()),
+        // Files that need review with no default folder to hold them.
+        unassigned,
         patterns,
         recommendations,
         suggestedStrategy: selectBestStrategy(patterns, files),

@@ -276,7 +276,14 @@ const initialState = {
    * graph canvas. Defaults to expanded so the most useful insights stay
    * easy to find; users can hide the strip to reclaim vertical space.
    */
-  graphInsightsDockCollapsed: false
+  graphInsightsDockCollapsed: false,
+  /**
+   * The Smart Folder definitions (getFolderDefinitionsHash) the user last
+   * tried on a sample, or chose to skip the sample for, before a large batch.
+   * Persisted so the offer comes back only after the folders change.
+   * @type {string|null}
+   */
+  smartFolderSampleHash: null
 };
 
 /** Valid accordion keys for the Knowledge OS graph sidebar (single-open). */
@@ -437,6 +444,9 @@ const uiSlice = createSlice({
         selectedTheme: state?.selectedTheme ?? initialState.selectedTheme,
         graphInsightsDockCollapsed:
           state?.graphInsightsDockCollapsed ?? initialState.graphInsightsDockCollapsed,
+        // Which folder set was already tried on a sample: a "Start over" does
+        // not change the folders, so it must not bring the offer back.
+        smartFolderSampleHash: state?.smartFolderSampleHash ?? initialState.smartFolderSampleHash,
         // The settings cache mirrors what main has saved; it is not session
         // state. Nothing refetches it after a reset, so dropping it made
         // selectNamingDefaults fall back to the hard-coded defaults, which
@@ -486,6 +496,10 @@ const uiSlice = createSlice({
     },
     setGraphInsightsDockCollapsed: (state, action) => {
       state.graphInsightsDockCollapsed = Boolean(action.payload);
+    },
+    setSmartFolderSampleHash: (state, action) => {
+      const value = action.payload;
+      state.smartFolderSampleHash = typeof value === 'string' && value ? value : null;
     },
     setViewMode: (state, action) => {
       const next = action.payload;
@@ -543,6 +557,7 @@ export const {
   setGraphInsightsSection,
   setGraphLegendHintDismissed,
   setGraphInsightsDockCollapsed,
+  setSmartFolderSampleHash,
   setViewMode,
   setCameFromDashboard,
   setSelectedTheme

@@ -295,3 +295,74 @@ describe('selectRepresentativeContent', () => {
     expect(result.coveragePercent).toBe(10);
   });
 });
+
+// ---------------------------------------------------------------------------
+// CSV and spreadsheet text (the extractors' "## Sheet:" and "Columns:" lines)
+// ---------------------------------------------------------------------------
+
+describe('selectRepresentativeContent on table text', () => {
+  const sheet = (name, columns, rows) =>
+    [
+      `## Sheet: ${name}`,
+      `Columns: ${columns.join(' | ')}`,
+      ...Array.from({ length: rows }, (_, i) => `${name.toLowerCase()} row ${i} 12 345 6.7% 8.9`)
+    ].join('\n');
+  const workbook = [
+    sheet('Queries', ['Top queries', 'Clicks', 'Impressions'], 900),
+    sheet('Pages', ['Top pages', 'Clicks', 'Impressions'], 900),
+    sheet('Devices', ['Device', 'Clicks'], 3),
+    ['## Sheet: Filters', 'Columns: Filter | Value', 'Property sc-domain:example.com'].join('\n')
+  ].join('\n');
+
+  test('keeps every sheet heading and its columns, within the table limit', () => {
+    const result = selectRepresentativeContent(workbook, 30000);
+    expect(result.strategy).toBe('table-heads');
+    expect(result.content.length).toBeLessThanOrEqual(2000);
+    for (const name of ['Queries', 'Pages', 'Devices', 'Filters']) {
+      expect(result.content).toContain(`## Sheet: ${name}`);
+    }
+    expect(result.content).toContain('Columns: Top pages | Clicks | Impressions');
+    // The last sheet survives: head/middle/tail sampling kept it only by chance.
+    expect(result.content).toContain('Property sc-domain:example.com');
+  });
+
+  test('keeps the first rows of each sheet and says how many were left out', () => {
+    const { content } = selectRepresentativeContent(workbook, 30000);
+    expect(content).toContain('queries row 0 ');
+    expect(content).not.toContain('queries row 8 ');
+    expect(content).toContain('(892 more rows)');
+    // A short sheet is kept whole, with no count line.
+    expect(content).toContain('devices row 2 ');
+    expect(content).not.toMatch(/devices row 2 [^\n]*\n\(\d+ more rows\)/);
+  });
+
+  test('a single CSV table gets the same treatment', () => {
+    const csv = [
+      'Columns: Keyword | Impressions | Clicks',
+      ...Array.from({ length: 500 }, (_, i) => `keyword ${i} 1000 10`)
+    ].join('\n');
+    const result = selectRepresentativeContent(csv, 30000);
+    expect(result.strategy).toBe('table-heads');
+    expect(result.content.split('\n')[0]).toBe('Columns: Keyword | Impressions | Clicks');
+    expect(result.content).toContain('(492 more rows)');
+  });
+
+  test('a smaller budget than the table limit still holds', () => {
+    const result = selectRepresentativeContent(workbook, 500);
+    expect(result.content.length).toBeLessThanOrEqual(500);
+    expect(result.content).toContain('## Sheet: Queries');
+  });
+
+  test('a table that fits is returned whole', () => {
+    const small = sheet('Devices', ['Device', 'Clicks'], 3);
+    expect(selectRepresentativeContent(small, 30000)).toMatchObject({
+      strategy: 'full',
+      content: small
+    });
+  });
+
+  test('prose that mentions columns is not treated as a table', () => {
+    const prose = `Columns: the report lists clicks and impressions.\n${'Body text. '.repeat(2000)}`;
+    expect(selectRepresentativeContent(prose, 3000).strategy).toBe('representative');
+  });
+});

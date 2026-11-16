@@ -6,13 +6,19 @@ const { getInstance: getCacheInvalidationBus } = require('../../shared/cacheInva
 const { LRUCache } = require('../../shared/LRUCache');
 
 const logger = createLogger('AnalysisCacheService');
+// Entries are bounded by maxEntries, and their keys change when the content,
+// model, Smart Folders or instructions change, so the TTL is only a backstop.
+// It used to be 30 minutes: a 275-file batch takes about two hours, so a copy
+// of a file analyzed more than 30 minutes earlier was analyzed again.
+const ANALYSIS_RESULT_TTL_MS = 12 * 60 * 60 * 1000;
+
 /**
  * Default configurations for different cache types
  * @type {Record<string, any>}
  */
 const CACHE_TYPE_DEFAULTS = {
-  document: { maxEntries: 500, ttlMs: 30 * 60 * 1000, name: 'documentCache' },
-  image: { maxEntries: 300, ttlMs: 30 * 60 * 1000, name: 'imageCache' },
+  document: { maxEntries: 500, ttlMs: ANALYSIS_RESULT_TTL_MS, name: 'documentCache' },
+  image: { maxEntries: 300, ttlMs: ANALYSIS_RESULT_TTL_MS, name: 'imageCache' },
   llm: { maxEntries: 200, ttlMs: 60 * 60 * 1000, name: 'llmCache' }
 };
 

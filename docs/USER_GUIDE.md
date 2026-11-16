@@ -96,6 +96,59 @@ content against these descriptions to decide where it fits best.
 | **Project Specs** | "Requirements, architecture docs, and project briefs." |
 | **Screenshots**   | "Screen captures, app screenshots, and UI mockups."    |
 
+### Writing folder descriptions
+
+The AI reads each folder's name and description, and nothing else, to decide where a file goes, so a
+few words of description decide where many files land. It is normal to find a description too vague
+only after seeing where files land; that is what the sample below is for.
+
+What to include:
+
+- The kinds of files that belong here, in the words those files use ("invoice", "W-2", "lease").
+- Who they come from or are about, when that tells folders apart ("from suppliers", "for the Garden
+  Street house").
+- The most telling words first. Only the first part of a long description reaches the AI, and Setup
+  says so when a description is cut off.
+
+What to leave out:
+
+- Words every folder could use, such as "files", "documents", "stuff" or "misc".
+- Files that belong in another folder. If two folders are close, say what goes in this one and not
+  the other ("Invoices from suppliers. Not receipts for things we bought.").
+
+Example: a folder named **Invoices** with the description "Documents" leaves the AI with the name
+alone. "Bills and invoices from suppliers, with an amount due and a due date. Not receipts." tells
+it what belongs there and what does not.
+
+Setup shows a hint under a description that is missing, short, cut off, or reads like another
+folder's. A hint never stops you from saving.
+
+### Try a few files first
+
+When you add 20 or more files and your Smart Folders have not been tried since they last changed,
+StratoSort asks before it starts: **Analyze 5 files first**, or **Analyze all** of them. The sample
+takes files of each type in the batch. Nothing is moved.
+
+When the sample is done, you see where each file would go, the confidence where there is one, and
+why. Then choose **Analyze the other files** to go on, or **Edit Smart Folders** to change a
+description first. The sample files count as analyzed, so the rest of the batch does not analyze
+them again. Files you have not analyzed yet stay in the queue on Discover.
+
+StratoSort remembers that you saw a sample, or chose **Analyze all**, for the folders you have now.
+It asks again only after you change a folder's name, description or location.
+
+### When you change Smart Folders after files were analyzed
+
+When you change a Smart Folder, **Organize** ranks the files waiting there again with the current
+folders, without analyzing them again. Most files get a current folder that way.
+
+Some files can still point to a folder picked from your old Smart Folders: the folder the analysis
+picked when nothing else ranks the file. StratoSort does not move those unnoticed. **Organize**
+lists them above the files, with **Analyze again** to analyze only those files with the current
+folders, and **Move** asks before it moves any of them. StratoSort does not analyze them again on
+its own, because on a large batch that takes as long as the first run did. A folder you chose
+yourself on a card is never treated as out of date.
+
 ### Teaching StratoSort
 
 When you change a file's folder on **Organize**, its card says what StratoSort learns from that.

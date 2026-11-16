@@ -11,8 +11,10 @@ jest.mock('../../src/renderer/contexts/NotificationContext', () => ({
   useNotification: jest.fn(() => ({ addNotification: mockAddNotification }))
 }));
 
+const mockReanalyzeFiles = jest.fn();
+
 jest.mock('../../src/renderer/phases/discover/AnalysisRunProvider', () => ({
-  useAnalysisRun: () => ({ reanalyzeFiles: jest.fn() })
+  useAnalysisRun: () => ({ reanalyzeFiles: mockReanalyzeFiles })
 }));
 
 jest.mock('../../src/renderer/components/UndoRedoSystem', () => ({
@@ -155,7 +157,20 @@ jest.mock('../../src/renderer/components/organize', () => ({
 
 jest.mock('../../src/renderer/components/ui/Modal', () => ({
   __esModule: true,
-  default: ({ isOpen, children }) => (isOpen ? <div>{children}</div> : null)
+  default: ({ isOpen, children }) => (isOpen ? <div>{children}</div> : null),
+  ConfirmModal: ({ isOpen, title, message, confirmText, cancelText, onConfirm, onClose }) =>
+    isOpen ? (
+      <div role="dialog">
+        <div>{title}</div>
+        <div>{message}</div>
+        <button type="button" onClick={onConfirm}>
+          {confirmText}
+        </button>
+        <button type="button" onClick={onClose}>
+          {cancelText}
+        </button>
+      </div>
+    ) : null
 }));
 
 jest.mock('../../src/renderer/components/organize/OrganizePreviewModal', () => ({
@@ -499,6 +514,44 @@ describe('OrganizePhase premium preflight copy', () => {
     expect(screen.queryByText(/IN_PLACE_NOTICE/)).not.toBeInTheDocument();
   });
 
+  test('Move stays off until the user chooses what happens to files that stay in their folder', () => {
+    const { useOrganization } = require('../../src/renderer/phases/organize/useOrganization');
+    const base = {
+      isOrganizing: false,
+      isPaused: false,
+      batchProgress: null,
+      organizePreview: [],
+      handleOrganizeFiles: jest.fn(),
+      organizeConflicts: []
+    };
+    const stays = (choice) => ({
+      sourcePath: '/in/a.csv',
+      fileName: 'a.csv',
+      folderName: 'Strato Input',
+      renamed: false,
+      folderKey: '/in',
+      choice
+    });
+
+    useOrganization.mockReturnValue({ ...base, inPlaceMoves: [stays(null)] });
+    const { rerender } = render(<OrganizePhase />);
+    const waiting = screen.getByRole('button', { name: /Move 2 files/i });
+    expect(waiting).toBeDisabled();
+    expect(waiting).toHaveAttribute(
+      'title',
+      'Choose what happens to the files already in their folder first.'
+    );
+
+    useOrganization.mockReturnValue({ ...base, inPlaceMoves: [stays('leave')] });
+    rerender(<OrganizePhase />);
+    expect(screen.getByRole('button', { name: /Move 2 files/i })).toBeEnabled();
+
+    // A skipped file is not counted on the button.
+    useOrganization.mockReturnValue({ ...base, inPlaceMoves: [stays('skip')] });
+    rerender(<OrganizePhase />);
+    expect(screen.getByRole('button', { name: /Move 1 file(?!s)/i })).toBeEnabled();
+  });
+
   test('keeps edits for files hidden only while their move is in flight (L11)', () => {
     const { useOrganization } = require('../../src/renderer/phases/organize/useOrganization');
     const { useFileEditing } = require('../../src/renderer/phases/organize/useFileEditing');
@@ -781,5 +834,124 @@ describe('OrganizePhase: every file of the last run', () => {
     expect(screen.getByText('Now at /dest/finance/GSC 2026.xlsx')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Show gsc.xlsx in its folder' }));
     expect(reveal).toHaveBeenCalledWith('/dest/finance/GSC 2026.xlsx');
+  });
+});
+
+describe('OrganizePhase with results made under old Smart Folder definitions', () => {
+  const { getFolderDefinitionsHash } = require('../../src/shared/smartFolderDefinitions');
+  const FOLDERS = [{ id: '1', name: 'Finance', path: '/dest/finance' }];
+  const currentHash = getFolderDefinitionsHash(FOLDERS);
+
+  let restoreState;
+  let handleOrganizeFiles;
+
+  function renderWith(files) {
+    const { useOrganizeState } = require('../../src/renderer/phases/organize/useOrganizeState');
+    const { useOrganization } = require('../../src/renderer/phases/organize/useOrganization');
+    const {
+      useFileEditing,
+      useProcessedFiles
+    } = require('../../src/renderer/phases/organize/useFileEditing');
+    const original = useOrganizeState.getMockImplementation();
+    restoreState = () => useOrganizeState.mockImplementation(original);
+    useOrganizeState.mockImplementation(() => ({ ...original(), filesWithAnalysis: files }));
+    // No card edits (an edit is the user's choice, never stale) and every
+    // file still waiting to move.
+    useFileEditing.mockReturnValue({
+      editingFiles: {},
+      setEditingFiles: jest.fn(),
+      handleEditFile: jest.fn(),
+      getFileWithEdits: (file) => file
+    });
+    useProcessedFiles.mockReturnValue({
+      setProcessedFileIds: jest.fn(),
+      markFilesAsProcessed: jest.fn(),
+      unmarkFilesAsProcessed: jest.fn(),
+      getFilteredFiles: (list) => ({ unprocessedFiles: list, processedFiles: [] }),
+      normalizePath: (value) => value
+    });
+    handleOrganizeFiles = jest.fn();
+    useOrganization.mockReturnValue({
+      isOrganizing: false,
+      batchProgress: null,
+      organizePreview: [],
+      handleOrganizeFiles,
+      organizeConflicts: []
+    });
+    render(<OrganizePhase />);
+  }
+
+  afterEach(() => {
+    restoreState?.();
+    restoreState = null;
+    jest.clearAllMocks();
+  });
+
+  const staleInvoice = {
+    path: '/tmp/invoice.pdf',
+    name: 'invoice.pdf',
+    analysis: { category: 'Finance', suggestedName: 'Invoice.pdf', smartFolderHash: 'sf-old' }
+  };
+  const freshNotes = {
+    path: '/tmp/notes.txt',
+    name: 'notes.txt',
+    analysis: { category: 'Finance', suggestedName: 'Notes.txt', smartFolderHash: currentHash }
+  };
+  const unstampedReport = {
+    path: '/tmp/report.pdf',
+    name: 'report.pdf',
+    analysis: { category: 'Finance', suggestedName: 'Report.pdf' }
+  };
+
+  test('lists a file whose folder came from old definitions, with one click to refresh', () => {
+    renderWith([staleInvoice, freshNotes, unstampedReport]);
+
+    expect(screen.getByTestId('stale-suggestions-notice')).toBeInTheDocument();
+    expect(
+      screen.getByText('Your Smart Folders changed after this file was analyzed')
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        '1 file still goes where your old Smart Folders sent it. Analyze it again to sort it with the current folders.'
+      )
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Analyze 1 again' }));
+    expect(mockReanalyzeFiles).toHaveBeenCalledWith(['/tmp/invoice.pdf']);
+  });
+
+  test('Move asks first when a file would go where old definitions sent it', async () => {
+    renderWith([staleInvoice, freshNotes]);
+
+    fireEvent.click(screen.getByRole('button', { name: /Move 2 files/i }));
+    expect(handleOrganizeFiles).not.toHaveBeenCalled();
+    expect(screen.getByText('Move files sorted by your old Smart Folders?')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        '1 of these files goes where your old Smart Folders sent it. To use your current folders, cancel and analyze it again.'
+      )
+    ).toBeInTheDocument();
+
+    // Cancel: nothing moves.
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    });
+    expect(handleOrganizeFiles).not.toHaveBeenCalled();
+
+    // Move anyway: the move goes ahead as asked.
+    fireEvent.click(screen.getByRole('button', { name: /Move 2 files/i }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Move anyway' }));
+    });
+    await waitFor(() => expect(handleOrganizeFiles).toHaveBeenCalledTimes(1));
+  });
+
+  test('current results move at once, with no warning', () => {
+    renderWith([freshNotes, unstampedReport]);
+
+    expect(screen.queryByTestId('stale-suggestions-notice')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Move 2 files/i }));
+    expect(handleOrganizeFiles).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('Move files sorted by your old Smart Folders?')).toBeNull();
   });
 });

@@ -42,9 +42,15 @@ export const smartFoldersIpc = {
   /**
    * @param {string} folderId
    * @param {Record<string, any>} updatedFolder
+   * @param {{ pathChange?: 'move' | 'new' }} [options] - the answer to a
+   *   PATH_CHANGE_CHOICE_REQUIRED reply: move the old folder and its files to
+   *   the new path, or start with a new empty folder there
    */
-  edit(folderId, updatedFolder) {
-    return requireElectronAPI().smartFolders.edit(folderId, updatedFolder);
+  edit(folderId, updatedFolder, options) {
+    const api = requireElectronAPI().smartFolders;
+    return options === undefined
+      ? api.edit(folderId, updatedFolder)
+      : api.edit(folderId, updatedFolder, options);
   },
   /** @param {string} folderId */
   delete(folderId) {

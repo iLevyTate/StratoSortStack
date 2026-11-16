@@ -7,7 +7,11 @@ import {
   normalizeEngineEntry,
   findFolderForCandidate,
   resolveOrganizeDestination,
-  suggestionForOperation
+  suggestionForOperation,
+  describeRouting,
+  routingScore,
+  isStaleDestination,
+  findStaleFiles
 } from '../src/renderer/phases/organize/organizeDestination';
 
 const FINANCE = { id: 'f-fin', name: 'Finance', path: '/library/Finance' };
@@ -143,6 +147,62 @@ describe('normalizeEngineEntry', () => {
   });
 });
 
+describe('a file the engine marks as needing review', () => {
+  const REVIEW_TEXT = 'No Smart Folder matched this file well. The closest was "Taxes".';
+
+  function reviewEngine(withDefault = true) {
+    return normalizeEngineEntry({
+      path: '/in/doc.pdf',
+      suggestion: withDefault
+        ? {
+            ...UNCATEGORIZED,
+            folder: UNCATEGORIZED.name,
+            folderId: UNCATEGORIZED.id,
+            isSmartFolder: true,
+            source: 'default'
+          }
+        : null,
+      confidence: withDefault ? 0.1 : 0,
+      explanation: REVIEW_TEXT,
+      alternatives: [{ ...TAXES, folder: TAXES.name, folderId: TAXES.id, isSmartFolder: true }],
+      needsReview: true,
+      routingDecision: { reason: 'weak_match' }
+    });
+  }
+
+  test('stays in the default folder; name matching does not pick one', () => {
+    const result = resolve({
+      analysis: { category: 'Taxes', vendor: 'Acme' },
+      engine: reviewEngine()
+    });
+    expect(result.source).toBe('review');
+    expect(result.folder).toBe(UNCATEGORIZED);
+    expect(result.engine.explanation).toBe(REVIEW_TEXT);
+    expect(result.engine.reviewReason).toBe('weak_match');
+    expect(result.engine.alternatives.map((a) => a.folder)).toEqual(['Taxes']);
+  });
+
+  test('with no default folder it stays unassigned', () => {
+    const engine = reviewEngine(false);
+    expect(engine).not.toBeNull();
+    expect(engine.needsReview).toBe(true);
+    expect(engine.folder).toBeNull();
+    const result = resolve({ analysis: { category: 'Taxes' }, engine });
+    expect(result.source).toBe('review');
+    expect(result.folder).toBeNull();
+  });
+
+  test('the user can still pick a folder', () => {
+    const result = resolve({
+      analysis: { category: 'Taxes' },
+      edits: { category: 'Finance' },
+      engine: reviewEngine()
+    });
+    expect(result.source).toBe('user');
+    expect(result.folder).toBe(FINANCE);
+  });
+});
+
 describe('findFolderForCandidate', () => {
   test('matches by id first, then by path', () => {
     expect(findFolderForCandidate({ folderId: 'f-tax', path: '/elsewhere' }, FOLDERS)).toBe(TAXES);
@@ -166,6 +226,26 @@ describe('suggestionForOperation', () => {
     });
   });
 
+  test('no suggestion for a file that needs review, even from a non-generic default', () => {
+    const INBOX = { id: 'f-inbox', name: 'Inbox', path: '/library/Inbox' };
+    const engine = normalizeEngineEntry({
+      path: '/in/doc.pdf',
+      suggestion: { ...INBOX, folder: 'Inbox', folderId: INBOX.id, isSmartFolder: true },
+      confidence: 0.1,
+      needsReview: true
+    });
+    const destination = resolveOrganizeDestination({
+      fileWithEdits: { path: '/in/doc.pdf', name: 'doc.pdf', analysis: {} },
+      edits: { category: 'Finance' },
+      engineSuggestion: engine,
+      smartFolders: [...FOLDERS, INBOX],
+      findSmartFolderForCategory: byName,
+      findSmartFolderForFile: byVendor
+    });
+    expect(destination.source).toBe('user');
+    expect(suggestionForOperation(destination, [...FOLDERS, INBOX])).toBe(undefined);
+  });
+
   test('no suggestion for a name match or a generic-bucket engine pick', () => {
     expect(suggestionForOperation(resolve({ analysis: { category: 'Taxes' } }), FOLDERS)).toBe(
       undefined
@@ -176,5 +256,81 @@ describe('suggestionForOperation', () => {
         FOLDERS
       )
     ).toBe(undefined);
+  });
+});
+
+describe('describeRouting and routingScore', () => {
+  test('an engine pick gives its reason and its score', () => {
+    const routing = resolve({ analysis: { category: 'Taxes' }, engine: engineFor(FINANCE) });
+    expect(describeRouting(routing, 'Taxes')).toBe('This file\'s meaning matches "Finance"');
+    expect(routingScore(routing)).toBe(0.82);
+  });
+
+  test('a label match says so, with no score', () => {
+    const routing = resolve({ analysis: { category: 'Taxes' } });
+    expect(describeRouting(routing, 'Taxes')).toBe(
+      'Matched by the label the analysis gave this file'
+    );
+    expect(routingScore(routing)).toBeNull();
+  });
+
+  test('the user choice names the engine pick it overrode, with no score', () => {
+    const routing = resolve({ edits: { category: 'Taxes' }, engine: engineFor(FINANCE) });
+    expect(describeRouting(routing, 'Taxes')).toBe('Your choice (suggested: Finance)');
+    expect(routingScore(routing)).toBeNull();
+  });
+
+  test('no destination has no reason', () => {
+    expect(describeRouting(resolve({ analysis: { category: 'Nonsense' } }), 'Nonsense')).toBe(null);
+  });
+});
+
+describe('stale results: picked under Smart Folder definitions that changed', () => {
+  const NOW = 'sf-current';
+  const file = (analysis) => ({ path: '/Users/alex/in/doc.pdf', name: 'doc.pdf', analysis });
+
+  test('a label match from old definitions is stale', () => {
+    const stale = file({ category: 'Taxes', smartFolderHash: 'sf-old' });
+    const routing = resolve({ analysis: stale.analysis });
+    expect(routing.source).toBe('name');
+    expect(isStaleDestination(stale, routing, NOW)).toBe(true);
+  });
+
+  test('no folder from an old label is stale too: the new folders may place it', () => {
+    const stale = file({ category: 'Nonsense', smartFolderHash: 'sf-old' });
+    const routing = resolve({ analysis: stale.analysis });
+    expect(routing.source).toBe('none');
+    expect(isStaleDestination(stale, routing, NOW)).toBe(true);
+  });
+
+  test('an engine pick is current: it was ranked with the current folders', () => {
+    const stale = file({ category: 'Taxes', smartFolderHash: 'sf-old' });
+    const routing = resolve({ analysis: stale.analysis, engine: engineFor(FINANCE) });
+    expect(isStaleDestination(stale, routing, NOW)).toBe(false);
+  });
+
+  test('the user choice is never stale', () => {
+    const stale = file({ category: 'Taxes', userCategory: 'Taxes', smartFolderHash: 'sf-old' });
+    const routing = resolve({ analysis: stale.analysis });
+    expect(routing.source).toBe('user');
+    expect(isStaleDestination(stale, routing, NOW)).toBe(false);
+  });
+
+  test('analysis under the current definitions, or with no stamp, is not stale', () => {
+    const current = file({ category: 'Taxes', smartFolderHash: NOW });
+    const unstamped = file({ category: 'Taxes' });
+    expect(isStaleDestination(current, resolve({ analysis: current.analysis }), NOW)).toBe(false);
+    expect(isStaleDestination(unstamped, resolve({ analysis: unstamped.analysis }), NOW)).toBe(
+      false
+    );
+  });
+
+  test('findStaleFiles keeps only the stale ones', () => {
+    const a = { ...file({ category: 'Taxes', smartFolderHash: 'sf-old' }), path: '/a.pdf' };
+    const b = { ...file({ category: 'Taxes', smartFolderHash: NOW }), path: '/b.pdf' };
+    const c = { path: '/c.pdf', name: 'c.pdf' }; // not analyzed
+    const resolveFile = (f) => resolve({ analysis: f.analysis || {} });
+    expect(findStaleFiles([a, b, c], resolveFile, NOW)).toEqual([a]);
+    expect(findStaleFiles([a, b, c], resolveFile, '')).toEqual([]);
   });
 });

@@ -399,7 +399,11 @@ export const ConfirmModal = memo(function ConfirmModal({
   // When set, the user must type this exact string before the Confirm
   // button enables. Used for irreversible actions (delete backup, full
   // embedding rebuild) so accidental clicks can't fire them.
-  requireConfirmText = null
+  requireConfirmText = null,
+  // A second real choice beside Confirm (e.g. 'Start with an empty folder'
+  // beside 'Move the folder'), shown between Cancel and Confirm.
+  alternativeText = null,
+  onAlternative = null
 }) {
   const [isConfirming, setIsConfirming] = useState(false);
   const [typedConfirmation, setTypedConfirmation] = useState('');
@@ -532,6 +536,17 @@ export const ConfirmModal = memo(function ConfirmModal({
           <Button onClick={onClose} variant="secondary" size="sm" disabled={isConfirming}>
             {cancelText}
           </Button>
+          {alternativeText && typeof onAlternative === 'function' && (
+            <Button
+              onClick={onAlternative}
+              variant="secondary"
+              size="sm"
+              disabled={isConfirming}
+              data-testid="confirm-modal-alternative"
+            >
+              {alternativeText}
+            </Button>
+          )}
           {/* eslint-disable jsx-a11y/no-autofocus -- deliberate initial focus per WAI-ARIA dialog pattern */}
           <Button
             onClick={handleConfirm}
@@ -611,7 +626,9 @@ ConfirmModal.propTypes = {
   cancelText: PropTypes.string,
   variant: PropTypes.oneOf(['default', 'danger', 'warning', 'info']),
   fileName: PropTypes.string,
-  requireConfirmText: PropTypes.string
+  requireConfirmText: PropTypes.string,
+  alternativeText: PropTypes.string,
+  onAlternative: PropTypes.func
 };
 
 export default Modal;

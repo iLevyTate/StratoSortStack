@@ -66,6 +66,34 @@ beforeEach(() => {
   global.window.electronAPI = { suggestions: { getBatchSuggestions } };
 });
 
+test('keeps files that need review, including unassigned ones', async () => {
+  const files = makeFiles(2, 'review');
+  getBatchSuggestions.mockImplementation(async () => ({
+    success: true,
+    groups: [],
+    unassigned: [
+      {
+        ...files[0],
+        suggestion: null,
+        alternatives: [],
+        confidence: 0,
+        explanation: 'No Smart Folder matched this file.',
+        needsReview: true,
+        routingDecision: { reason: 'no_match' }
+      }
+    ]
+  }));
+  const { result } = renderHook(() => useOrganizeSuggestions(files, FOLDERS));
+
+  await waitFor(() => expect(result.current.suggestionsByPath.size).toBe(1));
+  const entry = result.current.suggestionsByPath.get('/in/review-0.pdf');
+  expect(entry.needsReview).toBe(true);
+  expect(entry.folder).toBeNull();
+  expect(entry.reviewReason).toBe('no_match');
+  expect(entry.explanation).toBe('No Smart Folder matched this file.');
+  await waitFor(() => expect(result.current.isRanking).toBe(false));
+});
+
 test('fetches in chunks with generation and improvement candidates off', async () => {
   const files = makeFiles(SUGGESTION_CHUNK_SIZE + 5);
   const { result } = renderHook(() => useOrganizeSuggestions(files, FOLDERS));

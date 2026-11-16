@@ -11,7 +11,8 @@ const ORIGIN_TEXT = {
   queued: 'Files you added while the last run was going',
   resume: 'Continuing a run that was interrupted',
   retry: 'Trying again the files that failed',
-  reanalyze: 'Analyzing again because you chose Reanalyze'
+  reanalyze: 'Analyzing again because you chose Reanalyze',
+  sample: 'Trying your Smart Folders on a few files first'
 };
 
 const AnalysisProgress = memo(function AnalysisProgress({

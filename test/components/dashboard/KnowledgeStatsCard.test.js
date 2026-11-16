@@ -2,7 +2,7 @@
  * @jest-environment jsdom
  */
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import KnowledgeStatsCard from '../../../src/renderer/components/dashboard/KnowledgeStatsCard';
 
 // formatBytes(5.5 * 1024 * 1024 * 1024) → "5.50 GB"
@@ -55,11 +55,58 @@ describe('KnowledgeStatsCard', () => {
     // user whose thousands of analyzed files just failed to load. Genuinely
     // empty stats always carry explicit isEmpty/totalFiles fields, so the
     // fieldless envelope is distinguishable and renders as unavailable.
-    window.electronAPI.analysisHistory.getStatistics.mockResolvedValueOnce({ success: true });
+    // The same envelope is what the handler sends while the history service is
+    // still starting, so the card asks again a few times before giving up.
+    jest.useFakeTimers();
+    try {
+      window.electronAPI.analysisHistory.getStatistics.mockResolvedValue({ success: true });
+      render(<KnowledgeStatsCard />);
+      for (let i = 0; i < 8; i++) {
+        await act(async () => {
+          jest.advanceTimersByTime(1500);
+        });
+      }
+      expect(screen.getByText(/knowledge stats unavailable/i)).toBeTruthy();
+      expect(window.electronAPI.analysisHistory.getStatistics).toHaveBeenCalledTimes(6);
+      expect(screen.queryByText(/analyze files to build your knowledge layer/i)).toBeNull();
+      expect(screen.queryByText(/items preserved/i)).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('a bare answer at startup is asked again, so the stats still show', async () => {
+    // Right after launch the history service is not ready and the handler
+    // answers with a bare envelope; a few seconds later it has the stats.
+    jest.useFakeTimers();
+    try {
+      window.electronAPI.analysisHistory.getStatistics.mockResolvedValueOnce({ success: true });
+      render(<KnowledgeStatsCard />);
+      // Let the first (bare) answer arrive and schedule the retry, then run it.
+      await act(async () => {});
+      await act(async () => {
+        jest.advanceTimersByTime(1500);
+      });
+      expect(screen.getByText('1,234')).toBeTruthy();
+      expect(window.electronAPI.analysisHistory.getStatistics).toHaveBeenCalledTimes(2);
+      expect(screen.queryByText(/knowledge stats unavailable/i)).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('a single year reads as that year, not a range', async () => {
+    window.electronAPI.analysisHistory.getStatistics.mockResolvedValueOnce({
+      totalFiles: 3,
+      totalSize: 1024,
+      categoriesCount: 1,
+      oldestContentDate: '2026-01-01',
+      newestContentDate: '2026-11-16',
+      isEmpty: false
+    });
     render(<KnowledgeStatsCard />);
-    await waitFor(() => expect(screen.getByText(/knowledge stats unavailable/i)).toBeTruthy());
-    expect(screen.queryByText(/analyze files to build your knowledge layer/i)).toBeNull();
-    expect(screen.queryByText(/items preserved/i)).toBeNull();
+    await waitFor(() => expect(screen.getByText('2026')).toBeTruthy());
+    expect(screen.queryByText(/2026 to 2026/)).toBeNull();
   });
 
   test('shows the unavailable state instead of loading forever when the API returns nothing', async () => {

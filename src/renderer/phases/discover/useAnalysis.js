@@ -45,6 +45,7 @@ import {
   runBatchPathWhenFree
 } from './batchBusy';
 import { setAnalysisRunBase, clearAnalysisRunBase } from '../../store/analysisRunBase';
+import { getFolderDefinitionsHash } from '../../../shared/smartFolderDefinitions';
 
 const logger = createLogger('DiscoverPhase:Analysis');
 const BATCH_ANALYSIS_MIN_FILES = 40;
@@ -543,6 +544,10 @@ export function useAnalysis(options = {}) {
   const lastProgressAtRef = useRef(0);
   const activeBatchIdRef = useRef(null);
   const cancelInFlightBatchIdRef = useRef(null);
+  // The Smart Folder definitions the current run analyzes under, stamped on
+  // each result as analysis.smartFolderHash. Organize compares it with the
+  // current folders to find results made under old definitions.
+  const runFolderHashRef = useRef('');
 
   const invalidateEmbeddingStatsCache = useCallback(() => {
     try {
@@ -910,8 +915,12 @@ export function useAnalysis(options = {}) {
       if (shouldTreatAsReady) {
         const baseSuggestedName =
           analysisForUi.llmSuggestedName || analysisForUi.suggestedName || fileName;
+        const smartFolderHash =
+          runFolderHashRef.current ||
+          getFolderDefinitionsHash(/** @type {any} */ (store?.getState?.())?.files?.smartFolders);
         const enhancedAnalysis = {
           ...analysisForUi,
+          ...(smartFolderHash ? { smartFolderHash } : {}),
           originalSuggestedName: baseSuggestedName,
           suggestedName: resolveDiscoverSuggestedName({
             originalFileName: fileName,
@@ -953,7 +962,7 @@ export function useAnalysis(options = {}) {
         analyzedAt
       });
     },
-    [namingSettings, recordAnalysisResult, updateFileState]
+    [namingSettings, recordAnalysisResult, updateFileState, store]
   );
 
   /**
@@ -1061,11 +1070,15 @@ export function useAnalysis(options = {}) {
   const analyzeFiles = useCallback(
     async (
       /** @type {any} */ files,
-      /** @type {{ bypassCache?: boolean, origin?: 'queued' | 'resume' | 'retry' }} */ runOptions = {}
+      /** @type {{ bypassCache?: boolean, origin?: 'queued' | 'resume' | 'retry' | 'sample' }} */ runOptions = {}
     ) => {
       // A reanalysis: every file goes through the per-file request, which
       // carries bypassCache, and the run ends without auto-advance.
       const bypassCache = runOptions?.bypassCache === true;
+      // A sample run (a few files tried before a large batch): its results
+      // are shown in the sample dialog, so it ends without the completion
+      // notice and without moving on to Organize.
+      const isSampleRun = !bypassCache && runOptions?.origin === 'sample';
       // Why this run started, shown on the progress card (analysisSlice
       // runOrigin). A plain call is files the person just added.
       const runOrigin = bypassCache ? 'reanalyze' : runOptions?.origin || 'added';
@@ -1152,6 +1165,9 @@ export function useAnalysis(options = {}) {
 
       const runId = ++analysisRunIdRef.current;
       const isActiveRun = () => analysisRunIdRef.current === runId;
+      runFolderHashRef.current = getFolderDefinitionsHash(
+        /** @type {any} */ (store?.getState?.())?.files?.smartFolders
+      );
       const runGeneration = ++analysisRunGeneration;
       cancelledBatchSnapshotRef.current = null;
       batchCompletedPathsRef.current.clear();
@@ -2009,20 +2025,22 @@ export function useAnalysis(options = {}) {
         );
         const successCount = runResults.filter((/** @type {any} */ r) => r.analysis).length;
         const failureCount = runResults.length - successCount;
-        showAnalysisCompletionNotification({
-          successCount,
-          failureCount,
-          addNotification,
-          actions,
-          getCurrentPhase,
-          autoAdvanceTimeoutRef,
-          // Read at fire time: by then a queued run has either started (store
-          // says analyzing) or is still waiting in pendingFilesRef.
-          isMoreAnalysisPending: () =>
-            pendingFilesRef.current.length > 0 ||
-            Boolean(/** @type {any} */ (store.getState())?.analysis?.isAnalyzing),
-          isReanalysis: bypassCache
-        });
+        if (!isSampleRun) {
+          showAnalysisCompletionNotification({
+            successCount,
+            failureCount,
+            addNotification,
+            actions,
+            getCurrentPhase,
+            autoAdvanceTimeoutRef,
+            // Read at fire time: by then a queued run has either started (store
+            // says analyzing) or is still waiting in pendingFilesRef.
+            isMoreAnalysisPending: () =>
+              pendingFilesRef.current.length > 0 ||
+              Boolean(/** @type {any} */ (store.getState())?.analysis?.isAnalyzing),
+            isReanalysis: bypassCache
+          });
+        }
       } catch (error) {
         if (error.message !== 'Analysis cancelled by user') {
           const { message } = mapErrorToNotification({ error });

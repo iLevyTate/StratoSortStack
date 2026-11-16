@@ -46,6 +46,7 @@ const { schemas: validationSchemas } = require('./validationSchemas');
 const { cosineSimilarity, padOrTruncateVector } = require('../../shared/vectorMath');
 const { categorizeModel } = require('../../shared/modelCategorization');
 const { chunkText } = require('../utils/textChunking');
+const { chunkOptionsFor } = require('../analysis/chunkEmbedding');
 const { normalizeText } = require('../../shared/normalization');
 const { getFileEmbeddingId } = require('../utils/fileIdUtils');
 const { enrichFolderTextForEmbedding } = require('../analysis/semanticExtensionMap');
@@ -2818,11 +2819,7 @@ async function handleFullRebuild(
             // Also process chunks from extracted text
             const extractedText = analysis.extractedText || '';
             if (shouldRebuildChunks && extractedText.length >= CHUNKING.MIN_TEXT_LENGTH) {
-              const chunks = chunkText(extractedText, {
-                chunkSize: CHUNKING.CHUNK_SIZE,
-                overlap: CHUNKING.OVERLAP,
-                maxChunks: CHUNKING.MAX_CHUNKS
-              });
+              const chunks = chunkText(extractedText, chunkOptionsFor(extractedText));
 
               for (const chunk of chunks) {
                 throwIfInterrupted();
@@ -3563,11 +3560,7 @@ async function handleRebuildFiles(
           pendingChunkGroups.set(fileId, fileChunkPayloads);
 
           if (extractedText.trim().length >= CHUNKING.MIN_TEXT_LENGTH) {
-            const chunks = chunkText(extractedText, {
-              chunkSize: CHUNKING.CHUNK_SIZE,
-              overlap: CHUNKING.OVERLAP,
-              maxChunks: CHUNKING.MAX_CHUNKS
-            });
+            const chunks = chunkText(extractedText, chunkOptionsFor(extractedText));
 
             for (const c of chunks) {
               try {

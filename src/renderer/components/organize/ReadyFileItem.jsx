@@ -1,7 +1,7 @@
 import React, { memo, useCallback, useMemo } from 'react';
 import PropTypes from 'prop-types';
 import { useSelector } from 'react-redux';
-import { FileText, ChevronRight, Info, FolderPlus } from 'lucide-react';
+import { AlertCircle, FileText, ChevronRight, Info, FolderPlus } from 'lucide-react';
 import Input from '../ui/Input';
 import Select from '../ui/Select';
 import { Button, StatusBadge } from '../ui';
@@ -14,6 +14,7 @@ import {
   getSelectableSmartFolders,
   isDefaultCategoryName
 } from '../../../shared/categoryFolderMatching';
+import { describeRouting } from '../../phases/organize/organizeDestination';
 
 function ReadyFileItem({
   file,
@@ -73,6 +74,8 @@ function ReadyFileItem({
   // it is about this folder), not the LLM's confidence in its own label.
   const engine = routing?.engine || null;
   const routedByEngine = routing?.source === 'engine' && engine;
+  // No Smart Folder is a confident match: the file waits for the user.
+  const needsReview = routing?.source === 'review';
   const rawConfidence = routedByEngine ? engine.confidence : analysis?.confidence;
   const confidenceValue =
     typeof rawConfidence === 'number' && Number.isFinite(rawConfidence) && rawConfidence >= 0
@@ -100,35 +103,12 @@ function ReadyFileItem({
     }
     return names;
   }, [engine, selectableFolders]);
-  const routingNote = useMemo(() => {
-    if (!routing) return null;
-    if (routing.source === 'engine' && engine) {
-      return engine.explanation || 'Ranked by what the file contains';
-    }
-    if (routing.source === 'user') {
-      return engine?.folder && engine.folder !== routing.folder?.name
-        ? `Your choice (suggested: ${engine.folder})`
-        : 'Your choice';
-    }
-    if (routing.source === 'name') {
-      // A name match is either the analysis label or the file's own name/type.
-      const fromLabel =
-        typeof category === 'string' &&
-        category.trim().toLowerCase() ===
-          String(routing.folder?.name || '')
-            .trim()
-            .toLowerCase();
-      return fromLabel
-        ? 'Matched by the label the analysis gave this file'
-        : 'Matched by folder name';
-    }
-    return null;
-  }, [routing, engine, category]);
+  const routingNote = useMemo(() => describeRouting(routing, category), [routing, category]);
   // A changed suggestion is learned from the move, but only for files of the
   // same type and label, and only after a few (the engine weighs it against
   // what the file contains). Say so, so the user knows what to expect.
   const learningNote = useMemo(() => {
-    if (routing?.source !== 'user' || !engine?.folder) return null;
+    if (routing?.source !== 'user' || (!engine?.folder && !engine?.needsReview)) return null;
     const chosen = routing.folder?.name;
     if (!chosen || engine.folder === chosen) return null;
     const dot = String(file?.name || '').lastIndexOf('.');
@@ -148,7 +128,12 @@ function ReadyFileItem({
     computedConfidence !== null &&
     routing?.source !== 'name' &&
     routing?.source !== 'user' &&
+    !needsReview &&
     !(routedByEngine && engine?.source === 'default');
+  // Where the file goes if the user does not pick a folder.
+  const reviewAction = needsReview
+    ? `It goes to "${routing?.folder?.name || category || 'Uncategorized'}" unless you pick a folder.`
+    : null;
   const fileKey = toCanonicalPath(file?.path) || file?.path || '';
   const handleToggle = useCallback(() => onToggleSelected(fileKey), [onToggleSelected, fileKey]);
   const handleEditName = useCallback(
@@ -257,10 +242,12 @@ function ReadyFileItem({
                 flattened, fragments are not), so the groups go in an array. */}
             {rankedNames.length > 0
               ? [
-                  <optgroup key="suggested" label="Suggested">
+                  // A file that needs review has no best match, only the
+                  // folders that came closest.
+                  <optgroup key="suggested" label={needsReview ? 'Closest matches' : 'Suggested'}>
                     {rankedNames.map((name, rank) => (
                       <option key={`ranked-${name}`} value={name}>
-                        {rank === 0 ? `${name} (best match)` : name}
+                        {rank === 0 && !needsReview ? `${name} (best match)` : name}
                       </option>
                     ))}
                   </optgroup>,
@@ -280,14 +267,43 @@ function ReadyFileItem({
                   </option>
                 ))}
           </Select>
-          {routingNote && (
-            <Text
-              variant="tiny"
-              className="-mt-2 text-system-gray-500 line-clamp-2"
-              data-testid="organize-routing-note"
+          {needsReview ? (
+            <div
+              className="-mt-2 flex items-start gap-compact rounded-lg border border-stratosort-warning/40 bg-stratosort-warning/10 px-3 py-2"
+              role="note"
+              aria-label="Needs review"
+              data-testid="organize-needs-review"
             >
-              {routingNote}
-            </Text>
+              <AlertCircle
+                className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-stratosort-warning"
+                aria-hidden
+              />
+              <div className="min-w-0 space-y-0.5">
+                <Text variant="tiny" className="font-medium text-system-gray-900">
+                  Needs review
+                </Text>
+                <Text
+                  variant="tiny"
+                  className="text-system-gray-700"
+                  data-testid="organize-routing-note"
+                >
+                  {routingNote}
+                </Text>
+                <Text variant="tiny" className="text-system-gray-700">
+                  {reviewAction}
+                </Text>
+              </div>
+            </div>
+          ) : (
+            routingNote && (
+              <Text
+                variant="tiny"
+                className="-mt-2 text-system-gray-500 line-clamp-2"
+                data-testid="organize-routing-note"
+              >
+                {routingNote}
+              </Text>
+            )
           )}
           {learningNote && (
             <Text
@@ -404,7 +420,7 @@ ReadyFileItem.propTypes = {
   category: PropTypes.string,
   routing: PropTypes.shape({
     folder: PropTypes.object,
-    source: PropTypes.oneOf(['user', 'engine', 'name', 'none']),
+    source: PropTypes.oneOf(['user', 'engine', 'name', 'review', 'none']),
     engine: PropTypes.object
   }),
   onViewDetails: PropTypes.func,

@@ -1,6 +1,8 @@
 /**
- * useFileHandlers warns (never blocks) when the folder picked for sorting
- * overlaps a Smart Folder, where sorted files go.
+ * A folder picked for sorting that overlaps a Smart Folder (where sorted
+ * files go) is sorted only once the user says so. The answer is kept on the
+ * Smart Folder (`sourceOverlapOk`); after that, and when no dialog is wired
+ * in, the overlap is described in a warning and the folder is sorted.
  */
 
 import { renderHook, act, waitFor } from '@testing-library/react';
@@ -193,5 +195,195 @@ describe('useFileHandlers source overlap warnings', () => {
     });
 
     expect(overlapCalls()).toHaveLength(0);
+  });
+});
+
+describe('useFileHandlers: sorting a folder that overlaps a Smart Folder needs a choice', () => {
+  let useFileHandlers;
+  let mockAddSelectedFiles;
+  let mockAddNotification;
+  let mockAnalyzeFiles;
+  let mockShowConfirm;
+  let mockRemember;
+
+  const OUT = { id: 'out', name: 'Reports', path: '/Users/alex/Sorted/Reports' };
+
+  const createOptions = (overrides = {}) => ({
+    selectedFiles: [],
+    setSelectedFiles: jest.fn(),
+    addSelectedFiles: mockAddSelectedFiles,
+    updateFileState: jest.fn(),
+    addNotification: mockAddNotification,
+    analyzeFiles: mockAnalyzeFiles,
+    smartFolders: [OUT],
+    showConfirm: mockShowConfirm,
+    rememberSmartFolderChoice: mockRemember,
+    ...overrides
+  });
+
+  const overlapWarnings = () =>
+    mockAddNotification.mock.calls.filter(([, , , key]) => key === 'source-overlap');
+  const addedPaths = () =>
+    mockAddSelectedFiles.mock.calls.flatMap(([files]) => files.map((f) => f.path));
+
+  const pick = async (options) => {
+    const { result } = renderHook(() => useFileHandlers(options));
+    await act(async () => {
+      await result.current.handleFolderSelection();
+    });
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    global.window = global.window || {};
+    global.window.electronAPI = mockElectronAPI;
+    mockAddSelectedFiles = jest.fn();
+    mockAddNotification = jest.fn();
+    mockAnalyzeFiles = jest.fn();
+    mockShowConfirm = jest.fn();
+    mockRemember = jest.fn(async () => true);
+    mockElectronAPI.files.getStats.mockResolvedValue({ isDirectory: true });
+    mockElectronAPI.files.selectDirectory.mockReset();
+    mockElectronAPI.smartFolders.scanStructure.mockReset();
+    mockElectronAPI.smartFolders.scanStructure.mockImplementation(async (dir) => ({
+      files: [{ path: `${dir}/a.csv`, name: 'a.csv' }]
+    }));
+    useFileHandlers = require('../src/renderer/phases/discover/useFileHandlers').useFileHandlers;
+  });
+
+  test.each([
+    ['the Smart Folder itself', '/Users/alex/Sorted/Reports', 'It is also your Smart Folder'],
+    [
+      'the Smart Folder spelled with a trailing slash',
+      '/Users/alex/Sorted/Reports/',
+      'It is also your Smart Folder'
+    ],
+    [
+      'the Smart Folder spelled with Windows separators',
+      '\\Users\\alex\\Sorted\\Reports',
+      'It is also your Smart Folder'
+    ],
+    ['a folder inside it', '/Users/alex/Sorted/Reports/2026', 'It is inside your Smart Folder'],
+    ['a folder that holds it', '/Users/alex/Sorted', 'It holds your Smart Folder']
+  ])('picking %s asks first and names both folders', async (_label, picked, relation) => {
+    mockElectronAPI.files.selectDirectory.mockResolvedValueOnce({ success: true, path: picked });
+    mockShowConfirm.mockResolvedValue(true);
+
+    await pick(createOptions());
+
+    expect(mockShowConfirm).toHaveBeenCalledTimes(1);
+    const [{ message, confirmText, cancelText }] = mockShowConfirm.mock.calls[0];
+    expect(message).toContain(`You picked ${picked} to sort.`);
+    expect(message).toContain(relation);
+    expect(message).toContain('"Reports"');
+    if (relation !== 'It is also your Smart Folder') {
+      expect(message).toContain('at /Users/alex/Sorted/Reports');
+    }
+    expect(confirmText).toBe('Sort this folder');
+    expect(cancelText).toBe('Pick another folder');
+    expect(mockAnalyzeFiles).toHaveBeenCalled();
+  });
+
+  test('sorting it on purpose is kept on the Smart Folder, so the next pick is not asked', async () => {
+    mockElectronAPI.files.selectDirectory.mockResolvedValue({
+      success: true,
+      path: '/Users/alex/Sorted/Reports'
+    });
+    mockShowConfirm.mockResolvedValue(true);
+
+    await pick(createOptions());
+    expect(mockRemember).toHaveBeenCalledWith(['out'], { sourceOverlapOk: true });
+
+    mockShowConfirm.mockClear();
+    await pick(createOptions({ smartFolders: [{ ...OUT, sourceOverlapOk: true }] }));
+    expect(mockShowConfirm).not.toHaveBeenCalled();
+    // Still said, not asked.
+    expect(overlapWarnings()).toHaveLength(1);
+  });
+
+  test('"Pick another folder" sorts nothing from that folder and opens the picker again', async () => {
+    mockElectronAPI.files.selectDirectory
+      .mockResolvedValueOnce({ success: true, path: '/Users/alex/Sorted/Reports' })
+      .mockResolvedValueOnce({ success: true, path: '/Users/alex/Inbox' });
+    mockShowConfirm.mockResolvedValue(false);
+
+    await pick(createOptions());
+
+    expect(mockElectronAPI.files.selectDirectory).toHaveBeenCalledTimes(2);
+    expect(mockRemember).not.toHaveBeenCalled();
+    expect(addedPaths()).toEqual(['/Users/alex/Inbox/a.csv']);
+  });
+
+  test('closing the picker after declining sorts nothing', async () => {
+    mockElectronAPI.files.selectDirectory
+      .mockResolvedValueOnce({ success: true, path: '/Users/alex/Sorted/Reports' })
+      .mockResolvedValueOnce({ success: false, path: null });
+    mockShowConfirm.mockResolvedValue(false);
+
+    await pick(createOptions());
+
+    expect(mockAddSelectedFiles).not.toHaveBeenCalled();
+    expect(mockAnalyzeFiles).not.toHaveBeenCalled();
+  });
+
+  test('a dropped folder that is declined is skipped; the rest of the drop is sorted', async () => {
+    mockShowConfirm.mockResolvedValue(false);
+    const { result } = renderHook(() => useFileHandlers(createOptions()));
+
+    await act(async () => {
+      await result.current.handleFileDrop([
+        { path: '/Users/alex/Sorted/Reports', name: 'Reports' },
+        { path: '/Users/alex/Inbox', name: 'Inbox' }
+      ]);
+    });
+
+    expect(mockShowConfirm).toHaveBeenCalledTimes(1);
+    expect(mockShowConfirm.mock.calls[0][0].cancelText).toBe('Skip this folder');
+    expect(addedPaths()).toEqual(['/Users/alex/Inbox/a.csv']);
+  });
+
+  test('two dropped folders inside one Smart Folder ask once', async () => {
+    mockShowConfirm.mockResolvedValue(true);
+    const { result } = renderHook(() => useFileHandlers(createOptions()));
+
+    await act(async () => {
+      await result.current.handleFileDrop([
+        { path: '/Users/alex/Sorted/Reports/2025', name: '2025' },
+        { path: '/Users/alex/Sorted/Reports/2026', name: '2026' }
+      ]);
+    });
+
+    expect(mockShowConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  test('a choice that could not be saved still sorts the folder, and says it will ask again', async () => {
+    mockElectronAPI.files.selectDirectory.mockResolvedValueOnce({
+      success: true,
+      path: '/Users/alex/Sorted/Reports'
+    });
+    mockShowConfirm.mockResolvedValue(true);
+    mockRemember.mockResolvedValue(false);
+
+    await pick(createOptions());
+
+    expect(mockAnalyzeFiles).toHaveBeenCalled();
+    expect(mockAddNotification).toHaveBeenCalledWith(
+      'Your choice was not saved. StratoSort will ask again next time.',
+      'warning',
+      5000,
+      'source-overlap-save'
+    );
+  });
+
+  test('a folder that only shares a name prefix is not asked about', async () => {
+    mockElectronAPI.files.selectDirectory.mockResolvedValueOnce({
+      success: true,
+      path: '/Users/alex/Sorted/Reports 2'
+    });
+
+    await pick(createOptions());
+
+    expect(mockShowConfirm).not.toHaveBeenCalled();
+    expect(mockAnalyzeFiles).toHaveBeenCalled();
   });
 });

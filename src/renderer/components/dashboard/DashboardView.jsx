@@ -45,7 +45,10 @@ import { Heading, Text, Caption } from '../ui/Typography';
 import AnalysisProgress from '../discover/AnalysisProgress';
 import OrganizeSummaryBanner from '../organize/OrganizeSummaryBanner';
 import KnowledgeStatsCard from './KnowledgeStatsCard';
-import { countDestinationFolders } from '../../utils/smartFolderDestinations';
+import {
+  countDestinationFolders,
+  isUncategorizedBucket
+} from '../../utils/smartFolderDestinations';
 import { usePhaseJump } from '../../utils/phaseNavigation';
 import { useNotification } from '../../contexts/NotificationContext';
 import { useUndoRedo } from '../UndoRedoSystem';
@@ -239,7 +242,7 @@ AnimatedCount.propTypes = {
   value: PropTypes.number.isRequired
 };
 
-function PipelineStage({ icon: Icon, label, value, tone, isEntryHint, onClick }) {
+function PipelineStage({ icon: Icon, label, value, tone, onClick }) {
   // Invert the emphasis: an empty stage recedes (the number drops to muted gray,
   // the chip to a calm neutral blue) while a live count lights up in the stage's
   // semantic tone. The big number is written with explicit utilities rather than
@@ -261,15 +264,20 @@ function PipelineStage({ icon: Icon, label, value, tone, isEntryHint, onClick })
           : ''
       }`.trim()}
     >
+      {/* The tinted chip sits on an opaque card-colored base: the chips are
+          translucent, and without the base the connector rail ran visibly
+          through every icon. */}
       <span
-        className={`flex h-10 w-10 items-center justify-center rounded-xl transition-transform duration-200 ease-out ${iconClass} ${
-          isEntryHint ? 'ring-2 ring-stratosort-blue/25' : ''
-        } ${interactive ? 'group-hover/stage:scale-110' : ''}`.trim()}
+        className={`rounded-xl bg-[var(--surface-card-bg)] transition-transform duration-200 ease-out ${
+          interactive ? 'group-hover/stage:scale-110' : ''
+        }`.trim()}
       >
-        <Icon className="h-5 w-5" aria-hidden="true" />
+        <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${iconClass}`}>
+          <Icon className="h-5 w-5" aria-hidden="true" />
+        </span>
       </span>
       <div
-        className={`dashboard-stage-value mt-2 font-mono text-3xl font-semibold leading-none tracking-tight tabular-nums ${valueClass}`}
+        className={`dashboard-stage-value mt-3 text-3xl font-semibold leading-none tracking-tight tabular-nums ${valueClass}`}
       >
         <AnimatedCount value={value} />
       </div>
@@ -285,7 +293,6 @@ PipelineStage.propTypes = {
   label: PropTypes.string.isRequired,
   value: PropTypes.number.isRequired,
   tone: PropTypes.oneOf(['warning', 'accent', 'success']),
-  isEntryHint: PropTypes.bool,
   onClick: PropTypes.func
 };
 
@@ -327,13 +334,20 @@ function PipelineCard({
   const denom = stats.pending + stats.ready + organizedCount;
   const weightedProgress = stats.ready * 0.5 + organizedCount;
   const railPct = denom > 0 ? Math.round((weightedProgress / denom) * 100) : 0;
+  // The footer only speaks when it has news: files still waiting, failures,
+  // or files a run did not move. A calm board does not repeat the badge.
+  const hasFooter = inFlight > 0 || stats.failed > 0 || moveFailedCount > 0;
   return (
     <Card variant="default" className={className}>
       <div className="flex items-center justify-between gap-cozy">
         <SectionLabel>Organization pipeline</SectionLabel>
-        <StatusBadge variant={inFlight > 0 ? 'info' : 'success'} size="sm">
-          {waitingLabel}
-        </StatusBadge>
+        {/* An empty board has nothing to be clear of: the hero already says
+            no files are in yet. */}
+        {isEmpty ? null : (
+          <StatusBadge variant={inFlight > 0 ? 'info' : 'success'} size="sm">
+            {waitingLabel}
+          </StatusBadge>
+        )}
       </div>
       {/* The three lifecycle stages sit on a single connector rail so the card
           reads as a left-to-right flow, not three disconnected boxes. The track
@@ -363,7 +377,6 @@ function PipelineCard({
               label="Awaiting analysis"
               value={stats.pending}
               tone="warning"
-              isEntryHint={isEmpty}
               onClick={onPendingStage}
             />
             <PipelineStage
@@ -381,35 +394,40 @@ function PipelineCard({
               onClick={onOrganizedStage}
             />
           </div>
+          {isEmpty ? (
+            <Text variant="tiny" className="mt-cozy block text-center">
+              Files you add move through these three steps, left to right.
+            </Text>
+          ) : null}
         </div>
       </div>
-      <div className="mt-[var(--dash-section-gap)] flex items-center justify-between gap-cozy lg:mt-auto lg:pt-[var(--dash-section-gap)]">
-        <Text variant="tiny">
-          {inFlight > 0
-            ? `${inFlight} ${inFlight === 1 ? 'file' : 'files'} not organized yet`
-            : 'Nothing waiting'}
-        </Text>
-        <div className="flex items-center gap-compact">
-          {moveFailedCount > 0 && (
-            <Button variant="ghost" size="sm" onClick={onReviewNotMoved}>
-              <span className="inline-flex items-center gap-1.5 text-stratosort-warning">
-                <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
-                {`${moveFailedCount} not moved`}
-              </span>
-            </Button>
-          )}
-          {stats.failed > 0 ? (
-            <Button variant="ghost" size="sm" onClick={onReviewFailed}>
-              <span className="inline-flex items-center gap-1.5 text-stratosort-danger">
-                <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
-                {`${stats.failed} failed`}
-              </span>
-            </Button>
-          ) : (
-            <Text variant="tiny">0 failed</Text>
-          )}
+      {hasFooter ? (
+        <div className="mt-[var(--dash-section-gap)] flex items-center justify-between gap-cozy lg:mt-auto lg:pt-[var(--dash-section-gap)]">
+          <Text variant="tiny">
+            {inFlight > 0
+              ? `${inFlight} ${inFlight === 1 ? 'file' : 'files'} not organized yet`
+              : ''}
+          </Text>
+          <div className="flex items-center gap-compact">
+            {moveFailedCount > 0 && (
+              <Button variant="ghost" size="sm" onClick={onReviewNotMoved}>
+                <span className="inline-flex items-center gap-1.5 text-stratosort-warning">
+                  <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+                  {`${moveFailedCount} not moved`}
+                </span>
+              </Button>
+            )}
+            {stats.failed > 0 ? (
+              <Button variant="ghost" size="sm" onClick={onReviewFailed}>
+                <span className="inline-flex items-center gap-1.5 text-stratosort-danger">
+                  <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+                  {`${stats.failed} failed`}
+                </span>
+              </Button>
+            ) : null}
+          </div>
         </div>
-      </div>
+      ) : null}
     </Card>
   );
 }
@@ -432,8 +450,11 @@ PipelineCard.propTypes = {
 };
 
 function SmartFoldersCard({ folders, onManage, className }) {
-  const visible = folders.slice(0, FOLDER_CHIP_LIMIT);
-  const overflow = folders.length - visible.length;
+  // The Uncategorized catch-all is where unmatched files wait, not a
+  // destination (the hero count leaves it out for the same reason).
+  const destinations = folders.filter((folder) => folder && !isUncategorizedBucket(folder));
+  const visible = destinations.slice(0, FOLDER_CHIP_LIMIT);
+  const overflow = destinations.length - visible.length;
   return (
     <Card variant="default" className={className}>
       <div className="flex items-center justify-between gap-cozy">
@@ -442,13 +463,9 @@ function SmartFoldersCard({ folders, onManage, className }) {
           Manage
         </Button>
       </div>
-      {/* Responsive tile grid instead of small pills: tiles grow to fill the
-          card width (2 cols, 3 on large) AND its height. auto-rows-fr makes the
-          rows share the card's stretched height (this card matches the taller
-          Quick-actions card via lg:items-stretch), so a handful of folders read
-          as substantial cards instead of short pills floated at the top.
-          min-h keeps a floor for the many-folders case. */}
-      <div className="mt-[var(--dash-section-gap)] grid flex-1 auto-rows-fr grid-cols-2 gap-compact lg:grid-cols-3">
+      {/* Columns at least 11rem wide, so a name like "Client proposals" reads in
+          full instead of being cut short in a third of the card. */}
+      <div className="mt-[var(--dash-section-gap)] grid content-start gap-compact [grid-template-columns:repeat(auto-fill,minmax(11rem,1fr))]">
         {visible.map((folder) => (
           <div
             key={folder.id || folder.name}
@@ -773,8 +790,13 @@ export default function DashboardView() {
     if (stats.ready > 0) {
       return { label: `${stats.ready} ready to organize`, variant: 'info', icon: ArrowRight };
     }
+    if (stats.total === 0 && organizedCount === 0) {
+      // Not "no files yet": a returning user with an empty queue has
+      // analyzed files before, and the knowledge card below says so.
+      return { label: 'Ready for files', variant: 'info', icon: FilePlus };
+    }
     return { label: 'All caught up', variant: 'success', icon: CheckCircle2 };
-  }, [stats.failed, stats.pending, stats.ready, unmovedRun]);
+  }, [stats.failed, stats.pending, stats.ready, stats.total, organizedCount, unmovedRun]);
 
   const summary = useMemo(() => {
     // The Uncategorized catch-all main seeds on every profile is not a
@@ -874,8 +896,10 @@ export default function DashboardView() {
           {/* Live-status zone — the two surfaces that answer "what's happening?".
               The pipeline holds the aggregate counts; the activity rail holds the
               individual items behind those counts, so they are paired and share a
-              height via items-stretch rather than living in separate columns. */}
-          <div className="grid grid-cols-1 gap-[var(--dash-gap)] lg:grow lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:items-stretch">
+              height via items-stretch rather than living in separate columns.
+              No row grows into the window's spare height: a stretched card
+              centered three small counts in a mostly empty panel. */}
+          <div className="grid grid-cols-1 gap-[var(--dash-gap)] lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:items-stretch">
             <PipelineCard
               stats={stats}
               organizedCount={organizedCount}
@@ -919,7 +943,7 @@ export default function DashboardView() {
           {/* Get-things-done zone — shortcuts to the working surfaces paired with
               the smart-folder destinations they feed. Same 2fr/1fr split as the
               status row above so the column gutter lines up down the page. */}
-          <div className="grid grid-cols-1 gap-[var(--dash-gap)] lg:grow lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:items-stretch">
+          <div className="grid grid-cols-1 gap-[var(--dash-gap)] lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:items-stretch">
             <Card variant="default" className="h-full lg:flex lg:flex-col">
               <SectionLabel>Quick actions</SectionLabel>
               <div className="mt-[var(--dash-section-gap)] grid grid-cols-1 gap-cozy sm:grid-cols-3 sm:items-stretch lg:flex-1">
@@ -957,7 +981,7 @@ export default function DashboardView() {
           {/* Knowledge layer — a pride-surface summary of every file the local
               AI has processed. Sits at the foot of the board so it reads as a
               reward / closing thought after the pipeline and quick-action rows. */}
-          <KnowledgeStatsCard className="lg:flex lg:grow lg:flex-col" />
+          <KnowledgeStatsCard className="lg:flex lg:flex-col" />
         </motion.div>
       </motion.div>
     </div>

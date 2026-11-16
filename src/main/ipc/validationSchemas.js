@@ -748,7 +748,14 @@ if (!z) {
     description: z.string().max(1000).optional(),
     keywords: z.array(z.string().max(200)).max(200).optional(),
     category: z.string().max(255).optional(),
-    isDefault: z.boolean().optional()
+    isDefault: z.boolean().optional(),
+    // Choices the user made about this folder overlapping folders they sort.
+    // Listed so a whole-list save (Zod strips unknown keys) keeps them.
+    // sourceOverlapOk: sorting a folder that is, sits inside, or holds this
+    // one is on purpose. inPlaceFiles: what Organize does with files already
+    // in this folder that are sent back to it (null: ask again).
+    sourceOverlapOk: z.boolean().optional(),
+    inPlaceFiles: z.enum(['leave', 'skip']).nullable().optional()
   });
 
   /**
@@ -758,11 +765,17 @@ if (!z) {
   const smartFoldersArraySchema = z.array(smartFolderSchema).max(1000);
 
   /**
-   * Smart folder edit input (folderId + updated data)
+   * Smart folder edit input (folderId + updated data + options). The options
+   * say what to do when the new path does not exist yet: move the old folder
+   * there with its files ('move'), or create a new empty folder ('new').
    */
   const smartFolderEditSchema = z.tuple([
     z.string().min(1, 'Folder ID is required'),
-    smartFolderSchema.partial()
+    smartFolderSchema.partial(),
+    z
+      .object({ pathChange: z.enum(['move', 'new']).optional() })
+      .strict()
+      .optional()
   ]);
 
   // ===== File Operation Schemas =====

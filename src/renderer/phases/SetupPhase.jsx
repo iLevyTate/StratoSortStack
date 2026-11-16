@@ -87,7 +87,7 @@ function SetupPhase() {
     [dispatch]
   );
 
-  const { showConfirm, ConfirmDialog } = useConfirmDialog();
+  const { showConfirm, showChoice, ConfirmDialog } = useConfirmDialog();
   const { showSuccess, showError, showWarning, showInfo, addNotification } = useNotification();
 
   const [smartFolders, setSmartFolders] = useState([]);
@@ -329,10 +329,42 @@ function SetupPhase() {
       Boolean(original) &&
       String(editingFolder.description || '').trim() !== String(original.description || '').trim();
     try {
-      const result = await smartFoldersIpc.edit(editingFolder.id, editingFolder);
+      let result = await smartFoldersIpc.edit(editingFolder.id, editingFolder);
+      let pathChoice = null;
+      // The new location does not exist yet: main changed nothing and asks
+      // whether to move the old folder there with its files, or start with a
+      // new empty folder and leave the old one where it is.
+      if (result?.errorCode === 'PATH_CHANGE_CHOICE_REQUIRED') {
+        const answer =
+          typeof showChoice === 'function'
+            ? await showChoice({
+                title: 'Move the folder or start a new one?',
+                message:
+                  `"${editingFolder.name.trim()}" is at ${result.oldPath}. ` +
+                  `The new location, ${result.newPath}, does not exist yet. ` +
+                  'You can move the folder and the files in it there. ' +
+                  'Or you can start with a new empty folder there, and the old folder and its files stay where they are.',
+                confirmText: 'Move the folder and its files',
+                alternativeText: 'Use a new empty folder',
+                cancelText: 'Cancel',
+                variant: 'warning'
+              })
+            : null;
+        if (!answer) return;
+        pathChoice = answer === 'confirm' ? 'move' : 'new';
+        result = await smartFoldersIpc.edit(editingFolder.id, editingFolder, {
+          pathChange: pathChoice
+        });
+      }
       if (result.success) {
         const name = editingFolder.name.trim();
-        if (pathChanged) {
+        if (pathChanged && result.movedFolder) {
+          showSuccess(`Moved "${name}" and its files to the new location.`);
+        } else if (pathChanged && pathChoice === 'new') {
+          showSuccess(
+            `Updated "${name}". It now uses a new empty folder. The old folder and its files stay where they are.`
+          );
+        } else if (pathChanged) {
           showSuccess(
             isWatchingFolders
               ? `Updated "${name}". Files in the new location are being analyzed in the background. Nothing is moved.`

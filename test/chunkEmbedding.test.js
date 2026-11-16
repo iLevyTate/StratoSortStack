@@ -6,7 +6,11 @@ jest.mock('../src/shared/logger', () => ({
   createLogger: () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() })
 }));
 
-const { embedFileChunks, buildFileChunkPayloads } = require('../src/main/analysis/chunkEmbedding');
+const {
+  embedFileChunks,
+  buildFileChunkPayloads,
+  chunkOptionsFor
+} = require('../src/main/analysis/chunkEmbedding');
 const { CHUNKING } = require('../src/shared/performanceConstants');
 
 const LONG_TEXT = Array.from({ length: 60 }, (_, i) => `Sentence ${i} of a long document. `).join(
@@ -52,6 +56,45 @@ describe('chunkEmbedding', () => {
     });
     expect(payloads[0].document).toBe(payloads[0].meta.snippet);
     expect(payloads[1].id).toBe('chunk:file:/docs/a.pdf:1');
+  });
+
+  describe('spreadsheets and CSVs', () => {
+    const rows = (n) =>
+      Array.from(
+        { length: n },
+        (_, i) => `buy bread near me ${i} | ${i * 7} | ${i * 70} | 1.${i}%`
+      ).join('\n');
+    const SHEET_TEXT = `## Sheet: Queries\nColumns: Query | Clicks | Impressions | CTR\n${rows(2000)}`;
+    const CSV_TEXT = `Columns: Keyword | Clicks | Impressions\n${rows(2000)}`;
+
+    test('keep at most MAX_TABLE_CHUNKS passages, far fewer than other documents', async () => {
+      expect(CHUNKING.MAX_TABLE_CHUNKS).toBeLessThan(CHUNKING.MAX_CHUNKS);
+      for (const text of [SHEET_TEXT, CSV_TEXT]) {
+        const { payloads } = await buildFileChunkPayloads({
+          fileId: 'file:/exports/a.xlsx',
+          filePath: '/exports/a.xlsx',
+          text,
+          embedText
+        });
+        expect(payloads).toHaveLength(CHUNKING.MAX_TABLE_CHUNKS);
+        expect(payloads[0].meta.text.startsWith(text.slice(0, 20))).toBe(true);
+      }
+      expect(embedText).toHaveBeenCalledTimes(2 * CHUNKING.MAX_TABLE_CHUNKS);
+    });
+
+    test('prose that only mentions a sheet keeps the full limit', () => {
+      expect(chunkOptionsFor(SHEET_TEXT).maxChunks).toBe(CHUNKING.MAX_TABLE_CHUNKS);
+      expect(chunkOptionsFor(`  \n${CSV_TEXT}`).maxChunks).toBe(CHUNKING.MAX_TABLE_CHUNKS);
+      expect(chunkOptionsFor(`Notes on the export.\n${SHEET_TEXT}`).maxChunks).toBe(
+        CHUNKING.MAX_CHUNKS
+      );
+      expect(chunkOptionsFor(LONG_TEXT).maxChunks).toBe(CHUNKING.MAX_CHUNKS);
+      expect(chunkOptionsFor('')).toMatchObject({
+        chunkSize: CHUNKING.CHUNK_SIZE,
+        overlap: CHUNKING.OVERLAP,
+        maxChunks: CHUNKING.MAX_CHUNKS
+      });
+    });
   });
 
   test('persists chunks, replacing the old ones only after the new set exists', async () => {

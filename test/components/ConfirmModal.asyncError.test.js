@@ -202,3 +202,28 @@ describe('ConfirmModal async error handling', () => {
     expect(screen.getByRole('button', { name: 'Go' })).toBeInTheDocument();
   });
 });
+
+describe('ConfirmModal second choice', () => {
+  test('shows a second choice beside Confirm and reports it without confirming', () => {
+    const onAlternative = jest.fn();
+    const { props } = renderModal({
+      variant: 'warning',
+      confirmText: 'Move the folder and its files',
+      alternativeText: 'Use a new empty folder',
+      onAlternative
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Use a new empty folder' }));
+
+    expect(onAlternative).toHaveBeenCalledTimes(1);
+    expect(props.onConfirm).not.toHaveBeenCalled();
+  });
+
+  test('without one there are only Cancel and Confirm', () => {
+    renderModal();
+    expect(screen.getAllByRole('button').map((b) => b.textContent)).toEqual(
+      expect.not.arrayContaining(['Use a new empty folder'])
+    );
+    expect(screen.queryByTestId('confirm-modal-alternative')).not.toBeInTheDocument();
+  });
+});

@@ -153,6 +153,25 @@ function generateExplanation(suggestion, file) {
     return 'No clear match found. Consider creating a new folder.';
   }
 
+  // No Smart Folder was a confident match (routingDecision.js): say why,
+  // not what the default folder is for.
+  if (suggestion.needsReview) {
+    return explainReview(suggestion.review);
+  }
+
+  // Routed because the file names the folder outright.
+  if (suggestion.nameMatch) {
+    const { kind, field, value } = suggestion.nameMatch;
+    if (kind === 'extension') {
+      return `"${suggestion.folder}" is the folder for ${String(value || '').toUpperCase()} files`;
+    }
+    if (kind === 'type') return `"${suggestion.folder}" matches this file's type`;
+    if (kind === 'label' && field && field !== 'category') {
+      return `"${suggestion.folder}" matches this file's ${field}`;
+    }
+    return `The analysis labeled this file "${suggestion.folder}"`;
+  }
+
   // The user's own corrections overrode the folder that ranked first (item 16).
   // Checked before the source: the folder keeps the source of its evidence
   // (usually user_pattern), but the reason it is first is the corrections.
@@ -202,6 +221,25 @@ function generateExplanation(suggestion, file) {
 }
 
 /**
+ * Why a file needs review, in the words the Organize card shows.
+ *
+ * @param {{ reason?: string|null, best?: { folder: string }|null,
+ *   runnerUp?: { folder: string }|null }|null|undefined} review
+ * @returns {string}
+ */
+function explainReview(review) {
+  const best = review?.best?.folder;
+  const runnerUp = review?.runnerUp?.folder;
+  if (review?.reason === 'ambiguous' && best && runnerUp) {
+    return `"${best}" and "${runnerUp}" matched this file about equally.`;
+  }
+  if (review?.reason === 'weak_match' && best) {
+    return `No Smart Folder matched this file well. The closest was "${best}".`;
+  }
+  return 'No Smart Folder matched this file.';
+}
+
+/**
  * Combine suggestions from multiple sources
  * @param {Record<string, any>} sources - Object with suggestion arrays by source
  * @returns {Array<any>} Combined suggestions with source tags
@@ -225,5 +263,6 @@ module.exports = {
   calculateConfidence,
   capSuggestionConfidence,
   generateExplanation,
+  explainReview,
   combineSuggestions
 };

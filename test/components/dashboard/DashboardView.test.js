@@ -368,11 +368,22 @@ describe('DashboardView', () => {
   });
 
   describe('adaptive status badge', () => {
-    test('reads "All caught up" (success) when nothing is pending, ready, or failed', () => {
-      setupState({ fileStats: { total: 0, ready: 0, failed: 0, pending: 0 } });
+    test('reads "All caught up" (success) once files were organized and nothing waits', () => {
+      setupState({
+        fileStats: { total: 0, ready: 0, failed: 0, pending: 0 },
+        organizedFiles: [{ newName: 'done.pdf' }]
+      });
       render(<DashboardView />);
       const badge = screen.getByText('All caught up').closest('[data-testid="status-badge"]');
       expect(badge).toHaveAttribute('data-variant', 'success');
+    });
+
+    test('an empty board reads "Ready for files", not "All caught up"', () => {
+      setupState({ fileStats: { total: 0, ready: 0, failed: 0, pending: 0 }, organizedFiles: [] });
+      render(<DashboardView />);
+      const badge = screen.getByText('Ready for files').closest('[data-testid="status-badge"]');
+      expect(badge).toHaveAttribute('data-variant', 'info');
+      expect(screen.queryByText('All caught up')).not.toBeInTheDocument();
     });
 
     test('calls out pending analysis when files await', () => {
@@ -411,11 +422,24 @@ describe('DashboardView', () => {
       expect(screen.getByText('3 to analyze')).toBeInTheDocument();
     });
 
-    test('shows an "All clear" pipeline badge when nothing is waiting', () => {
-      setupState({ fileStats: { total: 0, ready: 0, failed: 0, pending: 0 } });
+    test('shows an "All clear" pipeline badge and no footer once everything is organized', () => {
+      setupState({
+        fileStats: { total: 0, ready: 0, failed: 0, pending: 0 },
+        organizedFiles: [{ newName: 'done.pdf' }]
+      });
       render(<DashboardView />);
       expect(screen.getByText('All clear')).toBeInTheDocument();
-      expect(screen.getByText('Nothing waiting')).toBeInTheDocument();
+      expect(screen.queryByText('Nothing waiting')).not.toBeInTheDocument();
+      expect(screen.queryByText(/failed/)).not.toBeInTheDocument();
+    });
+
+    test('an empty board explains the steps instead of declaring itself clear', () => {
+      setupState({ fileStats: { total: 0, ready: 0, failed: 0, pending: 0 }, organizedFiles: [] });
+      render(<DashboardView />);
+      expect(screen.queryByText('All clear')).not.toBeInTheDocument();
+      expect(
+        screen.getByText('Files you add move through these three steps, left to right.')
+      ).toBeInTheDocument();
     });
 
     // Files waiting for the user are not work in progress.
@@ -501,11 +525,12 @@ describe('DashboardView', () => {
       expect(phasePayloads()).toEqual(['discover']);
     });
 
-    test('the footer Failed indicator is inert and no alert renders when nothing failed', () => {
+    test('no Failed indicator and no alert render when nothing failed', () => {
       setupState({ fileStats: { total: 3, ready: 3, failed: 0, pending: 0 } });
       render(<DashboardView />);
       expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-      expect(screen.getByText('0 failed').closest('button')).toBeNull();
+      expect(screen.queryByText(/failed/)).not.toBeInTheDocument();
+      expect(screen.getByText('3 files not organized yet')).toBeInTheDocument();
     });
 
     test('the failed alert uses singular wording for a single failure', () => {
@@ -1084,6 +1109,19 @@ describe('DashboardView', () => {
       expect(screen.getByText('Work')).toBeInTheDocument();
       fireEvent.click(buttonFor('Manage'));
       expect(mockDispatch).toHaveBeenCalledWith({ type: 'ui/setPhase', payload: 'setup' });
+    });
+
+    test('the Uncategorized catch-all is not listed as a smart folder', () => {
+      setupState({
+        currentPhase: 'welcome',
+        smartFolders: [
+          { id: 'u', name: 'Uncategorized', category: 'uncategorized', isDefault: true },
+          { id: 'c', name: 'Client proposals' }
+        ]
+      });
+      render(<DashboardView />);
+      expect(screen.getByText('Client proposals')).toBeInTheDocument();
+      expect(screen.queryByText('Uncategorized')).not.toBeInTheDocument();
     });
   });
 
