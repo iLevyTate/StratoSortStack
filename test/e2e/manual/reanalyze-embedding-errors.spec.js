@@ -9,6 +9,13 @@
  * watcher to finish and reports the embedding pipeline's outcomes and error
  * reasons. Writes test-results/reanalyze-embedding-errors/report.json.
  *
+ * Cloud analysis: set STRATOSORT_E2E_CLOUD_PROFILE to a real StratoSort
+ * profile folder. Its AI settings and encrypted provider keys ("ai-keys",
+ * with the "Local State" that holds the key for them) are copied into the
+ * fresh test profile, so analysis runs on that profile's cloud provider while
+ * embeddings stay local. The copy is deleted with the test profile; the real
+ * profile is only read.
+ *
  * Run (Windows, from the repo root, after `npm run build`):
  *   $env:STRATOSORT_E2E_REANALYZE_EMBEDDINGS='1'
  *   $env:STRATOSORT_E2E_MODELS_DIR="$env:APPDATA\StratoSort Stack\models"
@@ -18,11 +25,46 @@
 const { test, expect } = require('@playwright/test');
 const path = require('path');
 const fs = require('fs/promises');
-const { launchApp, closeApp, waitForAppReady } = require('../helpers/electronApp');
+const fsSync = require('fs');
+const {
+  launchApp,
+  closeApp,
+  waitForAppReady,
+  createIsolatedE2eUserDataDir,
+  cleanupE2eUserDataDir,
+  linkLocalModels
+} = require('../helpers/electronApp');
 const { createTempDir, cleanupTempDir } = require('../helpers/testFixtures');
 const { waitForLoadedTextModel } = require('../helpers/liveLlm');
 
 const ENABLED = process.env.STRATOSORT_E2E_REANALYZE_EMBEDDINGS === '1';
+const CLOUD_PROFILE = process.env.STRATOSORT_E2E_CLOUD_PROFILE || '';
+// A prepared profile used as-is: its Smart Folders and index, nothing added.
+// The caller owns it (it is not deleted here). Name it outside the
+// "stratosort-e2e-*" pattern, which the global teardown deletes. Careful:
+// Reanalyze all queues every file in the profile's analysis history, not only
+// the files in its Smart Folders; with a cloud provider that is billed.
+const USE_PROFILE = process.env.STRATOSORT_E2E_USE_PROFILE || '';
+
+/**
+ * A fresh test profile with the local models, plus the cloud provider set-up
+ * of CLOUD_PROFILE: its "ai" settings, its encrypted keys and the Local State
+ * that decrypts them (same Windows user). Nothing else is copied.
+ * @returns {string}
+ */
+function cloudTestProfile() {
+  const dir = createIsolatedE2eUserDataDir();
+  linkLocalModels(dir);
+  fsSync.copyFileSync(path.join(CLOUD_PROFILE, 'Local State'), path.join(dir, 'Local State'));
+  fsSync.cpSync(path.join(CLOUD_PROFILE, 'ai-keys'), path.join(dir, 'ai-keys'), {
+    recursive: true
+  });
+  const real = JSON.parse(fsSync.readFileSync(path.join(CLOUD_PROFILE, 'settings.json'), 'utf8'));
+  const settingsPath = path.join(dir, 'settings.json');
+  const seeded = JSON.parse(fsSync.readFileSync(settingsPath, 'utf8'));
+  fsSync.writeFileSync(settingsPath, JSON.stringify({ ...seeded, ai: real.ai }, null, 2));
+  return dir;
+}
 const REPORT_DIR = path.join(
   __dirname,
   '..',
@@ -74,42 +116,74 @@ test.describe('Reanalyze all: embedding outcomes (real models)', () => {
   let app;
   let window;
   let workDir;
+  let profileDir = null;
 
   test.afterAll(async () => {
+    // Stop the watcher's queue first: Reanalyze all keeps working in the
+    // background, and an app left running after the test kept analyzing
+    // (and, with a cloud provider, kept spending).
+    if (window) {
+      await window
+        .evaluate(async () => window.electronAPI.smartFolders.watcherStop())
+        .catch(() => {});
+    }
     if (app) await closeApp(app);
     if (workDir) await cleanupTempDir(workDir);
+    if (profileDir) cleanupE2eUserDataDir(profileDir);
   });
 
   test('records why embeddings fail during Reanalyze all', async () => {
     test.setTimeout(30 * 60_000);
-    ({ app, window } = await launchApp({ localModels: true }));
+    if (USE_PROFILE) {
+      ({ app, window } = await launchApp({ userDataDir: USE_PROFILE }));
+    } else if (CLOUD_PROFILE) {
+      profileDir = cloudTestProfile();
+      ({ app, window } = await launchApp({ userDataDir: profileDir }));
+    } else {
+      ({ app, window } = await launchApp({ localModels: true }));
+    }
     await waitForAppReady(window);
-    const modelReady = await waitForLoadedTextModel(window);
-    test.skip(!modelReady, 'No text model: set STRATOSORT_E2E_MODELS_DIR.');
+    // A cloud provider does the analysis in the other modes; only a local
+    // run needs the text model.
+    if (!USE_PROFILE && !CLOUD_PROFILE) {
+      const modelReady = await waitForLoadedTextModel(window);
+      test.skip(!modelReady, 'No text model: set STRATOSORT_E2E_MODELS_DIR.');
+    }
 
-    workDir = await createTempDir('stratosort-reanalyze-');
-    const folderPath = path.join(workDir, '3D print');
-    const names = await writeLibrary(folderPath);
-
-    const added = await window.evaluate(
-      async (p) =>
-        window.electronAPI.smartFolders.add({
-          name: '3D print',
-          path: p,
-          description: '3D printer models (STL) and print notes'
-        }),
-      folderPath
-    );
-    expect(added?.success, JSON.stringify(added)).toBe(true);
+    let names = [];
+    if (!USE_PROFILE) {
+      workDir = await createTempDir('stratosort-reanalyze-');
+      const folderPath = path.join(workDir, '3D print');
+      names = await writeLibrary(folderPath);
+      const added = await window.evaluate(
+        async (p) =>
+          window.electronAPI.smartFolders.add({
+            name: '3D print',
+            path: p,
+            description: '3D printer models (STL) and print notes'
+          }),
+        folderPath
+      );
+      expect(added?.success, JSON.stringify(added)).toBe(true);
+    }
 
     const metrics = async () =>
       window.evaluate(async () => (await window.electronAPI.system.getMetrics())?.pipeline);
     const before = await metrics();
 
     const started = Date.now();
-    const reanalyze = await window.evaluate(async () =>
+    // A profile that already has Smart Folders may not have started the
+    // watcher yet; Reanalyze all needs it.
+    let reanalyze = await window.evaluate(async () =>
       window.electronAPI.embeddings.reanalyzeAll({})
     );
+    if (reanalyze?.errorCode === 'WATCHER_NOT_AVAILABLE') {
+      const startedWatcher = await window.evaluate(async () =>
+        window.electronAPI.smartFolders.watcherStart()
+      );
+      console.log('[reanalyze] watcher start:', JSON.stringify(startedWatcher).slice(0, 200));
+      reanalyze = await window.evaluate(async () => window.electronAPI.embeddings.reanalyzeAll({}));
+    }
     console.log('[reanalyze] started:', JSON.stringify(reanalyze).slice(0, 300));
 
     // Wait for the watcher to take the files and finish them.
@@ -127,6 +201,11 @@ test.describe('Reanalyze all: embedding outcomes (real models)', () => {
     const after = await metrics();
 
     const report = {
+      cloud: Boolean(CLOUD_PROFILE),
+      provider: await window.evaluate(async () => {
+        const s = await window.electronAPI.settings.get();
+        return s?.ai?.routing?.default || null;
+      }),
       files: names,
       reanalyze,
       watcherStatus: status,
