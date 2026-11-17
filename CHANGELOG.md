@@ -45,6 +45,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the concurrency the local graphics card recommends, which on a busy or small card was 1. Documents
   analyzed in the cloud now run at the requested concurrency; images and media, which run on local
   models, keep the hardware limit.
+- **The search index Refresh button stays still during analysis.** Background refreshes of the index
+  counts, every 1.5 seconds during a batch, spun and disabled the button and faded the counts. They
+  now update the numbers quietly; a refresh you ask for still shows that it is loading.
 - **Embedding problems say why.** The warning for a high embedding error rate now names the most
   frequent errors.
 

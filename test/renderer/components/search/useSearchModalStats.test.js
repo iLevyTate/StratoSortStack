@@ -125,6 +125,55 @@ describe('useSearchModalStats', () => {
     await waitFor(() => expect(mockGetStatsCached).toHaveBeenCalled());
   });
 
+  test('a background refresh during a batch keeps the Refresh button still', async () => {
+    const { result } = mount();
+    await waitFor(() => expect(result.current.hasLoadedStats).toBe(true));
+
+    // Hold the background refresh open so its in-flight state is visible.
+    let finish;
+    mockGetStatsCached.mockClear();
+    mockGetStatsCached.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve({ success: true, files: 9, folders: 3, initialized: true });
+        })
+    );
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('operation-progress', {
+          detail: { type: 'batch_analyze', completed: 1, total: 4 }
+        })
+      );
+    });
+    await waitFor(() => expect(mockGetStatsCached).toHaveBeenCalled());
+    expect(result.current.isLoadingStats).toBe(false);
+
+    await act(async () => {
+      finish();
+    });
+    expect(result.current.stats).toMatchObject({ files: 9 });
+  });
+
+  test('a refresh the user asks for still shows that it is loading', async () => {
+    const { result } = mount();
+    await waitFor(() => expect(result.current.hasLoadedStats).toBe(true));
+    let finish;
+    mockGetStatsCached.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve({ success: true, files: 8, folders: 3, initialized: true });
+        })
+    );
+    act(() => {
+      result.current.refreshStats(true);
+    });
+    expect(result.current.isLoadingStats).toBe(true);
+    await act(async () => {
+      finish();
+    });
+    expect(result.current.isLoadingStats).toBe(false);
+  });
+
   test('stats refreshes read embedding settings from the store, not over IPC', async () => {
     mockUiSettings = { embeddingTiming: 'after_organize', defaultEmbeddingPolicy: 'skip' };
     const { result } = mount();
