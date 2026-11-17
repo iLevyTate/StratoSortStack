@@ -405,7 +405,9 @@ describe('extractTextFromIpynb adversarial inputs', () => {
     );
     const started = Date.now();
     const out = await extractTextFromIpynb(file, { maxChars: 2 * 1024 * 1024 });
-    expect(Date.now() - started).toBeLessThan(1500);
+    // The bound guards against a quadratic join of the parts, not exact speed:
+    // 1.5 s failed at 1,505 ms on a shared macOS CI runner.
+    expect(Date.now() - started).toBeLessThan(5000);
     expect(out).toContain('[code]\na\na\n');
     expect(out).toContain('[output]\na\na\n');
     // The 600 KB output is capped per cell; the 600 KB source is not.
