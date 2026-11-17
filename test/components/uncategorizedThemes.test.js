@@ -8,6 +8,7 @@ import {
   findClosestFolderGroup,
   findRecurringTheme,
   CLOSEST_MIN_FILES,
+  CLOSEST_MIN_LEAD,
   THEME_MIN_FILES
 } from '../../src/renderer/components/organize/uncategorizedThemes';
 
@@ -109,6 +110,32 @@ describe('findClosestFolderGroup', () => {
     const group = findClosestFolderGroup(files, resolve, FOLDERS);
     expect(group.folder).toBe(GSC);
     expect(group.files.map((f) => f.name)).toEqual(['a.xlsx', 'b.xlsx', 'c.xlsx']);
+  });
+
+  test('leaves out files whose closest folder only ties the next one', () => {
+    const scored = (name, closest, runnerUp) => {
+      const file = held(name, 'excel GSc');
+      Object.assign(file.routing.engine, {
+        reviewClosestScore: closest,
+        reviewRunnerUpScore: runnerUp
+      });
+      return file;
+    };
+    // The local-model case: 49% vs 47% is a tie, not a lead.
+    expect(
+      findClosestFolderGroup(
+        [scored('a.xlsx', 0.49, 0.47), scored('b.xlsx', 0.52, 0.5)],
+        resolve,
+        FOLDERS
+      )
+    ).toBeNull();
+    const group = findClosestFolderGroup(
+      [scored('a.xlsx', 0.5, 0.4), scored('b.xlsx', 0.52, 0.45), scored('c.xlsx', 0.49, 0.48)],
+      resolve,
+      FOLDERS
+    );
+    expect(group.files.map((f) => f.name)).toEqual(['a.xlsx', 'b.xlsx']);
+    expect(CLOSEST_MIN_LEAD).toBe(0.03);
   });
 
   test('needs at least CLOSEST_MIN_FILES files', () => {

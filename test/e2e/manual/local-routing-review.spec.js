@@ -12,6 +12,11 @@
  * It asserts only that the pipeline ran; the numbers are the point. The
  * report goes to test-results/local-routing-review/.
  *
+ * Read the small files' scores with care: their names start with "gsc", which
+ * matches the folder name and lifts them. Search Console names its exports
+ * after the site ("<site>.com-Performance-on-Search-<date>.xlsx"); the file
+ * with that name, and its plain-named twin, show the gap.
+ *
  * Run (Windows, from the repo root, after `npm run build`):
  *   $env:STRATOSORT_E2E_ROUTING_REVIEW='1'
  *   $env:STRATOSORT_E2E_MODELS_DIR="$env:APPDATA\StratoSort Stack\models"
@@ -121,6 +126,38 @@ async function buildCorpus(dir, variant = 0) {
     { name: 'Countries', title: 'Country', rows: metricRows(COUNTRIES, 3) },
     { name: 'Devices', title: 'Device', rows: metricRows(DEVICES, 4) },
     { name: 'Dates', title: 'Date', rows: metricRows(DATES, 5) }
+  ]);
+  // The same export under a plain name: tells a name effect from a content one.
+  await writeWorkbook(add('gsc-full-export-oct.xlsx', GSC_FOLDER), [
+    { name: 'Queries', title: 'Top queries', rows: metricRows(QUERIES, 1) },
+    {
+      name: 'Pages',
+      title: 'Top pages',
+      rows: metricRows(
+        PAGES.map((p) => SITE + p),
+        2
+      )
+    },
+    { name: 'Countries', title: 'Country', rows: metricRows(COUNTRIES, 3) },
+    { name: 'Devices', title: 'Device', rows: metricRows(DEVICES, 4) },
+    { name: 'Dates', title: 'Date', rows: metricRows(DATES, 5) }
+  ]);
+  // A real export's size: Search Console writes up to 1,000 query rows.
+  const manyQueries = Array.from(
+    { length: 1000 },
+    (_, i) => `${QUERIES[i % QUERIES.length]} ${Math.floor(i / QUERIES.length) + 1}`
+  );
+  const manyPages = Array.from({ length: 300 }, (_, i) => `${SITE}/blog/post-${i + 1}`);
+  const manyDates = Array.from({ length: 90 }, (_, i) => {
+    const day = new Date(Date.UTC(2026, 7, 1 + i));
+    return day.toISOString().slice(0, 10);
+  });
+  await writeWorkbook(add('gsc-performance-3-months.xlsx', GSC_FOLDER), [
+    { name: 'Queries', title: 'Top queries', rows: metricRows(manyQueries, 11) },
+    { name: 'Pages', title: 'Top pages', rows: metricRows(manyPages, 12) },
+    { name: 'Countries', title: 'Country', rows: metricRows(COUNTRIES, 13) },
+    { name: 'Devices', title: 'Device', rows: metricRows(DEVICES, 14) },
+    { name: 'Dates', title: 'Date', rows: metricRows(manyDates, 15) }
   ]);
   await writeWorkbook(add('gsc-queries-week44.xlsx', GSC_FOLDER), [
     { name: 'Queries', title: 'Top queries', rows: metricRows(QUERIES.slice(0, 8), 6) }
@@ -233,6 +270,10 @@ function summarizeEntry(entry) {
     reason: entry?.routingDecision?.reason || entry?.suggestion?.review?.reason || null,
     closest: best?.folder || null,
     closestScore: toUnit(best?.score),
+    // Where the scores came from: the file's stored vector ('semantic_vector_db')
+    // or a summary built at ranking time.
+    method: entry?.suggestion?.method || entry?.suggestion?.source || null,
+    altMethods: [...new Set((entry?.alternatives || []).map((alt) => alt?.method || alt?.source))],
     alternatives: (entry?.alternatives || [])
       .slice(0, 3)
       .map((alt) => `${alt?.folder} ${Math.round((toUnit(alt?.confidence) || 0) * 100)}%`)
@@ -340,8 +381,8 @@ function renderMarkdown(report) {
   for (const c of report.conditions) {
     lines.push('', `## "${GSC_FOLDER}" described: ${c.key}`, '');
     lines.push(`Description: ${c.description || '(none)'}`, '');
-    lines.push('| File | Expected | Goes to | Score | Card says | Held | Closest |');
-    lines.push('| --- | --- | --- | --- | --- | --- | --- |');
+    lines.push('| File | Expected | Goes to | Score | Card says | Held | Closest | Method |');
+    lines.push('| --- | --- | --- | --- | --- | --- | --- | --- |');
     for (const row of c.rows) {
       const score = typeof row.score === 'number' ? `${Math.round(row.score * 100)}%` : '-';
       const closest = row.closest
@@ -350,7 +391,7 @@ function renderMarkdown(report) {
       lines.push(
         `| ${row.name} | ${row.expected} | ${row.needsReview ? '(held)' : row.folder || '-'} | ` +
           `${score} | ${row.needsReview ? 'held' : matchWords(row.score)} | ` +
-          `${row.needsReview ? 'yes' : 'no'} | ${closest} |`
+          `${row.needsReview ? 'yes' : 'no'} | ${closest} | ${[row.method, ...(row.altMethods || [])].filter(Boolean).join(', ') || '-'} |`
       );
     }
     lines.push('', `Correct: ${c.correct}/${c.rows.length}. Held: ${c.held}.`);

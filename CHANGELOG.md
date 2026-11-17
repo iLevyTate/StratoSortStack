@@ -16,8 +16,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **Send held files to the folder they came closest to.** When two or more files in Organize are
   held for review and all came closest to the same Smart Folder, the uncategorized bar names that
-  folder and offers one button to send them all there. Nothing moves until you move them, and the
-  routing bar is unchanged.
+  folder and offers one button to send them all there. A file whose closest folder only ties the
+  next one is left out of the offer. Nothing moves until you move them, and the routing bar is
+  unchanged.
 - **Ask about your files after a move.** The finished screen has an "Ask about your files" button
   that opens Chat, which answers from your library and names the files it used.
 - **MCP setup for other apps.** Settings → MCP Server can copy the server address and token for apps

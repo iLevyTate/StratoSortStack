@@ -187,9 +187,16 @@ describe('a file the engine marks as needing review', () => {
       path: '/in/export.xlsx',
       suggestion: null,
       needsReview: true,
-      routingDecision: { reason: 'weak_match', best: { folder: ' Taxes ', score: 0.48 } }
+      routingDecision: {
+        reason: 'weak_match',
+        best: { folder: ' Taxes ', score: 0.48 },
+        runnerUp: { folder: 'Receipts', score: 0.41 }
+      }
     });
     expect(engine.reviewClosest).toBe('Taxes');
+    // Both scores travel, so the bulk offer can skip a near-tie.
+    expect(engine.reviewClosestScore).toBe(0.48);
+    expect(engine.reviewRunnerUpScore).toBe(0.41);
     // A routed file carries no closest folder: only held files are offered one.
     const routed = normalizeEngineEntry({
       path: '/in/doc.pdf',
