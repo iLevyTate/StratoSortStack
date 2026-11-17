@@ -182,6 +182,24 @@ describe('a file the engine marks as needing review', () => {
     expect(result.engine.alternatives.map((a) => a.folder)).toEqual(['Taxes']);
   });
 
+  test('keeps the closest folder so held files can be offered it in bulk', () => {
+    const engine = normalizeEngineEntry({
+      path: '/in/export.xlsx',
+      suggestion: null,
+      needsReview: true,
+      routingDecision: { reason: 'weak_match', best: { folder: ' Taxes ', score: 0.48 } }
+    });
+    expect(engine.reviewClosest).toBe('Taxes');
+    // A routed file carries no closest folder: only held files are offered one.
+    const routed = normalizeEngineEntry({
+      path: '/in/doc.pdf',
+      suggestion: { ...TAXES, folder: TAXES.name, folderId: TAXES.id, isSmartFolder: true },
+      confidence: 0.8,
+      routingDecision: { best: { folder: 'Taxes', score: 0.8 } }
+    });
+    expect(routed.reviewClosest).toBeUndefined();
+  });
+
   test('with no default folder it stays unassigned', () => {
     const engine = reviewEngine(false);
     expect(engine).not.toBeNull();

@@ -15,6 +15,14 @@ import {
   isDefaultCategoryName
 } from '../../../shared/categoryFolderMatching';
 import { describeRouting } from '../../phases/organize/organizeDestination';
+import { describeMatchStrength } from '../../utils/confidenceColors';
+
+// Dot and bar color for each match strength (describeMatchStrength).
+const MATCH_TONE = Object.freeze({
+  high: 'bg-stratosort-success',
+  medium: 'bg-stratosort-blue',
+  low: 'bg-system-gray-400'
+});
 
 function ReadyFileItem({
   file,
@@ -87,6 +95,7 @@ function ReadyFileItem({
       : confidenceValue > 1
         ? Math.round(confidenceValue)
         : Math.round(confidenceValue * 100);
+  const matchStrength = describeMatchStrength(computedConfidence);
   // Engine-ranked folders first (primary, then alternatives), limited to
   // folders the user can pick; the rest follow under "All folders".
   const rankedNames = useMemo(() => {
@@ -355,32 +364,21 @@ function ReadyFileItem({
       {analysis && (
         <div className="mt-auto flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3 bg-system-gray-50/50 border-t border-system-gray-100 rounded-b-xl">
           {/* Confidence */}
-          {showConfidence ? (
-            <div className="flex items-center gap-compact">
+          {showConfidence && matchStrength ? (
+            <div className="flex items-center gap-compact" title={matchStrength.title}>
               <div className="flex items-center gap-1.5">
-                <div
-                  className={`w-2 h-2 rounded-full ${
-                    computedConfidence >= 80
-                      ? 'bg-stratosort-success'
-                      : computedConfidence >= 50
-                        ? 'bg-stratosort-warning'
-                        : 'bg-system-gray-400'
-                  }`}
-                />
+                <div className={`w-2 h-2 rounded-full ${MATCH_TONE[matchStrength.level]}`} />
                 <Text variant="tiny" className="font-medium text-system-gray-600">
-                  {computedConfidence}% confidence
+                  {matchStrength.label}
                 </Text>
               </div>
               {/* Mini progress bar */}
-              <div className="w-16 h-1.5 bg-system-gray-200 rounded-full overflow-hidden">
+              <div
+                className="w-16 h-1.5 bg-system-gray-200 rounded-full overflow-hidden"
+                aria-hidden="true"
+              >
                 <div
-                  className={`h-full rounded-full transition-[width,background-color] ${
-                    computedConfidence >= 80
-                      ? 'bg-stratosort-success'
-                      : computedConfidence >= 50
-                        ? 'bg-stratosort-warning'
-                        : 'bg-system-gray-400'
-                  }`}
+                  className={`h-full rounded-full transition-[width,background-color] ${MATCH_TONE[matchStrength.level]}`}
                   style={{ width: `${computedConfidence}%` }}
                 />
               </div>

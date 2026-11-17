@@ -91,7 +91,7 @@ test.describe('Full Pipeline — Analysis to Organize', () => {
         hasSelectFiles: body.includes('Select files'),
         hasScanFolder: body.includes('Scan folder'),
         hasAnalyzeSection: body.includes('Discover') || body.includes('Analyze'),
-        hasNamingStrategy: body.includes('Naming strategy')
+        hasNamingStrategy: body.includes('File names:')
       };
     });
 

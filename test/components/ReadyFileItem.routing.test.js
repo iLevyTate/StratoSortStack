@@ -64,9 +64,13 @@ test('an engine placement shows its explanation and routing confidence', () => {
   expect(screen.getByTestId('organize-routing-note')).toHaveTextContent(
     'This file\'s meaning matches "Finance"'
   );
-  // 64% from the engine, not the label's 95%.
-  expect(screen.getByText('64% confidence')).toBeInTheDocument();
-  expect(screen.queryByText('95% confidence')).not.toBeInTheDocument();
+  // 64% from the engine, not the label's 95%: a good match, with the
+  // percentage kept as the tooltip.
+  expect(screen.getByText('Good match').closest('[title]')).toHaveAttribute(
+    'title',
+    'Match score 64%'
+  );
+  expect(screen.queryByText('Strong match')).not.toBeInTheDocument();
 });
 
 test('ranked folders come first, the best match marked', () => {
@@ -86,7 +90,7 @@ test('a user choice says so and names the suggestion it overrode', () => {
   );
   // The label's 95% and the engine's 64% both rate other folders, not the
   // one the user picked: show no percentage.
-  expect(screen.queryByText(/% confidence/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Strong match|Good match|Check this/)).not.toBeInTheDocument();
 });
 
 test('a name match says so and keeps the plain folder list', () => {
@@ -98,7 +102,7 @@ test('a name match says so and keeps the plain folder list', () => {
     'Matched by the label the analysis gave this file'
   );
   // The label's own confidence is not a match score: show none.
-  expect(screen.queryByText(/% confidence/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Strong match|Good match|Check this/)).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('combobox', { name: /Category/i }));
   const options = within(screen.getByRole('listbox')).getAllByRole('option');
   expect(options.map((o) => o.textContent)).toEqual(['Archive', 'Finance', 'Taxes']);
@@ -133,7 +137,7 @@ describe('a file that needs review', () => {
     );
     expect(note).toHaveTextContent('It goes to "Uncategorized" unless you pick a folder.');
     // The engine's 10% is not a match score: show none, and never the label's 95%.
-    expect(screen.queryByText(/% confidence/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Strong match|Good match|Check this/)).not.toBeInTheDocument();
   });
 
   test('lists the closest folders first, none marked as the best match', () => {

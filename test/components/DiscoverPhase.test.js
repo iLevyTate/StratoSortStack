@@ -231,6 +231,23 @@ describe('DiscoverPhase premium guidance', () => {
     expect(screen.getByText(/Files ready for review/i)).toBeInTheDocument();
   });
 
+  test('the naming button says how files will be renamed', () => {
+    const { useDiscoverState } = require('../../src/renderer/phases/discover');
+    const defaultImpl = useDiscoverState.getMockImplementation();
+    useDiscoverState.mockImplementation(() => ({
+      ...defaultImpl(),
+      namingConvention: 'keep-original'
+    }));
+    try {
+      render(<DiscoverPhase />);
+      expect(screen.getByTestId('naming-strategy-trigger')).toHaveTextContent(
+        'File names: Keep original names'
+      );
+    } finally {
+      useDiscoverState.mockImplementation(defaultImpl);
+    }
+  });
+
   test('allows the top guidance card to be minimized', () => {
     render(<DiscoverPhase />);
 

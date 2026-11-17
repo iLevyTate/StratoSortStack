@@ -34,6 +34,15 @@ function generateSnippet(client, { port, token }) {
         null,
         2
       );
+    case 'other':
+      // For an app that asks for a server address and a header rather than a
+      // config file (Loci's "Add a server: a web address", for one).
+      return [
+        'StratoSort MCP server',
+        `Address: ${url}`,
+        `Header: Authorization: ${auth}`,
+        'Transport: Streamable HTTP'
+      ].join('\n');
     default:
       throw new Error(`Unknown MCP client: ${client}`);
   }

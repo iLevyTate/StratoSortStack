@@ -85,7 +85,7 @@ describe('one naming default for Discover and Settings', () => {
     const store = makeStore({ namingConvention: 'subject-date', separator: '-' });
     renderDiscover(store);
 
-    choose(conventionSelect(), 'date-subject');
+    choose(conventionSelect(), 'Date, then subject');
 
     await waitFor(() => expect(saveMock).toHaveBeenCalled());
     expect(saveMock).toHaveBeenCalledTimes(1);
@@ -96,7 +96,7 @@ describe('one naming default for Discover and Settings', () => {
     await waitFor(() =>
       expect(store.getState().files.namingConvention.convention).toBe('date-subject')
     );
-    expect(conventionSelect()).toHaveTextContent('date-subject');
+    expect(conventionSelect()).toHaveTextContent('Date, then subject');
   });
 
   test('Discover shows the value Settings holds, not its own stale copy', async () => {
@@ -106,7 +106,7 @@ describe('one naming default for Discover and Settings', () => {
 
     renderDiscover(store);
 
-    expect(conventionSelect()).toHaveTextContent('category-subject');
+    expect(conventionSelect()).toHaveTextContent('Category, then subject');
     expect(separatorSelect()).toHaveTextContent('_ (underscore)');
     await waitFor(() =>
       expect(store.getState().files.namingConvention).toEqual(
@@ -120,7 +120,7 @@ describe('one naming default for Discover and Settings', () => {
   test('a change saved from Settings shows up in the Discover dialog', async () => {
     const store = makeStore({ namingConvention: 'subject-date' });
     renderDiscover(store);
-    expect(conventionSelect()).toHaveTextContent('subject-date');
+    expect(conventionSelect()).toHaveTextContent('Subject, then date');
 
     // SettingsPanel save and the main-process settings-changed broadcast both
     // land as updateSettings.
@@ -128,7 +128,7 @@ describe('one naming default for Discover and Settings', () => {
       store.dispatch(updateSettings({ namingConvention: 'keep-original', separator: '.' }));
     });
 
-    expect(conventionSelect()).toHaveTextContent('keep-original');
+    expect(conventionSelect()).toHaveTextContent('Keep original names');
     expect(separatorSelect()).toHaveTextContent('. (dot)');
     expect(saveMock).not.toHaveBeenCalled();
   });

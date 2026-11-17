@@ -5,7 +5,9 @@
  * so no group ever reached the threshold and the suggestion never showed.
  */
 import {
+  findClosestFolderGroup,
   findRecurringTheme,
+  CLOSEST_MIN_FILES,
   THEME_MIN_FILES
 } from '../../src/renderer/components/organize/uncategorizedThemes';
 
@@ -81,5 +83,52 @@ describe('findRecurringTheme', () => {
   test('no files, no theme', () => {
     expect(findRecurringTheme([])).toBeNull();
     expect(findRecurringTheme(undefined)).toBeNull();
+  });
+});
+
+describe('findClosestFolderGroup', () => {
+  const GSC = { id: 'g', name: 'excel GSc', path: '/out/gsc' };
+  const BING = { id: 'b', name: 'Bing', path: '/out/bing' };
+  const UNC = { id: 'u', name: 'Uncategorized', path: '/out/unc', isDefault: true };
+  const FOLDERS = [GSC, BING, UNC];
+  const held = (name, closest) => ({
+    path: `/in/${name}`,
+    name,
+    routing: { source: 'review', engine: { needsReview: true, reviewClosest: closest } }
+  });
+  const resolve = (f) => f.routing;
+
+  test('groups held files by the same closest folder and picks the largest group', () => {
+    const files = [
+      held('a.xlsx', 'excel GSc'),
+      held('b.xlsx', 'Excel  gsc'),
+      held('c.xlsx', 'excel GSc'),
+      held('d.csv', 'Bing'),
+      held('e.csv', 'Bing')
+    ];
+    const group = findClosestFolderGroup(files, resolve, FOLDERS);
+    expect(group.folder).toBe(GSC);
+    expect(group.files.map((f) => f.name)).toEqual(['a.xlsx', 'b.xlsx', 'c.xlsx']);
+  });
+
+  test('needs at least CLOSEST_MIN_FILES files', () => {
+    expect(CLOSEST_MIN_FILES).toBe(2);
+    expect(findClosestFolderGroup([held('a.xlsx', 'excel GSc')], resolve, FOLDERS)).toBeNull();
+  });
+
+  test('ignores files that are not held, folders that no longer exist and Uncategorized', () => {
+    const routed = {
+      path: '/in/x.xlsx',
+      routing: { source: 'engine', engine: { reviewClosest: 'excel GSc' } }
+    };
+    const files = [
+      routed,
+      held('a.xlsx', 'Removed folder'),
+      held('b.xlsx', 'Removed folder'),
+      held('c.txt', 'Uncategorized'),
+      held('d.txt', 'Uncategorized'),
+      held('e.txt', null)
+    ];
+    expect(findClosestFolderGroup(files, resolve, FOLDERS)).toBeNull();
   });
 });

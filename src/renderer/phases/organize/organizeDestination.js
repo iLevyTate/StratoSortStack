@@ -40,6 +40,8 @@ import { toCanonicalPath } from '../../utils/canonicalPath';
  * @property {EngineCandidate[]} alternatives
  * @property {boolean} [needsReview] - no Smart Folder is a confident match
  * @property {string|null} [reviewReason] - no_match, weak_match or ambiguous
+ * @property {string|null} [reviewClosest] - name of the closest Smart Folder
+ *   when the file needs review (the "closest was …" folder), else absent
  */
 
 /**
@@ -105,6 +107,8 @@ export function normalizeEngineEntry(entry) {
     alternatives.push(candidate);
   }
   const reviewReason = entry?.routingDecision?.reason || entry?.suggestion?.review?.reason || null;
+  const closest = entry?.routingDecision?.best?.folder ?? entry?.suggestion?.review?.best?.folder;
+  const reviewClosest = typeof closest === 'string' && closest.trim() ? closest.trim() : null;
   return {
     ...(primary || { folder: null, path: null, folderId: null, source: null }),
     confidence,
@@ -113,7 +117,7 @@ export function normalizeEngineEntry(entry) {
         ? entry.explanation.trim()
         : null,
     alternatives,
-    ...(needsReview ? { needsReview: true, reviewReason } : {})
+    ...(needsReview ? { needsReview: true, reviewReason, reviewClosest } : {})
   };
 }
 

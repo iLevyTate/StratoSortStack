@@ -97,3 +97,17 @@ describe('validationConstants', () => {
     });
   });
 });
+
+describe('naming convention labels', () => {
+  const {
+    NAMING_CONVENTIONS,
+    NAMING_CONVENTION_LABELS
+  } = require('../src/shared/validationConstants');
+
+  test('every convention the settings accept has a label, and only those', () => {
+    expect(Object.keys(NAMING_CONVENTION_LABELS).sort()).toEqual([...NAMING_CONVENTIONS].sort());
+    for (const id of NAMING_CONVENTIONS) {
+      expect(NAMING_CONVENTION_LABELS[id]).toMatch(/^[A-Z][a-z]/);
+    }
+  });
+});

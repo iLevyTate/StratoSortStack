@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import PropTypes from 'prop-types';
-import { FolderPlus, RefreshCw, Lightbulb } from 'lucide-react';
+import { FolderPlus, FolderInput, RefreshCw, Lightbulb } from 'lucide-react';
 import { Button } from '../ui';
 import { Text } from '../ui/Typography';
 import Card from '../ui/Card';
@@ -8,7 +8,7 @@ import { AddSmartFolderModal } from '../setup';
 import { createLogger } from '../../../shared/logger';
 import { smartFoldersIpc } from '../../services/ipc';
 import { mapErrorToNotification } from '../../utils/errorMapping';
-import { findRecurringTheme } from './uncategorizedThemes';
+import { findClosestFolderGroup, findRecurringTheme } from './uncategorizedThemes';
 
 const logger = createLogger('UncategorizedActionsBar');
 
@@ -76,6 +76,7 @@ function UncategorizedActionsBar({
   existingFolders,
   onFolderCreated,
   onReanalyze,
+  onAssignFolder,
   isAnalyzing = false,
   addNotification
 }) {
@@ -84,7 +85,7 @@ function UncategorizedActionsBar({
   const earlierFiles = useEarlierUncategorizedFiles();
 
   // Derive uncategorized files + pattern suggestions in one pass.
-  const { uncategorizedFiles, suggestion } = useMemo(() => {
+  const { uncategorizedFiles, suggestion, closest } = useMemo(() => {
     // Prefer the grid's own resolution (user choice, engine ranking, then
     // name matching) so this bar never counts a file the card shows placed.
     const matcher =
@@ -109,13 +110,21 @@ function UncategorizedActionsBar({
       combined && earlierCount < combined.files.length
         ? { ...combined, earlierCount }
         : findRecurringTheme(uncategorized);
-    return { uncategorizedFiles: uncategorized, suggestion: theme };
+    return {
+      uncategorizedFiles: uncategorized,
+      suggestion: theme,
+      // Held files that all came closest to the same existing folder: often
+      // the right folder, just below the confidence bar. Files on this screen
+      // only, since only those can be given a folder here.
+      closest: findClosestFolderGroup(uncategorized, resolveDestination, existingFolders)
+    };
   }, [
     unprocessedFiles,
     earlierFiles,
     findSmartFolderForFile,
     findSmartFolderForCategory,
-    resolveDestination
+    resolveDestination,
+    existingFolders
   ]);
 
   const openCreateModal = useCallback((seedName = '') => {
@@ -177,6 +186,13 @@ function UncategorizedActionsBar({
     if (paths.length > 0) onReanalyze(paths);
   }, [uncategorizedFiles, onReanalyze, addNotification]);
 
+  const canAssignClosest = Boolean(closest) && typeof onAssignFolder === 'function';
+  const handleAssignClosest = useCallback(() => {
+    if (!closest || typeof onAssignFolder !== 'function') return;
+    const paths = closest.files.map((file) => file?.path).filter(Boolean);
+    if (paths.length > 0) onAssignFolder(paths, closest.folder.name);
+  }, [closest, onAssignFolder]);
+
   if (uncategorizedFiles.length === 0) return null;
 
   return (
@@ -191,6 +207,16 @@ function UncategorizedActionsBar({
               {uncategorizedFiles.length}{' '}
               {uncategorizedFiles.length === 1 ? 'file is' : 'files are'} uncategorized
             </Text>
+            {canAssignClosest && (
+              <Text variant="tiny" className="text-system-gray-600 mt-1 flex items-center gap-1">
+                <FolderInput className="w-3.5 h-3.5 text-stratosort-blue inline-shrink-0" />
+                <span>
+                  {closest.files.length} came closest to{' '}
+                  <strong className="text-system-gray-800">{closest.folder.name}</strong>. Send them
+                  there if that is where they belong.
+                </span>
+              </Text>
+            )}
             {suggestion ? (
               <Text variant="tiny" className="text-system-gray-600 mt-1 flex items-center gap-1">
                 <Lightbulb className="w-3.5 h-3.5 text-stratosort-blue inline-shrink-0" />
@@ -213,9 +239,15 @@ function UncategorizedActionsBar({
           </div>
 
           <div className="flex flex-wrap items-center gap-compact">
+            {canAssignClosest && (
+              <Button variant="primary" size="sm" onClick={handleAssignClosest}>
+                <FolderInput className="w-4 h-4 mr-1.5" />
+                Send {closest.files.length} to {closest.folder.name}
+              </Button>
+            )}
             {suggestion && (
               <Button
-                variant="primary"
+                variant={canAssignClosest ? 'secondary' : 'primary'}
                 size="sm"
                 onClick={() => openCreateModal(suggestion.displayName)}
               >
@@ -273,6 +305,8 @@ UncategorizedActionsBar.propTypes = {
   onFolderCreated: PropTypes.func,
   // Analyzes the given paths again (the analysis run's reanalyzeFiles).
   onReanalyze: PropTypes.func,
+  // Gives the given paths a Smart Folder (by name), as a bulk folder change does.
+  onAssignFolder: PropTypes.func,
   isAnalyzing: PropTypes.bool,
   addNotification: PropTypes.func
 };

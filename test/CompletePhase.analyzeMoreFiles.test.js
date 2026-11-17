@@ -71,6 +71,9 @@ jest.mock('../src/renderer/contexts/NotificationContext', () => ({
     showWarning: jest.fn()
   })
 }));
+jest.mock('../src/renderer/contexts/FloatingSearchContext', () => ({
+  useOptionalFloatingSearch: () => null
+}));
 jest.mock('../src/renderer/services/ipc', () => ({
   filesIpc: { openFolder: jest.fn(), exportOrganizeReport: jest.fn() }
 }));

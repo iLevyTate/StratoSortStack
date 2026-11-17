@@ -30,6 +30,13 @@ describe('configSnippets', () => {
     expect(parsed.context_servers.stratosort).not.toHaveProperty('source');
   });
 
+  test('other gives the address and header for apps without a config file', () => {
+    const s = generateSnippet('other', ctx);
+    expect(s).toContain('Address: http://127.0.0.1:53827/mcp');
+    expect(s).toContain(`Header: Authorization: Bearer ${ctx.token}`);
+    expect(s).toContain('Streamable HTTP');
+  });
+
   test('throws on unknown client', () => {
     expect(() => generateSnippet('weird', ctx)).toThrow();
   });

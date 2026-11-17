@@ -5,6 +5,7 @@ import { Text } from '../ui/Typography';
 import SettingRow from './SettingRow';
 import SettingsCard from './SettingsCard';
 import { normalizeSeparator } from '../../../shared/namingConventions';
+import { NAMING_CONVENTIONS, NAMING_CONVENTION_LABELS } from '../../../shared/validationConstants';
 
 /**
  * NamingSettingsSection - Settings section for the default naming convention.
@@ -59,11 +60,11 @@ function NamingSettingsSection({ settings, setSettings }) {
             aria-label="Naming convention"
             className="w-full"
           >
-            <option value="subject-date">subject-date</option>
-            <option value="date-subject">date-subject</option>
-            <option value="project-subject-date">project-subject-date</option>
-            <option value="category-subject">category-subject</option>
-            <option value="keep-original">keep-original</option>
+            {NAMING_CONVENTIONS.map((id) => (
+              <option key={id} value={id}>
+                {NAMING_CONVENTION_LABELS[id] || id}
+              </option>
+            ))}
           </Select>
         </SettingRow>
 

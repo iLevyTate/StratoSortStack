@@ -125,3 +125,53 @@ describe('UncategorizedActionsBar', () => {
     expect(container).toBeEmptyDOMElement();
   });
 });
+
+describe('held files that all came closest to one folder', () => {
+  const GSC = { id: 'g', name: 'excel GSc', path: '/out/gsc' };
+  const held = (name) => ({
+    path: `/in/${name}`,
+    name,
+    analysis: { category: 'Uncategorized', keywords: ['promptquorum'] }
+  });
+  const resolveDestination = () => ({
+    folder: null,
+    source: 'review',
+    engine: { needsReview: true, reviewClosest: 'excel GSc' }
+  });
+
+  function renderHeld(files, onAssignFolder) {
+    window.electronAPI = {
+      analysisHistory: { getUncategorized: jest.fn().mockResolvedValue({ items: [] }) }
+    };
+    return render(
+      <UncategorizedActionsBar
+        unprocessedFiles={files}
+        findSmartFolderForCategory={() => null}
+        resolveDestination={resolveDestination}
+        existingFolders={[GSC]}
+        onAssignFolder={onAssignFolder}
+      />
+    );
+  }
+
+  test('offers to send them all there in one click', async () => {
+    const onAssignFolder = jest.fn();
+    const files = [held('a.xlsx'), held('b.xlsx'), held('c.xlsx')];
+    renderHeld(files, onAssignFolder);
+
+    expect(await screen.findByText(/3 came closest to/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Send 3 to excel GSc' }));
+    expect(onAssignFolder).toHaveBeenCalledWith(
+      ['/in/a.xlsx', '/in/b.xlsx', '/in/c.xlsx'],
+      'excel GSc'
+    );
+    // The theme offer stays, as the second choice.
+    expect(screen.getByRole('button', { name: /Create folder for/ })).toBeInTheDocument();
+  });
+
+  test('without an assign handler the offer is not shown', async () => {
+    const { container } = renderHeld([held('a.xlsx'), held('b.xlsx')], undefined);
+    await screen.findByText('2 files are uncategorized');
+    expect(container.textContent).not.toContain('came closest to');
+  });
+});

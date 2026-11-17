@@ -1720,7 +1720,9 @@ if (!z) {
     mcpDisable: ipcVoidPayloadSchema,
     mcpStatus: ipcVoidPayloadSchema,
     mcpRotateToken: ipcVoidPayloadSchema,
-    mcpGetConfigSnippet: z.object({ client: z.enum(['claudeDesktop', 'cursor', 'zed']) }).strict(),
+    mcpGetConfigSnippet: z
+      .object({ client: z.enum(['claudeDesktop', 'cursor', 'zed', 'other']) })
+      .strict(),
     mcpTestConnection: ipcVoidPayloadSchema,
 
     // AI Provider IPC schemas (T7-T8 multi-provider AI work)

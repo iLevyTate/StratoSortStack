@@ -76,6 +76,9 @@ jest.mock('../../src/renderer/services/ipc', () => ({
 jest.mock('../../src/renderer/phases/discover/AnalysisRunProvider', () => ({
   useAnalysisRun: () => ({ resetRun: jest.fn() })
 }));
+jest.mock('../../src/renderer/contexts/FloatingSearchContext', () => ({
+  useOptionalFloatingSearch: () => null
+}));
 
 import CompletePhase from '../../src/renderer/phases/CompletePhase';
 

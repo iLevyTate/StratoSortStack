@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { AlertTriangle, X, RefreshCw, Network, FolderOpen, Settings, Database } from 'lucide-react';
 import { PHASES } from '../../shared/constants';
 import { TIMEOUTS } from '../../shared/performanceConstants';
+import { NAMING_CONVENTION_LABELS } from '../../shared/validationConstants';
 import { createLogger } from '../../shared/logger';
 import { useNotification } from '../contexts/NotificationContext';
 import { useFloatingSearch } from '../contexts/FloatingSearchContext';
@@ -499,9 +500,11 @@ function DiscoverPhase() {
             size="sm"
             data-testid="naming-strategy-trigger"
             onClick={() => setShowNamingSettings(true)}
+            title="Choose how files are renamed when you move them"
           >
             <Settings className="w-4 h-4" />
-            Naming strategy
+            {/* Says what happens to names, so renaming is found before Organize. */}
+            {`File names: ${NAMING_CONVENTION_LABELS[namingConvention] || 'choose a naming strategy'}`}
           </Button>
           <Button
             variant="secondary"

@@ -97,7 +97,7 @@ describe('the score on the card', () => {
     expect(screen.getByTestId('organize-routing-note')).toHaveTextContent(
       'Matched by the label the analysis gave this file'
     );
-    expect(screen.queryByText(/% confidence/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Strong match|Good match|Check this/)).not.toBeInTheDocument();
   });
 
   test('the catch-all fallback shows no score', () => {
@@ -114,7 +114,7 @@ describe('the score on the card', () => {
       category: 'Uncategorized',
       routing: { folder: FOLDERS[2], source: 'engine', engine: fallback }
     });
-    expect(screen.queryByText(/% confidence/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Strong match|Good match|Check this/)).not.toBeInTheDocument();
   });
 
   test('a folder the user picked shows no score', () => {
@@ -124,11 +124,11 @@ describe('the score on the card', () => {
       routing: { folder: FOLDERS[0], source: 'user', engine: ENGINE }
     });
     expect(screen.getByTestId('organize-routing-note')).toHaveTextContent('Your choice');
-    expect(screen.queryByText(/% confidence/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Strong match|Good match|Check this/)).not.toBeInTheDocument();
   });
 
   test('a content match still shows its score', () => {
     renderItem({ routing: { folder: FOLDERS[1], source: 'engine', engine: ENGINE } });
-    expect(screen.getByText('62% confidence')).toBeInTheDocument();
+    expect(screen.getByText('Good match')).toBeInTheDocument();
   });
 });

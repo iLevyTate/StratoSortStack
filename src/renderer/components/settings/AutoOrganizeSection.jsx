@@ -64,13 +64,13 @@ function AutoOrganizeSection({ settings, setSettings }) {
       </SettingRow>
 
       <SettingRow
-        label="Watch smart folders"
-        description="Analyze files as they land in your smart folders while the app is open. Turn off to analyze only what you pick in Discover."
+        label="Keep Smart Folders up to date"
+        description="While the app is open, analyze files you put straight into a Smart Folder, so search and chat include them. This watches where files go, not where they come from: files come in through Discover and, if it is on, the Downloads watcher above."
       >
         <Switch
           checked={settings.smartFolderWatchEnabled !== false}
           onChange={(checked) => updateSetting('smartFolderWatchEnabled', checked)}
-          aria-label="Toggle smart folder watching"
+          aria-label="Toggle keeping Smart Folders up to date"
         />
       </SettingRow>
 

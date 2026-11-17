@@ -37,7 +37,8 @@ const TOOLS = [
 const CLIENT_NAMES = {
   claudeDesktop: 'Claude Desktop',
   cursor: 'Cursor',
-  zed: 'Zed'
+  zed: 'Zed',
+  other: 'server address and token'
 };
 
 // Plain words for the lifecycle states; 'running' shows the address instead.
@@ -88,7 +89,12 @@ function McpServerSection({ addNotification }) {
       const result = await dispatch(getConfigSnippet(client)).unwrap();
       const snippet = result?.snippet || '';
       await navigator.clipboard.writeText(snippet);
-      addNotification?.(`Copied ${CLIENT_NAMES[client] || 'MCP'} config.`, 'success');
+      addNotification?.(
+        client === 'other'
+          ? 'Copied the server address and token.'
+          : `Copied ${CLIENT_NAMES[client] || 'MCP'} config.`,
+        'success'
+      );
     } catch (err) {
       addNotification?.(err.message, 'error');
     }
@@ -175,6 +181,14 @@ function McpServerSection({ addNotification }) {
               </Button>
               <Button onClick={() => onCopy('zed')} variant="outline" size="sm">
                 Copy Zed config
+              </Button>
+              <Button
+                onClick={() => onCopy('other')}
+                variant="outline"
+                size="sm"
+                title="For other apps, such as Loci, that ask for a server address and a header"
+              >
+                Copy address and token (other apps)
               </Button>
             </div>
           </SettingRow>

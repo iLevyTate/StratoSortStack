@@ -160,3 +160,11 @@ export function useFloatingSearch() {
   }
   return context;
 }
+
+/**
+ * The same context, or null outside the provider: for a screen that only
+ * links to search and renders fine without it (no provider, no link).
+ */
+export function useOptionalFloatingSearch() {
+  return useContext(FloatingSearchContext);
+}

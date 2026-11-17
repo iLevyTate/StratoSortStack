@@ -8,6 +8,27 @@ import { Text } from '../ui/Typography';
 import { Inline } from '../layout';
 import { selectRedactPaths } from '../../store/selectors';
 import { formatDisplayFileName } from '../../utils/pathDisplay';
+import { describeMatchStrength } from '../../utils/confidenceColors';
+
+// Badge variant for each match strength (describeMatchStrength).
+const MATCH_BADGE = Object.freeze({ high: 'success', medium: 'info', low: 'warning' });
+
+/** The match score in words; the percentage is the tooltip. */
+function MatchBadge({ score }) {
+  const strength = describeMatchStrength(score * 100);
+  if (!strength) return null;
+  return (
+    <span className="shrink-0 ml-auto" title={strength.title}>
+      <StatusBadge variant={MATCH_BADGE[strength.level]} size="sm">
+        {strength.label}
+      </StatusBadge>
+    </span>
+  );
+}
+
+MatchBadge.propTypes = {
+  score: PropTypes.number.isRequired
+};
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -144,11 +165,7 @@ function SampleRunDialog({
               <Text variant="small" className="font-medium text-system-gray-900 truncate">
                 {row.analyzed ? row.folder || 'Uncategorized' : 'Not analyzed'}
               </Text>
-              {row.score !== null && (
-                <StatusBadge variant="info" size="sm" className="shrink-0 ml-auto">
-                  {`${Math.round(row.score * 100)}% confidence`}
-                </StatusBadge>
-              )}
+              {row.score !== null && <MatchBadge score={row.score} />}
             </div>
             <Text variant="tiny" className="text-system-gray-600 mt-0.5">
               {row.reason}
