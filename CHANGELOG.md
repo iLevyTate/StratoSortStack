@@ -36,6 +36,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **"Watch smart folders" is now "Keep Smart Folders up to date".** Its description says it watches
   where files go, not where they come from, and names the ways files come in.
 
+### Fixed
+
+- **Spreadsheets from Visio and .NET tools are read.** Some tools write a workbook's XML with a
+  prefix on every tag (`<x:row>`), and StratoSort read those workbooks as empty. They are now read
+  like any other.
+
 ## [5.4.0] - 2026-11-16
 
 ### Added
