@@ -565,6 +565,12 @@ test.describe('Local routing review (real models)', () => {
       ? { query, ...(await askChat(window, query)) }
       : { query, ok: false, reason: 'exports did not reach the search index in 120 s' };
 
+    // The embedding pipeline's outcomes over the run, with reasons for errors.
+    report.embeddingPipeline = await window.evaluate(async () => {
+      const metrics = await window.electronAPI?.system?.getMetrics?.();
+      return metrics?.pipeline?.embedding || metrics?.data?.pipeline?.embedding || null;
+    });
+
     await fs.mkdir(REPORT_DIR, { recursive: true });
     await fs.writeFile(path.join(REPORT_DIR, 'report.json'), JSON.stringify(report, null, 2));
     await fs.writeFile(path.join(REPORT_DIR, 'report.md'), renderMarkdown(report));
