@@ -202,7 +202,42 @@ class BatchAnalysisService {
     }
   }
 
-  async _getAdaptiveConcurrency(/** @type {any} */ requestedConcurrency, autoConcurrency = true) {
+  /**
+   * True when document analysis goes to a cloud provider: the local model is
+   * not the one doing that work, so the local hardware cap does not apply to
+   * it. Reads the router's side-effect-free preview; false on any doubt.
+   * @returns {boolean}
+   */
+  _isDocumentAnalysisRemote() {
+    try {
+      // Lazy: aiProvider requires the services tree.
+      const aiProvider = require('../ipc/aiProvider');
+      const router = aiProvider.getActiveAiRouter ? aiProvider.getActiveAiRouter() : null;
+      const providerId =
+        typeof router?.previewChoiceId === 'function'
+          ? router.previewChoiceId({ operation: 'analyze' })
+          : null;
+      return Boolean(providerId) && providerId !== 'local';
+    } catch (error) {
+      logger.debug('[BATCH-ANALYSIS] Could not read the analysis provider', {
+        error: error?.message
+      });
+      return false;
+    }
+  }
+
+  /**
+   * @param {any} requestedConcurrency
+   * @param {boolean} [autoConcurrency]
+   * @param {{ remote?: boolean }} [options] remote: the work runs on a cloud
+   *   provider, so the hardware (VRAM/RAM) cap is skipped; queue pressure on
+   *   the local models still applies.
+   */
+  async _getAdaptiveConcurrency(
+    /** @type {any} */ requestedConcurrency,
+    autoConcurrency = true,
+    { remote = false } = {}
+  ) {
     let capped = requestedConcurrency;
     let perfRecommendation = null;
 
@@ -223,7 +258,9 @@ class BatchAnalysisService {
       // When the user has explicitly opted into manual concurrency, we honor
       // their value here; the queue-pressure reductions below (runtime
       // backpressure) still apply in both modes to protect against OOM.
+      // Work on a cloud provider does not run on this hardware at all.
       if (
+        !remote &&
         autoConcurrency !== false &&
         Number.isFinite(perfRecommendation?.maxConcurrent) &&
         perfRecommendation.maxConcurrent > 0
@@ -303,6 +340,15 @@ class BatchAnalysisService {
     const concurrency = disableAdaptiveConcurrency
       ? requestedConcurrency
       : await this._getAdaptiveConcurrency(requestedConcurrency, autoConcurrency);
+    // Documents analyzed by a cloud provider are not limited by local VRAM:
+    // a reanalysis through a cloud model ran one file at a time because the
+    // local hardware recommended 1. Images and media still run locally.
+    const documentConcurrency =
+      disableAdaptiveConcurrency || !this._isDocumentAnalysisRemote()
+        ? concurrency
+        : await this._getAdaptiveConcurrency(requestedConcurrency, autoConcurrency, {
+            remote: true
+          });
 
     if (!Array.isArray(filePaths) || filePaths.length === 0) {
       return {
@@ -322,6 +368,7 @@ class BatchAnalysisService {
       fileCount: filePaths.length,
       requestedConcurrency,
       concurrency,
+      documentConcurrency,
       sectionOrder: orderedSections,
       documentCount: partitioned.documents.length,
       imageCount: partitioned.images.length,
@@ -402,7 +449,8 @@ class BatchAnalysisService {
         }
         const sectionFiles = partitioned[section];
         const sectionIsImage = section === 'images';
-        const sectionConcurrency = Math.max(1, Math.min(concurrency, sectionFiles.length || 1));
+        const sectionCap = section === 'documents' ? documentConcurrency : concurrency;
+        const sectionConcurrency = Math.max(1, Math.min(sectionCap, sectionFiles.length || 1));
         const sectionStart = Date.now();
         // Vision batch mode is on by default in production. Tests can opt out
         // by passing { enableVisionBatchMode: false } in options. The previous

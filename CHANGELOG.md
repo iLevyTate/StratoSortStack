@@ -41,6 +41,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Spreadsheets from Visio and .NET tools are read.** Some tools write a workbook's XML with a
   prefix on every tag (`<x:row>`), and StratoSort read those workbooks as empty. They are now read
   like any other.
+- **Cloud analysis is no longer held to one file at a time.** With a cloud model, a batch still took
+  the concurrency the local graphics card recommends, which on a busy or small card was 1. Documents
+  analyzed in the cloud now run at the requested concurrency; images and media, which run on local
+  models, keep the hardware limit.
+- **Embedding problems say why.** The warning for a high embedding error rate now names the most
+  frequent errors.
 
 ## [5.4.0] - 2026-11-16
 
