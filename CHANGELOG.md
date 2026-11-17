@@ -48,6 +48,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **The search index Refresh button stays still during analysis.** Background refreshes of the index
   counts, every 1.5 seconds during a batch, spun and disabled the button and faded the counts. They
   now update the numbers quietly; a refresh you ask for still shows that it is loading.
+- **Search and Chat name files as they are on disk.** A file not yet organized was listed under the
+  name StratoSort suggested for it, which did not exist yet. Search results and Chat sources now use
+  the file's current name. Rebuild the search index to update files analyzed earlier.
 - **Embedding problems say why.** The warning for a high embedding error rate now names the most
   frequent errors.
 
