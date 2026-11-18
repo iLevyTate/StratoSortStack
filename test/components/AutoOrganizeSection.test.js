@@ -15,15 +15,14 @@ function renderWith(settings) {
 describe('AutoOrganizeSection smart-folder watching switch', () => {
   test('is on by default (matches DEFAULT_SETTINGS)', () => {
     renderWith({});
-    expect(screen.getByRole('switch', { name: 'Toggle smart folder watching' })).toHaveAttribute(
-      'aria-checked',
-      'true'
-    );
+    expect(
+      screen.getByRole('switch', { name: 'Toggle keeping Smart Folders up to date' })
+    ).toHaveAttribute('aria-checked', 'true');
   });
 
   test('reflects an explicit opt-out and writes the change back', () => {
     const setSettings = renderWith({ smartFolderWatchEnabled: false });
-    const sw = screen.getByRole('switch', { name: 'Toggle smart folder watching' });
+    const sw = screen.getByRole('switch', { name: 'Toggle keeping Smart Folders up to date' });
     expect(sw).toHaveAttribute('aria-checked', 'false');
     fireEvent.click(sw);
     expect(setSettings).toHaveBeenCalledTimes(1);

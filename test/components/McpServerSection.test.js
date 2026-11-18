@@ -234,7 +234,9 @@ describe('McpServerSection', () => {
 
   test.each([
     ['Copy Cursor config', 'cursor', 'Copied Cursor config.'],
-    ['Copy Zed config', 'zed', 'Copied Zed config.']
+    ['Copy Zed config', 'zed', 'Copied Zed config.'],
+    // Apps such as Loci ask for an address and a header, not a config file.
+    ['Copy address and token (other apps)', 'other', 'Copied the server address and token.']
   ])('"%s" confirms with the client name, not its id', async (buttonName, id, message) => {
     const addNotification = jest.fn();
     const store = configureStore({

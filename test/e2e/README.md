@@ -18,7 +18,7 @@ up every `*.spec.js` under `test/e2e/`, so a new spec only needs to be put in th
 | `settings/`  | Settings panel: backup, models, AI providers, MCP                           | 6     |
 | `workflows/` | Journeys that cross several phases, run on seeded data (no model needed)    | 2     |
 | `live-llm/`  | `@live-llm` specs that need real local models                               | 3     |
-| `manual/`    | Opt-in runs that are never part of CI: soak test and a QA repro session     | 2     |
+| `manual/`    | Opt-in runs that are never part of CI: soak, QA repro, local routing review | 3     |
 | `helpers/`   | Launch helpers, page objects, fixtures, global setup/teardown (not specs)   | -     |
 
 ### Spec index
@@ -111,12 +111,13 @@ All three are tagged `@live-llm` and run with `npm run test:e2e:live-llm`. Set
 
 #### `manual/` - opt-in, never in CI
 
-Both skip themselves in a plain `npm run test:e2e` run when their requirement is missing.
+All three skip themselves in a plain `npm run test:e2e` run when their requirement is missing.
 
-| Spec                       | Purpose                                                                    | CI smoke | Needs                                                                |
-| -------------------------- | -------------------------------------------------------------------------- | -------- | -------------------------------------------------------------------- |
-| `soak.spec.js`             | 10-15 minute stability loop with memory sampling                           |          | `SOAK=1` (use `npm run test:soak`); optional `SOAK_MINUTES`          |
-| `qa-runtime-repro.spec.js` | QA repro session for backlog items (settings, chat streaming, graph edges) |          | Windows, with the real models in `%APPDATA%\StratoSort Stack\models` |
+| Spec                           | Purpose                                                                                                                                                                                                    | CI smoke | Needs                                                                |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | -------------------------------------------------------------------- |
+| `soak.spec.js`                 | 10-15 minute stability loop with memory sampling                                                                                                                                                           |          | `SOAK=1` (use `npm run test:soak`); optional `SOAK_MINUTES`          |
+| `qa-runtime-repro.spec.js`     | QA repro session for backlog items (settings, chat streaming, graph edges)                                                                                                                                 |          | Windows, with the real models in `%APPDATA%\StratoSort Stack\models` |
+| `local-routing-review.spec.js` | Small Search Console exports through the local model: folder, score, held, closest folder, for three folder descriptions; then a timed Chat question. Writes `test-results/local-routing-review/report.md` |          | `STRATOSORT_E2E_ROUTING_REVIEW=1` and `STRATOSORT_E2E_MODELS_DIR`    |
 
 ## Prerequisites
 
@@ -204,7 +205,7 @@ test/e2e/
 ├── settings/               # Settings panel
 ├── workflows/              # Cross-phase journeys on seeded data
 ├── live-llm/               # @live-llm specs (real models)
-├── manual/                 # Soak test and QA repro (opt-in)
+├── manual/                 # Soak, QA repro, local routing review (opt-in)
 └── README.md               # This file
 ```
 

@@ -52,6 +52,19 @@ const NAMING_CONVENTIONS = [
 ];
 
 /**
+ * What each naming convention does, in words, for the pickers and the
+ * Discover button. One entry per NAMING_CONVENTIONS id.
+ * @type {Readonly<Record<string, string>>}
+ */
+const NAMING_CONVENTION_LABELS = Object.freeze({
+  'subject-date': 'Subject, then date',
+  'date-subject': 'Date, then subject',
+  'project-subject-date': 'Project, subject, then date',
+  'category-subject': 'Category, then subject',
+  'keep-original': 'Keep original names'
+});
+
+/**
  * Case conventions for filenames
  */
 const CASE_CONVENTIONS = [
@@ -160,6 +173,7 @@ module.exports = {
   LOGGING_LEVELS,
   NOTIFICATION_MODES,
   NAMING_CONVENTIONS,
+  NAMING_CONVENTION_LABELS,
   CASE_CONVENTIONS,
   SMART_FOLDER_ROUTING_MODES,
 

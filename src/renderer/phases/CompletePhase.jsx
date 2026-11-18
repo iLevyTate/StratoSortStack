@@ -1,6 +1,13 @@
 import React, { memo, useCallback, useMemo } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
-import { CheckCircle2, Copy, ArrowLeft, FolderOpen, FilePlus } from 'lucide-react';
+import {
+  CheckCircle2,
+  Copy,
+  ArrowLeft,
+  FolderOpen,
+  FilePlus,
+  MessageSquareText
+} from 'lucide-react';
 import { PHASES } from '../../shared/constants';
 import { useAppSelector, useAppDispatch } from '../store/hooks';
 import { setPhase, resetUi } from '../store/slices/uiSlice';
@@ -13,6 +20,7 @@ import { UndoRedoToolbar } from '../components/UndoRedoSystem';
 import { ActionBar, Inline, Stack } from '../components/layout';
 import { selectMovedCount, selectOrganizedCount, selectRedactPaths } from '../store/selectors';
 import { useNotification } from '../contexts/NotificationContext';
+import { useOptionalFloatingSearch } from '../contexts/FloatingSearchContext';
 import { filesIpc } from '../services/ipc';
 import { logger } from '../../shared/logger';
 import { toCanonicalPath } from '../utils/canonicalPath';
@@ -56,6 +64,7 @@ function CompletePhase() {
   const organizedCount = useAppSelector(selectOrganizedCount);
   // The Dashboard's "Organized" figure: removed duplicates are not in it.
   const movedCount = useAppSelector(selectMovedCount);
+  const floatingSearch = useOptionalFloatingSearch();
   const duplicateCount = organizedCount - movedCount;
   const analysisResults = useAppSelector((state) => state.analysis?.results);
   const redactPaths = useAppSelector(selectRedactPaths);
@@ -401,6 +410,20 @@ function CompletePhase() {
           <ArrowLeft className="w-4 h-4 mr-2" />
           Review organized files
         </Button>
+        {/* Chat with sources is the built-in way to ask about these files;
+            testers who only met it through MCP did not find it in the app. */}
+        {floatingSearch && movedCount > 0 && (
+          <Button
+            onClick={() => floatingSearch.openSearchModal('chat')}
+            variant="secondary"
+            size="md"
+            className="w-full sm:w-auto"
+            title="Ask a question and get an answer that names the files it used"
+          >
+            <MessageSquareText className="w-4 h-4 mr-2" />
+            Ask about your files
+          </Button>
+        )}
         {canOpenFolder && (
           <Button
             onClick={handleOpenFolder}

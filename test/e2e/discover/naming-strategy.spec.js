@@ -189,9 +189,9 @@ test.describe('Naming Strategy - Preview', () => {
     // Ensure the convention includes a date token so date-format changes are reflected in preview.
     const conventionTrigger = window.locator('#naming-convention');
     const currentConvention = ((await conventionTrigger.textContent()) || '').trim();
-    if (currentConvention !== 'subject-date') {
+    if (currentConvention !== 'Subject, then date') {
       await conventionTrigger.click();
-      await window.locator('[role="option"]:has-text("subject-date")').click();
+      await window.locator('[role="option"]:has-text("Subject, then date")').click();
       await safeWaitForTimeout(window, 200);
     }
 

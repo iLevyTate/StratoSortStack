@@ -308,6 +308,28 @@ function OrganizePhase() {
     ]
   );
 
+  // The uncategorized bar's "Send N to <folder>": the same choice a bulk
+  // folder change makes, for files held for review that all came closest to
+  // that folder. Saved under the same keys and in one store update; nothing
+  // moves until the user moves the files.
+  const assignFolderToFiles = useCallback(
+    (paths, folderName) => {
+      const keys = (Array.isArray(paths) ? paths : []).map(toCanonicalPath).filter(Boolean);
+      if (keys.length === 0 || !folderName) return;
+      setEditingFiles((prev) => {
+        const next = { ...prev };
+        for (const key of keys) next[key] = { ...(prev[key] || {}), category: folderName };
+        return next;
+      });
+      persistBulkFileEdit(keys, 'category', folderName);
+      addNotification(
+        `${keys.length} ${keys.length === 1 ? 'file goes' : 'files go'} to "${folderName}" when you move ${keys.length === 1 ? 'it' : 'them'}.`,
+        'success'
+      );
+    },
+    [setEditingFiles, persistBulkFileEdit, addNotification]
+  );
+
   const rememberSmartFolderChoice = useRememberSmartFolderChoice();
   const {
     isOrganizing,
@@ -916,6 +938,7 @@ function OrganizePhase() {
                     existingFolders={safeSmartFolders}
                     onFolderCreated={reloadSmartFolders}
                     onReanalyze={reanalyzeFiles}
+                    onAssignFolder={assignFolderToFiles}
                     isAnalyzing={isAnalysisRunning}
                     addNotification={addNotification}
                   />

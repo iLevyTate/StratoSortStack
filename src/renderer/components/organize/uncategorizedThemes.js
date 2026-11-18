@@ -11,6 +11,9 @@
  * file name or a generic category), and a keyword several files share.
  */
 
+import { isUncategorizedFolder } from '../../../shared/uncategorizedFolder';
+import { THRESHOLDS } from '../../../shared/performanceConstants';
+
 /** A group needs at least this many files before it is offered. */
 export const THEME_MIN_FILES = 3;
 
@@ -177,4 +180,66 @@ export function findRecurringTheme(files) {
   return best
     ? { displayName: toDisplayName(best.label), files: best.files, source: best.source }
     : null;
+}
+
+/** A closest-folder group needs at least this many files before it is offered. */
+export const CLOSEST_MIN_FILES = 2;
+
+/**
+ * How far a held file's closest folder must lead the next one to count toward
+ * the offer: the margin the engine uses to call two folders a tie. With the
+ * local model, Search Console exports came closest to Marketing by 1 to 5
+ * points over their own folder; a one-click offer must not rest on a tie.
+ */
+export const CLOSEST_MIN_LEAD = THRESHOLDS.CONFIDENCE_CALIBRATION?.NO_SPREAD_THRESHOLD ?? 0.03;
+
+/** @param {any} engine */
+function leadsClearly(engine) {
+  const closest = engine?.reviewClosestScore;
+  const runnerUp = engine?.reviewRunnerUpScore;
+  if (typeof closest !== 'number' || typeof runnerUp !== 'number') return true;
+  return closest - runnerUp >= CLOSEST_MIN_LEAD;
+}
+
+/**
+ * The largest group of files held for review whose closest Smart Folder is
+ * the same live folder, or null when none reaches CLOSEST_MIN_FILES.
+ *
+ * A file is held when no folder was a confident match, yet the right folder
+ * is often the closest one: short exports (a few hundred characters of
+ * columns and numbers) score low against a short folder description. Offering
+ * the closest folder for the whole group turns many single corrections into
+ * one choice. Nothing moves until the user moves the files. A file whose
+ * closest folder only ties the next one (CLOSEST_MIN_LEAD) is left out.
+ *
+ * @param {any[]} files - files the Organize screen lists as uncategorized
+ * @param {(file: any) => any} resolveDestination - the grid's destination resolver
+ * @param {any[]} smartFolders - the live Smart Folders
+ * @returns {{ folder: any, files: any[] } | null}
+ */
+export function findClosestFolderGroup(files, resolveDestination, smartFolders) {
+  if (typeof resolveDestination !== 'function') return null;
+  const folders = (Array.isArray(smartFolders) ? smartFolders : []).filter(
+    (folder) => folder?.name && !isUncategorizedFolder(folder)
+  );
+  /** @type {Map<any, { folder: any, files: any[] }>} */
+  const groups = new Map();
+  for (const file of Array.isArray(files) ? files : []) {
+    const routing = resolveDestination(file);
+    if (routing?.source !== 'review') continue;
+    const name = normalize(routing.engine?.reviewClosest);
+    if (!name || !leadsClearly(routing.engine)) continue;
+    const folder = folders.find((candidate) => normalize(candidate.name) === name);
+    if (!folder) continue;
+    const group = groups.get(folder) || { folder, files: [] };
+    group.files.push(file);
+    groups.set(folder, group);
+  }
+  /** @type {{ folder: any, files: any[] } | null} */
+  let best = null;
+  for (const group of groups.values()) {
+    if (group.files.length < CLOSEST_MIN_FILES) continue;
+    if (!best || group.files.length > best.files.length) best = group;
+  }
+  return best;
 }

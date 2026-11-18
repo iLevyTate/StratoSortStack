@@ -2,7 +2,11 @@
  * Tests for confidence color utilities
  */
 
-import { CONFIDENCE_COLORS, getConfidenceColor } from '../../src/renderer/utils/confidenceColors';
+import {
+  CONFIDENCE_COLORS,
+  describeMatchStrength,
+  getConfidenceColor
+} from '../../src/renderer/utils/confidenceColors';
 
 describe('confidenceColors', () => {
   describe('CONFIDENCE_COLORS constant', () => {
@@ -103,5 +107,30 @@ describe('confidenceColors', () => {
       expect(getConfidenceColor('HIGH')).toBe(CONFIDENCE_COLORS.low.combined);
       expect(getConfidenceColor('High')).toBe(CONFIDENCE_COLORS.low.combined);
     });
+  });
+});
+
+describe('describeMatchStrength', () => {
+  test('names the score by what the app does with it, keeping the percentage as a tooltip', () => {
+    expect(describeMatchStrength(82)).toEqual({
+      label: 'Strong match',
+      level: 'high',
+      title: 'Match score 82%'
+    });
+    expect(describeMatchStrength(64)).toMatchObject({ label: 'Good match', level: 'medium' });
+    expect(describeMatchStrength(43)).toMatchObject({ label: 'Check this', level: 'low' });
+  });
+
+  test('the edges follow the auto-organize default and the routing bar', () => {
+    expect(describeMatchStrength(75).label).toBe('Strong match');
+    expect(describeMatchStrength(74).label).toBe('Good match');
+    expect(describeMatchStrength(55).label).toBe('Good match');
+    expect(describeMatchStrength(54).label).toBe('Check this');
+  });
+
+  test('no score, no label', () => {
+    expect(describeMatchStrength(null)).toBeNull();
+    expect(describeMatchStrength(undefined)).toBeNull();
+    expect(describeMatchStrength(Number.NaN)).toBeNull();
   });
 });

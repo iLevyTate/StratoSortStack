@@ -49,8 +49,11 @@ do not need to reinstall clients, but each one needs the new token (copy its con
    `http://127.0.0.1:53827/mcp`. If that port is already taken, the server binds an OS-assigned
    ephemeral port (`listen(0)`) and Settings shows the actual port. It starts with StratoSort while
    the box is ticked; untick it to stop the server and keep it off.
-3. Click **Copy Claude Desktop config** (or **Copy Cursor config** / **Copy Zed config**).
-4. Paste it into your client's config file. Restart the client.
+3. Click **Copy Claude Desktop config** (or **Copy Cursor config** / **Copy Zed config**). For an
+   app that asks for a server address and a header instead of a config file (Loci, for one), click
+   **Copy address and token (other apps)**.
+4. Paste it into your client's config file, or the address and header into the app's server form.
+   Restart the client.
 5. The client now sees four StratoSort tools: `search_documents`, `chat_with_documents`,
    `get_document_summary`, `list_smart_folders`.
 
@@ -92,6 +95,16 @@ follow this shape:
 ```
 
 **Zed** (`~/.config/zed/settings.json`): same shape under `context_servers`.
+
+**Other apps** (a server form rather than a config file): plain text with the address, the header,
+and the transport.
+
+```text
+StratoSort MCP server
+Address: http://127.0.0.1:53827/mcp
+Header: Authorization: Bearer <YOUR-TOKEN>
+Transport: Streamable HTTP
+```
 
 The Settings panel always generates the snippet with your actual port and token filled in — copy
 from there rather than from this doc.

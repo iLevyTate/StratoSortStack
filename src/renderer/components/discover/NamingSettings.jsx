@@ -3,6 +3,7 @@ import PropTypes from 'prop-types';
 import Select from '../ui/Select';
 import { Text } from '../ui/Typography';
 import { normalizeSeparator } from '../../../shared/namingConventions';
+import { NAMING_CONVENTIONS, NAMING_CONVENTION_LABELS } from '../../../shared/validationConstants';
 
 const NamingSettings = memo(function NamingSettings({
   namingConvention,
@@ -37,11 +38,11 @@ const NamingSettings = memo(function NamingSettings({
         onChange={handleConventionChange}
         aria-label="Naming convention"
       >
-        <option value="subject-date">subject-date</option>
-        <option value="date-subject">date-subject</option>
-        <option value="project-subject-date">project-subject-date</option>
-        <option value="category-subject">category-subject</option>
-        <option value="keep-original">keep-original</option>
+        {NAMING_CONVENTIONS.map((id) => (
+          <option key={id} value={id}>
+            {NAMING_CONVENTION_LABELS[id] || id}
+          </option>
+        ))}
       </Select>
 
       <Select

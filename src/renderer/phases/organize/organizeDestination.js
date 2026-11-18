@@ -40,6 +40,10 @@ import { toCanonicalPath } from '../../utils/canonicalPath';
  * @property {EngineCandidate[]} alternatives
  * @property {boolean} [needsReview] - no Smart Folder is a confident match
  * @property {string|null} [reviewReason] - no_match, weak_match or ambiguous
+ * @property {string|null} [reviewClosest] - name of the closest Smart Folder
+ * @property {number|null} [reviewClosestScore] - its content score, 0..1
+ * @property {number|null} [reviewRunnerUpScore] - the next folder's content score, 0..1
+ *   when the file needs review (the "closest was …" folder), else absent
  */
 
 /**
@@ -105,6 +109,11 @@ export function normalizeEngineEntry(entry) {
     alternatives.push(candidate);
   }
   const reviewReason = entry?.routingDecision?.reason || entry?.suggestion?.review?.reason || null;
+  const closest = entry?.routingDecision?.best?.folder ?? entry?.suggestion?.review?.best?.folder;
+  const reviewClosest = typeof closest === 'string' && closest.trim() ? closest.trim() : null;
+  const decision = entry?.routingDecision || entry?.suggestion?.review || null;
+  const reviewClosestScore = toUnitConfidence(decision?.best?.score) ?? null;
+  const reviewRunnerUpScore = toUnitConfidence(decision?.runnerUp?.score) ?? null;
   return {
     ...(primary || { folder: null, path: null, folderId: null, source: null }),
     confidence,
@@ -113,7 +122,9 @@ export function normalizeEngineEntry(entry) {
         ? entry.explanation.trim()
         : null,
     alternatives,
-    ...(needsReview ? { needsReview: true, reviewReason } : {})
+    ...(needsReview
+      ? { needsReview: true, reviewReason, reviewClosest, reviewClosestScore, reviewRunnerUpScore }
+      : {})
   };
 }
 

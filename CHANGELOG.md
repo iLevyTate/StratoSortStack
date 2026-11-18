@@ -12,6 +12,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Send held files to the folder they came closest to.** When two or more files in Organize are
+  held for review and all came closest to the same Smart Folder, the uncategorized bar names that
+  folder and offers one button to send them all there. A file whose closest folder only ties the
+  next one is left out of the offer. Nothing moves until you move them, and the routing bar is
+  unchanged.
+- **Ask about your files after a move.** The finished screen has an "Ask about your files" button
+  that opens Chat, which answers from your library and names the files it used.
+- **MCP setup for other apps.** Settings → MCP Server can copy the server address and token for apps
+  that ask for an address and a header rather than a config file.
+
+### Changed
+
+- **Match scores read as words.** Review cards and the sample run say "Strong match", "Good match"
+  or "Check this" instead of a bare percentage, which read as an accuracy rate. The words follow
+  what the app does with the score (the auto-organize default and the routing bar), and the
+  percentage stays as the tooltip.
+- **Renaming is easier to find.** The Discover button that opened "Naming strategy" now says how
+  files will be named ("File names: Subject, then date"), and the naming pickers list each
+  convention in words rather than by its id.
+- **"Watch smart folders" is now "Keep Smart Folders up to date".** Its description says it watches
+  where files go, not where they come from, and names the ways files come in.
+
 ## [5.4.0] - 2026-11-16
 
 ### Added

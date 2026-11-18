@@ -128,7 +128,7 @@ describe('SampleRunDialog', () => {
 
     expect(screen.getByText('Where these files would go')).toBeInTheDocument();
     expect(screen.getByText('Invoices')).toBeInTheDocument();
-    expect(screen.getByText('82% confidence')).toBeInTheDocument();
+    expect(screen.getByText('Strong match')).toBeInTheDocument();
     expect(screen.getByText('Reads like a supplier invoice')).toBeInTheDocument();
     expect(screen.getByText('Uncategorized')).toBeInTheDocument();
     expect(screen.getByText('Not analyzed')).toBeInTheDocument();

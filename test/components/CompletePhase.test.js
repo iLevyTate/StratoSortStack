@@ -124,7 +124,13 @@ jest.mock('lucide-react', () => ({
   AlertTriangle: () => <span />,
   Clock: () => <span />,
   Download: () => <span />,
-  Undo2: () => <span />
+  Undo2: () => <span />,
+  MessageSquareText: () => <span />
+}));
+
+const mockOpenSearchModal = jest.fn();
+jest.mock('../../src/renderer/contexts/FloatingSearchContext', () => ({
+  useOptionalFloatingSearch: () => ({ openSearchModal: mockOpenSearchModal })
 }));
 
 const mockRevealFile = jest.fn();
@@ -196,6 +202,13 @@ describe('CompletePhase premium finish', () => {
     fireEvent.click(screen.getByText(/Analyze more files/i));
 
     expect(mockCancelPendingPersistence).toHaveBeenCalled();
+  });
+
+  test('Ask about your files opens Chat, which answers from the files it names', () => {
+    mockOpenSearchModal.mockClear();
+    render(<CompletePhase />);
+    fireEvent.click(screen.getByRole('button', { name: /Ask about your files/ }));
+    expect(mockOpenSearchModal).toHaveBeenCalledWith('chat');
   });
 
   test('Analyze more files clears the batch and lands on Discover, not Welcome', () => {
@@ -421,6 +434,10 @@ describe('CompletePhase premium finish', () => {
         screen.getAllByText('2 duplicates removed', { selector: 'span' }).length
       ).toBeGreaterThan(0);
       expect(screen.queryByText(/0 files/)).not.toBeInTheDocument();
+      // Nothing new landed, so there is nothing new to ask about.
+      expect(
+        screen.queryByRole('button', { name: /Ask about your files/ })
+      ).not.toBeInTheDocument();
     });
 
     test('the destination stays hidden when privacy redaction is on', () => {
