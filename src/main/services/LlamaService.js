@@ -4413,6 +4413,17 @@ class LlamaService extends EventEmitter {
     // Rapid exit -> enter: batch mode was re-entered, or another batch is on
     // its way in, before we even start.
     if (this._visionBatchMode || this._visionBatchEntriesPending > 0) return;
+    const { resetLlamaCircuit } = require('./LlamaResilience');
+    // Documents go to a cloud provider: nothing will use the local text
+    // model. Loading it after every image batch (a 7B model on a busy card)
+    // evicted the embedding model, which then reloaded for the next file.
+    // A local call that does need it still loads it on demand.
+    const { isDocumentAnalysisRemote } = require('../analysis/providerStamp');
+    if (isDocumentAnalysisRemote()) {
+      for (const circuit of circuitsToReset) resetLlamaCircuit(circuit);
+      logger.debug('[LlamaService] Skipped text preload after vision: analysis is remote');
+      return;
+    }
     let loaded;
     try {
       // speculative: this load does not hold the text lane, so the next
@@ -4440,7 +4451,6 @@ class LlamaService extends EventEmitter {
       }
       return;
     }
-    const { resetLlamaCircuit } = require('./LlamaResilience');
     for (const circuit of circuitsToReset) {
       resetLlamaCircuit(circuit);
     }

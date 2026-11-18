@@ -42,7 +42,28 @@ function stampAnalysisProvider(/** @type {any} */ analysis, /** @type {any} */ p
   return analysis;
 }
 
+/**
+ * True when document analysis goes to a cloud provider (the active router's
+ * side-effect-free preview for 'analyze' names one other than local). The
+ * local text model then does no document work, so it need not be loaded or
+ * limit concurrency. False when there is no router or on any doubt.
+ * @returns {boolean}
+ */
+function isDocumentAnalysisRemote() {
+  try {
+    // Lazy: aiProvider requires the services tree.
+    const aiProvider = require('../ipc/aiProvider');
+    const router = aiProvider.getActiveAiRouter ? aiProvider.getActiveAiRouter() : null;
+    if (typeof router?.previewChoiceId !== 'function') return false;
+    const providerId = router.previewChoiceId({ operation: 'analyze' });
+    return Boolean(providerId) && providerId !== 'local';
+  } catch {
+    return false;
+  }
+}
+
 module.exports = {
   resolveProviderIdFromRouter,
-  stampAnalysisProvider
+  stampAnalysisProvider,
+  isDocumentAnalysisRemote
 };

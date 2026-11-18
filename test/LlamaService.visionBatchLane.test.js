@@ -68,6 +68,13 @@ jest.mock('../src/main/services/VisionService', () => ({
   VISION_RUNTIME_MEMORY_TYPE: 'vision-runtime'
 }));
 
+// Document analysis runs locally unless a test says otherwise.
+const mockIsDocumentAnalysisRemote = jest.fn(() => false);
+jest.mock('../src/main/analysis/providerStamp', () => ({
+  ...jest.requireActual('../src/main/analysis/providerStamp'),
+  isDocumentAnalysisRemote: () => mockIsDocumentAnalysisRemote()
+}));
+
 const { LlamaService } = require('../src/main/services/LlamaService');
 const { ModelMemoryManager } = require('../src/main/services/ModelMemoryManager');
 
@@ -428,6 +435,18 @@ describe('LlamaService: the text preload after a batch', () => {
     finishLoad();
     await preload;
     expect(manager.unloadModel).toHaveBeenCalledWith('text');
+  });
+
+  test('skips the text model when documents are analyzed in the cloud', async () => {
+    // A reanalysis through Claude loaded a 7B local text model after every
+    // image batch; it evicted the embedding model, which reloaded each time.
+    mockIsDocumentAnalysisRemote.mockReturnValueOnce(true);
+    const { resetLlamaCircuit } = require('../src/main/services/LlamaResilience');
+
+    await service._preloadTextAfterVisionRelease(['embedding']);
+
+    expect(manager.ensureModelLoaded).not.toHaveBeenCalled();
+    expect(resetLlamaCircuit).toHaveBeenCalledWith('embedding');
   });
 
   test('gives way to a batch that is on its way in', async () => {

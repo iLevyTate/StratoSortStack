@@ -81,6 +81,7 @@ const { getRecommendedConcurrency } = require('./PerformanceService');
 const { getInstance: getModelAccessCoordinator } = require('./ModelAccessCoordinator');
 
 const { getFileTypeSingular } = require('./autoOrganize/fileTypeUtils');
+const { isDocumentAnalysisRemote } = require('../analysis/providerStamp');
 
 /**
  * BatchAnalysisService
@@ -209,21 +210,7 @@ class BatchAnalysisService {
    * @returns {boolean}
    */
   _isDocumentAnalysisRemote() {
-    try {
-      // Lazy: aiProvider requires the services tree.
-      const aiProvider = require('../ipc/aiProvider');
-      const router = aiProvider.getActiveAiRouter ? aiProvider.getActiveAiRouter() : null;
-      const providerId =
-        typeof router?.previewChoiceId === 'function'
-          ? router.previewChoiceId({ operation: 'analyze' })
-          : null;
-      return Boolean(providerId) && providerId !== 'local';
-    } catch (error) {
-      logger.debug('[BATCH-ANALYSIS] Could not read the analysis provider', {
-        error: error?.message
-      });
-      return false;
-    }
+    return isDocumentAnalysisRemote();
   }
 
   /**
