@@ -366,9 +366,23 @@ function registerAiProviderIpc(servicesOrParams) {
       safeSendToMain(getMainWindow, IPC_CHANNELS.AI_PROVIDER.STATUS_CHANGED, _routerStatus());
     });
     _router.on('folder-override-unavailable', (payload) => {
-      const providerLabel = payload?.configuredProvider || 'cloud';
+      // Once a minute per folder: the router raises this for every file in
+      // the folder, and a reanalysis touches hundreds.
+      const key = `folder:${payload?.folderId}:${payload?.configuredProvider}`;
+      const now = Date.now();
+      if (now - (_operationOverrideNoticeAt.get(key) || 0) < OVERRIDE_NOTICE_INTERVAL_MS) return;
+      _operationOverrideNoticeAt.set(key, now);
+      // The router falls through to the default provider (then local), not
+      // straight to local: name the one that actually runs.
+      const fallbackId =
+        _router?.previewChoiceId?.({ operation: payload?.operation || 'analyze' }) || 'local';
       safeSendToMain(getMainWindow, IPC_EVENTS.NOTIFICATION, {
-        message: `Smart folder AI override (${providerLabel}) is unavailable. Using the local model.`,
+        message: folderOverrideNotice({
+          configured: payload?.configuredProvider,
+          reason: payload?.reason,
+          fallbackId,
+          providers: _providers
+        }),
         severity: 'warning',
         duration: 8000,
         source: 'ai-provider',
@@ -823,6 +837,24 @@ function getActiveAiRouter() {
   return _router;
 }
 
+/**
+ * The notice for a Smart Folder whose AI provider is not ready. It names the
+ * provider that runs instead: the router falls through to the default
+ * provider, and the old text ("Using the local model") was wrong whenever the
+ * default was a cloud provider.
+ * @param {{ configured?: string, reason?: string, fallbackId?: string|null, providers?: Record<string, any>|null }} p
+ * @returns {string}
+ */
+function folderOverrideNotice({ configured, reason, fallbackId, providers }) {
+  const label = (/** @type {string|null|undefined} */ id) => providers?.[id || '']?.displayName;
+  const configuredLabel = label(configured) || configured || 'the chosen provider';
+  const fallbackLabel =
+    !fallbackId || fallbackId === 'local' ? 'the local model' : label(fallbackId) || fallbackId;
+  const why = reason ? ` (${reason})` : '';
+  return `A Smart Folder is set to ${configuredLabel}, which is not ready${why}. Using ${fallbackLabel} instead. Change it in Settings → AI.`;
+}
+
 module.exports = registerAiProviderIpc;
+module.exports.folderOverrideNotice = folderOverrideNotice;
 module.exports.disposeAiProvider = disposeAiProvider;
 module.exports.getActiveAiRouter = getActiveAiRouter;

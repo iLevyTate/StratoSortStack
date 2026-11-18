@@ -124,6 +124,26 @@ describe('SearchService (extended)', () => {
       expect(oldMeta).toBeDefined();
     });
 
+    test('a file not yet organized is named as it is on disk, not by its suggested name', async () => {
+      // Analysis records the suggested name in organization.newName before
+      // anything is renamed; chat cited files by that name.
+      const entries = {
+        held: {
+          id: 'held',
+          timestamp: '2026-11-17T00:00:00.000Z',
+          originalPath: 'C:\\Inbox\\example.com-Performance-on-Search-2026-10.xlsx',
+          fileName: 'example.com-Performance-on-Search-2026-10.xlsx',
+          analysis: { subject: 'Search performance', tags: ['seo'] },
+          organization: { newName: 'search-performance-2026-11-17.xlsx', renamed: true }
+        }
+      };
+      const { service } = createService({ historyEntries: entries });
+      await service.buildBM25Index();
+
+      const [meta] = Array.from(service.documentMap.values());
+      expect(meta.name).toBe('example.com-Performance-on-Search-2026-10.xlsx');
+    });
+
     test('returns indexed=0 and sets indexBuiltAt when there are no documents', async () => {
       const { service } = createService({ historyEntries: {} });
       const result = await service.buildBM25Index();

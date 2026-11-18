@@ -2762,7 +2762,9 @@ async function handleFullRebuild(
               continue;
             }
 
-            const displayName = organization.newName || entry.fileName || path.basename(filePath);
+            // The name on disk: organization.newName is only a suggestion
+            // until the file is moved.
+            const displayName = path.basename(filePath) || entry.fileName;
             const ext = (path.extname(filePath) || '').toLowerCase();
             const isImage = SUPPORTED_IMAGE_EXTENSIONS.includes(ext);
             const fileId = getFileEmbeddingId(filePath, isImage ? 'image' : 'file');
@@ -3511,8 +3513,9 @@ async function handleRebuildFiles(
         // Generate embedding
         const { vector, model } = await getFolderMatcher().embedText(summary);
 
-        // Use renamed name if available, otherwise fall back to original basename
-        const displayName = entry.organization?.newName || path.basename(filePath);
+        // The name on disk: organization.newName is only a suggestion until
+        // the file is moved.
+        const displayName = path.basename(filePath);
 
         // Extract rich metadata for graph visualization
         const tags = Array.isArray(entry.analysis?.tags) ? entry.analysis.tags : [];

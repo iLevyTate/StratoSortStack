@@ -33,6 +33,7 @@ const { LRUCache } = require('../../shared/LRUCache');
 const { normalizePathForIndex } = require('../../shared/pathSanitization');
 const { validateEmbeddingDimensions, padOrTruncateVector } = require('../../shared/vectorMath');
 const { getSemanticFileId } = require('../../shared/fileIdUtils');
+const { crossPlatformBasename } = require('../../shared/crossPlatformUtils');
 const { createBackgroundWorkTracker } = require('../../shared/promiseUtils');
 const { isGhostCleanupDeferred } = require('../../shared/ghostCleanupGuard');
 const systemAnalytics = require('../core/systemAnalytics');
@@ -529,7 +530,11 @@ class SearchService {
 
         // If file was moved/renamed, use the actual destination path
         const currentPath = organization.actual || doc.originalPath;
-        const currentName = organization.newName || doc.fileName || '';
+        // The name on disk. organization.newName is the suggested name from
+        // the moment a file is analyzed, before anything is renamed: search
+        // and chat cited files by names that did not exist yet.
+        const currentName =
+          (currentPath ? crossPlatformBasename(currentPath) : '') || doc.fileName || '';
 
         // Use normalizePathForIndex for Windows case-insensitivity consistency
         // This ensures BM25 index keys match vector DB lookups

@@ -82,10 +82,15 @@ export function useSearchModalStats({
   // state written by a newer one (rapid open/close + rebuild races).
   const statsRequestCounterRef = useRef(0);
 
+  // `quiet`: a background refresh (batch progress, a file move) updates the
+  // counts without the loading state. Batch progress refreshed every 1.5 s,
+  // and each one spun and disabled the Refresh button and faded the counts:
+  // the button flashed for the whole run.
   const refreshStats = useCallback(async (/** @type {any} */ options = {}) => {
     const forceRefresh = options === true || options?.force === true;
+    const quiet = options?.quiet === true;
     const requestId = (statsRequestCounterRef.current += 1);
-    if (isMountedRef.current) setIsLoadingStats(true);
+    if (isMountedRef.current && !quiet) setIsLoadingStats(true);
     try {
       /** @type {any} */
       let res = null;
@@ -169,7 +174,7 @@ export function useSearchModalStats({
         });
         onFileOperation?.(data);
         embeddingsIpc.invalidateStatsCache();
-        refreshStats(true);
+        refreshStats({ force: true, quiet: true });
       }
     };
 
@@ -194,7 +199,7 @@ export function useSearchModalStats({
       const elapsed = now - lastRefreshAt;
       const invoke = () => {
         lastRefreshAt = Date.now();
-        refreshStats({ force });
+        refreshStats({ force, quiet: true });
       };
 
       if (force || elapsed >= MIN_REFRESH_INTERVAL_MS) {

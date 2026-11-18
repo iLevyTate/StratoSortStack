@@ -36,6 +36,32 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **"Watch smart folders" is now "Keep Smart Folders up to date".** Its description says it watches
   where files go, not where they come from, and names the ways files come in.
 
+### Fixed
+
+- **Spreadsheets from Visio and .NET tools are read.** Some tools write a workbook's XML with a
+  prefix on every tag (`<x:row>`), and StratoSort read those workbooks as empty. They are now read
+  like any other.
+- **Cloud analysis is no longer held to one file at a time.** With a cloud model, a batch still took
+  the concurrency the local graphics card recommends, which on a busy or small card was 1. Documents
+  analyzed in the cloud now run at the requested concurrency; images and media, which run on local
+  models, keep the hardware limit.
+- **The search index Refresh button stays still during analysis.** Background refreshes of the index
+  counts, every 1.5 seconds during a batch, spun and disabled the button and faded the counts. They
+  now update the numbers quietly; a refresh you ask for still shows that it is loading.
+- **Search and Chat name files as they are on disk.** A file not yet organized was listed under the
+  name StratoSort suggested for it, which did not exist yet. Search results and Chat sources now use
+  the file's current name. Rebuild the search index to update files analyzed earlier.
+- **Cloud analysis no longer reloads the local text model after images.** With a cloud provider
+  doing the document analysis, StratoSort still loaded the local text model after every batch of
+  images. On a busy machine that pushed the embedding model out of memory, and it reloaded for the
+  next file. The text model now loads only when something local needs it.
+- **The notice for a Smart Folder whose AI provider is not ready is accurate.** It said the local
+  model would be used; the folder actually falls back to your default provider, which the notice now
+  names, along with the reason (such as a missing API key). It appears once a minute per folder
+  instead of for every file.
+- **Embedding problems say why.** The warning for a high embedding error rate now names the most
+  frequent errors.
+
 ## [5.4.0] - 2026-11-16
 
 ### Added

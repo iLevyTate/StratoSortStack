@@ -2182,8 +2182,22 @@ async function extractTextFromDocx(filePath, options = {}) {
   throw mammothError;
 }
 
+/**
+ * Spreadsheet XML with its element prefixes removed: "<x:row>" becomes
+ * "<row>". Excel writes the main namespace as the default one, but Visio and
+ * .NET (Open XML SDK) exports often bind it to a prefix, and the readers below
+ * match unprefixed tags only, so such a workbook read as empty. Attribute
+ * names ("r:id") and declarations ("<?xml", "<!") are left as they are.
+ * @param {string} xml
+ * @returns {string}
+ */
+function withoutElementPrefixes(xml) {
+  return xml.replace(/<(\/?)[A-Za-z_][\w.-]*:(?=[A-Za-z_])/g, '<$1');
+}
+
 async function extractSharedStringsFromXlsxXml(/** @type {any} */ sharedStringsXml) {
   if (!sharedStringsXml || typeof sharedStringsXml !== 'string') return [];
+  sharedStringsXml = withoutElementPrefixes(sharedStringsXml);
   const pool = getTextExtractionPool();
   if (pool && sharedStringsXml.length > 10000) {
     try {
@@ -2224,6 +2238,7 @@ async function extractTextFromXlsxWorksheetXml(
   /** @type {any} */ rowBudget
 ) {
   if (!worksheetXml || typeof worksheetXml !== 'string') return { text: '', rowsUsed: 0 };
+  worksheetXml = withoutElementPrefixes(worksheetXml);
   const pool = getTextExtractionPool();
   if (pool && worksheetXml.length > 10000) {
     try {

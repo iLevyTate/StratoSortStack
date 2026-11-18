@@ -226,11 +226,26 @@ const systemAnalytics = {
     }
     bucket.lastDegradedAt = now;
 
+    // The reasons, most frequent first: a rate alone left a steady 25%
+    // embedding error rate with no cause in the log.
+    /** @type {Record<string, number>} */
+    const reasonCounts = {};
+    for (const entry of bucket.recent) {
+      if (entry.outcome === 'primary') continue;
+      const reason = String(entry.reason || 'unknown').slice(0, 160);
+      reasonCounts[reason] = (reasonCounts[reason] || 0) + 1;
+    }
+    const topReasons = Object.entries(reasonCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([reason, count]) => ({ reason, count }));
+
     logger.warn('[ANALYTICS] Pipeline degradation detected', {
       pipeline: pipelineName,
       recentTotal,
       fallbackRate: Number(fallbackRate.toFixed(3)),
-      errorRate: Number(errorRate.toFixed(3))
+      errorRate: Number(errorRate.toFixed(3)),
+      topReasons
     });
   },
 

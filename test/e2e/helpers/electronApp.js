@@ -1011,6 +1011,7 @@ module.exports = {
   closeApp,
   createIsolatedE2eUserDataDir,
   cleanupE2eUserDataDir,
+  linkLocalModels,
   killOrphanStratoSortElectronProcesses,
   focusAppForKeyboardShortcuts,
   safeWaitForTimeout,

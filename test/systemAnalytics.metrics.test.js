@@ -11,13 +11,14 @@
  *      from the recent window (primary outcomes and null reasons excluded).
  */
 
+const mockLogger = {
+  info: jest.fn(),
+  warn: jest.fn(),
+  error: jest.fn(),
+  debug: jest.fn()
+};
 jest.mock('../src/shared/logger', () => ({
-  createLogger: () => ({
-    info: jest.fn(),
-    warn: jest.fn(),
-    error: jest.fn(),
-    debug: jest.fn()
-  })
+  createLogger: () => mockLogger
 }));
 
 const systemAnalytics = require('../src/main/core/systemAnalytics');
@@ -118,5 +119,35 @@ describe('systemAnalytics pipeline fallbackReasons', () => {
 
     const summary = systemAnalytics.getPipelineSummary();
     expect(summary.document.fallbackReasons).toEqual({ filename_fallback: 1 });
+  });
+});
+
+describe('systemAnalytics degradation warning', () => {
+  beforeEach(() => {
+    systemAnalytics.destroy();
+    mockLogger.warn.mockClear();
+  });
+
+  test('names the most frequent error reasons, not only the rate', () => {
+    for (let i = 0; i < 15; i += 1) {
+      systemAnalytics.recordPipelineOutcome('embedding', 'primary', { reason: 'ok' });
+    }
+    for (let i = 0; i < 4; i += 1) {
+      systemAnalytics.recordPipelineOutcome('embedding', 'error', { reason: 'Input is too long' });
+    }
+    systemAnalytics.recordPipelineOutcome('embedding', 'error', { reason: 'Context disposed' });
+
+    const call = mockLogger.warn.mock.calls.find(
+      ([msg]) => msg === '[ANALYTICS] Pipeline degradation detected'
+    );
+    expect(call).toBeDefined();
+    expect(call[1]).toMatchObject({
+      pipeline: 'embedding',
+      errorRate: 0.25,
+      topReasons: [
+        { reason: 'Input is too long', count: 4 },
+        { reason: 'Context disposed', count: 1 }
+      ]
+    });
   });
 });
