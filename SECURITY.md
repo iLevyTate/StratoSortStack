@@ -146,7 +146,7 @@ the maintainers’ key in an initial advisory-only message. The project may publ
 
 ## Security Updates
 
-Security updates will be released as patch versions (e.g., 5.4.1, 5.4.2) and announced via:
+Security updates will be released as patch versions (e.g., 5.4.2, 5.4.3) and announced via:
 
 - GitHub Releases
 - In-app update notifications (if auto-update is enabled)
@@ -158,4 +158,4 @@ Contributors who report valid security issues will be acknowledged here (with pe
 
 ---
 
-_Last updated: 2026-11-16 — applies to StratoSort Stack 5.4.0._
+_Last updated: 2026-11-18 — applies to StratoSort Stack 5.4.1._

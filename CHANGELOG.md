@@ -12,6 +12,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [5.4.1] - 2026-11-18
+
 ### Added
 
 - **Send held files to the folder they came closest to.** When two or more files in Organize are
@@ -1804,7 +1806,8 @@ notes.
 Note: versions before 5.0.0 were released from predecessor repositories whose tags are not part of
 this repository's history, so they are listed without links.
 
-[Unreleased]: https://github.com/iLevyTate/StratoSortStack/compare/v5.4.0...HEAD
+[Unreleased]: https://github.com/iLevyTate/StratoSortStack/compare/v5.4.1...HEAD
+[5.4.1]: https://github.com/iLevyTate/StratoSortStack/compare/v5.4.0...v5.4.1
 [5.4.0]: https://github.com/iLevyTate/StratoSortStack/compare/v5.3.1...v5.4.0
 [5.3.1]: https://github.com/iLevyTate/StratoSortStack/compare/v5.3.0...v5.3.1
 [5.3.0]: https://github.com/iLevyTate/StratoSortStack/compare/v5.2.0...v5.3.0
