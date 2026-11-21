@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-17T01:43:19.706Z",
+  "generatedAt": "2026-11-21T18:56:22.560Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
@@ -10713,7 +10713,7 @@
     },
     {
       "packageName": "@uwdata/flechette",
-      "version": "2.7.1",
+      "version": "2.8.1",
       "license": "BSD-3-Clause",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -10724,7 +10724,7 @@
     },
     {
       "packageName": "@uwdata/mosaic-core",
-      "version": "0.35.0",
+      "version": "0.35.1",
       "license": "BSD-3-Clause",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -10735,7 +10735,7 @@
     },
     {
       "packageName": "@uwdata/mosaic-sql",
-      "version": "0.35.0",
+      "version": "0.35.1",
       "license": "BSD-3-Clause",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -11773,7 +11773,7 @@
     },
     {
       "packageName": "better-sqlite3",
-      "version": "13.1.1",
+      "version": "13.2.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -13397,7 +13397,7 @@
     },
     {
       "packageName": "electron",
-      "version": "45.3.2",
+      "version": "45.3.3",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -13983,7 +13983,7 @@
     },
     {
       "packageName": "eslint-plugin-jest",
-      "version": "29.17.0",
+      "version": "29.17.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -17647,7 +17647,7 @@
     },
     {
       "packageName": "lint-staged",
-      "version": "17.6.0",
+      "version": "17.6.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -17789,7 +17789,7 @@
     },
     {
       "packageName": "lucide-react",
-      "version": "1.72.0",
+      "version": "1.73.0",
       "license": "ISC",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -18031,7 +18031,7 @@
     },
     {
       "packageName": "minimatch",
-      "version": "11.0.8",
+      "version": "11.0.9",
       "license": "BlueOak-1.0.0",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -18725,7 +18725,7 @@
     },
     {
       "packageName": "officeparser",
-      "version": "8.7.1",
+      "version": "8.8.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -21039,7 +21039,7 @@
     },
     {
       "packageName": "string-argv",
-      "version": "0.3.2",
+      "version": "0.4.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -22123,7 +22123,7 @@
     },
     {
       "packageName": "unpdf",
-      "version": "2.1.0",
+      "version": "2.2.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -22404,7 +22404,7 @@
     },
     {
       "packageName": "webpack-bundle-analyzer",
-      "version": "5.4.2",
+      "version": "5.4.3",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
