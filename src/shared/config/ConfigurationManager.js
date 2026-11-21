@@ -20,7 +20,6 @@ const { parseEnvValue, getEnvVar, validateValue } = require('./configValidation'
 
 // Path segments override() must never walk into or assign: they reach the
 // object prototype instead of a config value.
-const UNSAFE_PATH_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 /**
  * Configuration Manager Class
@@ -267,7 +266,9 @@ class ConfigurationManager {
     }
 
     const parts = path.split('.');
-    if (parts.some((part) => UNSAFE_PATH_KEYS.has(part))) {
+    if (
+      parts.some((part) => part === '__proto__' || part === 'constructor' || part === 'prototype')
+    ) {
       this._validationErrors.push({ path, value, reason: 'unsafe_path' });
       return;
     }
@@ -294,13 +295,31 @@ class ConfigurationManager {
     let current = this._config;
 
     for (let i = 0; i < parts.length - 1; i++) {
-      if (!current[parts[i]]) {
-        current[parts[i]] = {};
+      const key = parts[i];
+      if (key === '__proto__' || key === 'constructor' || key === 'prototype') return;
+      if (
+        !Object.hasOwn(current, key) ||
+        typeof current[key] !== 'object' ||
+        current[key] === null
+      ) {
+        Object.defineProperty(current, key, {
+          value: {},
+          writable: true,
+          enumerable: true,
+          configurable: true
+        });
       }
-      current = current[parts[i]];
+      current = current[key];
     }
 
-    current[parts[parts.length - 1]] = value;
+    const key = parts[parts.length - 1];
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') return;
+    Object.defineProperty(current, key, {
+      value,
+      writable: true,
+      enumerable: true,
+      configurable: true
+    });
   }
 
   /**
