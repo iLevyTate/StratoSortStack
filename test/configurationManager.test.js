@@ -104,6 +104,17 @@ describe('ConfigurationManager', () => {
     }
   );
 
+  test('override creates own containers without mutating inherited objects', () => {
+    const mgr = new ConfigurationManager();
+    mgr.load();
+    mgr.override('CUSTOM.toString.flag', true);
+    expect(Object.prototype.toString).not.toHaveProperty('flag');
+    expect(mgr.get('CUSTOM.toString.flag')).toBe(true);
+    mgr.override('CUSTOM.runtime', 1);
+    mgr.override('CUSTOM.runtime.flag', true);
+    expect(mgr.get('CUSTOM.runtime.flag')).toBe(true);
+  });
+
   test('override writes unknown nested paths and reset restores defaults', () => {
     const mgr = new ConfigurationManager();
     mgr.load();
