@@ -2902,7 +2902,7 @@ export function useGraphTab(
           reactFlowInstance.current?.fitView(
             getDefaultGraphFitViewOptions({
               nodes: expandedNodeIds.map((id) => ({ id })),
-              padding: 0.25,
+              padding: '10%',
               duration: 500
             })
           );
@@ -3833,7 +3833,7 @@ export function useGraphTab(
         reactFlowInstance.current.fitView(
           getDefaultGraphFitViewOptions({
             nodes: topMatches.map((/** @type {any} */ m) => ({ id: m.id })),
-            padding: 0.3,
+            padding: '11.54%',
             duration: 300
           })
         );
@@ -3884,7 +3884,7 @@ export function useGraphTab(
         reactFlowInstance.current?.fitView(
           getDefaultGraphFitViewOptions({
             nodes: [{ id: nodeId }],
-            padding: 0.4,
+            padding: '14.29%',
             duration: 400,
             maxZoom: 1.2
           })
@@ -3895,11 +3895,10 @@ export function useGraphTab(
   );
 
   const onNodesChange = useCallback(
-    (/** @type {any} */ changes) => {
-      // 1. Let React Flow helper handle all node updates (dragging, resizing, selection flags)
+    (/** @type {import('@xyflow/react').NodeChangeset} */ changes) => {
       graphActions.onNodesChange(changes);
 
-      // 2. Sync our separate selection state for the details panel
+      // Sync the details panel with React Flow's selection changes.
       for (const change of changes) {
         if (change.type === 'select') {
           if (change.selected) {

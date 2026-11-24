@@ -172,14 +172,14 @@ describe('getDefaultGraphFitViewOptions', () => {
     const options = getDefaultGraphFitViewOptions();
     expect(options.minZoom).toBe(GRAPH_FIT_VIEW_MIN_ZOOM);
     expect(options.minZoom).toBeGreaterThanOrEqual(0.6);
-    expect(options.padding).toBe(0.2);
+    expect(options.padding).toBe('8.33%');
     expect(options.maxZoom).toBe(1.5);
   });
 
   it('merges overrides without dropping minZoom default', () => {
-    const options = getDefaultGraphFitViewOptions({ duration: 800, padding: 0.3 });
+    const options = getDefaultGraphFitViewOptions({ duration: 800, padding: '11.54%' });
     expect(options.duration).toBe(800);
-    expect(options.padding).toBe(0.3);
+    expect(options.padding).toBe('11.54%');
     expect(options.minZoom).toBe(GRAPH_FIT_VIEW_MIN_ZOOM);
   });
 });

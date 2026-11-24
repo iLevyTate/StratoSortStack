@@ -1513,6 +1513,7 @@ export default function GraphTabContent({
                     <ReactFlow
                       nodes={rfNodes}
                       edges={rfEdges}
+                      elevateEdgesOnSelect={false}
                       nodeTypes={GRAPH_VIEW_NODE_TYPES}
                       edgeTypes={GRAPH_VIEW_EDGE_TYPES}
                       onError={handleReactFlowError}
