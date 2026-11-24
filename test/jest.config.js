@@ -15,7 +15,7 @@ module.exports = {
     'node_modules/(?!(@orama|@orama/plugin-data-persistence|lz4-napi|p-queue|p-timeout|eventemitter3|@modelcontextprotocol|pkce-challenge|@xyflow|classcat|d3-[^/]+)/)'
   ],
   transform: {
-    '^.+\\.(js|jsx|ts|tsx)$': [
+    '^.+\\.(m?js|jsx|ts|tsx)$': [
       'babel-jest',
       {
         presets: [
