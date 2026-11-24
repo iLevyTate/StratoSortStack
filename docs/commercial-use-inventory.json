@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-24T07:33:09.031Z",
+  "generatedAt": "2026-11-24T07:45:21.157Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
@@ -7391,7 +7391,7 @@
     },
     {
       "packageName": "@napi-rs/canvas",
-      "version": "1.1.1",
+      "version": "1.2.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": true,
@@ -7401,7 +7401,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-android-arm64",
-      "version": "1.1.1",
+      "version": "1.2.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7411,7 +7411,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-darwin-arm64",
-      "version": "1.1.1",
+      "version": "1.2.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7421,7 +7421,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-darwin-x64",
-      "version": "1.1.1",
+      "version": "1.2.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7431,7 +7431,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-linux-arm-gnueabihf",
-      "version": "1.1.1",
+      "version": "1.2.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7441,7 +7441,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-linux-arm64-gnu",
-      "version": "1.1.1",
+      "version": "1.2.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7451,7 +7451,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-linux-arm64-musl",
-      "version": "1.1.1",
+      "version": "1.2.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7461,7 +7461,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-linux-riscv64-gnu",
-      "version": "1.1.1",
+      "version": "1.2.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7471,7 +7471,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-linux-x64-gnu",
-      "version": "1.1.1",
+      "version": "1.2.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7481,7 +7481,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-linux-x64-musl",
-      "version": "1.1.1",
+      "version": "1.2.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7491,7 +7491,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-win32-arm64-msvc",
-      "version": "1.1.1",
+      "version": "1.2.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -7501,7 +7501,7 @@
     },
     {
       "packageName": "@napi-rs/canvas-win32-x64-msvc",
-      "version": "1.1.1",
+      "version": "1.2.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
