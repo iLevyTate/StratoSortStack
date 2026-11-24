@@ -1,12 +1,12 @@
 {
-  "generatedAt": "2026-11-22T22:41:36.139Z",
+  "generatedAt": "2026-11-24T07:13:31.914Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
     "detectedLicense": "PolyForm Noncommercial 1.0.0 (commercial license sold separately)"
   },
   "dependencySummary": {
-    "allowed": 2248,
+    "allowed": 2249,
     "review_required": 31,
     "high_risk": 0,
     "unknown": 0
@@ -260,7 +260,7 @@
     },
     {
       "packageName": "@babel/core",
-      "version": "8.1.2",
+      "version": "8.1.3",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -290,7 +290,7 @@
     },
     {
       "packageName": "@babel/core/node_modules/@babel/generator",
-      "version": "8.1.2",
+      "version": "8.1.3",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -320,7 +320,7 @@
     },
     {
       "packageName": "@babel/core/node_modules/@babel/helper-string-parser",
-      "version": "8.1.2",
+      "version": "8.1.3",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -350,7 +350,7 @@
     },
     {
       "packageName": "@babel/core/node_modules/@babel/parser",
-      "version": "8.1.2",
+      "version": "8.1.3",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -370,7 +370,7 @@
     },
     {
       "packageName": "@babel/core/node_modules/@babel/traverse",
-      "version": "8.1.2",
+      "version": "8.1.3",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -380,7 +380,7 @@
     },
     {
       "packageName": "@babel/core/node_modules/@babel/types",
-      "version": "8.1.2",
+      "version": "8.1.3",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -930,7 +930,7 @@
     },
     {
       "packageName": "@babel/helpers",
-      "version": "8.1.2",
+      "version": "8.1.3",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -950,7 +950,7 @@
     },
     {
       "packageName": "@babel/helpers/node_modules/@babel/helper-string-parser",
-      "version": "8.1.2",
+      "version": "8.1.3",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -970,7 +970,7 @@
     },
     {
       "packageName": "@babel/helpers/node_modules/@babel/parser",
-      "version": "8.1.2",
+      "version": "8.1.3",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -990,7 +990,7 @@
     },
     {
       "packageName": "@babel/helpers/node_modules/@babel/types",
-      "version": "8.1.2",
+      "version": "8.1.3",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -9993,6 +9993,16 @@
       "bundledRenderer": true
     },
     {
+      "packageName": "@types/convert-source-map",
+      "version": "2.0.3",
+      "license": "MIT",
+      "riskLevel": "allowed",
+      "directRuntime": false,
+      "directDev": false,
+      "lockfileDev": true,
+      "lockfileOptional": false
+    },
+    {
       "packageName": "@types/d3-color",
       "version": "3.1.3",
       "license": "MIT",
@@ -11553,7 +11563,7 @@
     },
     {
       "packageName": "autoprefixer",
-      "version": "10.6.2",
+      "version": "10.7.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -11763,7 +11773,7 @@
     },
     {
       "packageName": "baseline-browser-mapping",
-      "version": "2.11.34",
+      "version": "2.11.39",
       "license": "Apache-2.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -11863,7 +11873,7 @@
     },
     {
       "packageName": "browserslist",
-      "version": "4.29.5",
+      "version": "4.29.6",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -12095,7 +12105,7 @@
     },
     {
       "packageName": "caniuse-lite",
-      "version": "1.0.30001820",
+      "version": "1.0.30001826",
       "license": "CC-BY-4.0",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -13397,7 +13407,7 @@
     },
     {
       "packageName": "electron",
-      "version": "45.3.4",
+      "version": "45.4.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -13497,7 +13507,7 @@
     },
     {
       "packageName": "electron-to-chromium",
-      "version": "1.5.472",
+      "version": "1.5.492",
       "license": "ISC",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -13609,7 +13619,7 @@
     },
     {
       "packageName": "enhanced-resolve",
-      "version": "5.26.0",
+      "version": "5.27.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -17427,7 +17437,7 @@
     },
     {
       "packageName": "knip",
-      "version": "6.46.1",
+      "version": "6.47.0",
       "license": "ISC",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -17789,7 +17799,7 @@
     },
     {
       "packageName": "lucide-react",
-      "version": "1.75.0",
+      "version": "1.77.0",
       "license": "ISC",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -18051,7 +18061,7 @@
     },
     {
       "packageName": "minimizer-webpack-plugin",
-      "version": "5.13.1",
+      "version": "5.14.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -18563,7 +18573,7 @@
     },
     {
       "packageName": "node-releases",
-      "version": "2.0.63",
+      "version": "2.0.65",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -20435,7 +20445,7 @@
     },
     {
       "packageName": "schema-utils",
-      "version": "4.8.1",
+      "version": "4.8.5",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -21401,7 +21411,7 @@
     },
     {
       "packageName": "tapable",
-      "version": "2.3.3",
+      "version": "2.3.4",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -22193,7 +22203,7 @@
     },
     {
       "packageName": "update-browserslist-db",
-      "version": "1.3.4",
+      "version": "1.4.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -22364,7 +22374,7 @@
     },
     {
       "packageName": "watchpack",
-      "version": "2.6.3",
+      "version": "2.6.4",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -22394,7 +22404,7 @@
     },
     {
       "packageName": "webpack",
-      "version": "5.112.2",
+      "version": "5.113.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -22494,7 +22504,7 @@
     },
     {
       "packageName": "webpack-sources",
-      "version": "3.6.0",
+      "version": "3.7.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
