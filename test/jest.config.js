@@ -10,12 +10,12 @@ module.exports = {
   testMatch: ['**/__tests__/**/*.+(js|ts|tsx)', '**/*.(test|spec).+(js|ts|tsx)'],
   // Exclude specialized test directories (they have their own configs)
   testPathIgnorePatterns: ['/node_modules/', '/stress/', '/e2e/'],
-  // Allow transforming ESM modules in node_modules (required for @orama, @modelcontextprotocol)
+  // Transform ESM dependencies, including React Flow and its D3 modules.
   transformIgnorePatterns: [
-    'node_modules/(?!(@orama|@orama/plugin-data-persistence|lz4-napi|p-queue|p-timeout|eventemitter3|@modelcontextprotocol|pkce-challenge)/)'
+    'node_modules/(?!(@orama|@orama/plugin-data-persistence|lz4-napi|p-queue|p-timeout|eventemitter3|@modelcontextprotocol|pkce-challenge|@xyflow|classcat|d3-[^/]+)/)'
   ],
   transform: {
-    '^.+\\.(js|jsx|ts|tsx)$': [
+    '^.+\\.(m?js|jsx|ts|tsx)$': [
       'babel-jest',
       {
         presets: [

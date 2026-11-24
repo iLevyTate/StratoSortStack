@@ -1,7 +1,6 @@
 // @ts-check
 import { useReducer, useMemo } from 'react';
 import { logger } from '../../shared/logger';
-import { applyNodeChanges, applyEdgeChanges } from '@xyflow/react';
 
 // Action types
 const ACTIONS = {
@@ -62,12 +61,12 @@ function graphReducer(/** @type {any} */ state, /** @type {any} */ action) {
     case ACTIONS.ON_NODES_CHANGE:
       return {
         ...state,
-        nodes: applyNodeChanges(action.payload, state.nodes)
+        nodes: action.payload.applyTo(state.nodes)
       };
     case ACTIONS.ON_EDGES_CHANGE:
       return {
         ...state,
-        edges: applyEdgeChanges(action.payload, state.edges)
+        edges: action.payload.applyTo(state.edges)
       };
     case ACTIONS.SELECT_NODE: {
       const newSelected =
@@ -118,10 +117,10 @@ export function useGraphState() {
       setGraph: (/** @type {any} */ nodes, /** @type {any} */ edges) => {
         dispatch({ type: ACTIONS.SET_GRAPH, payload: { nodes, edges } });
       },
-      onNodesChange: (/** @type {any} */ changes) => {
+      onNodesChange: (/** @type {import('@xyflow/react').NodeChangeset} */ changes) => {
         dispatch({ type: ACTIONS.ON_NODES_CHANGE, payload: changes });
       },
-      onEdgesChange: (/** @type {any} */ changes) => {
+      onEdgesChange: (/** @type {import('@xyflow/react').EdgeChangeset} */ changes) => {
         dispatch({ type: ACTIONS.ON_EDGES_CHANGE, payload: changes });
       },
       selectNode: (/** @type {any} */ nodeIdOrUpdater) => {

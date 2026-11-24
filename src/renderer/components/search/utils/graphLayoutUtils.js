@@ -20,7 +20,7 @@ export const GRAPH_FIT_VIEW_MAX_ZOOM = 1.5;
  */
 export function getDefaultGraphFitViewOptions(overrides = {}) {
   return {
-    padding: 0.2,
+    padding: '8.33%',
     minZoom: GRAPH_FIT_VIEW_MIN_ZOOM,
     maxZoom: GRAPH_FIT_VIEW_MAX_ZOOM,
     ...overrides

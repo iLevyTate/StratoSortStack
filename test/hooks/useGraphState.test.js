@@ -3,31 +3,8 @@
  */
 
 import { renderHook, act } from '@testing-library/react';
+import { EdgeChangeset, NodeChangeset } from '@xyflow/react';
 import { useGraphState } from '../../src/renderer/hooks/useGraphState';
-
-// Mock reactflow's applyNodeChanges and applyEdgeChanges
-jest.mock('@xyflow/react', () => ({
-  applyNodeChanges: jest.fn((changes, nodes) => {
-    // Simple mock: apply position changes
-    return nodes
-      .map((node) => {
-        const change = changes.find((c) => c.id === node.id);
-        if (change?.type === 'position' && change.position) {
-          return { ...node, position: change.position };
-        }
-        if (change?.type === 'remove') {
-          return null;
-        }
-        return node;
-      })
-      .filter(Boolean);
-  }),
-  applyEdgeChanges: jest.fn((changes, edges) => {
-    // Simple mock: filter out removed edges
-    const removeIds = changes.filter((c) => c.type === 'remove').map((c) => c.id);
-    return edges.filter((edge) => !removeIds.includes(edge.id));
-  })
-}));
 
 describe('useGraphState', () => {
   describe('initial state', () => {
@@ -130,9 +107,9 @@ describe('useGraphState', () => {
       });
 
       act(() => {
-        result.current.actions.onNodesChange([
-          { id: 'node1', type: 'position', position: { x: 50, y: 50 } }
-        ]);
+        result.current.actions.onNodesChange(
+          new NodeChangeset([{ id: 'node1', type: 'position', position: { x: 50, y: 50 } }])
+        );
       });
 
       expect(result.current.nodes[0].position).toEqual({ x: 50, y: 50 });
@@ -149,7 +126,7 @@ describe('useGraphState', () => {
       });
 
       act(() => {
-        result.current.actions.onNodesChange([{ id: 'node1', type: 'remove' }]);
+        result.current.actions.onNodesChange(new NodeChangeset([{ id: 'node1', type: 'remove' }]));
       });
 
       expect(result.current.nodes).toHaveLength(1);
@@ -169,7 +146,7 @@ describe('useGraphState', () => {
       });
 
       act(() => {
-        result.current.actions.onEdgesChange([{ id: 'edge1', type: 'remove' }]);
+        result.current.actions.onEdgesChange(new EdgeChangeset([{ id: 'edge1', type: 'remove' }]));
       });
 
       expect(result.current.edges).toHaveLength(1);
