@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-24T07:45:21.157Z",
+  "generatedAt": "2026-11-25T07:13:48.819Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
@@ -19445,7 +19445,7 @@
     },
     {
       "packageName": "postcss-loader",
-      "version": "8.2.1",
+      "version": "8.2.2",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -19943,7 +19943,7 @@
     },
     {
       "packageName": "react-window",
-      "version": "2.5.3",
+      "version": "2.5.4",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
