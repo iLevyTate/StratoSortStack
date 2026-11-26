@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-25T07:13:48.819Z",
+  "generatedAt": "2026-11-26T07:04:35.366Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
@@ -17437,7 +17437,7 @@
     },
     {
       "packageName": "knip",
-      "version": "6.47.0",
+      "version": "6.48.0",
       "license": "ISC",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -17657,7 +17657,7 @@
     },
     {
       "packageName": "lint-staged",
-      "version": "17.6.1",
+      "version": "17.6.2",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
