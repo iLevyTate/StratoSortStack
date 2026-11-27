@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-27T06:59:54.083Z",
+  "generatedAt": "2026-11-27T07:19:00.123Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
@@ -13407,7 +13407,7 @@
     },
     {
       "packageName": "electron",
-      "version": "45.4.1",
+      "version": "45.5.0",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
