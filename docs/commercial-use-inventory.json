@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-25T07:13:48.819Z",
+  "generatedAt": "2026-11-27T06:59:54.083Z",
   "projectLicense": {
     "riskLevel": "allowed",
     "reason": "Project license is PolyForm Noncommercial 1.0.0 for personal/noncommercial use. Commercial rights are sold separately; third-party dependency obligations remain governed by their own licenses.",
@@ -10947,7 +10947,7 @@
     },
     {
       "packageName": "@xyflow/react",
-      "version": "13.0.2",
+      "version": "13.0.3",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -10958,7 +10958,7 @@
     },
     {
       "packageName": "@xyflow/system",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -17437,7 +17437,7 @@
     },
     {
       "packageName": "knip",
-      "version": "6.47.0",
+      "version": "6.48.0",
       "license": "ISC",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -17657,7 +17657,7 @@
     },
     {
       "packageName": "lint-staged",
-      "version": "17.6.1",
+      "version": "17.6.2",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -17799,7 +17799,7 @@
     },
     {
       "packageName": "lucide-react",
-      "version": "1.77.0",
+      "version": "1.78.0",
       "license": "ISC",
       "riskLevel": "allowed",
       "directRuntime": false,
@@ -22144,7 +22144,7 @@
     },
     {
       "packageName": "unpdf",
-      "version": "2.2.1",
+      "version": "2.2.2",
       "license": "MIT",
       "riskLevel": "allowed",
       "directRuntime": true,
