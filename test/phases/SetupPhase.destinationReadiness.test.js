@@ -125,10 +125,11 @@ jest.mock('../../src/renderer/components/setup', () => ({
 import SetupPhase from '../../src/renderer/phases/SetupPhase';
 
 async function renderLoaded() {
-  render(<SetupPhase />);
-  await screen.findAllByTestId('folder-item');
-  const continueButton = await screen.findByRole('button', { name: 'Continue to Discovery' });
-  return continueButton;
+  await act(async () => {
+    render(<SetupPhase />);
+  });
+  expect(screen.getAllByTestId('folder-item')).toHaveLength(mockFolders.length);
+  return screen.getByRole('button', { name: 'Continue to Discovery' });
 }
 
 function badgeTexts() {
