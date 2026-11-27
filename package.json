@@ -285,7 +285,7 @@
     "css-loader": "^7.1.5",
     "cssnano": "^9.9.0",
     "dotenv": "^18.0.10",
-    "electron": "^45.4.1",
+    "electron": "^45.5.0",
     "electron-builder": "^26.18.0",
     "electron-devtools-installer": "^4.0.0",
     "elkjs": "^0.12.1",
