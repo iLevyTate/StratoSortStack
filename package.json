@@ -308,7 +308,7 @@
     "jest-environment-jsdom": "^30.5.2",
     "knip": "^6.48.0",
     "lint-staged": "^17.6.2",
-    "lucide-react": "^1.78.0",
+    "lucide-react": "^1.79.0",
     "memfs": "^4.80.1",
     "mini-css-extract-plugin": "^2.10.2",
     "os-browserify": "^0.3.0",
